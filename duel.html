@@ -126,6 +126,39 @@
         padding: 14px;
       }
 
+      .statsWrap {
+        display: grid;
+        gap: 10px;
+      }
+
+      .statCard {
+        padding: 12px 14px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: rgba(0,0,0,0.35);
+      }
+
+      .statTitle {
+        margin: 0 0 8px;
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--gold-2);
+      }
+
+      .statRow {
+        display: flex;
+        justify-content: space-between;
+        font-size: 0.88rem;
+        color: var(--ink-dim);
+        padding: 3px 0;
+      }
+
+      .statRow strong {
+        color: var(--ink);
+        font-weight: 600;
+      }
+
       @media (max-width: 980px) {
         .grid { grid-template-columns: 1fr; }
       }
@@ -260,13 +293,27 @@
         <section class="panel">
           <div class="panelHeader">
             <h2>War Room</h2>
-            <div class="mini">Route: <span class="kbd">/duel</span> (name: Mak'Gora)</div>
           </div>
           <div class="panelBody">
-            <div class="btnRow">
+            <div class="statsWrap">
+              <div class="statCard">
+                <h3 class="statTitle">Friendly</h3>
+                <div class="statRow"><span>HP</span><strong id="friendlyHp">--</strong></div>
+                <div class="statRow"><span>MP</span><strong id="friendlyMp">--</strong></div>
+                <div class="statRow"><span>Energy</span><strong id="friendlyEnergy">--</strong></div>
+                <div class="statRow"><span>Rage</span><strong id="friendlyRage">--</strong></div>
+              </div>
+              <div class="statCard">
+                <h3 class="statTitle">Enemy</h3>
+                <div class="statRow"><span>HP</span><strong id="enemyHp">--</strong></div>
+                <div class="statRow"><span>MP</span><strong id="enemyMp">--</strong></div>
+                <div class="statRow"><span>Energy</span><strong id="enemyEnergy">--</strong></div>
+                <div class="statRow"><span>Rage</span><strong id="enemyRage">--</strong></div>
+              </div>
+            </div>
+
+            <div class="btnRow" style="margin-top: 12px;">
               <button id="queueBtn">Join Queue</button>
-              <button id="classWarriorBtn">/class Warrior</button>
-              <button id="classMageBtn">/class Mage</button>
             </div>
 
             <div class="cmdWrap">
@@ -277,11 +324,10 @@
             <div class="hint">
               Commands:
               <span class="kbd">Join Queue</span> to match.
-              Then pick a class:
-              <span class="kbd">/class Warrior</span> or <span class="kbd">/class Mage</span>.
-              During combat, type ability names like <span class="kbd">attack</span>, <span class="kbd">slash</span>, <span class="kbd">fireball</span>, <span class="kbd">defend</span>.
+              Then pick a class in prep: <span class="kbd">/class warrior</span> or <span class="kbd">/class mage</span> and add items.
+              During combat, type ability ids like <span class="kbd">basic_attack</span>, <span class="kbd">fireball</span>, <span class="kbd">defend</span>.
               <br /><br />
-              Chat: <span class="kbd">/chat hello</span>
+              Chat: <span class="kbd">/chat hello</span> • Items: <span class="kbd">/item weapon rusty_sword</span>
             </div>
           </div>
         </section>
@@ -304,12 +350,18 @@
       const cmdInput = document.getElementById("commandInput");
       const sendBtn = document.getElementById("sendBtn");
       const queueBtn = document.getElementById("queueBtn");
-      const classWarriorBtn = document.getElementById("classWarriorBtn");
-      const classMageBtn = document.getElementById("classMageBtn");
 
       const connDot = document.getElementById("connDot");
       const connText = document.getElementById("connText");
       const roleText = document.getElementById("roleText");
+      const friendlyHp = document.getElementById("friendlyHp");
+      const friendlyMp = document.getElementById("friendlyMp");
+      const friendlyEnergy = document.getElementById("friendlyEnergy");
+      const friendlyRage = document.getElementById("friendlyRage");
+      const enemyHp = document.getElementById("enemyHp");
+      const enemyMp = document.getElementById("enemyMp");
+      const enemyEnergy = document.getElementById("enemyEnergy");
+      const enemyRage = document.getElementById("enemyRage");
 
       const socket = io();
 
@@ -322,6 +374,7 @@
       }
 
       socket.on("connect", () => {
+        lastLogLength = 0;
         connDot.classList.remove("bad");
         connDot.classList.add("ok");
         connText.textContent = "Connected";
@@ -329,6 +382,7 @@
       });
 
       socket.on("disconnect", () => {
+        lastLogLength = 0;
         connDot.classList.remove("ok");
         connDot.classList.add("bad");
         connText.textContent = "Disconnected";
@@ -341,6 +395,17 @@
         roleText.textContent = `(${role})`;
         appendLine(`You are ${role}.`, "logLineSystem");
       });
+      socket.on("duel_prep_options", (data) => {
+        if (data?.classes) {
+          appendLine(`Classes: ${Object.keys(data.classes).join(", ")}`, "logLineSystem");
+        }
+        if (data?.items) {
+          appendLine(`Items: ${Object.keys(data.items).join(", ")}`, "logLineSystem");
+        }
+        if (data?.abilities) {
+          appendLine(`Abilities: ${Object.keys(data.abilities).join(", ")}`, "logLineSystem");
+        }
+      });
 
       socket.on("duel_turn", (msg) => {
         appendLine(" ", "logLineTurn");
@@ -348,8 +413,43 @@
       });
 
       socket.on("duel_log", (msg) => appendLine(msg, "logLineTurn"));
-      socket.on("duel_result", (data) => {
-        appendLine(`Result: ${data.winner} defeats ${data.loser}.`, "logLineSystem");
+      let lastLogLength = 0;
+      socket.on("duel_snapshot", (data) => {
+        function renderRes(res, target) {
+          if (!res) {
+            target.hp.textContent = "--";
+            target.mp.textContent = "--";
+            target.energy.textContent = "--";
+            target.rage.textContent = "--";
+            return;
+          }
+          target.hp.textContent = `${res.hp}/${res.hp_max}`;
+          target.mp.textContent = `${res.mp}/${res.mp_max}`;
+          target.energy.textContent = `${res.energy}/${res.energy_max}`;
+          target.rage.textContent = `${res.rage}/${res.rage_max}`;
+        }
+        renderRes(data.you, {
+          hp: friendlyHp,
+          mp: friendlyMp,
+          energy: friendlyEnergy,
+          rage: friendlyRage,
+        });
+        renderRes(data.enemy, {
+          hp: enemyHp,
+          mp: enemyMp,
+          energy: enemyEnergy,
+          rage: enemyRage,
+        });
+        if (data.log) {
+          const total = data.log_length ?? data.log.length;
+          const newCount = Math.max(total - lastLogLength, 0);
+          const sliceStart = data.log.length - newCount;
+          data.log.slice(sliceStart).forEach(line => appendLine(line, "logLineTurn"));
+          lastLogLength = total;
+        }
+        if (data.phase === "ended") {
+          appendLine("Duel ended.", "logLineSystem");
+        }
       });
 
       function sendCommand() {
@@ -359,13 +459,20 @@
         // Keep duel_* event names. Only the title/link say Mak'Gora.
         if (text.toLowerCase().startsWith("/class")) {
           const parts = text.split(/\s+/);
-          const className = parts[1] || "";
-          socket.emit("duel_class", className);
+          const classId = (parts[1] || "").toLowerCase();
+          socket.emit("duel_prep_submit", { class_id: classId });
+        } else if (text.toLowerCase().startsWith("/item")) {
+          const parts = text.split(/\s+/);
+          const slot = parts[1] || "";
+          const itemId = parts[2] || "";
+          if (slot && itemId) {
+            socket.emit("duel_prep_submit", { items: { [slot]: itemId } });
+          }
         } else if (text.toLowerCase().startsWith("/chat")) {
           const msg = text.slice(5).trim();
           if (msg) socket.emit("duel_chat", msg);
         } else {
-          socket.emit("duel_action", text);
+          socket.emit("duel_action", { ability_id: text.toLowerCase() });
         }
 
         cmdInput.value = "";
@@ -380,8 +487,6 @@
       });
 
       queueBtn.addEventListener("click", () => socket.emit("duel_queue"));
-      classWarriorBtn.addEventListener("click", () => socket.emit("duel_class", "Warrior"));
-      classMageBtn.addEventListener("click", () => socket.emit("duel_class", "Mage"));
     </script>
   </body>
 </html>
