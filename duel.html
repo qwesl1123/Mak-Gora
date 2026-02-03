@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mak'Gora</title>
+
+    <!-- Optional: if you already use Google fonts, you can keep Inter.
+         For a Warcraft-ish vibe, we use heavy caps + strong contrast. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&display=swap"
+      rel="stylesheet"
+    />
+
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg0: #07060a;
+        --bg1: #0e0b12;
+        --ink: #f3e6c8;
+        --ink-dim: rgba(243, 230, 200, 0.8);
+
+        --gold: #d8b35b;
+        --gold-2: #f2d07b;
+
+        --orc: #4aa04a;
+        --orc-2: #2f7d2f;
+
+        --horde: #b61c1c;
+        --shadow: rgba(0, 0, 0, 0.65);
+
+        --panel: rgba(14, 11, 18, 0.78);
+        --panel-2: rgba(9, 7, 12, 0.82);
+
+        --border: rgba(216, 179, 91, 0.35);
+        --border-strong: rgba(216, 179, 91, 0.6);
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(1200px 700px at 20% 10%, rgba(74, 160, 74, 0.18), transparent 55%),
+          radial-gradient(900px 600px at 80% 20%, rgba(182, 28, 28, 0.16), transparent 55%),
+          radial-gradient(1100px 800px at 50% 90%, rgba(216, 179, 91, 0.10), transparent 60%),
+          linear-gradient(180deg, var(--bg0), var(--bg1));
+        color: var(--ink);
+        font-family: Inter, system-ui, sans-serif;
+        padding: 22px;
+      }
+
+      .frame {
+        max-width: 1050px;
+        margin: 0 auto;
+        border-radius: 18px;
+        border: 1px solid var(--border);
+        background: linear-gradient(180deg, rgba(0,0,0,0.35), rgba(0,0,0,0.6));
+        box-shadow: 0 30px 70px var(--shadow);
+        overflow: hidden;
+      }
+
+      .topbar {
+        padding: 18px 20px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+        background:
+          linear-gradient(180deg, rgba(216,179,91,0.12), rgba(0,0,0,0.0)),
+          linear-gradient(90deg, rgba(74,160,74,0.10), rgba(182,28,28,0.10));
+        border-bottom: 1px solid var(--border);
+      }
+
+      .title {
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+      }
+
+      .title h1 {
+        margin: 0;
+        font-size: 1.55rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--gold-2);
+        text-shadow: 0 0 14px rgba(242, 208, 123, 0.25);
+      }
+
+      .subtitle {
+        font-size: 0.9rem;
+        color: var(--ink-dim);
+        letter-spacing: 0.02em;
+      }
+
+      .statuspill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: rgba(0,0,0,0.35);
+        color: var(--ink-dim);
+        font-size: 0.9rem;
+      }
+
+      .dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #888;
+        box-shadow: 0 0 12px rgba(0,0,0,0.4);
+      }
+
+      .dot.ok { background: var(--orc); box-shadow: 0 0 14px rgba(74,160,74,0.45); }
+      .dot.bad { background: var(--horde); box-shadow: 0 0 14px rgba(182,28,28,0.45); }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1.35fr;
+        gap: 14px;
+        padding: 14px;
+      }
+
+      @media (max-width: 980px) {
+        .grid { grid-template-columns: 1fr; }
+      }
+
+      .panel {
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        background: linear-gradient(180deg, var(--panel), var(--panel-2));
+        overflow: hidden;
+      }
+
+      .panelHeader {
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .panelHeader h2 {
+        margin: 0;
+        font-size: 0.95rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--gold);
+      }
+
+      .panelBody { padding: 12px 14px; }
+
+      .btnRow {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      button {
+        appearance: none;
+        border: 1px solid var(--border);
+        background: rgba(0,0,0,0.35);
+        color: var(--ink);
+        padding: 9px 12px;
+        border-radius: 10px;
+        cursor: pointer;
+        font-weight: 600;
+        letter-spacing: 0.02em;
+        transition: transform 0.12s ease, border-color 0.12s ease, background 0.12s ease;
+      }
+
+      button:hover {
+        transform: translateY(-1px);
+        border-color: var(--border-strong);
+        background: rgba(0,0,0,0.45);
+      }
+
+      .cmdWrap {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 8px;
+        margin-top: 10px;
+      }
+
+      input[type="text"] {
+        width: 100%;
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: rgba(0,0,0,0.35);
+        color: var(--ink);
+        outline: none;
+      }
+
+      input[type="text"]:focus {
+        border-color: var(--border-strong);
+      }
+
+      .hint {
+        margin-top: 10px;
+        font-size: 0.85rem;
+        color: var(--ink-dim);
+        line-height: 1.35;
+      }
+
+      .log {
+        height: 470px;
+        overflow: auto;
+        padding: 12px 14px;
+        white-space: pre-wrap;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        font-size: 0.92rem;
+        line-height: 1.35;
+      }
+
+      .logLineSystem { color: rgba(242, 208, 123, 0.95); }
+      .logLineTurn { color: rgba(243, 230, 200, 0.95); }
+      .logLineChat { color: rgba(180, 220, 255, 0.95); }
+
+      .mini {
+        font-size: 0.85rem;
+        color: var(--ink-dim);
+      }
+
+      .kbd {
+        padding: 2px 6px;
+        border: 1px solid rgba(216, 179, 91, 0.35);
+        border-bottom-width: 2px;
+        border-radius: 6px;
+        background: rgba(0,0,0,0.35);
+        color: var(--gold-2);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        font-size: 0.82rem;
+      }
+    </style>
+  </head>
+
+  <body>
+    <div class="frame">
+      <div class="topbar">
+        <div class="title">
+          <h1>Mak'Gora</h1>
+          <div class="subtitle">Duel to the death — turn-based PvP</div>
+        </div>
+        <div class="statuspill">
+          <span id="connDot" class="dot bad"></span>
+          <span id="connText">Disconnected</span>
+          <span class="mini" id="roleText"></span>
+        </div>
+      </div>
+
+      <div class="grid">
+        <!-- Left: Controls -->
+        <section class="panel">
+          <div class="panelHeader">
+            <h2>War Room</h2>
+            <div class="mini">Route: <span class="kbd">/duel</span> (name: Mak'Gora)</div>
+          </div>
+          <div class="panelBody">
+            <div class="btnRow">
+              <button id="queueBtn">Join Queue</button>
+              <button id="classWarriorBtn">/class Warrior</button>
+              <button id="classMageBtn">/class Mage</button>
+            </div>
+
+            <div class="cmdWrap">
+              <input id="commandInput" type="text" placeholder="Type a command (attack, slash, fireball, defend, shield)..." autocomplete="off" />
+              <button id="sendBtn">Send</button>
+            </div>
+
+            <div class="hint">
+              Commands:
+              <span class="kbd">Join Queue</span> to match.
+              Then pick a class:
+              <span class="kbd">/class Warrior</span> or <span class="kbd">/class Mage</span>.
+              During combat, type ability names like <span class="kbd">attack</span>, <span class="kbd">slash</span>, <span class="kbd">fireball</span>, <span class="kbd">defend</span>.
+              <br /><br />
+              Chat: <span class="kbd">/chat hello</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Right: Log -->
+        <section class="panel">
+          <div class="panelHeader">
+            <h2>Combat Log</h2>
+            <div class="mini">CLI-style output</div>
+          </div>
+          <div id="log" class="log"></div>
+        </section>
+      </div>
+    </div>
+
+    <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
+    <script>
+      // IMPORTANT: event names remain duel_* (logic unchanged).
+      const logDiv = document.getElementById("log");
+      const cmdInput = document.getElementById("commandInput");
+      const sendBtn = document.getElementById("sendBtn");
+      const queueBtn = document.getElementById("queueBtn");
+      const classWarriorBtn = document.getElementById("classWarriorBtn");
+      const classMageBtn = document.getElementById("classMageBtn");
+
+      const connDot = document.getElementById("connDot");
+      const connText = document.getElementById("connText");
+      const roleText = document.getElementById("roleText");
+
+      const socket = io();
+
+      function appendLine(msg, cls = "") {
+        const line = document.createElement("div");
+        if (cls) line.className = cls;
+        line.textContent = msg;
+        logDiv.appendChild(line);
+        logDiv.scrollTop = logDiv.scrollHeight;
+      }
+
+      socket.on("connect", () => {
+        connDot.classList.remove("bad");
+        connDot.classList.add("ok");
+        connText.textContent = "Connected";
+        appendLine("Connected to server.", "logLineSystem");
+      });
+
+      socket.on("disconnect", () => {
+        connDot.classList.remove("ok");
+        connDot.classList.add("bad");
+        connText.textContent = "Disconnected";
+        roleText.textContent = "";
+        appendLine("Disconnected from server.", "logLineSystem");
+      });
+
+      socket.on("duel_system", (msg) => appendLine(msg, "logLineSystem"));
+      socket.on("duel_role", (role) => {
+        roleText.textContent = `(${role})`;
+        appendLine(`You are ${role}.`, "logLineSystem");
+      });
+
+      socket.on("duel_turn", (msg) => {
+        appendLine(" ", "logLineTurn");
+        msg.split("\n").forEach(line => appendLine(line, "logLineTurn"));
+      });
+
+      socket.on("duel_log", (msg) => appendLine(msg, "logLineTurn"));
+      socket.on("duel_result", (data) => {
+        appendLine(`Result: ${data.winner} defeats ${data.loser}.`, "logLineSystem");
+      });
+
+      function sendCommand() {
+        const text = cmdInput.value.trim();
+        if (!text) return;
+
+        // Keep duel_* event names. Only the title/link say Mak'Gora.
+        if (text.toLowerCase().startsWith("/class")) {
+          const parts = text.split(/\s+/);
+          const className = parts[1] || "";
+          socket.emit("duel_class", className);
+        } else if (text.toLowerCase().startsWith("/chat")) {
+          const msg = text.slice(5).trim();
+          if (msg) socket.emit("duel_chat", msg);
+        } else {
+          socket.emit("duel_action", text);
+        }
+
+        cmdInput.value = "";
+      }
+
+      sendBtn.addEventListener("click", sendCommand);
+      cmdInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          sendCommand();
+        }
+      });
+
+      queueBtn.addEventListener("click", () => socket.emit("duel_queue"));
+      classWarriorBtn.addEventListener("click", () => socket.emit("duel_class", "Warrior"));
+      classMageBtn.addEventListener("click", () => socket.emit("duel_class", "Mage"));
+    </script>
+  </body>
+</html>
