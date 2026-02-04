@@ -9,18 +9,6 @@ from .content.classes import CLASSES
 from .content.items import ITEMS
 from .content.abilities import ABILITIES
 
-def class_name_for(match, sid):
-    picked = match.picks.get(sid, {})
-    class_id = None
-    if isinstance(picked, dict):
-        class_id = picked.get("class_id")
-    if not class_id:
-        ps = match.state.get(sid)
-        if ps and ps.build:
-            class_id = ps.build.class_id
-    class_data = CLASSES.get(class_id or "", {})
-    return class_data.get("name", "Adventurer")
-
 def snapshot_for(match, viewer_sid):
     """
     Returns a UI-friendly snapshot with friendly/enemy HP/Mana/Energy/Rage.
@@ -28,6 +16,18 @@ def snapshot_for(match, viewer_sid):
     p1, p2 = match.players
     you = viewer_sid
     enemy = p2 if you == p1 else p1
+
+    def class_name_for(sid):
+        picked = match.picks.get(sid, {})
+        class_id = None
+        if isinstance(picked, dict):
+            class_id = picked.get("class_id")
+        if not class_id:
+            ps = match.state.get(sid)
+            if ps and ps.build:
+                class_id = ps.build.class_id
+        class_data = CLASSES.get(class_id or "", {})
+        return class_data.get("name", "Adventurer")
 
     def resource_config_for(sid):
         picked = match.picks.get(sid, {})
@@ -70,7 +70,7 @@ def snapshot_for(match, viewer_sid):
         }
 
     def display_name_for(sid):
-        class_name = class_name_for(match, sid)
+        class_name = class_name_for(sid)
         if sid == viewer_sid:
             return f"{class_name}(you)"
         return class_name
@@ -95,8 +95,8 @@ def snapshot_for(match, viewer_sid):
         "turn": match.turn,
         "you": pack(you),
         "enemy": pack(enemy),
-        "you_class": class_name_for(match, you) + " (YOU)",
-        "enemy_class": class_name_for(match, enemy),
+        "you_class": class_name_for(you) + " (YOU)",
+        "enemy_class": class_name_for(enemy),
         "you_items": get_equipped_items(you),
         "enemy_items": get_equipped_items(enemy),
         "you_resource": primary_resource_for(you),
@@ -107,12 +107,23 @@ def snapshot_for(match, viewer_sid):
     }
 
 def register_duel_socket_handlers(socketio):
+    @socketio.on("connect")
+    def duel_connect():
+        sid = request.sid
+        emit("duel_system", "Connected to Arena Server")
+    
     @socketio.on("duel_queue")
     def duel_queue():
         sid = request.sid
         if state.get_match_by_sid(sid):
             emit("duel_system", "Already in a duel.")
             return
+        
+        # Prevent duplicate queue entries
+        if sid in state.duel_queue:
+            emit("duel_system", "Already in queue.")
+            return
+            
         state.enqueue(sid)
         emit("duel_system", "Queued for DUEL...")
 
@@ -125,12 +136,20 @@ def register_duel_socket_handlers(socketio):
             join_room(match.room_id, sid=p1)
             join_room(match.room_id, sid=p2)
 
+            # Send role assignments
+            socketio.emit("duel_role", "P1", to=p1)
+            socketio.emit("duel_role", "P2", to=p2)
+
             socketio.emit("duel_system", "Match found. Prep phase: pick class + items.", to=match.room_id)
             socketio.emit("duel_prep_options", {
                 "classes": CLASSES,
                 "items": ITEMS,
                 "abilities": ABILITIES,
             }, to=match.room_id)
+            
+            # Send initial snapshots to both players
+            socketio.emit("duel_snapshot", snapshot_for(match, p1), to=p1)
+            socketio.emit("duel_snapshot", snapshot_for(match, p2), to=p2)
 
     @socketio.on("duel_prep_submit")
     def duel_prep_submit(payload):
@@ -264,7 +283,6 @@ def register_duel_socket_handlers(socketio):
         if not match:
             return
         room_id = match.room_id
-        player_name = class_name_for(match, sid)
         leave_room(room_id, sid=sid)
-        socketio.emit("duel_system", f"{player_name} Leaves The Instance", to=room_id)
+        socketio.emit("duel_system", "Opponent disconnected. Duel ended.", to=room_id)
         state.cleanup_room(room_id)
