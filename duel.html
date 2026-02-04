@@ -413,6 +413,12 @@
         color: #ffaa44;
       }
 
+      .logLineProc {
+        color: var(--gold);
+        font-weight: 700;
+        text-shadow: 0 0 12px rgba(255, 215, 0, 0.8);
+      }
+
       .logLineChat {
         color: #88ddff;
       }
@@ -816,7 +822,14 @@
 
       function appendLine(msg, cls = "") {
         const line = document.createElement("div");
-        line.className = 'log-line ' + cls;
+        const classes = ['log-line'];
+        if (cls) {
+          classes.push(cls);
+        }
+        if (msg.includes("HOT STREAK")) {
+          classes.push("logLineProc");
+        }
+        line.className = classes.join(" ");
         line.textContent = msg;
         logDiv.appendChild(line);
         logDiv.scrollTop = logDiv.scrollHeight;

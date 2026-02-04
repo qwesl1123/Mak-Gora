@@ -19,7 +19,7 @@ ABILITIES = {
         "cooldown": 1,
         "classes": ["mage"],
         "on_hit_effects": [
-            {"id": "hot_streak", "chance": 0.15, "log": "Hot Streak!"}
+            {"id": "hot_streak", "chance": 0.15, "log": "Has HOT STREAK!"}
         ],
     },
     "defend": {
