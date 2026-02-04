@@ -283,6 +283,8 @@ def register_duel_socket_handlers(socketio):
         if not match:
             return
         room_id = match.room_id
+        role = "P1" if sid == match.players[0] else "P2"
         leave_room(room_id, sid=sid)
-        socketio.emit("duel_system", "Opponent disconnected. Duel ended.", to=room_id)
+        socketio.emit("duel_system", f"{role} Leaves The Instance", to=room_id)
+        socketio.emit("duel_system", "Duel ended.", to=room_id)
         state.cleanup_room(room_id)
