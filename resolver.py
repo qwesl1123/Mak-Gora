@@ -8,6 +8,9 @@ from ..content.classes import CLASSES
 from ..content.items import ITEMS
 from ..content.balance import DEFAULTS, CAPS
 
+# Centralized mechanics (passives/DoTs/mitigation/regen) live here.
+from .effects import mitigation_multiplier, trigger_on_hit_passives, end_of_turn
+
 def apply_prep_build(match: MatchState) -> None:
     """
     Called once when both players have selected class + items.
@@ -114,14 +117,6 @@ def resolve_turn(match: MatchState) -> None:
             setattr(res, key, getattr(res, key) - value)
         return True
 
-    def mitigation_multiplier(target: PlayerState) -> float:
-        total = 0.0
-        for effect in target.effects:
-            if effect.get("type") == "mitigation":
-                total += float(effect.get("value", 0))
-        total = max(0.0, min(total, 0.8))
-        return 1.0 - total
-
     def resolve_action(actor_sid: str, target_sid: str, action: Dict[str, Any]) -> Dict[str, Any]:
         actor = match.state[actor_sid]
         target = match.state[target_sid]
@@ -187,21 +182,10 @@ def resolve_turn(match: MatchState) -> None:
         
         log_parts.append(f"Deals {reduced} damage.")
         
-        # Apply on-hit passive effects (like burn from Wand of Fire)
-        if reduced > 0:  # Only if hit landed
-            for effect in actor.effects:
-                if effect.get("type") == "item_passive":
-                    passive = effect.get("passive", {})
-                    if passive.get("trigger") == "on_hit" and passive.get("type") == "burn":
-                        # Apply burn to target
-                        burn_value = passive.get("value", 0)
-                        target.effects.append({
-                            "type": "burn",
-                            "value": burn_value,
-                            "duration": 999,  # Permanent until cleansed
-                            "source": effect.get("source_item", "Unknown"),
-                        })
-                        log_parts.append(f"Burns target for {burn_value} damage/turn!")
+        # Apply on-hit passive effects (weapons/trinkets etc.)
+        # NOTE: these log directly into match.log (separate from the action's one-line log).
+        if reduced > 0:
+            trigger_on_hit_passives(actor, target, match.log)
         
         return {"damage": reduced, "log": " ".join(log_parts)}
 
@@ -215,37 +199,10 @@ def resolve_turn(match: MatchState) -> None:
     match.state[sids[1]].res.hp -= result1["damage"]
     match.state[sids[0]].res.hp -= result2["damage"]
 
-    # End of turn processing for both players
+    # End of turn processing for both players (DoTs, passives, duration ticks, regen)
     for sid in sids:
         ps = match.state[sid]
-        
-        # Apply DoT effects (burns, bleeds, etc.)
-        for effect in ps.effects:
-            if effect.get("type") == "burn":
-                burn_dmg = effect.get("value", 0)
-                ps.res.hp -= burn_dmg
-                match.log.append(f"{sid[:5]} burns for {burn_dmg} damage.")
-        
-        # Apply healing passives (end of turn)
-        for effect in ps.effects:
-            if effect.get("type") == "item_passive":
-                passive = effect.get("passive", {})
-                if passive.get("trigger") == "end_of_turn" and passive.get("type") == "heal_self":
-                    heal_value = passive.get("value", 0)
-                    ps.res.hp = min(ps.res.hp + heal_value, ps.res.hp_max)
-                    match.log.append(f"{sid[:5]} heals {heal_value} HP from {effect.get('source_item', 'item')}.")
-        
-        # Tick down effect durations (but keep permanent passives)
-        ps.effects = [
-            {**effect, "duration": effect.get("duration", 0) - 1}
-            for effect in ps.effects
-            if effect.get("duration", 0) - 1 > 0 or effect.get("type") == "item_passive" or effect.get("type") == "burn"
-        ]
-        
-        # Regenerate resources
-        if ps.res.hp > 0:
-            ps.res.mp = min(ps.res.mp + DEFAULTS["mp_regen_per_turn"], ps.res.mp_max)
-            ps.res.energy = min(ps.res.energy + DEFAULTS["energy_regen_per_turn"], ps.res.energy_max)
+        end_of_turn(ps, match.log, sid[:5])
 
     # Check for winners
     p1_alive = match.state[sids[0]].res.hp > 0
