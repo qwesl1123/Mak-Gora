@@ -297,18 +297,16 @@
           <div class="panelBody">
             <div class="statsWrap">
               <div class="statCard">
-                <h3 class="statTitle">Friendly</h3>
+                <h3 class="statTitle" id="friendlyLabel">Friendly</h3>
                 <div class="statRow"><span>HP</span><strong id="friendlyHp">--</strong></div>
-                <div class="statRow"><span>MP</span><strong id="friendlyMp">--</strong></div>
-                <div class="statRow"><span>Energy</span><strong id="friendlyEnergy">--</strong></div>
-                <div class="statRow"><span>Rage</span><strong id="friendlyRage">--</strong></div>
+                <div class="statRow" id="friendlyManaRow"><span>Mana</span><strong id="friendlyMana">--</strong></div>
+                <div class="statRow" id="friendlyRageRow"><span>Rage</span><strong id="friendlyRage">--</strong></div>
               </div>
               <div class="statCard">
-                <h3 class="statTitle">Enemy</h3>
+                <h3 class="statTitle" id="enemyLabel">Enemy</h3>
                 <div class="statRow"><span>HP</span><strong id="enemyHp">--</strong></div>
-                <div class="statRow"><span>MP</span><strong id="enemyMp">--</strong></div>
-                <div class="statRow"><span>Energy</span><strong id="enemyEnergy">--</strong></div>
-                <div class="statRow"><span>Rage</span><strong id="enemyRage">--</strong></div>
+                <div class="statRow" id="enemyManaRow"><span>Mana</span><strong id="enemyMana">--</strong></div>
+                <div class="statRow" id="enemyRageRow"><span>Rage</span><strong id="enemyRage">--</strong></div>
               </div>
             </div>
 
@@ -354,14 +352,18 @@
       const connDot = document.getElementById("connDot");
       const connText = document.getElementById("connText");
       const roleText = document.getElementById("roleText");
+      const friendlyLabel = document.getElementById("friendlyLabel");
+      const enemyLabel = document.getElementById("enemyLabel");
       const friendlyHp = document.getElementById("friendlyHp");
-      const friendlyMp = document.getElementById("friendlyMp");
-      const friendlyEnergy = document.getElementById("friendlyEnergy");
+      const friendlyMana = document.getElementById("friendlyMana");
       const friendlyRage = document.getElementById("friendlyRage");
+      const friendlyManaRow = document.getElementById("friendlyManaRow");
+      const friendlyRageRow = document.getElementById("friendlyRageRow");
       const enemyHp = document.getElementById("enemyHp");
-      const enemyMp = document.getElementById("enemyMp");
-      const enemyEnergy = document.getElementById("enemyEnergy");
+      const enemyMana = document.getElementById("enemyMana");
       const enemyRage = document.getElementById("enemyRage");
+      const enemyManaRow = document.getElementById("enemyManaRow");
+      const enemyRageRow = document.getElementById("enemyRageRow");
 
       const socket = io();
 
@@ -414,32 +416,51 @@
 
       socket.on("duel_log", (msg) => appendLine(msg, "logLineTurn"));
       let lastLogLength = 0;
+      let currentPhase = "prep";
       socket.on("duel_snapshot", (data) => {
-        function renderRes(res, target) {
+        function renderRes(res, target, className) {
+          if (className) {
+            target.label.textContent = target.isYou ? `${className} (you)` : className;
+          }
+          if (className === "Mage") {
+            target.manaRow.style.display = "flex";
+            target.rageRow.style.display = "none";
+          } else if (className === "Warrior") {
+            target.manaRow.style.display = "none";
+            target.rageRow.style.display = "flex";
+          } else {
+            target.manaRow.style.display = "flex";
+            target.rageRow.style.display = "flex";
+          }
           if (!res) {
             target.hp.textContent = "--";
-            target.mp.textContent = "--";
-            target.energy.textContent = "--";
+            target.mana.textContent = "--";
             target.rage.textContent = "--";
             return;
           }
           target.hp.textContent = `${res.hp}/${res.hp_max}`;
-          target.mp.textContent = `${res.mp}/${res.mp_max}`;
-          target.energy.textContent = `${res.energy}/${res.energy_max}`;
+          target.mana.textContent = `${res.mp}/${res.mp_max}`;
           target.rage.textContent = `${res.rage}/${res.rage_max}`;
         }
+        currentPhase = data.phase || currentPhase;
         renderRes(data.you, {
+          label: friendlyLabel,
           hp: friendlyHp,
-          mp: friendlyMp,
-          energy: friendlyEnergy,
+          mana: friendlyMana,
           rage: friendlyRage,
-        });
+          manaRow: friendlyManaRow,
+          rageRow: friendlyRageRow,
+          isYou: true,
+        }, data.you_class);
         renderRes(data.enemy, {
+          label: enemyLabel,
           hp: enemyHp,
-          mp: enemyMp,
-          energy: enemyEnergy,
+          mana: enemyMana,
           rage: enemyRage,
-        });
+          manaRow: enemyManaRow,
+          rageRow: enemyRageRow,
+          isYou: false,
+        }, data.enemy_class);
         if (data.log) {
           const total = data.log_length ?? data.log.length;
           const newCount = Math.max(total - lastLogLength, 0);
@@ -472,6 +493,11 @@
           const msg = text.slice(5).trim();
           if (msg) socket.emit("duel_chat", msg);
         } else {
+          if (currentPhase !== "combat") {
+            appendLine("Prep phase: use /class or /item before combat.", "logLineSystem");
+            cmdInput.value = "";
+            return;
+          }
           socket.emit("duel_action", { ability_id: text.toLowerCase() });
         }
 

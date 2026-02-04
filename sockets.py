@@ -17,6 +17,18 @@ def snapshot_for(match, viewer_sid):
     you = viewer_sid
     enemy = p2 if you == p1 else p1
 
+    def class_name_for(sid):
+        picked = match.picks.get(sid, {})
+        class_id = None
+        if isinstance(picked, dict):
+            class_id = picked.get("class_id")
+        if not class_id:
+            state = match.state.get(sid)
+            if state and state.build:
+                class_id = state.build.class_id
+        class_data = CLASSES.get(class_id or "", {})
+        return class_data.get("name", "Adventurer")
+
     def pack(sid):
         ps = match.state.get(sid)
         if not ps or not ps.res:
@@ -34,6 +46,8 @@ def snapshot_for(match, viewer_sid):
         "turn": match.turn,
         "you": pack(you),
         "enemy": pack(enemy),
+        "you_class": class_name_for(you),
+        "enemy_class": class_name_for(enemy),
         "log": match.log[-30:],
         "winner": match.winner,
         "log_length": len(match.log),
@@ -96,6 +110,8 @@ def register_duel_socket_handlers(socketio):
             socketio.emit("duel_snapshot", snapshot_for(match, match.players[0]), to=match.players[0])
             socketio.emit("duel_snapshot", snapshot_for(match, match.players[1]), to=match.players[1])
             socketio.emit("duel_system", "Combat begins.", to=match.room_id)
+        else:
+            socketio.emit("duel_snapshot", snapshot_for(match, sid), to=sid)
 
     @socketio.on("duel_action")
     def duel_action(payload):
@@ -105,10 +121,14 @@ def register_duel_socket_handlers(socketio):
             emit("duel_system", "Not in a duel.")
             return
         if match.phase != "combat":
-            emit("duel_system", "Not in combat phase.")
+            emit("duel_system", "Prep phase: choose class/items before combat.")
             return
 
         action = payload if isinstance(payload, dict) else {"ability_id": str(payload).strip()}
+        ability_id = action.get("ability_id", "")
+        if ability_id not in ABILITIES:
+            emit("duel_system", f"Unknown ability '{ability_id}'. Try again.")
+            return
         resolver.submit_action(match, sid, action)
         emit("duel_system", "Action received.")
 

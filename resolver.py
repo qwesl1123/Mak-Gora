@@ -99,18 +99,24 @@ def resolve_turn(match: MatchState) -> None:
         total = max(0.0, min(total, 0.8))
         return 1.0 - total
 
+    def actor_name(sid: str) -> str:
+        state = match.state.get(sid)
+        class_id = state.build.class_id if state and state.build else None
+        class_data = CLASSES.get(class_id or "", {})
+        return class_data.get("name", sid[:5])
+
     def resolve_action(actor_sid: str, target_sid: str, action: Dict[str, Any]) -> Dict[str, Any]:
         actor = match.state[actor_sid]
         target = match.state[target_sid]
         ability_id = action.get("ability_id")
         ability = ABILITIES.get(ability_id)
         if not ability:
-            return {"damage": 0, "log": f"{actor_sid[:5]} fumbles (unknown ability)."}
+            return {"damage": 0, "log": f"{actor_name(actor_sid)} fumbles (unknown ability)."}
 
         if not consume_costs(actor, ability.get("cost", {})):
-            return {"damage": 0, "log": f"{actor_sid[:5]} tried {ability['name']} but lacked resources."}
+            return {"damage": 0, "log": f"{actor_name(actor_sid)} tried {ability['name']} but lacked resources."}
 
-        log_parts = [f"{actor_sid[:5]} uses {ability['name']}."]
+        log_parts = [f"{actor_name(actor_sid)} uses {ability['name']}."]
         if ability.get("effect"):
             effect = dict(ability["effect"])
             effect["duration"] = int(effect.get("duration", 1))
@@ -165,10 +171,10 @@ def resolve_turn(match: MatchState) -> None:
         match.phase = "ended"
         if p1_alive and not p2_alive:
             match.winner = sids[0]
-            match.log.append(f"{sids[0][:5]} wins the duel.")
+            match.log.append(f"{actor_name(sids[0])} wins the duel.")
         elif p2_alive and not p1_alive:
             match.winner = sids[1]
-            match.log.append(f"{sids[1][:5]} wins the duel.")
+            match.log.append(f"{actor_name(sids[1])} wins the duel.")
         else:
             match.winner = None
             match.log.append("Double KO. No winner.")
