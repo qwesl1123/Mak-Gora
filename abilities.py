@@ -1,7 +1,7 @@
 # games/duel/content/abilities.py
 ABILITIES = {
     "basic_attack": {
-        "name": "Attack",
+        "name": "Basic Attack",
         "cost": {"energy": 0},
         "dice": {"type": "d20", "power_on": "roll"},
         "scaling": {"atk": 1.0},

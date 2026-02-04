@@ -205,6 +205,11 @@
         box-shadow: inset 0 2px 4px rgba(255, 255, 255, 0.3);
       }
 
+      .bar-fill.health.hp-dead {
+        background: #000;
+        box-shadow: none;
+      }
+
       .bar-fill.mana {
         background: linear-gradient(180deg, #4488ff 0%, #0044cc 100%);
         box-shadow: inset 0 2px 4px rgba(255, 255, 255, 0.3);
@@ -745,7 +750,7 @@
           
           <p><strong>Accuracy & Evasion:</strong> Attacks can miss based on attacker's Accuracy vs defender's Evasion.</p>
           
-          <p><strong>Damage over Time (DoT):</strong> Burn effects deal damage at the end of each turn. Multiple burns stack.</p>
+          <p><strong>Damage over Time (DoT):</strong> Burn effects deal damage at the end of each turn. Burns refresh but do not stack.</p>
           
           <p><strong>Passive Healing:</strong> Spirit Light Sword and Staff of Immortality heal automatically at turn end.</p>
           
@@ -923,12 +928,15 @@
           return;
         }
         
-        const hpPercent = (res.hp / res.hp_max) * 100;
+        const clampedHp = Math.max(0, Math.min(res.hp, res.hp_max));
+        const hpPercent = res.hp_max ? (clampedHp / res.hp_max) * 100 : 0;
         const primaryResource = primaryResourceFrom(res, resource);
         const primaryPercent = primaryResource.max ? (primaryResource.value / primaryResource.max) * 100 : 0;
         
         elements.hpText.textContent = `${res.hp} / ${res.hp_max}`;
-        elements.hpBar.style.width = hpPercent + "%";
+        const isDead = res.hp <= 0;
+        elements.hpBar.classList.toggle("hp-dead", isDead);
+        elements.hpBar.style.width = isDead ? "100%" : hpPercent + "%";
         elements.primaryText.textContent = `${primaryResource.value} / ${primaryResource.max}`;
         elements.primaryBar.style.width = primaryPercent + "%";
         elements.primaryLabel.textContent = resource.label || "Mana";

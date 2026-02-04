@@ -128,7 +128,12 @@ def resolve_turn(match: MatchState) -> None:
         if not consume_costs(actor, ability.get("cost", {})):
             return {"damage": 0, "log": f"{actor_sid[:5]} tried {ability['name']} but lacked resources."}
 
-        log_parts = [f"{actor_sid[:5]} uses {ability['name']}."]
+        weapon_id = None
+        if actor.build and actor.build.items:
+            weapon_id = actor.build.items.get("weapon")
+        weapon_name = ITEMS.get(weapon_id, {}).get("name", "Unarmed")
+
+        log_parts = [f"{actor_sid[:5]} uses {weapon_name} to cast {ability['name']}."]
         
         # Handle defensive abilities (non-damaging)
         if ability.get("effect"):

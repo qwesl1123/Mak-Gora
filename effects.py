@@ -39,6 +39,12 @@ def mitigation_multiplier(target: PlayerState) -> float:
 
 def apply_burn(target: PlayerState, value: int, source_item: str = "Unknown", duration: int = 999) -> None:
     """Attach a burn DoT to the target (matches your existing burn shape)."""
+    for effect in target.effects:
+        if effect.get("type") == "burn":
+            effect["value"] = max(int(effect.get("value", 0) or 0), int(value))
+            effect["duration"] = max(int(effect.get("duration", 0) or 0), int(duration))
+            effect["source"] = str(source_item)
+            return
     target.effects.append(
         {
             "type": "burn",
@@ -68,7 +74,9 @@ def trigger_on_hit_passives(attacker: PlayerState, target: PlayerState, log: Lis
                     duration=999,
                 )
                 # This log is separate from the action's one-line log.
-                log.append(f"Burns target for {burn_value} damage/turn!")
+                log.append(
+                    f"{attacker.sid[:5]} scorches the target with {effect.get('source_item', 'item')} ({burn_value} damage/turn)."
+                )
 
 
 def tick_dots(ps: PlayerState, log: List[str], label: str) -> None:
