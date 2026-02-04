@@ -39,6 +39,7 @@ class MatchState:
     turn: int = 0
     seed: int = 0                          # for deterministic dice
     picks: Dict[str, PlayerBuild] = field(default_factory=dict)
+    locked_in: Dict[str, bool] = field(default_factory=dict)
     submitted: Dict[str, Dict[str, Any]] = field(default_factory=dict)  # per-turn action
     state: Dict[str, PlayerState] = field(default_factory=dict)         # sid -> PlayerState
     log: List[str] = field(default_factory=list)

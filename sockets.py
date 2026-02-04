@@ -11,7 +11,7 @@ from .content.abilities import ABILITIES
 
 def snapshot_for(match, viewer_sid):
     """
-    Returns a UI-friendly snapshot with friendly/enemy HP/MP/Energy/Rage.
+    Returns a UI-friendly snapshot with friendly/enemy HP/Mana/Energy/Rage.
     """
     p1, p2 = match.players
     you = viewer_sid
@@ -28,6 +28,20 @@ def snapshot_for(match, viewer_sid):
                 class_id = ps.build.class_id
         class_data = CLASSES.get(class_id or "", {})
         return class_data.get("name", "Adventurer")
+
+    def resource_config_for(sid):
+        picked = match.picks.get(sid, {})
+        class_id = None
+        if isinstance(picked, dict):
+            class_id = picked.get("class_id")
+        if not class_id:
+            ps = match.state.get(sid)
+            if ps and ps.build:
+                class_id = ps.build.class_id
+        class_data = CLASSES.get(class_id or "", {})
+        return class_data.get("resource_display", {
+            "primary": {"id": "mp", "label": "Mana", "color": "var(--mana-blue)"},
+        })
     
     def get_equipped_items(sid):
         """Get the equipped item names for display"""
@@ -55,6 +69,27 @@ def snapshot_for(match, viewer_sid):
             "rage": r.rage, "rage_max": r.rage_max,
         }
 
+    def display_name_for(sid):
+        class_name = class_name_for(sid)
+        if sid == viewer_sid:
+            return f"{class_name}(you)"
+        return class_name
+
+    def format_log_line(line):
+        formatted = line
+        for sid in match.players:
+            formatted = formatted.replace(sid[:5], display_name_for(sid))
+        return formatted
+
+    def primary_resource_for(sid):
+        config = resource_config_for(sid)
+        primary = config.get("primary", {"id": "mp", "label": "Mana", "color": "var(--mana-blue)"})
+        return {
+            "id": primary.get("id", "mp"),
+            "label": primary.get("label", "Mana"),
+            "color": primary.get("color", "var(--mana-blue)"),
+        }
+
     return {
         "phase": match.phase,
         "turn": match.turn,
@@ -64,7 +99,9 @@ def snapshot_for(match, viewer_sid):
         "enemy_class": class_name_for(enemy),
         "you_items": get_equipped_items(you),
         "enemy_items": get_equipped_items(enemy),
-        "log": match.log[-30:],
+        "you_resource": primary_resource_for(you),
+        "enemy_resource": primary_resource_for(enemy),
+        "log": [format_log_line(line) for line in match.log[-30:]],
         "winner": match.winner,
         "log_length": len(match.log),
     }
@@ -119,13 +156,46 @@ def register_duel_socket_handlers(socketio):
             merged["items"] = items
         match.picks[sid] = merged  # later: validate schema
         emit("duel_system", "Prep saved. Waiting for opponent...")
+        try_start_combat(match)
 
-        if len(match.picks) == 2:
-            match.phase = "combat"
-            resolver.apply_prep_build(match)
-            socketio.emit("duel_snapshot", snapshot_for(match, match.players[0]), to=match.players[0])
-            socketio.emit("duel_snapshot", snapshot_for(match, match.players[1]), to=match.players[1])
-            socketio.emit("duel_system", "Combat begins.", to=match.room_id)
+    def both_players_locked(match):
+        return all(match.locked_in.get(sid) for sid in match.players)
+
+    def player_has_class(match, sid):
+        picked = match.picks.get(sid, {})
+        if isinstance(picked, dict):
+            return bool(picked.get("class_id"))
+        return False
+
+    def try_start_combat(match):
+        if match.phase != "prep":
+            return
+        if not both_players_locked(match):
+            return
+        if not all(player_has_class(match, sid) for sid in match.players):
+            return
+        match.phase = "combat"
+        resolver.apply_prep_build(match)
+        socketio.emit("duel_snapshot", snapshot_for(match, match.players[0]), to=match.players[0])
+        socketio.emit("duel_snapshot", snapshot_for(match, match.players[1]), to=match.players[1])
+        socketio.emit("duel_system", "Combat begins.", to=match.room_id)
+
+    @socketio.on("duel_lock_in")
+    def duel_lock_in():
+        sid = request.sid
+        match = state.get_match_by_sid(sid)
+        if not match:
+            emit("duel_system", "Not in a duel.")
+            return
+        if match.phase != "prep":
+            emit("duel_system", "Prep phase is over.")
+            return
+        if not player_has_class(match, sid):
+            emit("duel_system", "Choose a class before locking in.")
+            return
+        match.locked_in[sid] = True
+        emit("duel_system", "Locked in. Waiting for opponent...")
+        try_start_combat(match)
 
     @socketio.on("duel_action")
     def duel_action(payload):

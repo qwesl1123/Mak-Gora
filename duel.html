@@ -19,6 +19,7 @@
         --bronze: #cd7f32;
         --health-red: #cc3333;
         --mana-blue: #3385cc;
+        --rage-red: #8b1a1a;
         --energy-yellow: #ffcc00;
         --text-light: #f4e4c1;
         --text-dark: #c9b896;
@@ -556,10 +557,10 @@
               </div>
               
               <div class="resource-bar">
-                <span style="width: 60px; color: var(--mana-blue); font-weight: bold;">MP</span>
+                <span id="friendlyPrimaryLabel" style="width: 60px; color: var(--mana-blue); font-weight: bold;">Mana</span>
                 <div class="bar-container">
-                  <div class="bar-text" id="friendlyMpText">--</div>
-                  <div class="bar-fill mana" id="friendlyMpBar" style="width: 100%;"></div>
+                  <div class="bar-text" id="friendlyPrimaryText">--</div>
+                  <div class="bar-fill" id="friendlyPrimaryBar" style="width: 100%;"></div>
                 </div>
               </div>
               
@@ -582,10 +583,10 @@
               </div>
               
               <div class="resource-bar">
-                <span style="width: 60px; color: var(--mana-blue); font-weight: bold;">MP</span>
+                <span id="enemyPrimaryLabel" style="width: 60px; color: var(--mana-blue); font-weight: bold;">Mana</span>
                 <div class="bar-container">
-                  <div class="bar-text" id="enemyMpText">--</div>
-                  <div class="bar-fill mana" id="enemyMpBar" style="width: 100%;"></div>
+                  <div class="bar-text" id="enemyPrimaryText">--</div>
+                  <div class="bar-fill" id="enemyPrimaryBar" style="width: 100%;"></div>
                 </div>
               </div>
               
@@ -595,6 +596,7 @@
 
             <div class="controls">
               <button class="btn-primary" id="queueBtn">Enter the Arena</button>
+              <button class="btn-primary" id="lockBtn">Lock In</button>
               
               <div class="input-group">
                 <input id="commandInput" type="text" placeholder="Enter command..." autocomplete="off" />
@@ -651,8 +653,8 @@
           <div class="doc-item">
             <h4>Mage</h4>
             <p><span class="stat">Attack: 4</span> | <span class="stat">Intellect: 14</span> | <span class="stat">Defense: 4</span></p>
-            <p><span class="stat">HP: 90</span> | <span class="stat">MP: 80</span> | Speed: 9 | Crit: 8% | Accuracy: 95%</p>
-            <p>Master of arcane magic. Weak physical attacks but devastating spells. Uses MP for powerful abilities.</p>
+            <p><span class="stat">HP: 90</span> | <span class="stat">Mana: 80</span> | Speed: 9 | Crit: 8% | Accuracy: 95%</p>
+            <p>Master of arcane magic. Weak physical attacks but devastating spells. Uses Mana for powerful abilities.</p>
           </div>
         </div>
       </div>
@@ -719,7 +721,7 @@
           
           <div class="doc-item">
             <h4>Fireball</h4>
-            <p><span class="stat">Cost: 10 MP</span> | <span class="stat">Type: Magic</span></p>
+            <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Type: Magic</span></p>
             <p>Devastating spell. Damage scales with Intellect (1.4x multiplier). Roll d20 for power.</p>
           </div>
           
@@ -744,7 +746,7 @@
           
           <p><strong>Passive Healing:</strong> Spirit Light Sword and Staff of Immortality heal automatically at turn end.</p>
           
-          <p><strong>Resource Regeneration:</strong> MP regenerates 2 per turn. Energy regenerates 5 per turn.</p>
+          <p><strong>Resource Regeneration:</strong> Mana regenerates 2 per turn. Energy regenerates 5 per turn.</p>
         </div>
       </div>
 
@@ -782,8 +784,9 @@
       
       const friendlyHpText = document.getElementById("friendlyHpText");
       const friendlyHpBar = document.getElementById("friendlyHpBar");
-      const friendlyMpText = document.getElementById("friendlyMpText");
-      const friendlyMpBar = document.getElementById("friendlyMpBar");
+      const friendlyPrimaryLabel = document.getElementById("friendlyPrimaryLabel");
+      const friendlyPrimaryText = document.getElementById("friendlyPrimaryText");
+      const friendlyPrimaryBar = document.getElementById("friendlyPrimaryBar");
       const friendlyEnergy = document.getElementById("friendlyEnergy");
       const friendlyRage = document.getElementById("friendlyRage");
       const friendlyWeapon = document.getElementById("friendlyWeapon");
@@ -791,12 +794,14 @@
       
       const enemyHpText = document.getElementById("enemyHpText");
       const enemyHpBar = document.getElementById("enemyHpBar");
-      const enemyMpText = document.getElementById("enemyMpText");
-      const enemyMpBar = document.getElementById("enemyMpBar");
+      const enemyPrimaryLabel = document.getElementById("enemyPrimaryLabel");
+      const enemyPrimaryText = document.getElementById("enemyPrimaryText");
+      const enemyPrimaryBar = document.getElementById("enemyPrimaryBar");
       const enemyEnergy = document.getElementById("enemyEnergy");
       const enemyRage = document.getElementById("enemyRage");
       const enemyWeapon = document.getElementById("enemyWeapon");
       const enemyArmor = document.getElementById("enemyArmor");
+      const lockBtn = document.getElementById("lockBtn");
 
       const socket = io();
       let myRole = null;
@@ -892,45 +897,63 @@
           enemyArmor.textContent = data.enemy_items.armor || "--";
         }
         
-        function renderRes(res, elements) {
-          if (!res) {
-            elements.hpText.textContent = "--";
-            elements.hpBar.style.width = "0%";
-            elements.mpText.textContent = "--";
-            elements.mpBar.style.width = "0%";
-            elements.energy.textContent = "--";
-            elements.rage.textContent = "--";
-            return;
-          }
-          
-          const hpPercent = (res.hp / res.hp_max) * 100;
-          const mpPercent = (res.mp / res.mp_max) * 100;
-          
-          elements.hpText.textContent = `${res.hp} / ${res.hp_max}`;
-          elements.hpBar.style.width = hpPercent + "%";
-          elements.mpText.textContent = `${res.mp} / ${res.mp_max}`;
-          elements.mpBar.style.width = mpPercent + "%";
-          elements.energy.textContent = `${res.energy}/${res.energy_max}`;
-          elements.rage.textContent = `${res.rage}/${res.rage_max}`;
+      function primaryResourceFrom(res, resource) {
+        if (!resource || !res) {
+          return { value: 0, max: 0 };
+        }
+        const map = {
+          mp: { value: res.mp, max: res.mp_max },
+          rage: { value: res.rage, max: res.rage_max },
+          energy: { value: res.energy, max: res.energy_max },
+        };
+        return map[resource.id] || { value: res.mp, max: res.mp_max };
+      }
+
+      function renderRes(res, elements, resource) {
+        if (!res) {
+          elements.hpText.textContent = "--";
+          elements.hpBar.style.width = "0%";
+          elements.primaryText.textContent = "--";
+          elements.primaryBar.style.width = "0%";
+          elements.energy.textContent = "--";
+          elements.rage.textContent = "--";
+          return;
         }
         
+        const hpPercent = (res.hp / res.hp_max) * 100;
+        const primaryResource = primaryResourceFrom(res, resource);
+        const primaryPercent = primaryResource.max ? (primaryResource.value / primaryResource.max) * 100 : 0;
+        
+        elements.hpText.textContent = `${res.hp} / ${res.hp_max}`;
+        elements.hpBar.style.width = hpPercent + "%";
+        elements.primaryText.textContent = `${primaryResource.value} / ${primaryResource.max}`;
+        elements.primaryBar.style.width = primaryPercent + "%";
+        elements.primaryLabel.textContent = resource.label || "Mana";
+        elements.primaryLabel.style.color = resource.color || "var(--mana-blue)";
+        elements.primaryBar.style.backgroundColor = resource.color || "var(--mana-blue)";
+        elements.energy.textContent = `${res.energy}/${res.energy_max}`;
+        elements.rage.textContent = `${res.rage}/${res.rage_max}`;
+      }
+      
         renderRes(data.you, {
           hpText: friendlyHpText,
           hpBar: friendlyHpBar,
-          mpText: friendlyMpText,
-          mpBar: friendlyMpBar,
+          primaryText: friendlyPrimaryText,
+          primaryBar: friendlyPrimaryBar,
+          primaryLabel: friendlyPrimaryLabel,
           energy: friendlyEnergy,
           rage: friendlyRage,
-        });
+        }, data.you_resource || { id: "mp", label: "Mana", color: "var(--mana-blue)" });
         
         renderRes(data.enemy, {
           hpText: enemyHpText,
           hpBar: enemyHpBar,
-          mpText: enemyMpText,
-          mpBar: enemyMpBar,
+          primaryText: enemyPrimaryText,
+          primaryBar: enemyPrimaryBar,
+          primaryLabel: enemyPrimaryLabel,
           energy: enemyEnergy,
           rage: enemyRage,
-        });
+        }, data.enemy_resource || { id: "mp", label: "Mana", color: "var(--mana-blue)" });
         
         if (data.log) {
           const total = data.log_length ?? data.log.length;
@@ -943,6 +966,8 @@
         if (data.phase === "ended") {
           appendLine("🏆 DUEL ENDED!", "logLineSystem");
         }
+
+        lockBtn.disabled = data.phase !== "prep";
       });
 
       function sendCommand() {
@@ -992,6 +1017,7 @@
       });
 
       queueBtn.addEventListener("click", () => socket.emit("duel_queue"));
+      lockBtn.addEventListener("click", () => socket.emit("duel_lock_in"));
     </script>
   </body>
 </html>
