@@ -1,5 +1,5 @@
 # games/duel/engine/resolver.py
-from typing import Dict, Any
+from typing import Dict, Any, Tuple
 from .models import MatchState, PlayerState, PlayerBuild, Resources
 from .dice import rng_for, roll
 from .rules import base_damage, mitigate, hit_chance, clamp
@@ -9,7 +9,15 @@ from ..content.items import ITEMS
 from ..content.balance import DEFAULTS, CAPS
 
 # Centralized mechanics (passives/DoTs/mitigation/regen) live here.
-from .effects import mitigation_multiplier, trigger_on_hit_passives, end_of_turn
+from .effects import (
+    mitigation_multiplier,
+    trigger_on_hit_passives,
+    end_of_turn,
+    apply_effect_by_id,
+    has_effect,
+    remove_effect,
+    modify_stat,
+)
 
 def apply_prep_build(match: MatchState) -> None:
     """
@@ -107,15 +115,29 @@ def resolve_turn(match: MatchState) -> None:
     a1 = match.submitted.get(sids[0], {})
     a2 = match.submitted.get(sids[1], {})
 
-    def consume_costs(ps: PlayerState, costs: Dict[str, int]) -> bool:
+    def consume_costs(ps: PlayerState, costs: Dict[str, int]) -> Tuple[bool, str]:
         res = ps.res
         for key, value in costs.items():
             current = getattr(res, key)
             if current < value:
-                return False
+                if key == "rage":
+                    return False, "not enough rage"
+                return False, f"not enough {key}"
         for key, value in costs.items():
             setattr(res, key, getattr(res, key) - value)
-        return True
+        return True, ""
+
+    def set_cooldown(ps: PlayerState, ability_id: str, cooldown: int) -> None:
+        if cooldown > 0:
+            ps.cooldowns[ability_id] = cooldown
+
+    def tick_cooldowns(ps: PlayerState) -> None:
+        updated = {}
+        for ability_id, remaining in ps.cooldowns.items():
+            remaining = int(remaining) - 1
+            if remaining > 0:
+                updated[ability_id] = remaining
+        ps.cooldowns = updated
 
     def resolve_action(actor_sid: str, target_sid: str, action: Dict[str, Any]) -> Dict[str, Any]:
         actor = match.state[actor_sid]
@@ -125,7 +147,21 @@ def resolve_turn(match: MatchState) -> None:
         if not ability:
             return {"damage": 0, "log": f"{actor_sid[:5]} fumbles (unknown ability)."}
 
-        if not consume_costs(actor, ability.get("cost", {})):
+        allowed_classes = ability.get("classes")
+        if allowed_classes and actor.build.class_id not in allowed_classes:
+            return {"damage": 0, "log": f"{actor_sid[:5]} cannot use {ability['name']}."}
+
+        if actor.cooldowns.get(ability_id, 0) > 0:
+            return {"damage": 0, "log": "ability is on cooldown"}
+
+        required_effect = ability.get("requires_effect")
+        if required_effect and not has_effect(actor, required_effect):
+            return {"damage": 0, "log": f"{ability['name']} requires Hot Streak."}
+
+        ok, fail_reason = consume_costs(actor, ability.get("cost", {}))
+        if not ok:
+            if fail_reason == "not enough rage":
+                return {"damage": 0, "log": "not enough rage"}
             return {"damage": 0, "log": f"{actor_sid[:5]} tried {ability['name']} but lacked resources."}
 
         weapon_id = None
@@ -141,6 +177,7 @@ def resolve_turn(match: MatchState) -> None:
             effect["duration"] = int(effect.get("duration", 1))
             actor.effects.append(effect)
             log_parts.append("Defensive stance raised.")
+            set_cooldown(actor, ability_id, int(ability.get("cooldown", 0) or 0))
             return {"damage": 0, "log": " ".join(log_parts)}
 
         # Roll dice for power
@@ -151,9 +188,15 @@ def resolve_turn(match: MatchState) -> None:
             log_parts.append(f"Roll {dice_data['type']} = {roll_power}.")
 
         # Check accuracy
-        accuracy = hit_chance(actor.stats.get("acc", 90), target.stats.get("eva", 0))
+        accuracy = hit_chance(
+            modify_stat(actor, "acc", actor.stats.get("acc", 90)),
+            modify_stat(target, "eva", target.stats.get("eva", 0)),
+        )
         if r.randint(1, 100) > accuracy:
             log_parts.append("Miss!")
+            set_cooldown(actor, ability_id, int(ability.get("cooldown", 0) or 0))
+            if ability.get("consume_effect"):
+                remove_effect(actor, ability["consume_effect"])
             return {"damage": 0, "log": " ".join(log_parts)}
 
         # Calculate base damage using appropriate stat
@@ -162,36 +205,66 @@ def resolve_turn(match: MatchState) -> None:
         
         raw = 0
         if "atk" in scaling:
-            raw = base_damage(actor.stats.get("atk", 0), scaling["atk"], roll_power)
+            raw = base_damage(modify_stat(actor, "atk", actor.stats.get("atk", 0)), scaling["atk"], roll_power)
         elif "int" in scaling:
-            raw = base_damage(actor.stats.get("int", 0), scaling["int"], roll_power)
+            raw = base_damage(modify_stat(actor, "int", actor.stats.get("int", 0)), scaling["int"], roll_power)
         
         # Apply critical hit
-        if r.randint(1, 100) <= actor.stats.get("crit", 0):
+        if r.randint(1, 100) <= modify_stat(actor, "crit", actor.stats.get("crit", 0)):
             raw = int(raw * 1.5)
             log_parts.append("Critical hit!")
 
         # Apply defense mitigation
-        reduced = mitigate(raw, target.stats.get("def", 0))
+        reduced = mitigate(raw, modify_stat(target, "def", target.stats.get("def", 0)))
         
         # Apply damage type specific resistance
         if damage_type == "physical":
-            resist = target.stats.get("physical_reduction", 0)
+            resist = modify_stat(target, "physical_reduction", target.stats.get("physical_reduction", 0))
             reduced = max(0, reduced - resist)
         elif damage_type == "magic":
-            resist = target.stats.get("magic_resist", 0)
+            resist = modify_stat(target, "magic_resist", target.stats.get("magic_resist", 0))
             reduced = max(0, reduced - resist)
         
         # Apply defensive buff mitigation
         reduced = int(reduced * mitigation_multiplier(target))
         
         log_parts.append(f"Deals {reduced} damage.")
-        
+
+        if reduced > 0:
+            for effect in ability.get("on_hit_effects", []):
+                chance = float(effect.get("chance", 0) or 0)
+                if chance > 0 and r.random() <= chance:
+                    if not has_effect(actor, effect["id"]):
+                        apply_effect_by_id(
+                            actor,
+                            effect["id"],
+                            log=match.log,
+                            label=actor_sid[:5],
+                            log_message=effect.get("log"),
+                        )
+
         # Apply on-hit passive effects (weapons/trinkets etc.)
         # NOTE: these log directly into match.log (separate from the action's one-line log).
         if reduced > 0:
             trigger_on_hit_passives(actor, target, match.log)
-        
+
+        resource_gain = ability.get("resource_gain", {})
+        if reduced > 0 and resource_gain:
+            for resource, gain in resource_gain.items():
+                if gain == "damage":
+                    gain_value = reduced
+                else:
+                    gain_value = int(gain)
+                if gain_value > 0 and hasattr(actor.res, resource):
+                    current = getattr(actor.res, resource)
+                    cap = getattr(actor.res, f"{resource}_max", current)
+                    setattr(actor.res, resource, min(current + gain_value, cap))
+
+        if ability.get("consume_effect"):
+            remove_effect(actor, ability["consume_effect"])
+
+        set_cooldown(actor, ability_id, int(ability.get("cooldown", 0) or 0))
+
         return {"damage": reduced, "log": " ".join(log_parts)}
 
     # Resolve both actions
@@ -208,6 +281,7 @@ def resolve_turn(match: MatchState) -> None:
     for sid in sids:
         ps = match.state[sid]
         end_of_turn(ps, match.log, sid[:5])
+        tick_cooldowns(ps)
 
     # Check for winners
     p1_alive = match.state[sids[0]].res.hp > 0

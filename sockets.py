@@ -9,6 +9,18 @@ from .content.classes import CLASSES
 from .content.items import ITEMS
 from .content.abilities import ABILITIES
 
+def class_name_for(match, sid):
+    picked = match.picks.get(sid, {})
+    class_id = None
+    if isinstance(picked, dict):
+        class_id = picked.get("class_id")
+    if not class_id:
+        ps = match.state.get(sid)
+        if ps and ps.build:
+            class_id = ps.build.class_id
+    class_data = CLASSES.get(class_id or "", {})
+    return class_data.get("name", "Adventurer")
+
 def snapshot_for(match, viewer_sid):
     """
     Returns a UI-friendly snapshot with friendly/enemy HP/Mana/Energy/Rage.
@@ -16,18 +28,6 @@ def snapshot_for(match, viewer_sid):
     p1, p2 = match.players
     you = viewer_sid
     enemy = p2 if you == p1 else p1
-
-    def class_name_for(sid):
-        picked = match.picks.get(sid, {})
-        class_id = None
-        if isinstance(picked, dict):
-            class_id = picked.get("class_id")
-        if not class_id:
-            ps = match.state.get(sid)
-            if ps and ps.build:
-                class_id = ps.build.class_id
-        class_data = CLASSES.get(class_id or "", {})
-        return class_data.get("name", "Adventurer")
 
     def resource_config_for(sid):
         picked = match.picks.get(sid, {})
@@ -70,7 +70,7 @@ def snapshot_for(match, viewer_sid):
         }
 
     def display_name_for(sid):
-        class_name = class_name_for(sid)
+        class_name = class_name_for(match, sid)
         if sid == viewer_sid:
             return f"{class_name}(you)"
         return class_name
@@ -95,8 +95,8 @@ def snapshot_for(match, viewer_sid):
         "turn": match.turn,
         "you": pack(you),
         "enemy": pack(enemy),
-        "you_class": class_name_for(you) + " (YOU)",
-        "enemy_class": class_name_for(enemy),
+        "you_class": class_name_for(match, you) + " (YOU)",
+        "enemy_class": class_name_for(match, enemy),
         "you_items": get_equipped_items(you),
         "enemy_items": get_equipped_items(enemy),
         "you_resource": primary_resource_for(you),
@@ -264,6 +264,7 @@ def register_duel_socket_handlers(socketio):
         if not match:
             return
         room_id = match.room_id
+        player_name = class_name_for(match, sid)
         leave_room(room_id, sid=sid)
-        socketio.emit("duel_system", "Opponent disconnected. Duel ended.", to=room_id)
+        socketio.emit("duel_system", f"{player_name} Leaves The Instance", to=room_id)
         state.cleanup_room(room_id)

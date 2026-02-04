@@ -1,10 +1,19 @@
 # games/duel/engine/effects.py
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from .models import PlayerState
 from ..content.balance import DEFAULTS
+
+EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
+    "hot_streak": {
+        "type": "status",
+        "name": "Hot Streak",
+        "duration": 999,
+        "flags": {"hot_streak": True},
+    },
+}
 
 
 def is_permanent(effect: Dict[str, Any]) -> bool:
@@ -25,6 +34,55 @@ def tick_durations(effects: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             e2["duration"] = d
             new_list.append(e2)
     return new_list
+
+
+def build_effect(effect_id: str, overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    if effect_id not in EFFECT_TEMPLATES:
+        return {}
+    base = EFFECT_TEMPLATES.get(effect_id, {})
+    effect = dict(base)
+    effect["id"] = effect_id
+    if overrides:
+        effect.update(overrides)
+    return effect
+
+
+def apply_effect_by_id(
+    target: PlayerState,
+    effect_id: str,
+    log: Optional[List[str]] = None,
+    label: str = "",
+    log_message: Optional[str] = None,
+) -> None:
+    effect = build_effect(effect_id)
+    if not effect:
+        return
+    target.effects.append(effect)
+    if log is not None and log_message:
+        prefix = f"{label} " if label else ""
+        log.append(f"{prefix}{log_message}")
+
+
+def has_effect(target: PlayerState, effect_id: str) -> bool:
+    return any(effect.get("id") == effect_id for effect in target.effects)
+
+
+def remove_effect(target: PlayerState, effect_id: str) -> None:
+    target.effects = [effect for effect in target.effects if effect.get("id") != effect_id]
+
+
+def modify_stat(target: PlayerState, stat: str, base_value: int) -> int:
+    """Apply stat modifiers from effects; supports flat + mult."""
+    value = base_value
+    multiplier = 1.0
+    for effect in target.effects:
+        if effect.get("type") != "stat_mod":
+            continue
+        if effect.get("stat") != stat:
+            continue
+        value += int(effect.get("flat", 0) or 0)
+        multiplier *= float(effect.get("mult", 1.0) or 1.0)
+    return int(value * multiplier)
 
 
 def mitigation_multiplier(target: PlayerState) -> float:
