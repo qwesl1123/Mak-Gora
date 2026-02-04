@@ -282,9 +282,33 @@ def register_duel_socket_handlers(socketio):
         match = state.get_match_by_sid(sid)
         if not match:
             return
+        
         room_id = match.room_id
-        role = "P1" if sid == match.players[0] else "P2"
-        leave_room(room_id, sid=sid)
-        socketio.emit("duel_system", f"{role} Leaves The Instance", to=room_id)
+        
+        # Determine which player disconnected and get their class name
+        p1, p2 = match.players
+        role = "P1" if sid == p1 else "P2"
+        
+        # Get disconnecting player's class name for better message
+        picked = match.picks.get(sid, {})
+        class_id = None
+        if isinstance(picked, dict):
+            class_id = picked.get("class_id")
+        if not class_id:
+            ps = match.state.get(sid)
+            if ps and ps.build:
+                class_id = ps.build.class_id
+        
+        class_data = CLASSES.get(class_id or "", {})
+        player_class = class_data.get("name", "Adventurer")
+        
+        # Send disconnect message to the room BEFORE leaving
+        disconnect_msg = f"⚠️ {player_class} ({role}) has left the instance"
+        socketio.emit("duel_system", disconnect_msg, to=room_id)
         socketio.emit("duel_system", "Duel ended.", to=room_id)
+        
+        # Now remove the player from the room
+        leave_room(room_id, sid=sid)
+        
+        # Clean up the match state
         state.cleanup_room(room_id)
