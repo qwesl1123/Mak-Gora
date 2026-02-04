@@ -17,6 +17,32 @@ def snapshot_for(match, viewer_sid):
     you = viewer_sid
     enemy = p2 if you == p1 else p1
 
+    def class_name_for(sid):
+        picked = match.picks.get(sid, {})
+        class_id = None
+        if isinstance(picked, dict):
+            class_id = picked.get("class_id")
+        if not class_id:
+            ps = match.state.get(sid)
+            if ps and ps.build:
+                class_id = ps.build.class_id
+        class_data = CLASSES.get(class_id or "", {})
+        return class_data.get("name", "Adventurer")
+    
+    def get_equipped_items(sid):
+        """Get the equipped item names for display"""
+        ps = match.state.get(sid)
+        if not ps or not ps.build:
+            return {"weapon": None, "armor": None, "trinket": None}
+        
+        equipped = {}
+        for slot, item_id in ps.build.items.items():
+            if item_id and item_id in ITEMS:
+                equipped[slot] = ITEMS[item_id]["name"]
+            else:
+                equipped[slot] = None
+        return equipped
+
     def pack(sid):
         ps = match.state.get(sid)
         if not ps or not ps.res:
@@ -34,6 +60,10 @@ def snapshot_for(match, viewer_sid):
         "turn": match.turn,
         "you": pack(you),
         "enemy": pack(enemy),
+        "you_class": class_name_for(you) + " (YOU)",
+        "enemy_class": class_name_for(enemy),
+        "you_items": get_equipped_items(you),
+        "enemy_items": get_equipped_items(enemy),
         "log": match.log[-30:],
         "winner": match.winner,
         "log_length": len(match.log),
@@ -105,10 +135,14 @@ def register_duel_socket_handlers(socketio):
             emit("duel_system", "Not in a duel.")
             return
         if match.phase != "combat":
-            emit("duel_system", "Not in combat phase.")
+            emit("duel_system", "Prep phase: choose class/items before combat.")
             return
 
         action = payload if isinstance(payload, dict) else {"ability_id": str(payload).strip()}
+        ability_id = action.get("ability_id", "")
+        if ability_id not in ABILITIES:
+            emit("duel_system", f"Unknown ability '{ability_id}'. Try again.")
+            return
         resolver.submit_action(match, sid, action)
         emit("duel_system", "Action received.")
 
@@ -126,7 +160,31 @@ def register_duel_socket_handlers(socketio):
         if not match:
             emit("duel_system", "Not in a duel.")
             return
-        socketio.emit("duel_system", f"{sid[:5]}: {message}", to=match.room_id)
+        
+        game = match
+        p1, p2 = game.players
+        role = "P1" if sid == p1 else "P2"
+        
+        # Get player class name
+        picked = match.picks.get(sid, {})
+        class_id = None
+        if isinstance(picked, dict):
+            class_id = picked.get("class_id")
+        if not class_id:
+            ps = match.state.get(sid)
+            if ps and ps.build:
+                class_id = ps.build.class_id
+        
+        from .content.classes import CLASSES
+        class_data = CLASSES.get(class_id or "", {})
+        player_class = class_data.get("name", "Adventurer")
+        
+        # Broadcast the chat message to both players with class name
+        socketio.emit("duel_chat", {
+            "playerClass": player_class,
+            "message": message,
+            "role": role
+        }, to=match.room_id)
 
     @socketio.on("disconnect")
     def duel_disconnect():
