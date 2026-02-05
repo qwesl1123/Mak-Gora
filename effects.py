@@ -13,6 +13,25 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 999,
         "flags": {"hot_streak": True},
     },
+    "die_by_sword": {
+        "type": "status",
+        "name": "Die by the Sword",
+        "duration": 2,
+        "flags": {"immune_physical": True},
+    },
+    "iceblock": {
+        "type": "status",
+        "name": "Ice Block",
+        "duration": 3,
+        "flags": {"immune_all": True, "stunned": True},
+        "regen": {"hp": 20, "mp": 25},
+    },
+    "stunned": {
+        "type": "status",
+        "name": "Stunned",
+        "duration": 1,
+        "flags": {"stunned": True},
+    },
 }
 
 
@@ -53,8 +72,9 @@ def apply_effect_by_id(
     log: Optional[List[str]] = None,
     label: str = "",
     log_message: Optional[str] = None,
+    overrides: Optional[Dict[str, Any]] = None,
 ) -> None:
-    effect = build_effect(effect_id)
+    effect = build_effect(effect_id, overrides=overrides)
     if not effect:
         return
     target.effects.append(effect)
@@ -69,6 +89,24 @@ def has_effect(target: PlayerState, effect_id: str) -> bool:
 
 def remove_effect(target: PlayerState, effect_id: str) -> None:
     target.effects = [effect for effect in target.effects if effect.get("id") != effect_id]
+
+
+def has_flag(target: PlayerState, flag: str) -> bool:
+    return any(effect.get("flags", {}).get(flag) for effect in target.effects)
+
+
+def is_stunned(target: PlayerState) -> bool:
+    return has_flag(target, "stunned")
+
+
+def is_damage_immune(target: PlayerState, damage_type: str) -> bool:
+    if has_flag(target, "immune_all"):
+        return True
+    if damage_type == "physical" and has_flag(target, "immune_physical"):
+        return True
+    if damage_type == "magic" and has_flag(target, "immune_magic"):
+        return True
+    return False
 
 
 def modify_stat(target: PlayerState, stat: str, base_value: int) -> int:
@@ -165,6 +203,25 @@ def trigger_end_of_turn_passives(ps: PlayerState, log: List[str], label: str) ->
                 )
 
 
+def trigger_end_of_turn_effects(ps: PlayerState, log: List[str], label: str) -> None:
+    """Run end-of-turn status effects such as regeneration from buffs."""
+    for effect in ps.effects:
+        regen = effect.get("regen", {}) or {}
+        if not regen:
+            continue
+        hp_gain = int(regen.get("hp", 0) or 0)
+        mp_gain = int(regen.get("mp", 0) or 0)
+        if hp_gain > 0:
+            ps.res.hp = min(ps.res.hp + hp_gain, ps.res.hp_max)
+        if mp_gain > 0:
+            ps.res.mp = min(ps.res.mp + mp_gain, ps.res.mp_max)
+        if (hp_gain > 0 or mp_gain > 0) and log is not None:
+            effect_name = effect.get("name", "an effect")
+            log.append(
+                f"{label} recovers {hp_gain} HP and {mp_gain} MP from {effect_name}."
+            )
+
+
 def end_of_turn(ps: PlayerState, log: List[str], label: str) -> None:
     """End-of-turn pipeline: DoTs, passives, duration tick, regen."""
     if not ps.res:
@@ -172,6 +229,7 @@ def end_of_turn(ps: PlayerState, log: List[str], label: str) -> None:
 
     tick_dots(ps, log, label)
     trigger_end_of_turn_passives(ps, log, label)
+    trigger_end_of_turn_effects(ps, log, label)
     ps.effects = tick_durations(ps.effects)
 
     if ps.res.hp > 0:

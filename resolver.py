@@ -17,6 +17,8 @@ from .effects import (
     has_effect,
     remove_effect,
     modify_stat,
+    is_stunned,
+    is_damage_immune,
 )
 
 def apply_prep_build(match: MatchState) -> None:
@@ -114,6 +116,7 @@ def resolve_turn(match: MatchState) -> None:
     sids = match.players
     a1 = match.submitted.get(sids[0], {})
     a2 = match.submitted.get(sids[1], {})
+    stunned_at_start = {sid: is_stunned(match.state[sid]) for sid in sids}
 
     def consume_costs(ps: PlayerState, costs: Dict[str, int]) -> Tuple[bool, str]:
         res = ps.res
@@ -139,6 +142,18 @@ def resolve_turn(match: MatchState) -> None:
                 updated[ability_id] = remaining
         ps.cooldowns = updated
 
+    def apply_effect_entries(actor: PlayerState, target: PlayerState, ability: Dict[str, Any], log_parts: list) -> None:
+        for entry in ability.get("self_effects", []) or []:
+            overrides = {"duration": int(entry.get("duration"))} if entry.get("duration") else None
+            apply_effect_by_id(actor, entry["id"], overrides=overrides)
+            if entry.get("log"):
+                log_parts.append(entry["log"])
+        for entry in ability.get("target_effects", []) or []:
+            overrides = {"duration": int(entry.get("duration"))} if entry.get("duration") else None
+            apply_effect_by_id(target, entry["id"], overrides=overrides)
+            if entry.get("log"):
+                log_parts.append(entry["log"])
+
     def resolve_action(actor_sid: str, target_sid: str, action: Dict[str, Any]) -> Dict[str, Any]:
         actor = match.state[actor_sid]
         target = match.state[target_sid]
@@ -146,6 +161,9 @@ def resolve_turn(match: MatchState) -> None:
         ability = ABILITIES.get(ability_id)
         if not ability:
             return {"damage": 0, "log": f"{actor_sid[:5]} fumbles (unknown ability)."}
+
+        if stunned_at_start.get(actor_sid, False):
+            return {"damage": 0, "log": f"{actor_sid[:5]} is stunned and cannot act."}
 
         allowed_classes = ability.get("classes")
         if allowed_classes and actor.build.class_id not in allowed_classes:
@@ -157,6 +175,11 @@ def resolve_turn(match: MatchState) -> None:
         required_effect = ability.get("requires_effect")
         if required_effect and not has_effect(actor, required_effect):
             return {"damage": 0, "log": f"{ability['name']} requires Hot Streak."}
+
+        target_hp_threshold = ability.get("requires_target_hp_below")
+        if target_hp_threshold is not None:
+            if target.res.hp / max(1, target.res.hp_max) >= float(target_hp_threshold):
+                return {"damage": 0, "log": f"{ability['name']} can only be used as an execute."}
 
         ok, fail_reason = consume_costs(actor, ability.get("cost", {}))
         if not ok:
@@ -180,6 +203,22 @@ def resolve_turn(match: MatchState) -> None:
             set_cooldown(actor, ability_id, int(ability.get("cooldown", 0) or 0))
             return {"damage": 0, "log": " ".join(log_parts)}
 
+        has_damage = any(
+            value
+            for value in (
+                ability.get("dice"),
+                ability.get("scaling"),
+                ability.get("flat_damage"),
+            )
+        )
+        has_target_effects = bool(ability.get("target_effects"))
+        has_self_effects = bool(ability.get("self_effects"))
+
+        if has_self_effects and not has_target_effects and not has_damage:
+            apply_effect_entries(actor, target, ability, log_parts)
+            set_cooldown(actor, ability_id, int(ability.get("cooldown", 0) or 0))
+            return {"damage": 0, "log": " ".join(log_parts)}
+
         # Roll dice for power
         roll_power = 0
         dice_data = ability.get("dice")
@@ -199,18 +238,28 @@ def resolve_turn(match: MatchState) -> None:
                 remove_effect(actor, ability["consume_effect"])
             return {"damage": 0, "log": " ".join(log_parts)}
 
+        if has_self_effects or has_target_effects:
+            apply_effect_entries(actor, target, ability, log_parts)
+
+        if not has_damage:
+            set_cooldown(actor, ability_id, int(ability.get("cooldown", 0) or 0))
+            return {"damage": 0, "log": " ".join(log_parts)}
+
         # Calculate base damage using appropriate stat
         damage_type = ability.get("damage_type", "physical")
         scaling = ability.get("scaling", {})
+        flat_damage = ability.get("flat_damage")
         
         raw = 0
-        if "atk" in scaling:
+        if flat_damage is not None:
+            raw = int(flat_damage)
+        elif "atk" in scaling:
             raw = base_damage(modify_stat(actor, "atk", actor.stats.get("atk", 0)), scaling["atk"], roll_power)
         elif "int" in scaling:
             raw = base_damage(modify_stat(actor, "int", actor.stats.get("int", 0)), scaling["int"], roll_power)
         
         # Apply critical hit
-        if r.randint(1, 100) <= modify_stat(actor, "crit", actor.stats.get("crit", 0)):
+        if raw > 0 and r.randint(1, 100) <= modify_stat(actor, "crit", actor.stats.get("crit", 0)):
             raw = int(raw * 1.5)
             log_parts.append("Critical hit!")
 
@@ -227,8 +276,12 @@ def resolve_turn(match: MatchState) -> None:
         
         # Apply defensive buff mitigation
         reduced = int(reduced * mitigation_multiplier(target))
-        
-        log_parts.append(f"Deals {reduced} damage.")
+
+        if is_damage_immune(target, damage_type):
+            reduced = 0
+            log_parts.append("Immune!")
+        else:
+            log_parts.append(f"Deals {reduced} damage.")
 
         if reduced > 0:
             for effect in ability.get("on_hit_effects", []):
