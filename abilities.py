@@ -67,7 +67,7 @@ ABILITIES = {
         "scaling": {"atk": 2.0},
         "damage_type": "physical",
         "tags": ["attack", "physical"],
-        "cooldown": 2,
+        "cooldown": 0,
         "classes": ["warrior"],
     },
     "die_by_sword": {
@@ -78,14 +78,15 @@ ABILITIES = {
         "cooldown": 4,
         "classes": ["warrior"],
         "self_effects": [
-            {"id": "die_by_sword", "duration": 2, "log": "becomes immune to physical damage."}
+            {"id": "die_by_sword", "duration": 2, "log": "becomes immune to physical damage."},
+            {"id": "die_by_sword_mitigation", "duration": 2, "log": "reduces incoming damage by 30%."},
         ],
     },
     "execute": {
         "name": "Execute",
-        "cost": {"rage": 35},
-        "dice": None,
-        "flat_damage": 40,
+        "cost": {"rage": 20},
+        "dice": {"type": "d6", "power_on": "roll"},
+        "scaling": {"atk": 1.5},
         "damage_type": "physical",
         "tags": ["attack", "physical"],
         "cooldown": 1,

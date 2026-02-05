@@ -129,25 +129,6 @@ def resolve_turn(match: MatchState) -> None:
                 return False, f"not enough {key}"
         return True, ""
 
-    execute_ability = ABILITIES.get("execute", {})
-    execute_threshold = execute_ability.get("requires_target_hp_below")
-    if execute_threshold is not None:
-        for sid in sids:
-            ps = match.state[sid]
-            opponent_sid = sids[1] if sid == sids[0] else sids[0]
-            opponent = match.state[opponent_sid]
-            if ps.build.class_id != "warrior":
-                continue
-            if ps.cooldowns.get("execute", 0) > 0:
-                continue
-            if is_stunned(ps):
-                continue
-            if opponent.res.hp / max(1, opponent.res.hp_max) >= float(execute_threshold):
-                continue
-            ok, _ = can_pay_costs(ps, execute_ability.get("cost", {}))
-            if ok:
-                match.log.append(f"{sid[:5]} Can Use Execute!")
-
     def consume_costs(ps: PlayerState, costs: Dict[str, int]) -> None:
         res = ps.res
         for key, value in costs.items():
@@ -190,7 +171,10 @@ def resolve_turn(match: MatchState) -> None:
             return {"damage": 0, "log": f"{actor_sid[:5]} cannot use {ability['name']}."}
 
         if actor.cooldowns.get(ability_id, 0) > 0:
-            return {"damage": 0, "log": "ability is on cooldown"}
+            return {
+                "damage": 0,
+                "log": f"{actor_sid[:5]} tried to use {ability['name']} but it is on cooldown.",
+            }
 
         required_effect = ability.get("requires_effect")
         if required_effect and not has_effect(actor, required_effect):
@@ -357,7 +341,11 @@ def resolve_turn(match: MatchState) -> None:
             return {"damage": 0, "log": f"{actor_sid[:5]} cannot use {ability['name']}.", "resolved": True}
 
         if actor.cooldowns.get(ability_id, 0) > 0:
-            return {"damage": 0, "log": "ability is on cooldown", "resolved": True}
+            return {
+                "damage": 0,
+                "log": f"{actor_sid[:5]} tried to use {ability['name']} but it is on cooldown.",
+                "resolved": True,
+            }
 
         required_effect = ability.get("requires_effect")
         if required_effect and not has_effect(actor, required_effect):
@@ -472,6 +460,25 @@ def resolve_turn(match: MatchState) -> None:
         else:
             match.winner = None
             match.log.append("Double KO. No winner.")
+
+    execute_ability = ABILITIES.get("execute", {})
+    execute_threshold = execute_ability.get("requires_target_hp_below")
+    if execute_threshold is not None and match.phase != "ended":
+        for sid in sids:
+            ps = match.state[sid]
+            opponent_sid = sids[1] if sid == sids[0] else sids[0]
+            opponent = match.state[opponent_sid]
+            if ps.build.class_id != "warrior":
+                continue
+            if ps.cooldowns.get("execute", 0) > 0:
+                continue
+            if is_stunned(ps):
+                continue
+            if opponent.res.hp / max(1, opponent.res.hp_max) >= float(execute_threshold):
+                continue
+            ok, _ = can_pay_costs(ps, execute_ability.get("cost", {}))
+            if ok:
+                match.log.append(f"{sid[:5]} Can Use Execute!")
 
     match.submitted.clear()
     match.turn += 1

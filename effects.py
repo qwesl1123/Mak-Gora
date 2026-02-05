@@ -19,6 +19,12 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 2,
         "flags": {"immune_physical": True},
     },
+    "die_by_sword_mitigation": {
+        "type": "mitigation",
+        "name": "Die by the Sword",
+        "duration": 2,
+        "value": 0.3,
+    },
     "iceblock": {
         "type": "status",
         "name": "Ice Block",

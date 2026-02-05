@@ -24,6 +24,10 @@
         --text-light: #f4e4c1;
         --text-dark: #c9b896;
         --border-gold: #8b7355;
+        --warrior-color: #C69B6D;
+        --mage-color: #3FC7EB;
+        --item-green: #1eff00;
+        --item-blue: #0070dd;
       }
 
       * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -340,7 +344,7 @@
         background: rgba(0, 0, 0, 0.7);
         border: 3px solid #44ff44;
         border-radius: 6px;
-        height: 150px;
+        height: 300px;
         overflow-y: auto;
         padding: 12px;
         font-family: 'Arial', sans-serif;
@@ -440,6 +444,28 @@
 
       .logLineChat {
         color: #88ddff;
+      }
+
+      .log-class-warrior,
+      .log-ability-warrior {
+        color: var(--warrior-color);
+        font-weight: 700;
+      }
+
+      .log-class-mage,
+      .log-ability-mage {
+        color: var(--mage-color);
+        font-weight: 700;
+      }
+
+      .log-item-green {
+        color: var(--item-green);
+        font-weight: 700;
+      }
+
+      .log-item-blue {
+        color: var(--item-blue);
+        font-weight: 700;
       }
 
       .controls {
@@ -779,20 +805,20 @@
 
           <div class="doc-item">
             <h4>Mortal Strike</h4>
-            <p><span class="stat">Cost: 30 Rage</span> | <span class="stat">Type: Physical</span> | <span class="stat">Cooldown: 2</span></p>
+            <p><span class="stat">Cost: 30 Rage</span> | <span class="stat">Type: Physical</span> | <span class="stat">Cooldown: 0</span></p>
             <p>Massive blow. Scales with Attack (2.0x) and d6 power.</p>
           </div>
 
           <div class="doc-item">
             <h4>Execute</h4>
-            <p><span class="stat">Cost: 35 Rage</span> | <span class="stat">Type: Physical</span> | <span class="stat">Cooldown: 1</span></p>
-            <p>Finishing strike that can only be used when the enemy is below 20% HP. Deals around 40 damage.</p>
+            <p><span class="stat">Cost: 20 Rage</span> | <span class="stat">Type: Physical</span> | <span class="stat">Cooldown: 1</span></p>
+            <p>Finishing strike that can only be used when the enemy is below 20% HP. Scales with Attack (1.5x) and d6 power.</p>
           </div>
 
           <div class="doc-item">
             <h4>Die by the Sword</h4>
             <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 4</span></p>
-            <p>Become immune to physical damage for 2 turns while continuing to attack.</p>
+            <p>Become immune to physical damage and reduce all incoming damage by 30% for 2 turns.</p>
           </div>
 
           <div class="doc-item">
@@ -889,6 +915,77 @@
       const socket = io();
       let myRole = null;
 
+      function escapeHtml(text) {
+        return text
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#039;");
+      }
+
+      function escapeRegExp(text) {
+        return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      }
+
+      function highlightLogLine(text) {
+        if (text.includes("HOT STREAK") || text.includes("Can Use Execute")) {
+          return escapeHtml(text);
+        }
+
+        let output = escapeHtml(text);
+        const classPatterns = [
+          { pattern: /\bWarrior(\(you\))?\b/g, className: "log-class-warrior" },
+          { pattern: /\bMage(\(you\))?\b/g, className: "log-class-mage" },
+        ];
+        classPatterns.forEach(({ pattern, className }) => {
+          output = output.replace(pattern, `<span class="${className}">$&</span>`);
+        });
+
+        const warriorAbilities = [
+          "Overpower",
+          "Victory Rush",
+          "Mortal Strike",
+          "Execute",
+          "Die by the Sword",
+        ];
+        const mageAbilities = [
+          "Fireball",
+          "Pyroblast",
+          "Ice Block",
+          "Ring of Ice",
+        ];
+        const greenItems = [
+          "Steel Long Sword",
+          "Wand of Fire",
+          "Plate Armor",
+        ];
+        const blueItems = [
+          "Spirit Light Sword",
+          "Staff of Immortality",
+          "Leather Armor",
+        ];
+
+        warriorAbilities.forEach((ability) => {
+          const pattern = new RegExp(`\\b${escapeRegExp(ability)}\\b`, "g");
+          output = output.replace(pattern, `<span class="log-ability-warrior">$&</span>`);
+        });
+        mageAbilities.forEach((ability) => {
+          const pattern = new RegExp(`\\b${escapeRegExp(ability)}\\b`, "g");
+          output = output.replace(pattern, `<span class="log-ability-mage">$&</span>`);
+        });
+        greenItems.forEach((item) => {
+          const pattern = new RegExp(`\\b${escapeRegExp(item)}\\b`, "g");
+          output = output.replace(pattern, `<span class="log-item-green">$&</span>`);
+        });
+        blueItems.forEach((item) => {
+          const pattern = new RegExp(`\\b${escapeRegExp(item)}\\b`, "g");
+          output = output.replace(pattern, `<span class="log-item-blue">$&</span>`);
+        });
+
+        return output;
+      }
+
       function appendLine(msg, cls = "") {
         const line = document.createElement("div");
         const classes = ['log-line'];
@@ -908,7 +1005,7 @@
           classes.push("logLineOutcome");
         }
         line.className = classes.join(" ");
-        line.textContent = msg;
+        line.innerHTML = highlightLogLine(msg);
         logDiv.appendChild(line);
         logDiv.scrollTop = logDiv.scrollHeight;
       }
