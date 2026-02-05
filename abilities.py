@@ -104,7 +104,7 @@ ABILITIES = {
         "cooldown": 3,
         "classes": ["mage"],
         "target_effects": [
-            {"id": "stunned", "duration": 1, "log": "freezes the enemy solid."}
+            {"id": "stunned", "duration": 2, "log": "freezes the enemy solid."}
         ],
     },
 }
