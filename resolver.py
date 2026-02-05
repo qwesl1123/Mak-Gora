@@ -118,7 +118,7 @@ def resolve_turn(match: MatchState) -> None:
     a2 = match.submitted.get(sids[1], {})
     stunned_at_start = {sid: is_stunned(match.state[sid]) for sid in sids}
 
-    def consume_costs(ps: PlayerState, costs: Dict[str, int]) -> Tuple[bool, str]:
+    def can_pay_costs(ps: PlayerState, costs: Dict[str, int]) -> Tuple[bool, str]:
         res = ps.res
         for key, value in costs.items():
             current = getattr(res, key)
@@ -126,9 +126,12 @@ def resolve_turn(match: MatchState) -> None:
                 if key == "rage":
                     return False, "not enough rage"
                 return False, f"not enough {key}"
+        return True, ""
+
+    def consume_costs(ps: PlayerState, costs: Dict[str, int]) -> None:
+        res = ps.res
         for key, value in costs.items():
             setattr(res, key, getattr(res, key) - value)
-        return True, ""
 
     def set_cooldown(ps: PlayerState, ability_id: str, cooldown: int) -> None:
         if cooldown > 0:
@@ -162,9 +165,6 @@ def resolve_turn(match: MatchState) -> None:
         if not ability:
             return {"damage": 0, "log": f"{actor_sid[:5]} fumbles (unknown ability)."}
 
-        if stunned_at_start.get(actor_sid, False):
-            return {"damage": 0, "log": f"{actor_sid[:5]} is stunned and cannot act."}
-
         allowed_classes = ability.get("classes")
         if allowed_classes and actor.build.class_id not in allowed_classes:
             return {"damage": 0, "log": f"{actor_sid[:5]} cannot use {ability['name']}."}
@@ -181,7 +181,7 @@ def resolve_turn(match: MatchState) -> None:
             if target.res.hp / max(1, target.res.hp_max) >= float(target_hp_threshold):
                 return {"damage": 0, "log": f"{ability['name']} can only be used as an execute."}
 
-        ok, fail_reason = consume_costs(actor, ability.get("cost", {}))
+        ok, fail_reason = can_pay_costs(actor, ability.get("cost", {}))
         if not ok:
             if fail_reason == "not enough rage":
                 return {"damage": 0, "log": "not enough rage"}
@@ -194,14 +194,8 @@ def resolve_turn(match: MatchState) -> None:
 
         log_parts = [f"{actor_sid[:5]} uses {weapon_name} to cast {ability['name']}."]
         
-        # Handle defensive abilities (non-damaging)
-        if ability.get("effect"):
-            effect = dict(ability["effect"])
-            effect["duration"] = int(effect.get("duration", 1))
-            actor.effects.append(effect)
-            log_parts.append("Defensive stance raised.")
-            set_cooldown(actor, ability_id, int(ability.get("cooldown", 0) or 0))
-            return {"damage": 0, "log": " ".join(log_parts)}
+        if is_stunned(actor):
+            return {"damage": 0, "log": f"{actor_sid[:5]} is stunned and cannot act."}
 
         has_damage = any(
             value
@@ -214,10 +208,7 @@ def resolve_turn(match: MatchState) -> None:
         has_target_effects = bool(ability.get("target_effects"))
         has_self_effects = bool(ability.get("self_effects"))
 
-        if has_self_effects and not has_target_effects and not has_damage:
-            apply_effect_entries(actor, target, ability, log_parts)
-            set_cooldown(actor, ability_id, int(ability.get("cooldown", 0) or 0))
-            return {"damage": 0, "log": " ".join(log_parts)}
+        consume_costs(actor, ability.get("cost", {}))
 
         # Roll dice for power
         roll_power = 0
@@ -320,9 +311,110 @@ def resolve_turn(match: MatchState) -> None:
 
         return {"damage": reduced, "log": " ".join(log_parts)}
 
+    def build_immediate_resolution(actor_sid: str, target_sid: str, action: Dict[str, Any]) -> Dict[str, Any]:
+        actor = match.state[actor_sid]
+        target = match.state[target_sid]
+        ability_id = action.get("ability_id")
+        ability = ABILITIES.get(ability_id)
+        if not ability:
+            return {"damage": 0, "log": f"{actor_sid[:5]} fumbles (unknown ability).", "resolved": True}
+
+        if stunned_at_start.get(actor_sid, False):
+            return {"damage": 0, "log": f"{actor_sid[:5]} is stunned and cannot act.", "resolved": True}
+
+        allowed_classes = ability.get("classes")
+        if allowed_classes and actor.build.class_id not in allowed_classes:
+            return {"damage": 0, "log": f"{actor_sid[:5]} cannot use {ability['name']}.", "resolved": True}
+
+        if actor.cooldowns.get(ability_id, 0) > 0:
+            return {"damage": 0, "log": "ability is on cooldown", "resolved": True}
+
+        required_effect = ability.get("requires_effect")
+        if required_effect and not has_effect(actor, required_effect):
+            return {"damage": 0, "log": f"{ability['name']} requires Hot Streak.", "resolved": True}
+
+        target_hp_threshold = ability.get("requires_target_hp_below")
+        if target_hp_threshold is not None:
+            if target.res.hp / max(1, target.res.hp_max) >= float(target_hp_threshold):
+                return {"damage": 0, "log": f"{ability['name']} can only be used as an execute.", "resolved": True}
+
+        ok, fail_reason = can_pay_costs(actor, ability.get("cost", {}))
+        if not ok:
+            if fail_reason == "not enough rage":
+                return {"damage": 0, "log": "not enough rage", "resolved": True}
+            return {
+                "damage": 0,
+                "log": f"{actor_sid[:5]} tried {ability['name']} but lacked resources.",
+                "resolved": True,
+            }
+
+        has_damage = any(
+            value
+            for value in (
+                ability.get("dice"),
+                ability.get("scaling"),
+                ability.get("flat_damage"),
+            )
+        )
+        has_target_effects = bool(ability.get("target_effects"))
+        has_self_effects = bool(ability.get("self_effects"))
+        is_defensive = bool(ability.get("effect"))
+        immediate_effects_only = is_defensive or (not has_damage and (has_self_effects or has_target_effects))
+
+        return {
+            "damage": 0,
+            "log": "",
+            "resolved": False,
+            "ability": ability,
+            "ability_id": ability_id,
+            "immediate_only": immediate_effects_only,
+        }
+
+    contexts = {
+        sids[0]: build_immediate_resolution(sids[0], sids[1], a1),
+        sids[1]: build_immediate_resolution(sids[1], sids[0], a2),
+    }
+
+    def resolve_immediate_effects(actor_sid: str, target_sid: str, ctx: Dict[str, Any]) -> None:
+        if ctx.get("resolved") or not ctx.get("immediate_only"):
+            return
+        actor = match.state[actor_sid]
+        target = match.state[target_sid]
+        ability = ctx["ability"]
+        ability_id = ctx["ability_id"]
+
+        consume_costs(actor, ability.get("cost", {}))
+
+        weapon_id = None
+        if actor.build and actor.build.items:
+            weapon_id = actor.build.items.get("weapon")
+        weapon_name = ITEMS.get(weapon_id, {}).get("name", "Unarmed")
+        log_parts = [f"{actor_sid[:5]} uses {weapon_name} to cast {ability['name']}."]
+
+        if ability.get("effect"):
+            effect = dict(ability["effect"])
+            effect["duration"] = int(effect.get("duration", 1))
+            actor.effects.append(effect)
+            log_parts.append("Defensive stance raised.")
+        else:
+            apply_effect_entries(actor, target, ability, log_parts)
+
+        set_cooldown(actor, ability_id, int(ability.get("cooldown", 0) or 0))
+        ctx["damage"] = 0
+        ctx["log"] = " ".join(log_parts)
+        ctx["resolved"] = True
+
+    resolve_immediate_effects(sids[0], sids[1], contexts[sids[0]])
+    resolve_immediate_effects(sids[1], sids[0], contexts[sids[1]])
+
+    def finalize_action(actor_sid: str, target_sid: str, action: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
+        if ctx.get("resolved"):
+            return ctx
+        return resolve_action(actor_sid, target_sid, action)
+
     # Resolve both actions
-    result1 = resolve_action(sids[0], sids[1], a1)
-    result2 = resolve_action(sids[1], sids[0], a2)
+    result1 = finalize_action(sids[0], sids[1], a1, contexts[sids[0]])
+    result2 = finalize_action(sids[1], sids[0], a2, contexts[sids[1]])
     match.log.append(result1["log"])
     match.log.append(result2["log"])
 
