@@ -24,7 +24,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "name": "Ice Block",
         "duration": 3,
         "flags": {"immune_all": True, "stunned": True},
-        "regen": {"hp": 20, "mp": 25},
+        "regen": {"hp": 10, "mp": 25},
     },
     "stunned": {
         "type": "status",

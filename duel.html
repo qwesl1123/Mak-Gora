@@ -413,10 +413,29 @@
         color: #ffaa44;
       }
 
+      .logLineTurnHeader {
+        color: #ffffff;
+        font-size: 1.4em;
+        font-weight: 700;
+        text-shadow: 0 0 12px rgba(255, 255, 255, 0.85);
+      }
+
       .logLineProc {
         color: var(--gold);
         font-weight: 700;
         text-shadow: 0 0 12px rgba(255, 215, 0, 0.8);
+      }
+
+      .logLineExecute {
+        color: #ff4444;
+        font-weight: 700;
+        text-shadow: 0 0 12px rgba(255, 68, 68, 0.85);
+      }
+
+      .logLineOutcome {
+        font-size: 2em;
+        font-weight: 700;
+        text-shadow: 0 0 12px rgba(255, 255, 255, 0.7);
       }
 
       .logLineChat {
@@ -611,6 +630,7 @@
             <div class="controls">
               <button class="btn-primary" id="queueBtn">Enter the Arena</button>
               <button class="btn-primary" id="lockBtn">Lock In</button>
+              <button id="passBtn">Pass Turn</button>
               
               <div class="input-group">
                 <input id="commandInput" type="text" placeholder="Enter command..." autocomplete="off" />
@@ -623,7 +643,7 @@
               <span class="kbd">/class warrior</span> or <span class="kbd">/class mage</span> - Choose your class<br>
               <span class="kbd">/item weapon steel_long_sword</span> - Equip weapon<br>
               <span class="kbd">/item armor leather_armor</span> - Equip armor<br>
-              <span class="kbd">basic_attack</span>, <span class="kbd">fireball</span>, <span class="kbd">defend</span> - Combat abilities<br>
+              <span class="kbd">basic_attack</span>, <span class="kbd">fireball</span>, <span class="kbd">defend</span>, <span class="kbd">victory_rush</span>, <span class="kbd">pass_turn</span> - Combat abilities<br>
               <br>
               <strong>Chat:</strong> Use the Chat box below to message your opponent
             </div>
@@ -752,6 +772,12 @@
           </div>
 
           <div class="doc-item">
+            <h4>Victory Rush</h4>
+            <p><span class="stat">Cost: 0 Rage</span> | <span class="stat">Type: Physical</span> | <span class="stat">Cooldown: 15</span></p>
+            <p>Quick strike that scales with Attack (0.5x) and d2 power. Heals 40 HP on hit.</p>
+          </div>
+
+          <div class="doc-item">
             <h4>Mortal Strike</h4>
             <p><span class="stat">Cost: 30 Rage</span> | <span class="stat">Type: Physical</span> | <span class="stat">Cooldown: 2</span></p>
             <p>Massive blow. Scales with Attack (2.0x) and d6 power.</p>
@@ -784,7 +810,7 @@
           <div class="doc-item">
             <h4>Ice Block</h4>
             <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 20</span></p>
-            <p>Become immune to all damage for 3 turns. Restores 20 HP and 25 Mana each turn, but you cannot act.</p>
+            <p>Become immune to all damage for 3 turns. Restores 10 HP and 25 Mana each turn, but you cannot act.</p>
           </div>
         </div>
       </div>
@@ -858,6 +884,7 @@
       const enemyWeapon = document.getElementById("enemyWeapon");
       const enemyArmor = document.getElementById("enemyArmor");
       const lockBtn = document.getElementById("lockBtn");
+      const passBtn = document.getElementById("passBtn");
 
       const socket = io();
       let myRole = null;
@@ -870,6 +897,15 @@
         }
         if (msg.includes("HOT STREAK")) {
           classes.push("logLineProc");
+        }
+        if (msg.includes("Can Use Execute")) {
+          classes.push("logLineExecute");
+        }
+        if (msg.startsWith("Turn ")) {
+          classes.push("logLineTurnHeader");
+        }
+        if (msg.includes("wins the duel") || msg.includes("Double KO")) {
+          classes.push("logLineOutcome");
         }
         line.className = classes.join(" ");
         line.textContent = msg;
@@ -1025,7 +1061,7 @@
           const total = data.log_length ?? data.log.length;
           const newCount = Math.max(total - lastLogLength, 0);
           const sliceStart = data.log.length - newCount;
-          data.log.slice(sliceStart).forEach(line => appendLine("⚔️ " + line, "logLineTurn"));
+          data.log.slice(sliceStart).forEach(line => appendLine(line, "logLineTurn"));
           lastLogLength = total;
         }
         
@@ -1084,6 +1120,7 @@
 
       queueBtn.addEventListener("click", () => socket.emit("duel_queue"));
       lockBtn.addEventListener("click", () => socket.emit("duel_lock_in"));
+      passBtn.addEventListener("click", () => socket.emit("duel_action", { ability_id: "pass_turn" }));
     </script>
   </body>
 </html>

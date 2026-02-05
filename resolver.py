@@ -117,6 +117,7 @@ def resolve_turn(match: MatchState) -> None:
     a1 = match.submitted.get(sids[0], {})
     a2 = match.submitted.get(sids[1], {})
     stunned_at_start = {sid: is_stunned(match.state[sid]) for sid in sids}
+    match.log.append(f"Turn {match.turn + 1}")
 
     def can_pay_costs(ps: PlayerState, costs: Dict[str, int]) -> Tuple[bool, str]:
         res = ps.res
@@ -127,6 +128,25 @@ def resolve_turn(match: MatchState) -> None:
                     return False, "not enough rage"
                 return False, f"not enough {key}"
         return True, ""
+
+    execute_ability = ABILITIES.get("execute", {})
+    execute_threshold = execute_ability.get("requires_target_hp_below")
+    if execute_threshold is not None:
+        for sid in sids:
+            ps = match.state[sid]
+            opponent_sid = sids[1] if sid == sids[0] else sids[0]
+            opponent = match.state[opponent_sid]
+            if ps.build.class_id != "warrior":
+                continue
+            if ps.cooldowns.get("execute", 0) > 0:
+                continue
+            if is_stunned(ps):
+                continue
+            if opponent.res.hp / max(1, opponent.res.hp_max) >= float(execute_threshold):
+                continue
+            ok, _ = can_pay_costs(ps, execute_ability.get("cost", {}))
+            if ok:
+                match.log.append(f"{sid[:5]} Can Use Execute!")
 
     def consume_costs(ps: PlayerState, costs: Dict[str, int]) -> None:
         res = ps.res
@@ -194,7 +214,7 @@ def resolve_turn(match: MatchState) -> None:
 
         log_parts = [f"{actor_sid[:5]} uses {weapon_name} to cast {ability['name']}."]
         
-        if is_stunned(actor):
+        if is_stunned(actor) and not ability.get("allow_while_stunned"):
             return {"damage": 0, "log": f"{actor_sid[:5]} is stunned and cannot act."}
 
         has_damage = any(
@@ -207,6 +227,10 @@ def resolve_turn(match: MatchState) -> None:
         )
         has_target_effects = bool(ability.get("target_effects"))
         has_self_effects = bool(ability.get("self_effects"))
+        if "pass" in (ability.get("tags") or []):
+            set_cooldown(actor, ability_id, int(ability.get("cooldown", 0) or 0))
+            log_parts.append("Passes the turn.")
+            return {"damage": 0, "log": " ".join(log_parts)}
 
         consume_costs(actor, ability.get("cost", {}))
 
@@ -217,17 +241,18 @@ def resolve_turn(match: MatchState) -> None:
             roll_power = roll(dice_data["type"], r)
             log_parts.append(f"Roll {dice_data['type']} = {roll_power}.")
 
-        # Check accuracy
-        accuracy = hit_chance(
-            modify_stat(actor, "acc", actor.stats.get("acc", 90)),
-            modify_stat(target, "eva", target.stats.get("eva", 0)),
-        )
-        if r.randint(1, 100) > accuracy:
-            log_parts.append("Miss!")
-            set_cooldown(actor, ability_id, int(ability.get("cooldown", 0) or 0))
-            if ability.get("consume_effect"):
-                remove_effect(actor, ability["consume_effect"])
-            return {"damage": 0, "log": " ".join(log_parts)}
+        if has_damage or has_target_effects:
+            # Check accuracy
+            accuracy = hit_chance(
+                modify_stat(actor, "acc", actor.stats.get("acc", 90)),
+                modify_stat(target, "eva", target.stats.get("eva", 0)),
+            )
+            if r.randint(1, 100) > accuracy:
+                log_parts.append("Miss!")
+                set_cooldown(actor, ability_id, int(ability.get("cooldown", 0) or 0))
+                if ability.get("consume_effect"):
+                    remove_effect(actor, ability["consume_effect"])
+                return {"damage": 0, "log": " ".join(log_parts)}
 
         if has_self_effects or has_target_effects:
             apply_effect_entries(actor, target, ability, log_parts)
@@ -292,6 +317,11 @@ def resolve_turn(match: MatchState) -> None:
         if reduced > 0:
             trigger_on_hit_passives(actor, target, match.log)
 
+        heal_on_hit = int(ability.get("heal_on_hit", 0) or 0)
+        if reduced > 0 and heal_on_hit > 0:
+            actor.res.hp = min(actor.res.hp + heal_on_hit, actor.res.hp_max)
+            log_parts.append(f"Heals {heal_on_hit} HP.")
+
         resource_gain = ability.get("resource_gain", {})
         if reduced > 0 and resource_gain:
             for resource, gain in resource_gain.items():
@@ -319,7 +349,7 @@ def resolve_turn(match: MatchState) -> None:
         if not ability:
             return {"damage": 0, "log": f"{actor_sid[:5]} fumbles (unknown ability).", "resolved": True}
 
-        if stunned_at_start.get(actor_sid, False):
+        if stunned_at_start.get(actor_sid, False) and not ability.get("allow_while_stunned"):
             return {"damage": 0, "log": f"{actor_sid[:5]} is stunned and cannot act.", "resolved": True}
 
         allowed_classes = ability.get("classes")

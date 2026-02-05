@@ -9,6 +9,14 @@ ABILITIES = {
         "tags": ["attack", "physical"],
         "cooldown": 0,
     },
+    "pass_turn": {
+        "name": "Pass Turn",
+        "cost": {"energy": 0},
+        "dice": None,
+        "tags": ["pass"],
+        "cooldown": 0,
+        "allow_while_stunned": True,
+    },
     "fireball": {
         "name": "Fireball",
         "cost": {"mp": 10},
@@ -40,6 +48,17 @@ ABILITIES = {
         "cooldown": 1,
         "classes": ["warrior"],
         "resource_gain": {"rage": "damage"},
+    },
+    "victory_rush": {
+        "name": "Victory Rush",
+        "cost": {"rage": 0},
+        "dice": {"type": "d2", "power_on": "roll"},
+        "scaling": {"atk": 0.5},
+        "damage_type": "physical",
+        "tags": ["attack", "physical"],
+        "cooldown": 15,
+        "classes": ["warrior"],
+        "heal_on_hit": 40,
     },
     "mortal_strike": {
         "name": "Mortal Strike",
