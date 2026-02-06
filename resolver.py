@@ -18,7 +18,9 @@ from .effects import (
     remove_effect,
     modify_stat,
     is_stunned,
+    is_stealthed,
     is_damage_immune,
+    has_flag,
 )
 
 def apply_prep_build(match: MatchState) -> None:
@@ -56,6 +58,9 @@ def apply_prep_build(match: MatchState) -> None:
                 continue
             item = ITEMS.get(item_id)
             if not item:
+                continue
+            allowed_classes = item.get("classes")
+            if allowed_classes and build.class_id not in allowed_classes:
                 continue
             
             equipped_items.append(item)
@@ -129,6 +134,9 @@ def resolve_turn(match: MatchState) -> None:
                 return False, f"not enough {key}"
         return True, ""
 
+    def effect_name(effect_id: str) -> str:
+        return effect_id.replace("_", " ").title()
+
     def consume_costs(ps: PlayerState, costs: Dict[str, int]) -> None:
         res = ps.res
         for key, value in costs.items():
@@ -148,15 +156,26 @@ def resolve_turn(match: MatchState) -> None:
 
     def apply_effect_entries(actor: PlayerState, target: PlayerState, ability: Dict[str, Any], log_parts: list) -> None:
         for entry in ability.get("self_effects", []) or []:
-            overrides = {"duration": int(entry.get("duration"))} if entry.get("duration") else None
-            apply_effect_by_id(actor, entry["id"], overrides=overrides)
+            overrides = dict(entry.get("overrides", {}) or {})
+            if entry.get("duration"):
+                overrides["duration"] = int(entry.get("duration"))
+            apply_effect_by_id(actor, entry["id"], overrides=overrides or None)
             if entry.get("log"):
                 log_parts.append(entry["log"])
         for entry in ability.get("target_effects", []) or []:
-            overrides = {"duration": int(entry.get("duration"))} if entry.get("duration") else None
-            apply_effect_by_id(target, entry["id"], overrides=overrides)
+            overrides = dict(entry.get("overrides", {}) or {})
+            if entry.get("duration"):
+                overrides["duration"] = int(entry.get("duration"))
+            apply_effect_by_id(target, entry["id"], overrides=overrides or None)
             if entry.get("log"):
                 log_parts.append(entry["log"])
+
+    def break_stealth_on_action(actor: PlayerState, ability: Dict[str, Any]) -> None:
+        if not has_effect(actor, "stealth"):
+            return
+        if "pass" in (ability.get("tags") or []):
+            return
+        remove_effect(actor, "stealth")
 
     def resolve_action(actor_sid: str, target_sid: str, action: Dict[str, Any]) -> Dict[str, Any]:
         actor = match.state[actor_sid]
@@ -178,7 +197,7 @@ def resolve_turn(match: MatchState) -> None:
 
         required_effect = ability.get("requires_effect")
         if required_effect and not has_effect(actor, required_effect):
-            return {"damage": 0, "log": f"{ability['name']} requires Hot Streak."}
+            return {"damage": 0, "log": f"{ability['name']} requires {effect_name(required_effect)}."}
 
         target_hp_threshold = ability.get("requires_target_hp_below")
         if target_hp_threshold is not None:
@@ -216,6 +235,8 @@ def resolve_turn(match: MatchState) -> None:
             log_parts.append("Passes the turn.")
             return {"damage": 0, "log": " ".join(log_parts)}
 
+        break_stealth_on_action(actor, ability)
+
         consume_costs(actor, ability.get("cost", {}))
 
         # Roll dice for power
@@ -226,6 +247,34 @@ def resolve_turn(match: MatchState) -> None:
             log_parts.append(f"Roll {dice_data['type']} = {roll_power}.")
 
         if has_damage or has_target_effects:
+            if is_stealthed(target):
+                log_parts.append("Target is stealthed — no valid target.")
+                set_cooldown(actor, ability_id, int(ability.get("cooldown", 0) or 0))
+                if ability.get("consume_effect"):
+                    remove_effect(actor, ability["consume_effect"])
+                return {"damage": 0, "log": " ".join(log_parts)}
+            if has_flag(target, "untargetable"):
+                log_parts.append("Target blinks away — no valid target.")
+                set_cooldown(actor, ability_id, int(ability.get("cooldown", 0) or 0))
+                if ability.get("consume_effect"):
+                    remove_effect(actor, ability["consume_effect"])
+                return {"damage": 0, "log": " ".join(log_parts)}
+            if has_flag(target, "evade_all"):
+                log_parts.append("Evaded!")
+                set_cooldown(actor, ability_id, int(ability.get("cooldown", 0) or 0))
+                if ability.get("consume_effect"):
+                    remove_effect(actor, ability["consume_effect"])
+                return {"damage": 0, "log": " ".join(log_parts)}
+
+            if weapon_id and ITEMS.get(weapon_id, {}).get("miss_chance"):
+                miss_chance = float(ITEMS.get(weapon_id, {}).get("miss_chance", 0) or 0)
+                if miss_chance > 0 and r.random() <= miss_chance:
+                    log_parts.append("Misfire!")
+                    set_cooldown(actor, ability_id, int(ability.get("cooldown", 0) or 0))
+                    if ability.get("consume_effect"):
+                        remove_effect(actor, ability["consume_effect"])
+                    return {"damage": 0, "log": " ".join(log_parts)}
+
             # Check accuracy
             accuracy = hit_chance(
                 modify_stat(actor, "acc", actor.stats.get("acc", 90)),
@@ -299,7 +348,16 @@ def resolve_turn(match: MatchState) -> None:
         # Apply on-hit passive effects (weapons/trinkets etc.)
         # NOTE: these log directly into match.log (separate from the action's one-line log).
         if reduced > 0:
-            trigger_on_hit_passives(actor, target, match.log)
+            bonus_damage = trigger_on_hit_passives(
+                actor,
+                target,
+                match.log,
+                reduced,
+                damage_type,
+                r,
+            )
+            if bonus_damage > 0:
+                reduced += bonus_damage
 
         heal_on_hit = int(ability.get("heal_on_hit", 0) or 0)
         if reduced > 0 and heal_on_hit > 0:
@@ -349,7 +407,11 @@ def resolve_turn(match: MatchState) -> None:
 
         required_effect = ability.get("requires_effect")
         if required_effect and not has_effect(actor, required_effect):
-            return {"damage": 0, "log": f"{ability['name']} requires Hot Streak.", "resolved": True}
+            return {
+                "damage": 0,
+                "log": f"{ability['name']} requires {effect_name(required_effect)}.",
+                "resolved": True,
+            }
 
         target_hp_threshold = ability.get("requires_target_hp_below")
         if target_hp_threshold is not None:
@@ -401,6 +463,8 @@ def resolve_turn(match: MatchState) -> None:
         ability = ctx["ability"]
         ability_id = ctx["ability_id"]
 
+        break_stealth_on_action(actor, ability)
+
         consume_costs(actor, ability.get("cost", {}))
 
         weapon_id = None
@@ -408,6 +472,21 @@ def resolve_turn(match: MatchState) -> None:
             weapon_id = actor.build.items.get("weapon")
         weapon_name = ITEMS.get(weapon_id, {}).get("name", "Unarmed")
         log_parts = [f"{actor_sid[:5]} uses {weapon_name} to cast {ability['name']}."]
+
+        if ability.get("target_effects") and is_stealthed(target):
+            log_parts.append("Target is stealthed — no valid target.")
+            set_cooldown(actor, ability_id, int(ability.get("cooldown", 0) or 0))
+            ctx["damage"] = 0
+            ctx["log"] = " ".join(log_parts)
+            ctx["resolved"] = True
+            return
+        if ability.get("target_effects") and has_flag(target, "untargetable"):
+            log_parts.append("Target blinks away — no valid target.")
+            set_cooldown(actor, ability_id, int(ability.get("cooldown", 0) or 0))
+            ctx["damage"] = 0
+            ctx["log"] = " ".join(log_parts)
+            ctx["resolved"] = True
+            return
 
         if ability.get("effect"):
             effect = dict(ability["effect"])
@@ -439,6 +518,10 @@ def resolve_turn(match: MatchState) -> None:
     # Apply damage
     match.state[sids[1]].res.hp -= result1["damage"]
     match.state[sids[0]].res.hp -= result2["damage"]
+    if result1["damage"] > 0:
+        remove_effect(match.state[sids[1]], "stealth")
+    if result2["damage"] > 0:
+        remove_effect(match.state[sids[0]], "stealth")
 
     # End of turn processing for both players (DoTs, passives, duration ticks, regen)
     for sid in sids:

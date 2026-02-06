@@ -12,4 +12,10 @@ CLASSES = {
         "resources": {"hp": 90, "mp": 80, "energy": 0, "rage": 0, "rage_max": 0},
         "resource_display": {"primary": {"id": "mp", "label": "Mana", "color": "var(--mana-blue)"}},
     },
+    "rogue": {
+        "name": "Rogue",
+        "base_stats": {"atk": 10, "int": 1, "def": 4, "spd": 9, "crit": 8, "acc": 97, "eva": 20},
+        "resources": {"hp": 95, "mp": 0, "energy": 100, "rage": 0, "rage_max": 0},
+        "resource_display": {"primary": {"id": "energy", "label": "Energy", "color": "#FFF468"}},
+    },
 }

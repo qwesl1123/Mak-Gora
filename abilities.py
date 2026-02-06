@@ -116,6 +116,17 @@ ABILITIES = {
             {"id": "iceblock", "duration": 3, "log": "encases themselves in ice."}
         ],
     },
+    "blink": {
+        "name": "Blink",
+        "cost": {"mp": 0},
+        "dice": None,
+        "tags": ["spell", "defense"],
+        "cooldown": 2,
+        "classes": ["mage"],
+        "self_effects": [
+            {"id": "blink", "duration": 2, "log": "blinks out of reach."}
+        ],
+    },
     "ring_of_ice": {
         "name": "Ring of Ice",
         "cost": {"mp": 0},
@@ -126,5 +137,78 @@ ABILITIES = {
         "target_effects": [
             {"id": "stunned", "duration": 1, "log": "freezes the enemy solid."}
         ],
+    },
+    "cheap_shot": {
+        "name": "Cheap Shot",
+        "cost": {"energy": 0},
+        "dice": None,
+        "tags": ["control"],
+        "cooldown": 3,
+        "classes": ["rogue"],
+        "target_effects": [
+            {"id": "stunned", "duration": 1, "log": "is caught off-guard."}
+        ],
+    },
+    "vanish": {
+        "name": "Vanish",
+        "cost": {"energy": 0},
+        "dice": None,
+        "tags": ["stealth", "defense"],
+        "cooldown": 15,
+        "classes": ["rogue"],
+        "self_effects": [
+            {
+                "id": "stealth",
+                "duration": 3,
+                "overrides": {"regen": {"hp": 15, "energy": 5}},
+                "log": "vanishes into the shadows.",
+            }
+        ],
+    },
+    "eviscerate": {
+        "name": "Eviscerate",
+        "cost": {"energy": 30},
+        "dice": {"type": "d10", "power_on": "roll"},
+        "scaling": {"atk": 1.2},
+        "damage_type": "physical",
+        "tags": ["attack", "physical"],
+        "cooldown": 1,
+        "classes": ["rogue"],
+    },
+    "evasion": {
+        "name": "Evasion",
+        "cost": {"energy": 0},
+        "dice": None,
+        "tags": ["defense"],
+        "cooldown": 20,
+        "classes": ["rogue"],
+        "self_effects": [
+            {"id": "evasion", "duration": 2, "log": "becomes incredibly evasive."}
+        ],
+    },
+    "shadow_blade": {
+        "name": "Shadow Blade",
+        "cost": {"energy": 20},
+        "dice": {"type": "d6", "power_on": "roll"},
+        "scaling": {"atk": 0.3},
+        "damage_type": "physical",
+        "tags": ["attack", "physical"],
+        "cooldown": 0,
+        "classes": ["rogue"],
+        "on_hit_effects": [
+            {"id": "ambush", "chance": 0.2, "log": "Has Ambush!"}
+        ],
+    },
+    "ambush": {
+        "name": "Ambush",
+        "cost": {"energy": 20},
+        "dice": {"type": "d6", "power_on": "roll"},
+        "scaling": {"atk": 2.0},
+        "damage_type": "physical",
+        "tags": ["attack", "physical"],
+        "cooldown": 0,
+        "classes": ["rogue"],
+        "requires_effect": "ambush",
+        "consume_effect": "ambush",
     },
 }

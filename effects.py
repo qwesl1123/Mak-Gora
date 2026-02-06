@@ -38,6 +38,30 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 1,
         "flags": {"stunned": True},
     },
+    "stealth": {
+        "type": "stealth",
+        "name": "Stealth",
+        "duration": 3,
+        "flags": {"stealthed": True},
+    },
+    "blink": {
+        "type": "status",
+        "name": "Blink",
+        "duration": 2,
+        "flags": {"blinked": True, "untargetable": True},
+    },
+    "evasion": {
+        "type": "status",
+        "name": "Evasion",
+        "duration": 2,
+        "flags": {"evade_all": True},
+    },
+    "ambush": {
+        "type": "status",
+        "name": "Ambush",
+        "duration": 999,
+        "flags": {"ambush_ready": True},
+    },
 }
 
 
@@ -105,6 +129,10 @@ def is_stunned(target: PlayerState) -> bool:
     return has_flag(target, "stunned")
 
 
+def is_stealthed(target: PlayerState) -> bool:
+    return has_flag(target, "stealthed")
+
+
 def is_damage_immune(target: PlayerState, damage_type: str) -> bool:
     if has_flag(target, "immune_all"):
         return True
@@ -157,8 +185,16 @@ def apply_burn(target: PlayerState, value: int, source_item: str = "Unknown", du
     )
 
 
-def trigger_on_hit_passives(attacker: PlayerState, target: PlayerState, log: List[str]) -> None:
-    """Run attacker item passives that trigger on_hit (currently: burn)."""
+def trigger_on_hit_passives(
+    attacker: PlayerState,
+    target: PlayerState,
+    log: List[str],
+    base_damage: int,
+    damage_type: str,
+    rng,
+) -> int:
+    """Run attacker item passives that trigger on_hit."""
+    bonus_damage = 0
     for effect in attacker.effects:
         if effect.get("type") != "item_passive":
             continue
@@ -179,7 +215,18 @@ def trigger_on_hit_passives(attacker: PlayerState, target: PlayerState, log: Lis
                 log.append(
                     f"{attacker.sid[:5]} scorches the target with {effect.get('source_item', 'item')} ({burn_value} damage/turn)."
                 )
+        elif passive.get("type") == "strike_again":
+            chance = float(passive.get("chance", 0) or 0)
+            multiplier = float(passive.get("multiplier", 0) or 0)
+            if base_damage > 0 and chance > 0 and multiplier > 0 and rng.random() <= chance:
+                extra = int(base_damage * multiplier)
+                if extra > 0:
+                    bonus_damage += extra
+                    log.append(
+                        f"{attacker.sid[:5]} strikes again with {effect.get('source_item', 'item')} for {extra} bonus damage."
+                    )
 
+    return bonus_damage
 
 def tick_dots(ps: PlayerState, log: List[str], label: str) -> None:
     """Apply DoT damage (currently: burn)."""
@@ -188,6 +235,7 @@ def tick_dots(ps: PlayerState, log: List[str], label: str) -> None:
             burn_dmg = int(effect.get("value", 0) or 0)
             if burn_dmg > 0:
                 ps.res.hp -= burn_dmg
+                remove_effect(ps, "stealth")
                 log.append(f"{label} burns for {burn_dmg} damage.")
 
 
@@ -217,14 +265,17 @@ def trigger_end_of_turn_effects(ps: PlayerState, log: List[str], label: str) -> 
             continue
         hp_gain = int(regen.get("hp", 0) or 0)
         mp_gain = int(regen.get("mp", 0) or 0)
+        energy_gain = int(regen.get("energy", 0) or 0)
         if hp_gain > 0:
             ps.res.hp = min(ps.res.hp + hp_gain, ps.res.hp_max)
         if mp_gain > 0:
             ps.res.mp = min(ps.res.mp + mp_gain, ps.res.mp_max)
-        if (hp_gain > 0 or mp_gain > 0) and log is not None:
+        if energy_gain > 0:
+            ps.res.energy = min(ps.res.energy + energy_gain, ps.res.energy_max)
+        if (hp_gain > 0 or mp_gain > 0 or energy_gain > 0) and log is not None:
             effect_name = effect.get("name", "an effect")
             log.append(
-                f"{label} recovers {hp_gain} HP and {mp_gain} MP from {effect_name}."
+                f"{label} recovers {hp_gain} HP, {mp_gain} MP, and {energy_gain} Energy from {effect_name}."
             )
 
 

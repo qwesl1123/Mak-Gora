@@ -26,8 +26,10 @@
         --border-gold: #8b7355;
         --warrior-color: #C69B6D;
         --mage-color: #3FC7EB;
+        --rogue-color: #FFF468;
         --item-green: #1eff00;
         --item-blue: #0070dd;
+        --item-purple: #a335ee;
       }
 
       * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -178,6 +180,16 @@
       .stat-row strong {
         color: var(--text-light);
         font-weight: 600;
+      }
+
+      .status-text {
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      .status-text.stealthed {
+        color: var(--rogue-color);
       }
 
       .resource-bar {
@@ -430,6 +442,12 @@
         text-shadow: 0 0 12px rgba(255, 215, 0, 0.8);
       }
 
+      .logLineAmbush {
+        color: var(--rogue-color);
+        font-weight: 700;
+        text-shadow: 0 0 12px rgba(255, 244, 104, 0.95);
+      }
+
       .logLineExecute {
         color: #ff4444;
         font-weight: 700;
@@ -458,6 +476,12 @@
         font-weight: 700;
       }
 
+      .log-class-rogue,
+      .log-ability-rogue {
+        color: var(--rogue-color);
+        font-weight: 700;
+      }
+
       .log-item-green {
         color: var(--item-green);
         font-weight: 700;
@@ -465,6 +489,11 @@
 
       .log-item-blue {
         color: var(--item-blue);
+        font-weight: 700;
+      }
+
+      .log-item-purple {
+        color: var(--item-purple);
         font-weight: 700;
       }
 
@@ -606,6 +635,7 @@
               <h3 class="stat-title" id="friendlyLabel">Friendly Champion</h3>
               <div class="stat-row"><span>Weapon:</span><strong id="friendlyWeapon">--</strong></div>
               <div class="stat-row"><span>Armor:</span><strong id="friendlyArmor">--</strong></div>
+              <div class="stat-row"><span>Status:</span><strong id="friendlyStatus" class="status-text">--</strong></div>
               
               <div class="resource-bar">
                 <span style="width: 60px; color: var(--health-red); font-weight: bold;">HP</span>
@@ -632,6 +662,7 @@
               <h3 class="stat-title" id="enemyLabel">Enemy Champion</h3>
               <div class="stat-row"><span>Weapon:</span><strong id="enemyWeapon">--</strong></div>
               <div class="stat-row"><span>Armor:</span><strong id="enemyArmor">--</strong></div>
+              <div class="stat-row"><span>Status:</span><strong id="enemyStatus" class="status-text">--</strong></div>
               
               <div class="resource-bar">
                 <span style="width: 60px; color: var(--health-red); font-weight: bold;">HP</span>
@@ -666,10 +697,10 @@
 
             <div class="hint">
               <strong>Commands:</strong><br>
-              <span class="kbd">/class warrior</span> or <span class="kbd">/class mage</span> - Choose your class<br>
+              <span class="kbd">/class warrior</span>, <span class="kbd">/class mage</span>, or <span class="kbd">/class rogue</span> - Choose your class<br>
               <span class="kbd">/item weapon steel_long_sword</span> - Equip weapon<br>
               <span class="kbd">/item armor leather_armor</span> - Equip armor<br>
-              <span class="kbd">basic_attack</span>, <span class="kbd">fireball</span>, <span class="kbd">defend</span>, <span class="kbd">victory_rush</span>, <span class="kbd">pass_turn</span> - Combat abilities<br>
+              <span class="kbd">basic_attack</span>, <span class="kbd">fireball</span>, <span class="kbd">eviscerate</span>, <span class="kbd">blink</span>, <span class="kbd">cheap_shot</span> - Combat abilities<br>
               <br>
               <strong>Chat:</strong> Use the Chat box below to message your opponent
             </div>
@@ -716,6 +747,13 @@
             <p><span class="stat">HP: 90</span> | <span class="stat">Mana: 80</span> | Speed: 9 | Crit: 8% | Accuracy: 95%</p>
             <p>Master of arcane magic. Weak physical attacks but devastating spells. Uses Mana for powerful abilities.</p>
           </div>
+
+          <div class="doc-item">
+            <h4>Rogue</h4>
+            <p><span class="stat">Attack: 10</span> | <span class="stat">Intellect: 1</span> | <span class="stat">Defense: 4</span></p>
+            <p><span class="stat">HP: 95</span> | <span class="stat">Energy: 100</span> | Speed: 9 | Crit: 8% | Accuracy: 97%</p>
+            <p>Elusive striker with exceptional evasion. Uses Energy and excels at stealthy burst damage.</p>
+          </div>
         </div>
       </div>
 
@@ -747,6 +785,20 @@
             <p><span class="stat">+3 Intellect</span></p>
             <p><span class="stat">Passive: Heal 4 HP every turn</span></p>
             <p>Ancient artifact of life magic. Grants powerful regeneration.</p>
+          </div>
+
+          <div class="doc-item">
+            <h4>Steel Daggers</h4>
+            <p><span class="stat">+4 Physical Attack</span></p>
+            <p><span class="stat">Passive: 25% chance to strike again for 40% damage</span></p>
+            <p>Swift blades favored by rogues. Occasionally delivers a second strike.</p>
+          </div>
+
+          <div class="doc-item">
+            <h4>Glock 19</h4>
+            <p><span class="stat">+17 Physical Attack</span></p>
+            <p><span class="stat">Passive: 70% chance to miss</span></p>
+            <p>A risky firearm with devastating potential. High damage, unreliable aim.</p>
           </div>
         </div>
       </div>
@@ -838,6 +890,48 @@
             <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 20</span></p>
             <p>Become immune to all damage for 3 turns. Restores 10 HP and 25 Mana each turn, but you cannot act.</p>
           </div>
+
+          <div class="doc-item">
+            <h4>Blink</h4>
+            <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 2</span></p>
+            <p>Blinks away, causing enemy attacks to miss for the current and next turn.</p>
+          </div>
+
+          <div class="doc-item">
+            <h4>Cheap Shot</h4>
+            <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 3</span></p>
+            <p>Stuns the enemy for 1 turn.</p>
+          </div>
+
+          <div class="doc-item">
+            <h4>Vanish</h4>
+            <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 15</span></p>
+            <p>Enter Stealth for 3 turns, restoring 15 HP and 5 Energy each turn.</p>
+          </div>
+
+          <div class="doc-item">
+            <h4>Eviscerate</h4>
+            <p><span class="stat">Cost: 30 Energy</span> | <span class="stat">Type: Physical</span> | <span class="stat">Cooldown: 1</span></p>
+            <p>Heavy strike that scales with Attack (1.2x) and d10 power.</p>
+          </div>
+
+          <div class="doc-item">
+            <h4>Evasion</h4>
+            <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 20</span></p>
+            <p>Double your evasion for 2 turns while still allowing attacks.</p>
+          </div>
+
+          <div class="doc-item">
+            <h4>Shadow Blade</h4>
+            <p><span class="stat">Cost: 20 Energy</span> | <span class="stat">Type: Physical</span></p>
+            <p>Quick strike that scales with Attack (0.3x) and d6 power. 20% chance to proc Ambush.</p>
+          </div>
+
+          <div class="doc-item">
+            <h4>Ambush</h4>
+            <p><span class="stat">Cost: 20 Energy</span> | <span class="stat">Type: Physical</span></p>
+            <p>Powerful strike only usable after an Ambush proc. Scales with Attack (2.0x) and d6 power.</p>
+          </div>
         </div>
       </div>
 
@@ -855,6 +949,8 @@
           <p><strong>Passive Healing:</strong> Spirit Light Sword and Staff of Immortality heal automatically at turn end.</p>
           
           <p><strong>Resource Regeneration:</strong> Mana regenerates 2 per turn. Energy regenerates 5 per turn.</p>
+
+          <p><strong>Stealth:</strong> Stealthed targets cannot be hit until they attack or take damage.</p>
         </div>
       </div>
 
@@ -863,7 +959,7 @@
         <div class="doc-content">
           <p><strong>1. Join Queue:</strong> Click "Enter the Arena" to find an opponent.</p>
           
-          <p><strong>2. Prep Phase:</strong> Choose your class with <span class="kbd">/class warrior</span> or <span class="kbd">/class mage</span></p>
+          <p><strong>2. Prep Phase:</strong> Choose your class with <span class="kbd">/class warrior</span>, <span class="kbd">/class mage</span>, or <span class="kbd">/class rogue</span></p>
           
           <p><strong>3. Equip Items:</strong> Use <span class="kbd">/item weapon steel_long_sword</span> and <span class="kbd">/item armor plate_armor</span></p>
           
@@ -899,6 +995,7 @@
       const friendlyRage = document.getElementById("friendlyRage");
       const friendlyWeapon = document.getElementById("friendlyWeapon");
       const friendlyArmor = document.getElementById("friendlyArmor");
+      const friendlyStatus = document.getElementById("friendlyStatus");
       
       const enemyHpText = document.getElementById("enemyHpText");
       const enemyHpBar = document.getElementById("enemyHpBar");
@@ -909,6 +1006,7 @@
       const enemyRage = document.getElementById("enemyRage");
       const enemyWeapon = document.getElementById("enemyWeapon");
       const enemyArmor = document.getElementById("enemyArmor");
+      const enemyStatus = document.getElementById("enemyStatus");
       const lockBtn = document.getElementById("lockBtn");
       const passBtn = document.getElementById("passBtn");
 
@@ -932,11 +1030,15 @@
         if (text.includes("HOT STREAK") || text.includes("Can Use Execute")) {
           return escapeHtml(text);
         }
+        if (text.includes("Has Ambush!")) {
+          return escapeHtml(text);
+        }
 
         let output = escapeHtml(text);
         const classPatterns = [
           { pattern: /\bWarrior(\(you\))?\b/g, className: "log-class-warrior" },
           { pattern: /\bMage(\(you\))?\b/g, className: "log-class-mage" },
+          { pattern: /\bRogue(\(you\))?\b/g, className: "log-class-rogue" },
         ];
         classPatterns.forEach(({ pattern, className }) => {
           output = output.replace(pattern, `<span class="${className}">$&</span>`);
@@ -954,16 +1056,29 @@
           "Pyroblast",
           "Ice Block",
           "Ring of Ice",
+          "Blink",
+        ];
+        const rogueAbilities = [
+          "Cheap Shot",
+          "Vanish",
+          "Eviscerate",
+          "Evasion",
+          "Shadow Blade",
+          "Ambush",
         ];
         const greenItems = [
           "Steel Long Sword",
           "Wand of Fire",
           "Plate Armor",
+          "Steel Daggers",
         ];
         const blueItems = [
           "Spirit Light Sword",
           "Staff of Immortality",
           "Leather Armor",
+        ];
+        const purpleItems = [
+          "Glock 19",
         ];
 
         warriorAbilities.forEach((ability) => {
@@ -974,6 +1089,10 @@
           const pattern = new RegExp(`\\b${escapeRegExp(ability)}\\b`, "g");
           output = output.replace(pattern, `<span class="log-ability-mage">$&</span>`);
         });
+        rogueAbilities.forEach((ability) => {
+          const pattern = new RegExp(`\\b${escapeRegExp(ability)}\\b`, "g");
+          output = output.replace(pattern, `<span class="log-ability-rogue">$&</span>`);
+        });
         greenItems.forEach((item) => {
           const pattern = new RegExp(`\\b${escapeRegExp(item)}\\b`, "g");
           output = output.replace(pattern, `<span class="log-item-green">$&</span>`);
@@ -981,6 +1100,10 @@
         blueItems.forEach((item) => {
           const pattern = new RegExp(`\\b${escapeRegExp(item)}\\b`, "g");
           output = output.replace(pattern, `<span class="log-item-blue">$&</span>`);
+        });
+        purpleItems.forEach((item) => {
+          const pattern = new RegExp(`\\b${escapeRegExp(item)}\\b`, "g");
+          output = output.replace(pattern, `<span class="log-item-purple">$&</span>`);
         });
 
         return output;
@@ -994,6 +1117,9 @@
         }
         if (msg.includes("HOT STREAK")) {
           classes.push("logLineProc");
+        }
+        if (msg.includes("Has Ambush!")) {
+          classes.push("logLineAmbush");
         }
         if (msg.includes("Can Use Execute")) {
           classes.push("logLineExecute");
@@ -1133,6 +1259,17 @@
         elements.energy.textContent = `${res.energy}/${res.energy_max}`;
         elements.rage.textContent = `${res.rage}/${res.rage_max}`;
       }
+
+      function renderStatus(stealthed, element) {
+        if (!element) return;
+        if (stealthed) {
+          element.textContent = "Stealthed";
+          element.classList.add("stealthed");
+        } else {
+          element.textContent = "--";
+          element.classList.remove("stealthed");
+        }
+      }
       
         renderRes(data.you, {
           hpText: friendlyHpText,
@@ -1143,6 +1280,7 @@
           energy: friendlyEnergy,
           rage: friendlyRage,
         }, data.you_resource || { id: "mp", label: "Mana", color: "var(--mana-blue)" });
+        renderStatus(Boolean(data.you_stealthed), friendlyStatus);
         
         renderRes(data.enemy, {
           hpText: enemyHpText,
@@ -1153,6 +1291,7 @@
           energy: enemyEnergy,
           rage: enemyRage,
         }, data.enemy_resource || { id: "mp", label: "Mana", color: "var(--mana-blue)" });
+        renderStatus(Boolean(data.enemy_stealthed), enemyStatus);
         
         if (data.log) {
           const total = data.log_length ?? data.log.length;

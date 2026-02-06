@@ -28,6 +28,22 @@ ITEMS = {
         "damage_type": "magic",
         "passive": {"type": "heal_self", "value": 4, "trigger": "end_of_turn"},
     },
+    "steel_daggers": {
+        "name": "Steel Daggers",
+        "slot": "weapon",
+        "mods": {"atk": 4},
+        "damage_type": "physical",
+        "classes": ["rogue"],
+        "passive": {"type": "strike_again", "chance": 0.25, "multiplier": 0.4, "trigger": "on_hit"},
+    },
+    "glock_19": {
+        "name": "Glock 19",
+        "slot": "weapon",
+        "mods": {"atk": 17},
+        "damage_type": "physical",
+        "classes": ["rogue"],
+        "miss_chance": 0.7,
+    },
     
     # Armor
     "leather_armor": {

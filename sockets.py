@@ -5,6 +5,7 @@ import time
 
 from . import state
 from .engine import resolver
+from .engine.effects import is_stealthed
 from .content.classes import CLASSES
 from .content.items import ITEMS
 from .content.abilities import ABILITIES
@@ -52,7 +53,12 @@ def snapshot_for(match, viewer_sid):
         equipped = {}
         for slot, item_id in ps.build.items.items():
             if item_id and item_id in ITEMS:
-                equipped[slot] = ITEMS[item_id]["name"]
+                item = ITEMS[item_id]
+                allowed_classes = item.get("classes")
+                if allowed_classes and ps.build.class_id not in allowed_classes:
+                    equipped[slot] = None
+                else:
+                    equipped[slot] = item["name"]
             else:
                 equipped[slot] = None
         return equipped
@@ -68,6 +74,12 @@ def snapshot_for(match, viewer_sid):
             "energy": r.energy, "energy_max": r.energy_max,
             "rage": r.rage, "rage_max": r.rage_max,
         }
+
+    def stealthed_for(sid):
+        ps = match.state.get(sid)
+        if not ps:
+            return False
+        return is_stealthed(ps)
 
     def display_name_for(sid):
         class_name = class_name_for(sid)
@@ -101,6 +113,8 @@ def snapshot_for(match, viewer_sid):
         "enemy_items": get_equipped_items(enemy),
         "you_resource": primary_resource_for(you),
         "enemy_resource": primary_resource_for(enemy),
+        "you_stealthed": stealthed_for(you),
+        "enemy_stealthed": stealthed_for(enemy),
         "log": [format_log_line(line) for line in match.log[-30:]],
         "winner": match.winner,
         "log_length": len(match.log),
