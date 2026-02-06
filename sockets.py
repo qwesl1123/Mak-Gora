@@ -188,7 +188,22 @@ def register_duel_socket_handlers(socketio):
         if items:
             merged["items"] = items
         match.picks[sid] = merged  # later: validate schema
-        emit("duel_system", "Prep saved. Waiting for opponent...")
+        selection_name = None
+        if isinstance(payload, dict):
+            class_id = payload.get("class_id")
+            if class_id:
+                selection_name = CLASSES.get(class_id, {}).get("name", class_id)
+            else:
+                items_payload = payload.get("items", {})
+                if isinstance(items_payload, dict):
+                    for item_id in items_payload.values():
+                        if item_id and item_id in ITEMS:
+                            selection_name = ITEMS[item_id]["name"]
+                            break
+        if selection_name:
+            emit("duel_system", f"🛡️ Prep saved, {selection_name}.")
+        else:
+            emit("duel_system", "🛡️ Prep saved.")
         try_start_combat(match)
 
     def both_players_locked(match):
@@ -247,7 +262,15 @@ def register_duel_socket_handlers(socketio):
             emit("duel_system", f"Unknown ability '{ability_id}'. Try again.")
             return
         resolver.submit_action(match, sid, action)
-        emit("duel_system", "Action received.")
+        ability_name = ABILITIES.get(ability_id, {}).get("name", ability_id)
+        cooldown_remaining = 0
+        ps = match.state.get(sid)
+        if ps:
+            cooldown_remaining = ps.cooldowns.get(ability_id, 0)
+        if cooldown_remaining > 0:
+            emit("duel_system", f"🛡️ Action received. Warning {ability_name} is on cooldown.")
+        else:
+            emit("duel_system", f"🛡️ Action received. {ability_name}")
 
         if resolver.ready_to_resolve(match):
             resolver.resolve_turn(match)

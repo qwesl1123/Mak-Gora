@@ -42,14 +42,19 @@ ITEMS = {
         "mods": {"atk": 17},
         "damage_type": "physical",
         "classes": ["rogue"],
-        "miss_chance": 0.7,
+        "miss_chance": 0.55,
     },
     
     # Armor
     "leather_armor": {
         "name": "Leather Armor",
         "slot": "armor",
-        "mods": {"physical_reduction": 2, "magic_resist": 4},
+        "mods": {"physical_reduction": 3, "magic_resist": 3},
+    },
+    "cloth_armor": {
+        "name": "Cloth Armor",
+        "slot": "armor",
+        "mods": {"physical_reduction": 1, "magic_resist": 5},
     },
     "plate_armor": {
         "name": "Plate Armor",

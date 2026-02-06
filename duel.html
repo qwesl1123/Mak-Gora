@@ -635,6 +635,7 @@
               <h3 class="stat-title" id="friendlyLabel">Friendly Champion</h3>
               <div class="stat-row"><span>Weapon:</span><strong id="friendlyWeapon">--</strong></div>
               <div class="stat-row"><span>Armor:</span><strong id="friendlyArmor">--</strong></div>
+              <div class="stat-row"><span>Trinket:</span><strong id="friendlyTrinket">--</strong></div>
               <div class="stat-row"><span>Status:</span><strong id="friendlyStatus" class="status-text">--</strong></div>
               
               <div class="resource-bar">
@@ -662,6 +663,7 @@
               <h3 class="stat-title" id="enemyLabel">Enemy Champion</h3>
               <div class="stat-row"><span>Weapon:</span><strong id="enemyWeapon">--</strong></div>
               <div class="stat-row"><span>Armor:</span><strong id="enemyArmor">--</strong></div>
+              <div class="stat-row"><span>Trinket:</span><strong id="enemyTrinket">--</strong></div>
               <div class="stat-row"><span>Status:</span><strong id="enemyStatus" class="status-text">--</strong></div>
               
               <div class="resource-bar">
@@ -797,7 +799,7 @@
           <div class="doc-item">
             <h4>Glock 19</h4>
             <p><span class="stat">+17 Physical Attack</span></p>
-            <p><span class="stat">Passive: 70% chance to miss</span></p>
+            <p><span class="stat">Passive: 55% chance to miss</span></p>
             <p>A risky firearm with devastating potential. High damage, unreliable aim.</p>
           </div>
         </div>
@@ -808,9 +810,16 @@
         <div class="doc-grid">
           <div class="doc-item">
             <h4>Leather Armor</h4>
-            <p><span class="stat">Physical Reduction: 2</span></p>
-            <p><span class="stat">Magic Resist: 4</span></p>
+            <p><span class="stat">Physical Reduction: 3</span></p>
+            <p><span class="stat">Magic Resist: 3</span></p>
             <p>Flexible protection. Reduces damage from all sources. Balanced defense.</p>
+          </div>
+
+          <div class="doc-item">
+            <h4>Cloth Armor</h4>
+            <p><span class="stat">Physical Reduction: 1</span></p>
+            <p><span class="stat">Magic Resist: 5</span></p>
+            <p>Lightweight cloth with strong enchantments. Great against spell damage.</p>
           </div>
           
           <div class="doc-item">
@@ -856,6 +865,12 @@
           </div>
 
           <div class="doc-item">
+            <h4>Rampage</h4>
+            <p><span class="stat">Cost: 15 Rage</span> | <span class="stat">Type: Physical</span> | <span class="stat">Cooldown: 0</span></p>
+            <p>Rapidly strike twice. Each hit scales with Attack (0.7x) and d4 power.</p>
+          </div>
+
+          <div class="doc-item">
             <h4>Mortal Strike</h4>
             <p><span class="stat">Cost: 30 Rage</span> | <span class="stat">Type: Physical</span> | <span class="stat">Cooldown: 0</span></p>
             <p>Massive blow. Scales with Attack (2.0x) and d6 power.</p>
@@ -893,7 +908,7 @@
 
           <div class="doc-item">
             <h4>Blink</h4>
-            <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 2</span></p>
+            <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 6</span></p>
             <p>Blinks away, causing enemy attacks to miss for the current and next turn.</p>
           </div>
 
@@ -906,7 +921,7 @@
           <div class="doc-item">
             <h4>Vanish</h4>
             <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 15</span></p>
-            <p>Enter Stealth for 3 turns, restoring 15 HP and 5 Energy each turn.</p>
+            <p>Enter Stealth for 3 turns, restoring 15 HP and 5 Energy each turn. Stealth breaks if you take more than 5 damage.</p>
           </div>
 
           <div class="doc-item">
@@ -923,13 +938,13 @@
 
           <div class="doc-item">
             <h4>Shadow Blade</h4>
-            <p><span class="stat">Cost: 20 Energy</span> | <span class="stat">Type: Physical</span></p>
-            <p>Quick strike that scales with Attack (0.3x) and d6 power. 20% chance to proc Ambush.</p>
+            <p><span class="stat">Cost: 15 Energy</span> | <span class="stat">Type: Physical</span></p>
+            <p>Quick strike that scales with Attack (0.3x) and d6 power. While stealthed, it scales with Attack (1.0x) and d8 power. 20% chance to proc Ambush.</p>
           </div>
 
           <div class="doc-item">
             <h4>Ambush</h4>
-            <p><span class="stat">Cost: 20 Energy</span> | <span class="stat">Type: Physical</span></p>
+            <p><span class="stat">Cost: 15 Energy</span> | <span class="stat">Type: Physical</span></p>
             <p>Powerful strike only usable after an Ambush proc. Scales with Attack (2.0x) and d6 power.</p>
           </div>
         </div>
@@ -950,7 +965,7 @@
           
           <p><strong>Resource Regeneration:</strong> Mana regenerates 2 per turn. Energy regenerates 5 per turn.</p>
 
-          <p><strong>Stealth:</strong> Stealthed targets cannot be hit until they attack or take damage.</p>
+          <p><strong>Stealth:</strong> Stealthed targets cannot be hit until they attack or take more than 5 damage.</p>
         </div>
       </div>
 
@@ -995,6 +1010,7 @@
       const friendlyRage = document.getElementById("friendlyRage");
       const friendlyWeapon = document.getElementById("friendlyWeapon");
       const friendlyArmor = document.getElementById("friendlyArmor");
+      const friendlyTrinket = document.getElementById("friendlyTrinket");
       const friendlyStatus = document.getElementById("friendlyStatus");
       
       const enemyHpText = document.getElementById("enemyHpText");
@@ -1006,6 +1022,7 @@
       const enemyRage = document.getElementById("enemyRage");
       const enemyWeapon = document.getElementById("enemyWeapon");
       const enemyArmor = document.getElementById("enemyArmor");
+      const enemyTrinket = document.getElementById("enemyTrinket");
       const enemyStatus = document.getElementById("enemyStatus");
       const lockBtn = document.getElementById("lockBtn");
       const passBtn = document.getElementById("passBtn");
@@ -1047,6 +1064,7 @@
         const warriorAbilities = [
           "Overpower",
           "Victory Rush",
+          "Rampage",
           "Mortal Strike",
           "Execute",
           "Die by the Sword",
@@ -1071,6 +1089,7 @@
           "Wand of Fire",
           "Plate Armor",
           "Steel Daggers",
+          "Cloth Armor",
         ];
         const blueItems = [
           "Spirit Light Sword",
@@ -1213,10 +1232,12 @@
         if (data.you_items) {
           friendlyWeapon.textContent = data.you_items.weapon || "--";
           friendlyArmor.textContent = data.you_items.armor || "--";
+          friendlyTrinket.textContent = data.you_items.trinket || "--";
         }
         if (data.enemy_items) {
           enemyWeapon.textContent = data.enemy_items.weapon || "--";
           enemyArmor.textContent = data.enemy_items.armor || "--";
+          enemyTrinket.textContent = data.enemy_items.trinket || "--";
         }
         
       function primaryResourceFrom(res, resource) {

@@ -43,6 +43,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "name": "Stealth",
         "duration": 3,
         "flags": {"stealthed": True},
+        "break_on_damage_over": 5,
     },
     "blink": {
         "type": "status",
@@ -119,6 +120,18 @@ def has_effect(target: PlayerState, effect_id: str) -> bool:
 
 def remove_effect(target: PlayerState, effect_id: str) -> None:
     target.effects = [effect for effect in target.effects if effect.get("id") != effect_id]
+
+
+def break_stealth_on_damage(target: PlayerState, damage: int) -> None:
+    if damage <= 0:
+        return
+    for effect in target.effects:
+        if effect.get("id") != "stealth":
+            continue
+        threshold = effect.get("break_on_damage_over")
+        if threshold is None or damage > int(threshold):
+            remove_effect(target, "stealth")
+        return
 
 
 def has_flag(target: PlayerState, flag: str) -> bool:
@@ -235,7 +248,7 @@ def tick_dots(ps: PlayerState, log: List[str], label: str) -> None:
             burn_dmg = int(effect.get("value", 0) or 0)
             if burn_dmg > 0:
                 ps.res.hp -= burn_dmg
-                remove_effect(ps, "stealth")
+                break_stealth_on_damage(ps, burn_dmg)
                 log.append(f"{label} burns for {burn_dmg} damage.")
 
 

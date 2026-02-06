@@ -121,7 +121,7 @@ ABILITIES = {
         "cost": {"mp": 0},
         "dice": None,
         "tags": ["spell", "defense"],
-        "cooldown": 2,
+        "cooldown": 6,
         "classes": ["mage"],
         "self_effects": [
             {"id": "blink", "duration": 2, "log": "blinks out of reach."}
@@ -188,9 +188,14 @@ ABILITIES = {
     },
     "shadow_blade": {
         "name": "Shadow Blade",
-        "cost": {"energy": 20},
+        "cost": {"energy": 15},
         "dice": {"type": "d6", "power_on": "roll"},
         "scaling": {"atk": 0.3},
+        "stealth_bonus": {
+            "dice": {"type": "d8", "power_on": "roll"},
+            "scaling": {"atk": 1.0},
+            "log": "Empowered by stealth.",
+        },
         "damage_type": "physical",
         "tags": ["attack", "physical"],
         "cooldown": 0,
@@ -201,7 +206,7 @@ ABILITIES = {
     },
     "ambush": {
         "name": "Ambush",
-        "cost": {"energy": 20},
+        "cost": {"energy": 15},
         "dice": {"type": "d6", "power_on": "roll"},
         "scaling": {"atk": 2.0},
         "damage_type": "physical",
@@ -210,5 +215,16 @@ ABILITIES = {
         "classes": ["rogue"],
         "requires_effect": "ambush",
         "consume_effect": "ambush",
+    },
+    "rampage": {
+        "name": "Rampage",
+        "cost": {"rage": 15},
+        "dice": {"type": "d4", "power_on": "roll"},
+        "scaling": {"atk": 0.7},
+        "damage_type": "physical",
+        "tags": ["attack", "physical"],
+        "cooldown": 0,
+        "classes": ["warrior"],
+        "hits": 2,
     },
 }
