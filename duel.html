@@ -832,6 +832,25 @@
       </div>
 
       <div class="doc-section">
+        <h3>Trinkets</h3>
+        <div class="doc-grid">
+          <div class="doc-item">
+            <h4>Focus Charm</h4>
+            <p><span class="stat">+10 Mana</span></p>
+            <p><span class="stat">Passive: Deal 10% more damage while above 70% HP</span></p>
+            <p>Channel a steady focus to amplify spell and weapon damage.</p>
+          </div>
+
+          <div class="doc-item">
+            <h4>Rage Crystal</h4>
+            <p><span class="stat">+20 Rage</span></p>
+            <p><span class="stat">Passive: Deal 15% more damage while below 30% HP</span></p>
+            <p>A volatile crystal that empowers desperate finishing blows.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="doc-section">
         <h3>Abilities</h3>
         <div class="doc-grid">
           <div class="doc-item">
@@ -860,8 +879,8 @@
 
           <div class="doc-item">
             <h4>Victory Rush</h4>
-            <p><span class="stat">Cost: 0 Rage</span> | <span class="stat">Type: Physical</span> | <span class="stat">Cooldown: 15</span></p>
-            <p>Quick strike that scales with Attack (0.5x) and d2 power. Heals 40 HP on hit.</p>
+            <p><span class="stat">Cost: 0 Rage</span> | <span class="stat">Type: Physical</span> | <span class="stat">Cooldown: 15 (2 charges)</span></p>
+            <p>Quick strike that scales with Attack (0.5x) and d2 power. Heals 40 HP on hit and generates 5 Rage.</p>
           </div>
 
           <div class="doc-item">
@@ -884,7 +903,7 @@
 
           <div class="doc-item">
             <h4>Die by the Sword</h4>
-            <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 4</span></p>
+            <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 10</span></p>
             <p>Become immune to physical damage and reduce all incoming damage by 30% for 2 turns.</p>
           </div>
 
@@ -934,6 +953,12 @@
             <h4>Evasion</h4>
             <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 20</span></p>
             <p>Double your evasion for 2 turns while still allowing attacks.</p>
+          </div>
+
+          <div class="doc-item">
+            <h4>Thistle Tea</h4>
+            <p><span class="stat">Cost: 30 Energy</span> | <span class="stat">Cooldown: 20</span></p>
+            <p>Restore 30 Energy at the end of each turn for 3 turns.</p>
           </div>
 
           <div class="doc-item">
@@ -1083,6 +1108,7 @@
           "Evasion",
           "Shadow Blade",
           "Ambush",
+          "Thistle Tea",
         ];
         const greenItems = [
           "Steel Long Sword",
@@ -1095,6 +1121,8 @@
           "Spirit Light Sword",
           "Staff of Immortality",
           "Leather Armor",
+          "Focus Charm",
+          "Rage Crystal",
         ];
         const purpleItems = [
           "Glock 19",

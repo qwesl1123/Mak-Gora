@@ -29,7 +29,7 @@ class PlayerState:
     res: Optional[Resources] = None
     stats: Dict[str, int] = field(default_factory=dict)     # atk/def/spd/crit/acc/eva...
     effects: List[Dict[str, Any]] = field(default_factory=list)  # buffs/debuffs
-    cooldowns: Dict[str, int] = field(default_factory=dict)
+    cooldowns: Dict[str, list[int]] = field(default_factory=dict)
 
 @dataclass
 class MatchState:

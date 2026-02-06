@@ -266,7 +266,7 @@ def register_duel_socket_handlers(socketio):
         cooldown_remaining = 0
         ps = match.state.get(sid)
         if ps:
-            cooldown_remaining = ps.cooldowns.get(ability_id, 0)
+            cooldown_remaining = resolver.cooldown_remaining(ps, ability_id, ABILITIES.get(ability_id, {}))
         if cooldown_remaining > 0:
             emit("duel_system", f"🛡️ Action received. Warning {ability_name} is on cooldown.")
         else:

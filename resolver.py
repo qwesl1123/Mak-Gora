@@ -12,6 +12,7 @@ from ..content.balance import DEFAULTS, CAPS
 from .effects import (
     mitigation_multiplier,
     trigger_on_hit_passives,
+    damage_multiplier_from_passives,
     end_of_turn,
     apply_effect_by_id,
     break_stealth_on_damage,
@@ -23,6 +24,29 @@ from .effects import (
     is_damage_immune,
     has_flag,
 )
+
+def cooldown_slots(ps: PlayerState, ability_id: str) -> list:
+    stored = ps.cooldowns.get(ability_id, [])
+    if isinstance(stored, int):
+        return [stored] if stored > 0 else []
+    return list(stored or [])
+
+
+def ability_charges(ability: Dict[str, Any]) -> int:
+    return max(1, int(ability.get("charges", 1) or 1))
+
+
+def is_on_cooldown(ps: PlayerState, ability_id: str, ability: Dict[str, Any]) -> bool:
+    charges = ability_charges(ability)
+    return len(cooldown_slots(ps, ability_id)) >= charges
+
+
+def cooldown_remaining(ps: PlayerState, ability_id: str, ability: Dict[str, Any]) -> int:
+    charges = ability_charges(ability)
+    slots = cooldown_slots(ps, ability_id)
+    if len(slots) < charges:
+        return 0
+    return min(slots) if slots else 0
 
 def apply_prep_build(match: MatchState) -> None:
     """
@@ -146,16 +170,24 @@ def resolve_turn(match: MatchState) -> None:
         for key, value in costs.items():
             setattr(res, key, getattr(res, key) - value)
 
-    def set_cooldown(ps: PlayerState, ability_id: str, cooldown: int) -> None:
+    def set_cooldown(ps: PlayerState, ability_id: str, ability: Dict[str, Any]) -> None:
+        cooldown = int(ability.get("cooldown", 0) or 0)
         if cooldown > 0:
-            ps.cooldowns[ability_id] = cooldown
+            slots = cooldown_slots(ps, ability_id)
+            slots.append(cooldown)
+            ps.cooldowns[ability_id] = slots
 
     def tick_cooldowns(ps: PlayerState) -> None:
         updated = {}
         for ability_id, remaining in ps.cooldowns.items():
-            remaining = int(remaining) - 1
-            if remaining > 0:
-                updated[ability_id] = remaining
+            slots = [remaining] if isinstance(remaining, int) else list(remaining or [])
+            next_slots = []
+            for slot in slots:
+                remaining_turns = int(slot) - 1
+                if remaining_turns > 0:
+                    next_slots.append(remaining_turns)
+            if next_slots:
+                updated[ability_id] = next_slots
         ps.cooldowns = updated
 
     def apply_effect_entries(actor: PlayerState, target: PlayerState, ability: Dict[str, Any], log_parts: list) -> None:
@@ -193,7 +225,7 @@ def resolve_turn(match: MatchState) -> None:
         if allowed_classes and actor.build.class_id not in allowed_classes:
             return {"damage": 0, "log": f"{actor_sid[:5]} cannot use {ability['name']}."}
 
-        if actor.cooldowns.get(ability_id, 0) > 0:
+        if is_on_cooldown(actor, ability_id, ability):
             return {
                 "damage": 0,
                 "log": f"{actor_sid[:5]} tried to use {ability['name']} but it is on cooldown.",
@@ -219,15 +251,18 @@ def resolve_turn(match: MatchState) -> None:
             weapon_id = actor.build.items.get("weapon")
         weapon_name = ITEMS.get(weapon_id, {}).get("name", "Unarmed")
 
-        log_parts = [f"{actor_sid[:5]} uses {weapon_name} to cast {ability['name']}."]
-        
         if is_stunned(actor) and not ability.get("allow_while_stunned"):
-            return {"damage": 0, "log": f"{actor_sid[:5]} is stunned and cannot act."}
+            return {
+                "damage": 0,
+                "log": f"{actor_sid[:5]} tries to use {ability['name']} but is stunned and cannot act.",
+            }
+
+        log_parts = [f"{actor_sid[:5]} uses {weapon_name} to cast {ability['name']}."]
 
         has_target_effects = bool(ability.get("target_effects"))
         has_self_effects = bool(ability.get("self_effects"))
         if "pass" in (ability.get("tags") or []):
-            set_cooldown(actor, ability_id, int(ability.get("cooldown", 0) or 0))
+            set_cooldown(actor, ability_id, ability)
             log_parts.append("Passes the turn.")
             return {"damage": 0, "log": " ".join(log_parts)}
 
@@ -253,19 +288,19 @@ def resolve_turn(match: MatchState) -> None:
         if has_damage or has_target_effects:
             if is_stealthed(target):
                 log_parts.append("Target is stealthed — no valid target.")
-                set_cooldown(actor, ability_id, int(ability.get("cooldown", 0) or 0))
+                set_cooldown(actor, ability_id, ability)
                 if ability.get("consume_effect"):
                     remove_effect(actor, ability["consume_effect"])
                 return {"damage": 0, "log": " ".join(log_parts)}
             if has_flag(target, "untargetable"):
-                log_parts.append("Target blinks away — no valid target.")
-                set_cooldown(actor, ability_id, int(ability.get("cooldown", 0) or 0))
+                log_parts.append("Target blinks away — Miss.")
+                set_cooldown(actor, ability_id, ability)
                 if ability.get("consume_effect"):
                     remove_effect(actor, ability["consume_effect"])
                 return {"damage": 0, "log": " ".join(log_parts)}
             if has_flag(target, "evade_all"):
                 log_parts.append("Evaded!")
-                set_cooldown(actor, ability_id, int(ability.get("cooldown", 0) or 0))
+                set_cooldown(actor, ability_id, ability)
                 if ability.get("consume_effect"):
                     remove_effect(actor, ability["consume_effect"])
                 return {"damage": 0, "log": " ".join(log_parts)}
@@ -274,7 +309,7 @@ def resolve_turn(match: MatchState) -> None:
             apply_effect_entries(actor, target, ability, log_parts)
 
         if not has_damage:
-            set_cooldown(actor, ability_id, int(ability.get("cooldown", 0) or 0))
+            set_cooldown(actor, ability_id, ability)
             return {"damage": 0, "log": " ".join(log_parts)}
 
         # Calculate base damage using appropriate stat
@@ -333,6 +368,9 @@ def resolve_turn(match: MatchState) -> None:
                 reduced = 0
                 log_parts.append(f"{prefix}Immune!")
             else:
+                multiplier = damage_multiplier_from_passives(actor)
+                if multiplier != 1.0:
+                    reduced = int(reduced * multiplier)
                 log_parts.append(f"{prefix}Deals {reduced} damage.")
 
             if reduced > 0:
@@ -384,7 +422,7 @@ def resolve_turn(match: MatchState) -> None:
         if ability.get("consume_effect"):
             remove_effect(actor, ability["consume_effect"])
 
-        set_cooldown(actor, ability_id, int(ability.get("cooldown", 0) or 0))
+        set_cooldown(actor, ability_id, ability)
 
         return {"damage": total_damage, "log": " ".join(log_parts)}
 
@@ -397,13 +435,17 @@ def resolve_turn(match: MatchState) -> None:
             return {"damage": 0, "log": f"{actor_sid[:5]} fumbles (unknown ability).", "resolved": True}
 
         if stunned_at_start.get(actor_sid, False) and not ability.get("allow_while_stunned"):
-            return {"damage": 0, "log": f"{actor_sid[:5]} is stunned and cannot act.", "resolved": True}
+            return {
+                "damage": 0,
+                "log": f"{actor_sid[:5]} tries to use {ability['name']} but is stunned and cannot act.",
+                "resolved": True,
+            }
 
         allowed_classes = ability.get("classes")
         if allowed_classes and actor.build.class_id not in allowed_classes:
             return {"damage": 0, "log": f"{actor_sid[:5]} cannot use {ability['name']}.", "resolved": True}
 
-        if actor.cooldowns.get(ability_id, 0) > 0:
+        if is_on_cooldown(actor, ability_id, ability):
             return {
                 "damage": 0,
                 "log": f"{actor_sid[:5]} tried to use {ability['name']} but it is on cooldown.",
@@ -480,14 +522,14 @@ def resolve_turn(match: MatchState) -> None:
 
         if ability.get("target_effects") and is_stealthed(target):
             log_parts.append("Target is stealthed — no valid target.")
-            set_cooldown(actor, ability_id, int(ability.get("cooldown", 0) or 0))
+            set_cooldown(actor, ability_id, ability)
             ctx["damage"] = 0
             ctx["log"] = " ".join(log_parts)
             ctx["resolved"] = True
             return
         if ability.get("target_effects") and has_flag(target, "untargetable"):
-            log_parts.append("Target blinks away — no valid target.")
-            set_cooldown(actor, ability_id, int(ability.get("cooldown", 0) or 0))
+            log_parts.append("Target blinks away — Miss.")
+            set_cooldown(actor, ability_id, ability)
             ctx["damage"] = 0
             ctx["log"] = " ".join(log_parts)
             ctx["resolved"] = True
@@ -501,7 +543,7 @@ def resolve_turn(match: MatchState) -> None:
         else:
             apply_effect_entries(actor, target, ability, log_parts)
 
-        set_cooldown(actor, ability_id, int(ability.get("cooldown", 0) or 0))
+        set_cooldown(actor, ability_id, ability)
         ctx["damage"] = 0
         ctx["log"] = " ".join(log_parts)
         ctx["resolved"] = True
@@ -558,7 +600,7 @@ def resolve_turn(match: MatchState) -> None:
             opponent = match.state[opponent_sid]
             if ps.build.class_id != "warrior":
                 continue
-            if ps.cooldowns.get("execute", 0) > 0:
+            if is_on_cooldown(ps, "execute", execute_ability):
                 continue
             if is_stunned(ps):
                 continue

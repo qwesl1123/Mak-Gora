@@ -63,6 +63,12 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 999,
         "flags": {"ambush_ready": True},
     },
+    "thistle_tea": {
+        "type": "status",
+        "name": "Thistle Tea",
+        "duration": 3,
+        "regen": {"energy": 30},
+    },
 }
 
 
@@ -240,6 +246,28 @@ def trigger_on_hit_passives(
                     )
 
     return bonus_damage
+
+def damage_multiplier_from_passives(attacker: PlayerState) -> float:
+    """Apply conditional damage multipliers from item passives."""
+    if not attacker.res:
+        return 1.0
+    hp_pct = attacker.res.hp / max(1, attacker.res.hp_max)
+    multiplier = 1.0
+    for effect in attacker.effects:
+        if effect.get("type") != "item_passive":
+            continue
+        passive = effect.get("passive", {}) or {}
+        if passive.get("trigger") != "on_damage":
+            continue
+        if passive.get("type") == "damage_bonus_above_hp":
+            threshold = float(passive.get("threshold", 0) or 0)
+            if hp_pct > threshold:
+                multiplier *= float(passive.get("multiplier", 1.0) or 1.0)
+        elif passive.get("type") == "damage_bonus_below_hp":
+            threshold = float(passive.get("threshold", 0) or 0)
+            if hp_pct < threshold:
+                multiplier *= float(passive.get("multiplier", 1.0) or 1.0)
+    return multiplier
 
 def tick_dots(ps: PlayerState, log: List[str], label: str) -> None:
     """Apply DoT damage (currently: burn)."""

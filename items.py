@@ -67,10 +67,22 @@ ITEMS = {
         "name": "Focus Charm",
         "slot": "trinket",
         "mods": {"mp_max": 10},
+        "passive": {
+            "type": "damage_bonus_above_hp",
+            "threshold": 0.7,
+            "multiplier": 1.1,
+            "trigger": "on_damage",
+        },
     },
     "rage_crystal": {
         "name": "Rage Crystal",
         "slot": "trinket",
         "mods": {"rage_max": 20},
+        "passive": {
+            "type": "damage_bonus_below_hp",
+            "threshold": 0.3,
+            "multiplier": 1.15,
+            "trigger": "on_damage",
+        },
     },
 }

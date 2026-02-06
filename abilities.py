@@ -57,8 +57,10 @@ ABILITIES = {
         "damage_type": "physical",
         "tags": ["attack", "physical"],
         "cooldown": 15,
+        "charges": 2,
         "classes": ["warrior"],
         "heal_on_hit": 40,
+        "resource_gain": {"rage": 5},
     },
     "mortal_strike": {
         "name": "Mortal Strike",
@@ -75,7 +77,7 @@ ABILITIES = {
         "cost": {"rage": 0},
         "dice": None,
         "tags": ["defense"],
-        "cooldown": 4,
+        "cooldown": 10,
         "classes": ["warrior"],
         "self_effects": [
             {"id": "die_by_sword", "duration": 2, "log": "becomes immune to physical damage."},
@@ -146,7 +148,7 @@ ABILITIES = {
         "cooldown": 3,
         "classes": ["rogue"],
         "target_effects": [
-            {"id": "stunned", "duration": 1, "log": "is caught off-guard."}
+            {"id": "stunned", "duration": 1, "log": "Target stunned."}
         ],
     },
     "vanish": {
@@ -184,6 +186,17 @@ ABILITIES = {
         "classes": ["rogue"],
         "self_effects": [
             {"id": "evasion", "duration": 2, "log": "becomes incredibly evasive."}
+        ],
+    },
+    "thistle_tea": {
+        "name": "Thistle Tea",
+        "cost": {"energy": 30},
+        "dice": None,
+        "tags": ["buff"],
+        "cooldown": 20,
+        "classes": ["rogue"],
+        "self_effects": [
+            {"id": "thistle_tea", "duration": 3, "log": "sips Thistle Tea."}
         ],
     },
     "shadow_blade": {
