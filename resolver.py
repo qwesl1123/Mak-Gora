@@ -252,7 +252,7 @@ def resolve_turn(match: MatchState) -> None:
         weapon_id = None
         if actor.build and actor.build.items:
             weapon_id = actor.build.items.get("weapon")
-        weapon_name = ITEMS.get(weapon_id, {}).get("name", "Unarmed")
+        weapon_name = ITEMS.get(weapon_id, {}).get("name", "their bare hands")
 
         if is_stunned(actor) and not ability.get("allow_while_stunned"):
             return {
@@ -533,7 +533,7 @@ def resolve_turn(match: MatchState) -> None:
         weapon_id = None
         if actor.build and actor.build.items:
             weapon_id = actor.build.items.get("weapon")
-        weapon_name = ITEMS.get(weapon_id, {}).get("name", "Unarmed")
+        weapon_name = ITEMS.get(weapon_id, {}).get("name", "their bare hands")
         log_parts = [f"{actor_sid[:5]} uses {weapon_name} to cast {ability['name']}."]
 
         if ability.get("target_effects") and stealth_targeting.get(target_sid, False):

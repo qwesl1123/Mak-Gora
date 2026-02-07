@@ -35,14 +35,24 @@
       * { box-sizing: border-box; margin: 0; padding: 0; }
 
       body {
-        background: 
-          linear-gradient(135deg, rgba(26, 20, 16, 0.95) 0%, rgba(45, 38, 32, 0.98) 100%),
-          url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"><rect width="100" height="100" fill="%231a1410"/><path d="M0 0L50 50M50 0L0 50M100 0L50 50M50 50L100 100M0 100L50 50" stroke="%23000" stroke-width="0.5" opacity="0.1"/></svg>');
+        background:
+          linear-gradient(
+            135deg,
+            rgba(10, 8, 6, 0.55) 0%,
+            rgba(10, 8, 6, 0.65) 100%
+          ),
+          url("/static/art/duel.webp");
+
+        background-size: cover;
+        background-position: center;
+        background-attachment: fixed;
+
         color: var(--text-light);
         font-family: 'Crimson Text', serif;
         min-height: 100vh;
         padding: 20px;
       }
+
 
       .container {
         max-width: 1400px;
@@ -654,8 +664,6 @@
                 </div>
               </div>
               
-              <div class="stat-row"><span>Energy:</span><strong id="friendlyEnergy">--</strong></div>
-              <div class="stat-row"><span>Rage:</span><strong id="friendlyRage">--</strong></div>
             </div>
 
             <!-- Enemy Stats -->
@@ -682,8 +690,6 @@
                 </div>
               </div>
               
-              <div class="stat-row"><span>Energy:</span><strong id="enemyEnergy">--</strong></div>
-              <div class="stat-row"><span>Rage:</span><strong id="enemyRage">--</strong></div>
             </div>
 
             <div class="controls">
@@ -1045,8 +1051,6 @@
       const friendlyPrimaryLabel = document.getElementById("friendlyPrimaryLabel");
       const friendlyPrimaryText = document.getElementById("friendlyPrimaryText");
       const friendlyPrimaryBar = document.getElementById("friendlyPrimaryBar");
-      const friendlyEnergy = document.getElementById("friendlyEnergy");
-      const friendlyRage = document.getElementById("friendlyRage");
       const friendlyWeapon = document.getElementById("friendlyWeapon");
       const friendlyArmor = document.getElementById("friendlyArmor");
       const friendlyTrinket = document.getElementById("friendlyTrinket");
@@ -1057,8 +1061,6 @@
       const enemyPrimaryLabel = document.getElementById("enemyPrimaryLabel");
       const enemyPrimaryText = document.getElementById("enemyPrimaryText");
       const enemyPrimaryBar = document.getElementById("enemyPrimaryBar");
-      const enemyEnergy = document.getElementById("enemyEnergy");
-      const enemyRage = document.getElementById("enemyRage");
       const enemyWeapon = document.getElementById("enemyWeapon");
       const enemyArmor = document.getElementById("enemyArmor");
       const enemyTrinket = document.getElementById("enemyTrinket");
@@ -1302,8 +1304,6 @@
           elements.hpBar.style.width = "0%";
           elements.primaryText.textContent = "--";
           elements.primaryBar.style.width = "0%";
-          elements.energy.textContent = "--";
-          elements.rage.textContent = "--";
           return;
         }
         
@@ -1321,8 +1321,6 @@
         elements.primaryLabel.textContent = resource.label || "Mana";
         elements.primaryLabel.style.color = resource.color || "var(--mana-blue)";
         elements.primaryBar.style.backgroundColor = resource.color || "var(--mana-blue)";
-        elements.energy.textContent = `${res.energy}/${res.energy_max}`;
-        elements.rage.textContent = `${res.rage}/${res.rage_max}`;
       }
 
       function renderStatus(stealthed, element) {
@@ -1342,8 +1340,6 @@
           primaryText: friendlyPrimaryText,
           primaryBar: friendlyPrimaryBar,
           primaryLabel: friendlyPrimaryLabel,
-          energy: friendlyEnergy,
-          rage: friendlyRage,
         }, data.you_resource || { id: "mp", label: "Mana", color: "var(--mana-blue)" });
         renderStatus(Boolean(data.you_stealthed), friendlyStatus);
         
@@ -1353,8 +1349,6 @@
           primaryText: enemyPrimaryText,
           primaryBar: enemyPrimaryBar,
           primaryLabel: enemyPrimaryLabel,
-          energy: enemyEnergy,
-          rage: enemyRage,
         }, data.enemy_resource || { id: "mp", label: "Mana", color: "var(--mana-blue)" });
         renderStatus(Boolean(data.enemy_stealthed), enemyStatus);
         
