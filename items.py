@@ -7,6 +7,20 @@ ITEMS = {
         "mods": {"atk": 5},
         "damage_type": "physical",
     },
+    "crusaders_greatsword": {
+        "name": "Crusader's Greatsword",
+        "slot": "weapon",
+        "mods": {"atk": 4, "int": 2},
+        "damage_type": "physical",
+        "color": "#a335ee",
+        "passive": {
+            "type": "empower_next_offense",
+            "chance": 0.25,
+            "multiplier": 1.2,
+            "trigger": "on_hit",
+            "effect_id": "crusader_empower",
+        },
+    },
     "spirit_light_sword": {
         "name": "Spirit Light Sword",
         "slot": "weapon",

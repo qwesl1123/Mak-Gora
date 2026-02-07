@@ -327,6 +327,15 @@ def resolve_turn(match: MatchState) -> None:
         damage_type = ability.get("damage_type", "physical")
         hits = int(ability.get("hits", 1) or 1)
         total_damage = 0
+        empower_multiplier = 1.0
+        consume_empower = False
+        empower_logged = False
+        if offensive_action and has_damage:
+            for effect in actor.effects:
+                if effect.get("flags", {}).get("empower_next_offense"):
+                    empower_multiplier = float(effect.get("damage_mult", 1.0) or 1.0)
+                    consume_empower = True
+                    break
         miss_chance = float(ITEMS.get(weapon_id, {}).get("miss_chance", 0) or 0) if weapon_id else 0.0
         accuracy = hit_chance(
             modify_stat(actor, "acc", actor.stats.get("acc", 90)),
@@ -383,6 +392,11 @@ def resolve_turn(match: MatchState) -> None:
                 multiplier = damage_multiplier_from_passives(actor)
                 if multiplier != 1.0:
                     reduced = int(reduced * multiplier)
+                if empower_multiplier != 1.0:
+                    reduced = int(reduced * empower_multiplier)
+                    if not empower_logged:
+                        log_parts.append(f"{prefix}Empowered strike!")
+                        empower_logged = True
                 log_parts.append(f"{prefix}Deals {reduced} damage.")
 
             if reduced > 0:
@@ -413,6 +427,24 @@ def resolve_turn(match: MatchState) -> None:
                     extra_logs.extend(passive_logs)
 
             heal_on_hit = int(ability.get("heal_on_hit", 0) or 0)
+            heal_scaling = ability.get("heal_scaling", {}) or {}
+            heal_dice = ability.get("heal_dice")
+            if heal_scaling or heal_dice:
+                roll_power = 0
+                if heal_dice:
+                    roll_power = roll(heal_dice.get("type", "d0"), r)
+                if "atk" in heal_scaling:
+                    heal_on_hit = base_damage(
+                        modify_stat(actor, "atk", actor.stats.get("atk", 0)),
+                        heal_scaling["atk"],
+                        roll_power,
+                    )
+                elif "int" in heal_scaling:
+                    heal_on_hit = base_damage(
+                        modify_stat(actor, "int", actor.stats.get("int", 0)),
+                        heal_scaling["int"],
+                        roll_power,
+                    )
             if reduced > 0 and heal_on_hit > 0:
                 actor.res.hp = min(actor.res.hp + heal_on_hit, actor.res.hp_max)
                 log_parts.append(f"{prefix}Heals {heal_on_hit} HP.")
@@ -433,6 +465,9 @@ def resolve_turn(match: MatchState) -> None:
 
         if ability.get("consume_effect"):
             remove_effect(actor, ability["consume_effect"])
+
+        if consume_empower and empower_multiplier != 1.0:
+            remove_effect(actor, "crusader_empower")
 
         set_cooldown(actor, ability_id, ability)
         if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):

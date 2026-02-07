@@ -576,6 +576,16 @@
         padding-bottom: 10px;
       }
 
+      .doc-subtitle {
+        font-family: 'Cinzel', serif;
+        font-size: 1.4rem;
+        color: var(--text-light);
+        margin-top: 20px;
+        margin-bottom: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+      }
+
       .doc-content {
         font-size: 1.1rem;
         line-height: 1.8;
@@ -773,6 +783,13 @@
             <p><span class="stat">+5 Physical Attack</span></p>
             <p>A reliable blade forged in the fires of war. Ideal for Warriors.</p>
           </div>
+
+          <div class="doc-item">
+            <h4>Crusader's Greatsword</h4>
+            <p><span class="stat">+4 Physical Attack</span> | <span class="stat">+2 Intellect</span></p>
+            <p><span class="stat">Passive: 25% chance on hit to empower your next offensive ability (+20% damage)</span></p>
+            <p>An epic blade that channels righteous fury into your next strike.</p>
+          </div>
           
           <div class="doc-item">
             <h4>Spirit Light Sword</h4>
@@ -872,124 +889,161 @@
 
       <div class="doc-section">
         <h3>Abilities</h3>
+        <h4 class="doc-subtitle">General</h4>
         <div class="doc-grid">
           <div class="doc-item">
             <h4>Basic Attack</h4>
             <p><span class="stat">Cost: Free</span> | <span class="stat">Type: Physical</span></p>
+            <p><span class="stat">Command: <span class="kbd">basic_attack</span></span></p>
             <p>Standard melee attack. Damage scales with Attack stat. Roll d4 for power.</p>
-          </div>
-
-          <div class="doc-item">
-            <h4>Fireball</h4>
-            <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Type: Magic</span> | <span class="stat">Cooldown: 1</span></p>
-            <p>Arcane blast. Damage scales with Intellect (0.4x) and d6 power. 15% chance to trigger Hot Streak.</p>
           </div>
 
           <div class="doc-item">
             <h4>Defend</h4>
             <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 2</span></p>
+            <p><span class="stat">Command: <span class="kbd">defend</span></span></p>
             <p>Defensive stance. Reduces incoming damage by 50% for 1 turn.</p>
           </div>
+        </div>
 
+        <h4 class="doc-subtitle">Warrior</h4>
+        <div class="doc-grid">
           <div class="doc-item">
             <h4>Overpower</h4>
             <p><span class="stat">Cost: 0 Rage</span> | <span class="stat">Type: Physical</span> | <span class="stat">Cooldown: 1</span></p>
+            <p><span class="stat">Command: <span class="kbd">overpower</span></span></p>
             <p>Weapon strike that scales with Attack (0.6x) and d4 power. Generates Rage equal to damage dealt.</p>
           </div>
 
           <div class="doc-item">
             <h4>Victory Rush</h4>
-            <p><span class="stat">Cost: 0 Rage</span> | <span class="stat">Type: Physical</span> | <span class="stat">Cooldown: 15 (2 charges)</span></p>
-            <p>Quick strike that scales with Attack (0.5x) and d2 power. Heals 40 HP on hit and generates 5 Rage.</p>
+            <p><span class="stat">Cost: 0 Rage</span> | <span class="stat">Type: Physical</span> | <span class="stat">Cooldown: 20 (2 charges)</span></p>
+            <p><span class="stat">Command: <span class="kbd">victory_rush</span></span></p>
+            <p>Quick strike that scales with Attack (0.5x) and d2 power. Heals for Attack (2.2x) and d6 power on hit and generates 5 Rage.</p>
           </div>
 
           <div class="doc-item">
             <h4>Rampage</h4>
             <p><span class="stat">Cost: 15 Rage</span> | <span class="stat">Type: Physical</span> | <span class="stat">Cooldown: 0</span></p>
+            <p><span class="stat">Command: <span class="kbd">rampage</span></span></p>
             <p>Rapidly strike twice. Each hit scales with Attack (0.7x) and d4 power.</p>
           </div>
 
           <div class="doc-item">
             <h4>Mortal Strike</h4>
             <p><span class="stat">Cost: 30 Rage</span> | <span class="stat">Type: Physical</span> | <span class="stat">Cooldown: 0</span></p>
+            <p><span class="stat">Command: <span class="kbd">mortal_strike</span></span></p>
             <p>Massive blow. Scales with Attack (2.0x) and d6 power.</p>
           </div>
 
           <div class="doc-item">
             <h4>Execute</h4>
             <p><span class="stat">Cost: 20 Rage</span> | <span class="stat">Type: Physical</span> | <span class="stat">Cooldown: 1</span></p>
+            <p><span class="stat">Command: <span class="kbd">execute</span></span></p>
             <p>Finishing strike that can only be used when the enemy is below 20% HP. Scales with Attack (1.5x) and d6 power.</p>
           </div>
 
           <div class="doc-item">
             <h4>Die by the Sword</h4>
             <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 10</span></p>
+            <p><span class="stat">Command: <span class="kbd">die_by_sword</span></span></p>
             <p>Become immune to physical damage and reduce all incoming damage by 30% for 2 turns.</p>
+          </div>
+        </div>
+
+        <h4 class="doc-subtitle">Mage</h4>
+        <div class="doc-grid">
+          <div class="doc-item">
+            <h4>Fireball</h4>
+            <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Type: Magic</span> | <span class="stat">Cooldown: 1</span></p>
+            <p><span class="stat">Command: <span class="kbd">fireball</span></span></p>
+            <p>Arcane blast. Damage scales with Intellect (0.4x) and d6 power. 15% chance to trigger Hot Streak.</p>
           </div>
 
           <div class="doc-item">
             <h4>Pyroblast</h4>
             <p><span class="stat">Cost: 20 Mana</span> | <span class="stat">Type: Magic</span> | <span class="stat">Cooldown: 0</span></p>
+            <p><span class="stat">Command: <span class="kbd">pyroblast</span></span></p>
             <p>Devastating spell that requires Hot Streak. Scales with Intellect (2.0x) and d10 power.</p>
           </div>
 
           <div class="doc-item">
             <h4>Ring of Ice</h4>
             <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 3</span></p>
+            <p><span class="stat">Command: <span class="kbd">ring_of_ice</span></span></p>
             <p>Freezes the enemy in place, stunning them for 1 turn.</p>
           </div>
 
           <div class="doc-item">
             <h4>Ice Block</h4>
             <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 20</span></p>
+            <p><span class="stat">Command: <span class="kbd">iceblock</span></span></p>
             <p>Become immune to all damage for 3 turns. Restores 10 HP and 25 Mana each turn, but you cannot act.</p>
           </div>
 
           <div class="doc-item">
             <h4>Blink</h4>
             <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 6</span></p>
+            <p><span class="stat">Command: <span class="kbd">blink</span></span></p>
             <p>Blinks away, causing enemy attacks to miss for the current and next turn.</p>
           </div>
+        </div>
 
+        <h4 class="doc-subtitle">Rogue</h4>
+        <div class="doc-grid">
           <div class="doc-item">
             <h4>Cheap Shot</h4>
             <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 3</span></p>
+            <p><span class="stat">Command: <span class="kbd">cheap_shot</span></span></p>
             <p>Stuns the enemy for 1 turn.</p>
+          </div>
+
+          <div class="doc-item">
+            <h4>Kidney Shot</h4>
+            <p><span class="stat">Cost: 5 Energy</span> | <span class="stat">Cooldown: 10</span></p>
+            <p><span class="stat">Command: <span class="kbd">kidney_shot</span></span></p>
+            <p>Stuns the enemy for 2 turns.</p>
           </div>
 
           <div class="doc-item">
             <h4>Vanish</h4>
             <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 15</span></p>
+            <p><span class="stat">Command: <span class="kbd">vanish</span></span></p>
             <p>Enter Stealth for 3 turns, restoring 15 HP and 5 Energy each turn. Stealth breaks if you take more than 5 damage.</p>
           </div>
 
           <div class="doc-item">
             <h4>Eviscerate</h4>
             <p><span class="stat">Cost: 30 Energy</span> | <span class="stat">Type: Physical</span> | <span class="stat">Cooldown: 1</span></p>
+            <p><span class="stat">Command: <span class="kbd">eviscerate</span></span></p>
             <p>Heavy strike that scales with Attack (1.2x) and d10 power.</p>
           </div>
 
           <div class="doc-item">
             <h4>Evasion</h4>
             <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 20</span></p>
+            <p><span class="stat">Command: <span class="kbd">evasion</span></span></p>
             <p>Double your evasion for 2 turns while still allowing attacks.</p>
           </div>
 
           <div class="doc-item">
             <h4>Thistle Tea</h4>
-            <p><span class="stat">Cost: 30 Energy</span> | <span class="stat">Cooldown: 20</span></p>
+            <p><span class="stat">Cost: 30 Energy</span> | <span class="stat">Cooldown: 15</span></p>
+            <p><span class="stat">Command: <span class="kbd">thistle_tea</span></span></p>
             <p>Restore 30 Energy at the end of each turn for 3 turns.</p>
           </div>
 
           <div class="doc-item">
             <h4>Shadow Blade</h4>
             <p><span class="stat">Cost: 15 Energy</span> | <span class="stat">Type: Physical</span></p>
+            <p><span class="stat">Command: <span class="kbd">shadow_blade</span></span></p>
             <p>Quick strike that scales with Attack (0.3x) and d6 power. While stealthed, it scales with Attack (1.0x) and d8 power. 20% chance to proc Ambush.</p>
           </div>
 
           <div class="doc-item">
             <h4>Ambush</h4>
             <p><span class="stat">Cost: 15 Energy</span> | <span class="stat">Type: Physical</span></p>
+            <p><span class="stat">Command: <span class="kbd">ambush</span></span></p>
             <p>Powerful strike only usable after an Ambush proc. Scales with Attack (2.0x) and d6 power.</p>
           </div>
         </div>
@@ -1084,6 +1138,77 @@
         return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       }
 
+      const warriorAbilities = [
+        "Overpower",
+        "Victory Rush",
+        "Rampage",
+        "Mortal Strike",
+        "Execute",
+        "Die by the Sword",
+      ];
+      const mageAbilities = [
+        "Fireball",
+        "Pyroblast",
+        "Ice Block",
+        "Ring of Ice",
+        "Blink",
+      ];
+      const rogueAbilities = [
+        "Cheap Shot",
+        "Kidney Shot",
+        "Vanish",
+        "Eviscerate",
+        "Evasion",
+        "Shadow Blade",
+        "Ambush",
+        "Thistle Tea",
+      ];
+      const greenItems = [
+        "Steel Long Sword",
+        "Wand of Fire",
+        "Plate Armor",
+        "Steel Daggers",
+        "Cloth Armor",
+      ];
+      const blueItems = [
+        "Spirit Light Sword",
+        "Staff of Immortality",
+        "Leather Armor",
+        "Focus Charm",
+        "Rage Crystal",
+        "Spear of Light",
+      ];
+      const purpleItems = [
+        "Glock 19",
+        "Void Blades",
+        "Crusader's Greatsword",
+      ];
+
+      function itemClassForName(name) {
+        if (!name) {
+          return "";
+        }
+        if (greenItems.includes(name)) {
+          return "log-item-green";
+        }
+        if (blueItems.includes(name)) {
+          return "log-item-blue";
+        }
+        if (purpleItems.includes(name)) {
+          return "log-item-purple";
+        }
+        return "";
+      }
+
+      function setItemLabel(element, name) {
+        element.textContent = name || "--";
+        element.classList.remove("log-item-green", "log-item-blue", "log-item-purple");
+        const itemClass = itemClassForName(name);
+        if (itemClass) {
+          element.classList.add(itemClass);
+        }
+      }
+
       function highlightLogLine(text) {
         if (text.includes("HOT STREAK") || text.includes("Can Use Execute")) {
           return escapeHtml(text);
@@ -1102,50 +1227,6 @@
           output = output.replace(pattern, `<span class="${className}">$&</span>`);
         });
 
-        const warriorAbilities = [
-          "Overpower",
-          "Victory Rush",
-          "Rampage",
-          "Mortal Strike",
-          "Execute",
-          "Die by the Sword",
-        ];
-        const mageAbilities = [
-          "Fireball",
-          "Pyroblast",
-          "Ice Block",
-          "Ring of Ice",
-          "Blink",
-        ];
-        const rogueAbilities = [
-          "Cheap Shot",
-          "Vanish",
-          "Eviscerate",
-          "Evasion",
-          "Shadow Blade",
-          "Ambush",
-          "Thistle Tea",
-        ];
-        const greenItems = [
-          "Steel Long Sword",
-          "Wand of Fire",
-          "Plate Armor",
-          "Steel Daggers",
-          "Cloth Armor",
-        ];
-        const blueItems = [
-          "Spirit Light Sword",
-          "Staff of Immortality",
-          "Leather Armor",
-          "Focus Charm",
-          "Rage Crystal",
-          "Spear of Light",
-        ];
-        const purpleItems = [
-          "Glock 19",
-          "Void Blades",
-        ];
-
         warriorAbilities.forEach((ability) => {
           const pattern = new RegExp(`\\b${escapeRegExp(ability)}\\b`, "g");
           output = output.replace(pattern, `<span class="log-ability-warrior">$&</span>`);
@@ -1159,15 +1240,18 @@
           output = output.replace(pattern, `<span class="log-ability-rogue">$&</span>`);
         });
         greenItems.forEach((item) => {
-          const pattern = new RegExp(`\\b${escapeRegExp(item)}\\b`, "g");
+          const escapedItem = escapeRegExp(item).replace(/'/g, "(?:'|&#039;)");
+          const pattern = new RegExp(`\\b${escapedItem}\\b`, "g");
           output = output.replace(pattern, `<span class="log-item-green">$&</span>`);
         });
         blueItems.forEach((item) => {
-          const pattern = new RegExp(`\\b${escapeRegExp(item)}\\b`, "g");
+          const escapedItem = escapeRegExp(item).replace(/'/g, "(?:'|&#039;)");
+          const pattern = new RegExp(`\\b${escapedItem}\\b`, "g");
           output = output.replace(pattern, `<span class="log-item-blue">$&</span>`);
         });
         purpleItems.forEach((item) => {
-          const pattern = new RegExp(`\\b${escapeRegExp(item)}\\b`, "g");
+          const escapedItem = escapeRegExp(item).replace(/'/g, "(?:'|&#039;)");
+          const pattern = new RegExp(`\\b${escapedItem}\\b`, "g");
           output = output.replace(pattern, `<span class="log-item-purple">$&</span>`);
         });
 
@@ -1276,14 +1360,14 @@
         
         // Update equipped items
         if (data.you_items) {
-          friendlyWeapon.textContent = data.you_items.weapon || "--";
-          friendlyArmor.textContent = data.you_items.armor || "--";
-          friendlyTrinket.textContent = data.you_items.trinket || "--";
+          setItemLabel(friendlyWeapon, data.you_items.weapon);
+          setItemLabel(friendlyArmor, data.you_items.armor);
+          setItemLabel(friendlyTrinket, data.you_items.trinket);
         }
         if (data.enemy_items) {
-          enemyWeapon.textContent = data.enemy_items.weapon || "--";
-          enemyArmor.textContent = data.enemy_items.armor || "--";
-          enemyTrinket.textContent = data.enemy_items.trinket || "--";
+          setItemLabel(enemyWeapon, data.enemy_items.weapon);
+          setItemLabel(enemyArmor, data.enemy_items.armor);
+          setItemLabel(enemyTrinket, data.enemy_items.trinket);
         }
         
       function primaryResourceFrom(res, resource) {

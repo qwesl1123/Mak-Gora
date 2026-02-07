@@ -71,6 +71,13 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 3,
         "regen": {"energy": 30},
     },
+    "crusader_empower": {
+        "type": "status",
+        "name": "Crusader's Might",
+        "duration": 999,
+        "damage_mult": 1.2,
+        "flags": {"empower_next_offense": True},
+    },
 }
 
 
@@ -269,6 +276,17 @@ def trigger_on_hit_passives(
                 bonus_damage += reduced
                 log_lines.append(
                     f"{attacker.sid[:5]} calls upon the void with {effect.get('source_item', 'item')}. Roll {dice} = {roll_power}. Deals {reduced} magic damage."
+                )
+        elif passive.get("type") == "empower_next_offense":
+            chance = float(passive.get("chance", 0) or 0)
+            effect_id = passive.get("effect_id", "crusader_empower")
+            if chance > 0 and rng.random() <= chance and not has_effect(attacker, effect_id):
+                overrides = {}
+                if passive.get("multiplier") is not None:
+                    overrides["damage_mult"] = float(passive.get("multiplier", 1.0) or 1.0)
+                apply_effect_by_id(attacker, effect_id, overrides=overrides or None)
+                log_lines.append(
+                    f"{attacker.sid[:5]} feels empowered by {effect.get('source_item', 'item')}."
                 )
 
     return bonus_damage, log_lines

@@ -56,10 +56,11 @@ ABILITIES = {
         "scaling": {"atk": 0.5},
         "damage_type": "physical",
         "tags": ["attack", "physical"],
-        "cooldown": 15,
+        "cooldown": 20,
         "charges": 2,
         "classes": ["warrior"],
-        "heal_on_hit": 40,
+        "heal_scaling": {"atk": 2.2},
+        "heal_dice": {"type": "d6", "power_on": "roll"},
         "resource_gain": {"rage": 5},
     },
     "mortal_strike": {
@@ -151,6 +152,17 @@ ABILITIES = {
             {"id": "stunned", "duration": 1, "log": "Target stunned."}
         ],
     },
+    "kidney_shot": {
+        "name": "Kidney Shot",
+        "cost": {"energy": 5},
+        "dice": None,
+        "tags": ["control"],
+        "cooldown": 10,
+        "classes": ["rogue"],
+        "target_effects": [
+            {"id": "stunned", "duration": 2, "log": "Target stunned."}
+        ],
+    },
     "vanish": {
         "name": "Vanish",
         "cost": {"energy": 0},
@@ -193,7 +205,7 @@ ABILITIES = {
         "cost": {"energy": 30},
         "dice": None,
         "tags": ["buff"],
-        "cooldown": 20,
+        "cooldown": 15,
         "classes": ["rogue"],
         "self_effects": [
             {"id": "thistle_tea", "duration": 3, "log": "sips Thistle Tea."}
