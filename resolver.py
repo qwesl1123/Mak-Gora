@@ -18,6 +18,7 @@ from .effects import (
     break_stealth_on_damage,
     has_effect,
     remove_effect,
+    remove_stealth,
     modify_stat,
     is_stunned,
     is_stealthed,
@@ -150,6 +151,8 @@ def resolve_turn(match: MatchState) -> None:
     a1 = match.submitted.get(sids[0], {})
     a2 = match.submitted.get(sids[1], {})
     stunned_at_start = {sid: is_stunned(match.state[sid]) for sid in sids}
+    stealth_start_at_turn_begin = {sid: is_stealthed(match.state[sid]) for sid in sids}
+    stealth_targeting = dict(stealth_start_at_turn_begin)
     match.log.append(f"Turn {match.turn + 1}")
 
     def can_pay_costs(ps: PlayerState, costs: Dict[str, int]) -> Tuple[bool, str]:
@@ -206,12 +209,12 @@ def resolve_turn(match: MatchState) -> None:
             if entry.get("log"):
                 log_parts.append(entry["log"])
 
-    def break_stealth_on_action(actor: PlayerState, ability: Dict[str, Any]) -> None:
-        if not has_effect(actor, "stealth"):
-            return
+    def is_offensive_action(ability: Dict[str, Any]) -> bool:
         if "pass" in (ability.get("tags") or []):
-            return
-        remove_effect(actor, "stealth")
+            return False
+        has_damage = any(value for value in (ability.get("dice"), ability.get("scaling"), ability.get("flat_damage")))
+        has_target_effects = bool(ability.get("target_effects"))
+        return has_damage or has_target_effects
 
     def resolve_action(actor_sid: str, target_sid: str, action: Dict[str, Any]) -> Dict[str, Any]:
         actor = match.state[actor_sid]
@@ -267,7 +270,7 @@ def resolve_turn(match: MatchState) -> None:
             return {"damage": 0, "log": " ".join(log_parts)}
 
         was_stealthed = has_effect(actor, "stealth")
-        break_stealth_on_action(actor, ability)
+        offensive_action = is_offensive_action(ability)
 
         consume_costs(actor, ability.get("cost", {}))
 
@@ -286,23 +289,29 @@ def resolve_turn(match: MatchState) -> None:
         has_damage = any(value for value in (dice_data, scaling, flat_damage))
 
         if has_damage or has_target_effects:
-            if is_stealthed(target):
+            if stealth_targeting.get(target_sid, False):
                 log_parts.append("Target is stealthed — no valid target.")
                 set_cooldown(actor, ability_id, ability)
                 if ability.get("consume_effect"):
                     remove_effect(actor, ability["consume_effect"])
+                if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
+                    remove_stealth(actor)
                 return {"damage": 0, "log": " ".join(log_parts)}
             if has_flag(target, "untargetable"):
                 log_parts.append("Target blinks away — Miss.")
                 set_cooldown(actor, ability_id, ability)
                 if ability.get("consume_effect"):
                     remove_effect(actor, ability["consume_effect"])
+                if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
+                    remove_stealth(actor)
                 return {"damage": 0, "log": " ".join(log_parts)}
             if has_flag(target, "evade_all"):
                 log_parts.append("Evaded!")
                 set_cooldown(actor, ability_id, ability)
                 if ability.get("consume_effect"):
                     remove_effect(actor, ability["consume_effect"])
+                if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
+                    remove_stealth(actor)
                 return {"damage": 0, "log": " ".join(log_parts)}
 
         if has_self_effects or has_target_effects:
@@ -310,6 +319,8 @@ def resolve_turn(match: MatchState) -> None:
 
         if not has_damage:
             set_cooldown(actor, ability_id, ability)
+            if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
+                remove_stealth(actor)
             return {"damage": 0, "log": " ".join(log_parts)}
 
         # Calculate base damage using appropriate stat
@@ -424,6 +435,8 @@ def resolve_turn(match: MatchState) -> None:
             remove_effect(actor, ability["consume_effect"])
 
         set_cooldown(actor, ability_id, ability)
+        if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
+            remove_stealth(actor)
 
         return {
             "damage": total_damage,
@@ -515,8 +528,6 @@ def resolve_turn(match: MatchState) -> None:
         ability = ctx["ability"]
         ability_id = ctx["ability_id"]
 
-        break_stealth_on_action(actor, ability)
-
         consume_costs(actor, ability.get("cost", {}))
 
         weapon_id = None
@@ -525,12 +536,14 @@ def resolve_turn(match: MatchState) -> None:
         weapon_name = ITEMS.get(weapon_id, {}).get("name", "Unarmed")
         log_parts = [f"{actor_sid[:5]} uses {weapon_name} to cast {ability['name']}."]
 
-        if ability.get("target_effects") and is_stealthed(target):
+        if ability.get("target_effects") and stealth_targeting.get(target_sid, False):
             log_parts.append("Target is stealthed — no valid target.")
             set_cooldown(actor, ability_id, ability)
             ctx["damage"] = 0
             ctx["log"] = " ".join(log_parts)
             ctx["resolved"] = True
+            if is_offensive_action(ability) and stealth_start_at_turn_begin.get(actor_sid, False):
+                remove_stealth(actor)
             return
         if ability.get("target_effects") and has_flag(target, "untargetable"):
             log_parts.append("Target blinks away — Miss.")
@@ -538,6 +551,8 @@ def resolve_turn(match: MatchState) -> None:
             ctx["damage"] = 0
             ctx["log"] = " ".join(log_parts)
             ctx["resolved"] = True
+            if is_offensive_action(ability) and stealth_start_at_turn_begin.get(actor_sid, False):
+                remove_stealth(actor)
             return
 
         if ability.get("effect"):
@@ -552,9 +567,12 @@ def resolve_turn(match: MatchState) -> None:
         ctx["damage"] = 0
         ctx["log"] = " ".join(log_parts)
         ctx["resolved"] = True
+        if is_offensive_action(ability) and stealth_start_at_turn_begin.get(actor_sid, False):
+            remove_stealth(actor)
 
     resolve_immediate_effects(sids[0], sids[1], contexts[sids[0]])
     resolve_immediate_effects(sids[1], sids[0], contexts[sids[1]])
+    stealth_targeting = {sid: is_stealthed(match.state[sid]) for sid in sids}
 
     def finalize_action(actor_sid: str, target_sid: str, action: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
         if ctx.get("resolved"):

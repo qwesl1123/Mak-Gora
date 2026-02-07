@@ -130,6 +130,10 @@ def remove_effect(target: PlayerState, effect_id: str) -> None:
     target.effects = [effect for effect in target.effects if effect.get("id") != effect_id]
 
 
+def remove_stealth(target: PlayerState) -> None:
+    remove_effect(target, "stealth")
+
+
 def break_stealth_on_damage(target: PlayerState, damage: int) -> None:
     if damage <= 0:
         return
@@ -138,7 +142,7 @@ def break_stealth_on_damage(target: PlayerState, damage: int) -> None:
             continue
         threshold = effect.get("break_on_damage_over")
         if threshold is None or damage > int(threshold):
-            remove_effect(target, "stealth")
+            remove_stealth(target)
         return
 
 
