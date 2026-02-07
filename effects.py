@@ -5,6 +5,8 @@ from typing import Any, Dict, List, Optional
 
 from .models import PlayerState
 from ..content.balance import DEFAULTS
+from .dice import roll
+from .rules import mitigate
 
 EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
     "hot_streak": {
@@ -207,13 +209,13 @@ def apply_burn(target: PlayerState, value: int, source_item: str = "Unknown", du
 def trigger_on_hit_passives(
     attacker: PlayerState,
     target: PlayerState,
-    log: List[str],
     base_damage: int,
     damage_type: str,
     rng,
-) -> int:
+) -> tuple[int, List[str]]:
     """Run attacker item passives that trigger on_hit."""
     bonus_damage = 0
+    log_lines: List[str] = []
     for effect in attacker.effects:
         if effect.get("type") != "item_passive":
             continue
@@ -230,8 +232,7 @@ def trigger_on_hit_passives(
                     source_item=str(effect.get("source_item", "Unknown")),
                     duration=999,
                 )
-                # This log is separate from the action's one-line log.
-                log.append(
+                log_lines.append(
                     f"{attacker.sid[:5]} scorches the target with {effect.get('source_item', 'item')} ({burn_value} damage/turn)."
                 )
         elif passive.get("type") == "strike_again":
@@ -241,11 +242,32 @@ def trigger_on_hit_passives(
                 extra = int(base_damage * multiplier)
                 if extra > 0:
                     bonus_damage += extra
-                    log.append(
+                    log_lines.append(
                         f"{attacker.sid[:5]} strikes again with {effect.get('source_item', 'item')} for {extra} bonus damage."
                     )
+        elif passive.get("type") == "void_blade":
+            if base_damage <= 0:
+                continue
+            int_multiplier = float(passive.get("int_multiplier", 0.4) or 0.4)
+            dice = passive.get("dice", "d4")
+            roll_power = roll(dice, rng) if dice else 0
+            intellect = modify_stat(attacker, "int", attacker.stats.get("int", 0))
+            raw = int(intellect * int_multiplier) + int(roll_power)
+            if raw <= 0:
+                continue
+            reduced = mitigate(raw, modify_stat(target, "def", target.stats.get("def", 0)))
+            resist = modify_stat(target, "magic_resist", target.stats.get("magic_resist", 0))
+            reduced = max(0, reduced - resist)
+            reduced = int(reduced * mitigation_multiplier(target))
+            if is_damage_immune(target, "magic"):
+                reduced = 0
+            if reduced > 0:
+                bonus_damage += reduced
+                log_lines.append(
+                    f"{attacker.sid[:5]} calls upon the void with {effect.get('source_item', 'item')}. Roll {dice} = {roll_power}. Deals {reduced} magic damage."
+                )
 
-    return bonus_damage
+    return bonus_damage, log_lines
 
 def damage_multiplier_from_passives(attacker: PlayerState) -> float:
     """Apply conditional damage multipliers from item passives."""

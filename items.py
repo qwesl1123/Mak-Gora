@@ -36,6 +36,19 @@ ITEMS = {
         "classes": ["rogue"],
         "passive": {"type": "strike_again", "chance": 0.25, "multiplier": 0.4, "trigger": "on_hit"},
     },
+    "spear_of_light": {
+        "name": "Spear of Light",
+        "slot": "weapon",
+        "mods": {"atk": 3, "int": 3, "magic_resist": 2},
+        "damage_type": "physical",
+    },
+    "void_blades": {
+        "name": "Void Blades",
+        "slot": "weapon",
+        "mods": {"atk": 3, "int": 2},
+        "damage_type": "physical",
+        "passive": {"type": "void_blade", "trigger": "on_hit", "int_multiplier": 0.4, "dice": "d4"},
+    },
     "glock_19": {
         "name": "Glock 19",
         "slot": "weapon",

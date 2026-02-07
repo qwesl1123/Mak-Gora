@@ -322,6 +322,7 @@ def resolve_turn(match: MatchState) -> None:
             modify_stat(target, "eva", target.stats.get("eva", 0)),
         )
 
+        extra_logs: list[str] = []
         for hit_index in range(1, hits + 1):
             prefix = f"Hit {hit_index}: " if hits > 1 else ""
             roll_power = 0
@@ -387,18 +388,18 @@ def resolve_turn(match: MatchState) -> None:
                             )
 
             # Apply on-hit passive effects (weapons/trinkets etc.)
-            # NOTE: these log directly into match.log (separate from the action's one-line log).
             if reduced > 0:
-                bonus_damage = trigger_on_hit_passives(
+                bonus_damage, passive_logs = trigger_on_hit_passives(
                     actor,
                     target,
-                    match.log,
                     reduced,
                     damage_type,
                     r,
                 )
                 if bonus_damage > 0:
                     reduced += bonus_damage
+                if passive_logs:
+                    extra_logs.extend(passive_logs)
 
             heal_on_hit = int(ability.get("heal_on_hit", 0) or 0)
             if reduced > 0 and heal_on_hit > 0:
@@ -424,7 +425,11 @@ def resolve_turn(match: MatchState) -> None:
 
         set_cooldown(actor, ability_id, ability)
 
-        return {"damage": total_damage, "log": " ".join(log_parts)}
+        return {
+            "damage": total_damage,
+            "log": " ".join(log_parts),
+            "extra_logs": extra_logs,
+        }
 
     def build_immediate_resolution(actor_sid: str, target_sid: str, action: Dict[str, Any]) -> Dict[str, Any]:
         actor = match.state[actor_sid]
@@ -560,7 +565,9 @@ def resolve_turn(match: MatchState) -> None:
     result1 = finalize_action(sids[0], sids[1], a1, contexts[sids[0]])
     result2 = finalize_action(sids[1], sids[0], a2, contexts[sids[1]])
     match.log.append(result1["log"])
+    match.log.extend(result1.get("extra_logs", []))
     match.log.append(result2["log"])
+    match.log.extend(result2.get("extra_logs", []))
 
     # Apply damage
     match.state[sids[1]].res.hp -= result1["damage"]
