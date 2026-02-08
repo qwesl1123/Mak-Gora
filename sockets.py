@@ -70,6 +70,8 @@ def snapshot_for(match, viewer_sid):
         r = ps.res
         return {
             "hp": r.hp, "hp_max": r.hp_max,
+            "absorb": getattr(r, "absorb", 0),
+            "absorb_max": getattr(r, "absorb_max", None),
             "mp": r.mp, "mp_max": r.mp_max,
             "energy": r.energy, "energy_max": r.energy_max,
             "rage": r.rage, "rage_max": r.rage_max,

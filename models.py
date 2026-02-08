@@ -12,6 +12,8 @@ class Resources:
     energy_max: int
     rage: int
     rage_max: int
+    absorb: int = 0
+    absorb_max: Optional[int] = None
 
 @dataclass
 class PlayerBuild:

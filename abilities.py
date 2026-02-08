@@ -141,6 +141,14 @@ ABILITIES = {
             {"id": "stunned", "duration": 1, "log": "freezes the enemy solid."}
         ],
     },
+    "ice_barrier": {
+        "name": "Ice Barrier",
+        "cost": {"mp": 10},
+        "dice": None,
+        "tags": ["spell", "defense"],
+        "cooldown": 15,
+        "classes": ["mage"],
+    },
     "cheap_shot": {
         "name": "Cheap Shot",
         "cost": {"energy": 0},

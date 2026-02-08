@@ -24,6 +24,8 @@ from .effects import (
     is_stealthed,
     is_damage_immune,
     has_flag,
+    add_absorb,
+    consume_absorb,
 )
 
 def cooldown_slots(ps: PlayerState, ability_id: str) -> list:
@@ -65,6 +67,7 @@ def apply_prep_build(match: MatchState) -> None:
 
         class_data = CLASSES.get(build.class_id, next(iter(CLASSES.values())))
         stats = dict(class_data["base_stats"])
+        stats.setdefault("int", 0)
         
         # Initialize damage reduction stats
         stats["physical_reduction"] = 0
@@ -115,6 +118,8 @@ def apply_prep_build(match: MatchState) -> None:
             energy_max=energy_max,
             rage=res_data.get("rage", DEFAULTS["rage"]),
             rage_max=rage_max,
+            absorb=0,
+            absorb_max=None,
         )
         
         ps = PlayerState(sid=sid, build=build, res=res, stats=stats)
@@ -316,6 +321,17 @@ def resolve_turn(match: MatchState) -> None:
 
         if has_self_effects or has_target_effects:
             apply_effect_entries(actor, target, ability, log_parts)
+
+        if ability_id == "ice_barrier":
+            intellect = modify_stat(actor, "int", actor.stats.get("int", 0))
+            roll_power = roll("d6", r)
+            absorb_value = int(intellect * 0.9) + int(roll_power)
+            add_absorb(actor, absorb_value)
+            log_parts.append(f"Ice Barrier grants {absorb_value} absorb.")
+            set_cooldown(actor, ability_id, ability)
+            if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
+                remove_stealth(actor)
+            return {"damage": 0, "log": " ".join(log_parts)}
 
         if not has_damage:
             set_cooldown(actor, ability_id, ability)
@@ -623,12 +639,18 @@ def resolve_turn(match: MatchState) -> None:
     match.log.extend(result2.get("extra_logs", []))
 
     # Apply damage
-    match.state[sids[1]].res.hp -= result1["damage"]
-    match.state[sids[0]].res.hp -= result2["damage"]
-    if result1["damage"] > 0:
-        break_stealth_on_damage(match.state[sids[1]], result1["damage"])
-    if result2["damage"] > 0:
-        break_stealth_on_damage(match.state[sids[0]], result2["damage"])
+    def apply_damage(target: PlayerState, incoming: int, target_sid: str) -> None:
+        if incoming <= 0 or not target.res:
+            return
+        absorbed, remaining = consume_absorb(target, incoming)
+        if absorbed > 0:
+            match.log.append(f"Shield absorbs {absorbed} damage for {target_sid[:5]}.")
+        if remaining > 0:
+            target.res.hp -= remaining
+            break_stealth_on_damage(target, remaining)
+
+    apply_damage(match.state[sids[1]], result1["damage"], sids[1])
+    apply_damage(match.state[sids[0]], result2["damage"], sids[0])
 
     # End of turn processing for both players (DoTs, passives, duration ticks, regen)
     for sid in sids:

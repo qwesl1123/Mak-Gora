@@ -217,6 +217,35 @@ def apply_burn(target: PlayerState, value: int, source_item: str = "Unknown", du
     )
 
 
+def add_absorb(ps: PlayerState, amount: int, source_item: Optional[str] = None, cap: Optional[int] = None) -> int:
+    if not ps.res:
+        return 0
+    value = int(amount)
+    if value == 0:
+        return ps.res.absorb
+    next_value = ps.res.absorb + value
+    if cap is not None:
+        next_value = max(0, min(next_value, int(cap)))
+    else:
+        next_value = max(0, next_value)
+    ps.res.absorb = next_value
+    if ps.res.absorb_max is not None:
+        ps.res.absorb_max = max(ps.res.absorb_max, ps.res.absorb)
+    return ps.res.absorb
+
+
+def consume_absorb(ps: PlayerState, incoming: int) -> tuple[int, int]:
+    if not ps.res:
+        return 0, incoming
+    incoming_value = max(0, int(incoming))
+    if incoming_value <= 0 or ps.res.absorb <= 0:
+        return 0, incoming_value
+    absorbed = min(ps.res.absorb, incoming_value)
+    ps.res.absorb -= absorbed
+    remaining = incoming_value - absorbed
+    return absorbed, remaining
+
+
 def trigger_on_hit_passives(
     attacker: PlayerState,
     target: PlayerState,
@@ -339,6 +368,13 @@ def trigger_end_of_turn_passives(ps: PlayerState, log: List[str], label: str) ->
                 ps.res.hp = min(ps.res.hp + heal_value, ps.res.hp_max)
                 log.append(
                     f"{label} heals {heal_value} HP from {effect.get('source_item', 'item')}."
+                )
+        elif passive.get("type") == "absorb_self":
+            absorb_value = int(passive.get("value", 0) or 0)
+            if absorb_value > 0:
+                add_absorb(ps, absorb_value)
+                log.append(
+                    f"{label} gains {absorb_value} absorb from {effect.get('source_item', 'item')}."
                 )
 
 
