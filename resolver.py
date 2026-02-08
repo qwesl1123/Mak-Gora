@@ -26,6 +26,7 @@ from .effects import (
     has_flag,
     add_absorb,
     consume_absorb,
+    build_effect,
 )
 
 def cooldown_slots(ps: PlayerState, ability_id: str) -> list:
@@ -205,8 +206,19 @@ def resolve_turn(match: MatchState) -> None:
                 updated[ability_id] = next_slots
         ps.cooldowns = updated
 
-    def apply_effect_entries(actor: PlayerState, target: PlayerState, ability: Dict[str, Any], log_parts: list) -> None:
+    def apply_effect_entries(
+        actor: PlayerState,
+        target: PlayerState,
+        ability: Dict[str, Any],
+        log_parts: list,
+        skip_self_effect_ids: set[str] | None = None,
+    ) -> None:
+        skip_self_effect_ids = skip_self_effect_ids or set()
         for entry in ability.get("self_effects", []) or []:
+            if entry["id"] in skip_self_effect_ids:
+                if entry.get("log"):
+                    log_parts.append(entry["log"])
+                continue
             overrides = dict(entry.get("overrides", {}) or {})
             if entry.get("duration"):
                 overrides["duration"] = int(entry.get("duration"))
@@ -585,6 +597,53 @@ def resolve_turn(match: MatchState) -> None:
         sids[1]: build_immediate_resolution(sids[1], sids[0], a2),
     }
 
+    def is_pre_resolution_defensive(ability: Dict[str, Any]) -> bool:
+        if "defense" not in (ability.get("tags") or []):
+            return False
+        has_damage = any(
+            value
+            for value in (
+                ability.get("dice"),
+                ability.get("scaling"),
+                ability.get("flat_damage"),
+            )
+        )
+        if has_damage or ability.get("target_effects"):
+            return False
+        for entry in ability.get("self_effects", []) or []:
+            effect = build_effect(entry["id"], overrides=entry.get("overrides"))
+            flags = effect.get("flags", {}) or {}
+            if flags.get("untargetable") or flags.get("evade_all"):
+                return True
+        return False
+
+    def apply_pre_resolution_defensive(actor_sid: str, ctx: Dict[str, Any]) -> None:
+        if ctx.get("resolved"):
+            return
+        ability = ctx.get("ability")
+        if not ability or not is_pre_resolution_defensive(ability):
+            return
+        actor = match.state[actor_sid]
+        pre_applied: set[str] = set()
+        for entry in ability.get("self_effects", []) or []:
+            effect = build_effect(entry["id"], overrides=entry.get("overrides"))
+            flags = effect.get("flags", {}) or {}
+            if not (flags.get("untargetable") or flags.get("evade_all")):
+                continue
+            overrides = dict(entry.get("overrides", {}) or {})
+            if entry.get("duration"):
+                overrides["duration"] = int(entry.get("duration"))
+            apply_effect_by_id(actor, entry["id"], overrides=overrides or None)
+            pre_applied.add(entry["id"])
+        if pre_applied:
+            ctx["pre_resolved_self_effects"] = pre_applied
+
+    # Regression scenarios:
+    # - P1 Rogue Kidney Shot, P2 Mage Blink => stun avoided because Blink registers first.
+    # - P1 Mage Blink, P2 Rogue Kidney Shot => stun avoided (same outcome).
+    apply_pre_resolution_defensive(sids[0], contexts[sids[0]])
+    apply_pre_resolution_defensive(sids[1], contexts[sids[1]])
+
     def resolve_immediate_effects(actor_sid: str, target_sid: str, ctx: Dict[str, Any]) -> None:
         if ctx.get("resolved") or not ctx.get("immediate_only"):
             return
@@ -592,6 +651,7 @@ def resolve_turn(match: MatchState) -> None:
         target = match.state[target_sid]
         ability = ctx["ability"]
         ability_id = ctx["ability_id"]
+        skip_self_effect_ids = ctx.get("pre_resolved_self_effects", set())
 
         consume_costs(actor, ability.get("cost", {}))
 
@@ -626,7 +686,13 @@ def resolve_turn(match: MatchState) -> None:
             actor.effects.append(effect)
             log_parts.append("Defensive stance raised.")
         else:
-            apply_effect_entries(actor, target, ability, log_parts)
+            apply_effect_entries(
+                actor,
+                target,
+                ability,
+                log_parts,
+                skip_self_effect_ids=skip_self_effect_ids,
+            )
 
         set_cooldown(actor, ability_id, ability)
         ctx["damage"] = 0
