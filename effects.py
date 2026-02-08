@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 from .models import PlayerState
 from ..content.balance import DEFAULTS
 from .dice import roll
-from .rules import mitigate
+from .rules import base_damage as calc_base_damage, mitigate
 
 EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
     "hot_streak": {
@@ -305,6 +305,64 @@ def trigger_on_hit_passives(
                 bonus_damage += reduced
                 log_lines.append(
                     f"{attacker.sid[:5]} calls upon the void with {effect.get('source_item', 'item')}. Roll {dice} = {roll_power}. Deals {reduced} magic damage."
+                )
+        elif passive.get("type") == "lightning_blast":
+            chance = float(passive.get("chance", 0) or 0)
+            scaling = passive.get("scaling", {}) or {}
+            dice = passive.get("dice", "d3")
+            if chance <= 0 or rng.random() > chance:
+                continue
+            roll_power = roll(dice, rng) if dice else 0
+            raw = 0
+            if "atk" in scaling:
+                raw = calc_base_damage(
+                    modify_stat(attacker, "atk", attacker.stats.get("atk", 0)),
+                    scaling["atk"],
+                    roll_power,
+                )
+            elif "int" in scaling:
+                raw = calc_base_damage(
+                    modify_stat(attacker, "int", attacker.stats.get("int", 0)),
+                    scaling["int"],
+                    roll_power,
+                )
+            if raw <= 0:
+                continue
+            reduced = mitigate(raw, modify_stat(target, "def", target.stats.get("def", 0)))
+            resist = modify_stat(target, "magic_resist", target.stats.get("magic_resist", 0))
+            reduced = max(0, reduced - resist)
+            reduced = int(reduced * mitigation_multiplier(target))
+            if is_damage_immune(target, "magic"):
+                reduced = 0
+            if reduced > 0:
+                bonus_damage += reduced
+                log_lines.append(
+                    f"{attacker.sid[:5]} blasts the target with lightning from {effect.get('source_item', 'item')}. Roll {dice} = {roll_power}. Deals {reduced} magic damage."
+                )
+        elif passive.get("type") == "heal_on_hit":
+            chance = float(passive.get("chance", 0) or 0)
+            scaling = passive.get("scaling", {}) or {}
+            dice = passive.get("dice", "d3")
+            if chance <= 0 or rng.random() > chance:
+                continue
+            roll_power = roll(dice, rng) if dice else 0
+            heal_value = 0
+            if "atk" in scaling:
+                heal_value = calc_base_damage(
+                    modify_stat(attacker, "atk", attacker.stats.get("atk", 0)),
+                    scaling["atk"],
+                    roll_power,
+                )
+            elif "int" in scaling:
+                heal_value = calc_base_damage(
+                    modify_stat(attacker, "int", attacker.stats.get("int", 0)),
+                    scaling["int"],
+                    roll_power,
+                )
+            if heal_value > 0 and attacker.res:
+                attacker.res.hp = min(attacker.res.hp + heal_value, attacker.res.hp_max)
+                log_lines.append(
+                    f"{attacker.sid[:5]} draws strength from {effect.get('source_item', 'item')}, healing {heal_value} HP."
                 )
         elif passive.get("type") == "empower_next_offense":
             chance = float(passive.get("chance", 0) or 0)

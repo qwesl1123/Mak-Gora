@@ -27,8 +27,19 @@ ABILITIES = {
         "cooldown": 1,
         "classes": ["mage"],
         "on_hit_effects": [
-            {"id": "hot_streak", "chance": 0.15, "log": "Has HOT STREAK!"}
+            {"id": "hot_streak", "chance": 0.2, "log": "Has HOT STREAK!"}
         ],
+    },
+    "arcane_barrage": {
+        "name": "Arcane Barrage",
+        "cost": {"mp": 15},
+        "dice": {"type": "d6", "power_on": "roll"},
+        "scaling": {"int": 0.4},
+        "damage_type": "magic",
+        "tags": ["spell", "attack", "magic"],
+        "cooldown": 2,
+        "classes": ["mage"],
+        "hits": 3,
     },
     "defend": {
         "name": "Defend",

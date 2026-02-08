@@ -129,11 +129,18 @@ def apply_prep_build(match: MatchState) -> None:
         
         # Store item references for passive effects
         for item in equipped_items:
-            if item.get("passive"):
+            passives = item.get("passive")
+            if not passives:
+                continue
+            if isinstance(passives, list):
+                passive_list = passives
+            else:
+                passive_list = [passives]
+            for passive in passive_list:
                 ps.effects.append({
                     "type": "item_passive",
                     "source_item": item["name"],
-                    "passive": item["passive"],
+                    "passive": passive,
                     "duration": 999,  # Permanent passive
                 })
         

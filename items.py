@@ -63,6 +63,29 @@ ITEMS = {
         "damage_type": "physical",
         "passive": {"type": "void_blade", "trigger": "on_hit", "int_multiplier": 0.4, "dice": "d4"},
     },
+    "thunderfury": {
+        "name": "Thunderfury, Blessed Blade of the Windseeker",
+        "slot": "weapon",
+        "mods": {"atk": 8, "magic_resist": 1},
+        "damage_type": "physical",
+        "color": "#ff8000",
+        "passive": [
+            {
+                "type": "lightning_blast",
+                "trigger": "on_hit",
+                "chance": 0.25,
+                "scaling": {"atk": 0.5},
+                "dice": "d3",
+            },
+            {
+                "type": "heal_on_hit",
+                "trigger": "on_hit",
+                "chance": 0.25,
+                "scaling": {"atk": 0.5},
+                "dice": "d3",
+            },
+        ],
+    },
     "glock_19": {
         "name": "Glock 19",
         "slot": "weapon",

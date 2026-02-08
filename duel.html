@@ -30,6 +30,7 @@
         --item-green: #1eff00;
         --item-blue: #0070dd;
         --item-purple: #a335ee;
+        --item-orange: #ff8000;
       }
 
       * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -513,6 +514,11 @@
         font-weight: 700;
       }
 
+      .log-item-orange {
+        color: var(--item-orange);
+        font-weight: 700;
+      }
+
       .controls {
         display: grid;
         gap: 10px;
@@ -842,6 +848,14 @@
           </div>
 
           <div class="doc-item">
+            <h4>Thunderfury, Blessed Blade of the Windseeker</h4>
+            <p><span class="stat">+8 Physical Attack</span> | <span class="stat">Magic Resist: 1</span></p>
+            <p><span class="stat">Passive: 25% chance on hit to blast the enemy with lightning (Attack x0.5 + d3 magic damage)</span></p>
+            <p><span class="stat">Passive: 25% chance on hit to heal yourself (Attack x0.5 + d3 HP)</span></p>
+            <p>A legendary blade crackling with storms that punish foes and bolster its wielder.</p>
+          </div>
+
+          <div class="doc-item">
             <h4>Glock 19</h4>
             <p><span class="stat">+17 Physical Attack</span></p>
             <p><span class="stat">Passive: 55% chance to miss</span></p>
@@ -965,7 +979,14 @@
             <h4>Fireball</h4>
             <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Type: Magic</span> | <span class="stat">Cooldown: 1</span></p>
             <p><span class="stat">Command: <span class="kbd">fireball</span></span></p>
-            <p>Arcane blast. Damage scales with Intellect (0.4x) and d6 power. 15% chance to trigger Hot Streak.</p>
+            <p>Throws a fiery ball to the enemy. Damage scales with Intellect (0.4x) and d6 power. 20% chance to trigger Hot Streak.</p>
+          </div>
+
+          <div class="doc-item">
+            <h4>Arcane Barrage</h4>
+            <p><span class="stat">Cost: 15 Mana</span> | <span class="stat">Type: Magic</span> | <span class="stat">Cooldown: 2</span></p>
+            <p><span class="stat">Command: <span class="kbd">arcane_barrage</span></span></p>
+            <p>Launches 3 bolts of arcane energy at the enemy target. Each bolt deals Intellect (0.4x) plus d6 power.</p>
           </div>
 
           <div class="doc-item">
@@ -1165,6 +1186,7 @@
       ];
       const mageAbilities = [
         "Fireball",
+        "Arcane Barrage",
         "Pyroblast",
         "Ice Block",
         "Ring of Ice",
@@ -1201,6 +1223,9 @@
         "Void Blades",
         "Crusader's Greatsword",
       ];
+      const orangeItems = [
+        "Thunderfury, Blessed Blade of the Windseeker",
+      ];
 
       function itemClassForName(name) {
         if (!name) {
@@ -1215,12 +1240,15 @@
         if (purpleItems.includes(name)) {
           return "log-item-purple";
         }
+        if (orangeItems.includes(name)) {
+          return "log-item-orange";
+        }
         return "";
       }
 
       function setItemLabel(element, name) {
         element.textContent = name || "--";
-        element.classList.remove("log-item-green", "log-item-blue", "log-item-purple");
+        element.classList.remove("log-item-green", "log-item-blue", "log-item-purple", "log-item-orange");
         const itemClass = itemClassForName(name);
         if (itemClass) {
           element.classList.add(itemClass);
@@ -1271,6 +1299,11 @@
           const escapedItem = escapeRegExp(item).replace(/'/g, "(?:'|&#039;)");
           const pattern = new RegExp(`\\b${escapedItem}\\b`, "g");
           output = output.replace(pattern, `<span class="log-item-purple">$&</span>`);
+        });
+        orangeItems.forEach((item) => {
+          const escapedItem = escapeRegExp(item).replace(/'/g, "(?:'|&#039;)");
+          const pattern = new RegExp(`\\b${escapedItem}\\b`, "g");
+          output = output.replace(pattern, `<span class="log-item-orange">$&</span>`);
         });
 
         return output;
