@@ -366,6 +366,8 @@ def resolve_turn(match: MatchState) -> None:
         )
 
         extra_logs: list[str] = []
+        ability_hit_landed = False
+        on_hit_base_damage = 0
         for hit_index in range(1, hits + 1):
             prefix = f"Hit {hit_index}: " if hits > 1 else ""
             roll_power = 0
@@ -380,6 +382,8 @@ def resolve_turn(match: MatchState) -> None:
             if r.randint(1, 100) > accuracy:
                 log_parts.append(f"{prefix}Miss!")
                 continue
+
+            ability_hit_landed = True
 
             raw = 0
             if flat_damage is not None:
@@ -422,6 +426,9 @@ def resolve_turn(match: MatchState) -> None:
                         empower_logged = True
                 log_parts.append(f"{prefix}Deals {reduced} damage.")
 
+            if reduced > 0 and on_hit_base_damage == 0:
+                on_hit_base_damage = reduced
+
             if reduced > 0:
                 for effect in ability.get("on_hit_effects", []):
                     chance = float(effect.get("chance", 0) or 0)
@@ -434,20 +441,6 @@ def resolve_turn(match: MatchState) -> None:
                                 label=actor_sid[:5],
                                 log_message=effect.get("log"),
                             )
-
-            # Apply on-hit passive effects (weapons/trinkets etc.)
-            if reduced > 0:
-                bonus_damage, passive_logs = trigger_on_hit_passives(
-                    actor,
-                    target,
-                    reduced,
-                    damage_type,
-                    r,
-                )
-                if bonus_damage > 0:
-                    reduced += bonus_damage
-                if passive_logs:
-                    extra_logs.extend(passive_logs)
 
             heal_on_hit = int(ability.get("heal_on_hit", 0) or 0)
             heal_scaling = ability.get("heal_scaling", {}) or {}
@@ -473,6 +466,20 @@ def resolve_turn(match: MatchState) -> None:
                 log_parts.append(f"{prefix}Heals {heal_on_hit} HP.")
 
             total_damage += reduced
+
+        # Apply on-hit passive effects once per ability execution (weapons/trinkets etc.)
+        if ability_hit_landed:
+            bonus_damage, passive_logs = trigger_on_hit_passives(
+                actor,
+                target,
+                on_hit_base_damage,
+                damage_type,
+                r,
+            )
+            if bonus_damage > 0:
+                total_damage += bonus_damage
+            if passive_logs:
+                extra_logs.extend(passive_logs)
 
         resource_gain = ability.get("resource_gain", {})
         if total_damage > 0 and resource_gain:
