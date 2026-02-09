@@ -78,7 +78,106 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "damage_mult": 1.2,
         "flags": {"empower_next_offense": True},
     },
+    "bear_form": {
+        "type": "form",
+        "name": "Bear Form",
+        "duration": 999,
+        "flags": {"form": "bear", "bear_form": True},
+    },
+    "bear_form_stats": {
+        "type": "stat_mods",
+        "name": "Bear Form",
+        "duration": 999,
+        "mods": {"atk": 1, "def": 15, "eva": -5, "physical_reduction": 3},
+    },
+    "cat_form": {
+        "type": "form",
+        "name": "Cat Form",
+        "duration": 999,
+        "flags": {"form": "cat", "cat_form": True},
+    },
+    "cat_form_stats": {
+        "type": "stat_mods",
+        "name": "Cat Form",
+        "duration": 999,
+        "mods": {"atk": 3, "def": 1, "crit": 2, "acc": 2, "eva": 2},
+    },
+    "moonkin_form": {
+        "type": "form",
+        "name": "Moonkin Form",
+        "duration": 999,
+        "flags": {"form": "moonkin", "moonkin_form": True},
+    },
+    "moonkin_form_stats": {
+        "type": "stat_mods",
+        "name": "Moonkin Form",
+        "duration": 999,
+        "mods": {"int": 2, "crit": 1, "acc": 5},
+    },
+    "tree_form": {
+        "type": "form",
+        "name": "Tree Form",
+        "duration": 999,
+        "flags": {"form": "tree", "tree_form": True},
+    },
+    "tree_form_stats": {
+        "type": "stat_mods",
+        "name": "Tree Form",
+        "duration": 999,
+        "mods": {"int": 2, "def": 3, "magic_resist": 3},
+    },
+    "rip_ready": {
+        "type": "status",
+        "name": "Rip Ready",
+        "duration": 999,
+        "flags": {"rip_ready": True},
+    },
+    "starfire_ready": {
+        "type": "status",
+        "name": "Starfire Ready",
+        "duration": 999,
+        "flags": {"starfire_ready": True},
+    },
+    "barkskin": {
+        "type": "mitigation",
+        "name": "Barkskin",
+        "duration": 3,
+        "value": 0.35,
+    },
+    "cyclone": {
+        "type": "status",
+        "name": "Cyclone",
+        "duration": 2,
+        "flags": {"cycloned": True, "stunned": True, "immune_all": True},
+    },
+    "frenzied_regeneration": {
+        "type": "status",
+        "name": "Frenzied Regeneration",
+        "duration": 4,
+        "regen": {"hp": 0},
+    },
+    "regrowth": {
+        "type": "status",
+        "name": "Regrowth",
+        "duration": 5,
+        "regen": {"hp": 0},
+    },
 }
+
+FORM_EFFECT_IDS = ("bear_form", "cat_form", "moonkin_form", "tree_form")
+FORM_STAT_EFFECT_IDS = (
+    "bear_form_stats",
+    "cat_form_stats",
+    "moonkin_form_stats",
+    "tree_form_stats",
+)
+FORM_STAT_MAP = {
+    "bear_form": "bear_form_stats",
+    "cat_form": "cat_form_stats",
+    "moonkin_form": "moonkin_form_stats",
+    "tree_form": "tree_form_stats",
+}
+FORM_CLEAR_EFFECT_IDS = ("stealth", "rip_ready", "starfire_ready")
 
 
 def is_permanent(effect: Dict[str, Any]) -> bool:
@@ -133,6 +232,39 @@ def has_effect(target: PlayerState, effect_id: str) -> bool:
     return any(effect.get("id") == effect_id for effect in target.effects)
 
 
+def is_in_form(target: PlayerState, form_id: str) -> bool:
+    return has_effect(target, form_id)
+
+
+def current_form_id(target: PlayerState) -> Optional[str]:
+    for form_id in FORM_EFFECT_IDS:
+        if has_effect(target, form_id):
+            return form_id
+    return None
+
+
+def clear_forms(target: PlayerState) -> None:
+    target.effects = [
+        effect
+        for effect in target.effects
+        if effect.get("id") not in FORM_EFFECT_IDS
+        and effect.get("id") not in FORM_STAT_EFFECT_IDS
+        and effect.get("id") not in FORM_CLEAR_EFFECT_IDS
+    ]
+
+
+def apply_form(
+    target: PlayerState,
+    form_id: str,
+    overrides: Optional[Dict[str, Any]] = None,
+) -> None:
+    clear_forms(target)
+    apply_effect_by_id(target, form_id, overrides=overrides)
+    stat_effect_id = FORM_STAT_MAP.get(form_id)
+    if stat_effect_id:
+        apply_effect_by_id(target, stat_effect_id)
+
+
 def remove_effect(target: PlayerState, effect_id: str) -> None:
     target.effects = [effect for effect in target.effects if effect.get("id") != effect_id]
 
@@ -180,12 +312,16 @@ def modify_stat(target: PlayerState, stat: str, base_value: int) -> int:
     value = base_value
     multiplier = 1.0
     for effect in target.effects:
-        if effect.get("type") != "stat_mod":
-            continue
-        if effect.get("stat") != stat:
-            continue
-        value += int(effect.get("flat", 0) or 0)
-        multiplier *= float(effect.get("mult", 1.0) or 1.0)
+        effect_type = effect.get("type")
+        if effect_type == "stat_mod":
+            if effect.get("stat") != stat:
+                continue
+            value += int(effect.get("flat", 0) or 0)
+            multiplier *= float(effect.get("mult", 1.0) or 1.0)
+        elif effect_type == "stat_mods":
+            mods = effect.get("mods", {}) or {}
+            if stat in mods:
+                value += int(mods.get(stat, 0) or 0)
     return int(value * multiplier)
 
 
@@ -461,6 +597,10 @@ def trigger_end_of_turn_effects(ps: PlayerState, log: List[str], label: str) -> 
 def end_of_turn(ps: PlayerState, log: List[str], label: str) -> None:
     """End-of-turn pipeline: DoTs, passives, duration tick, regen."""
     if not ps.res:
+        return
+
+    if has_flag(ps, "cycloned"):
+        ps.effects = tick_durations(ps.effects)
         return
 
     tick_dots(ps, log, label)

@@ -5,7 +5,7 @@ import time
 
 from . import state
 from .engine import resolver
-from .engine.effects import is_stealthed
+from .engine.effects import current_form_id, is_stealthed
 from .content.classes import CLASSES
 from .content.items import ITEMS
 from .content.abilities import ABILITIES
@@ -83,6 +83,12 @@ def snapshot_for(match, viewer_sid):
             return False
         return is_stealthed(ps)
 
+    def form_for(sid):
+        ps = match.state.get(sid)
+        if not ps:
+            return None
+        return current_form_id(ps)
+
     def display_name_for(sid):
         class_name = class_name_for(sid)
         if sid == viewer_sid:
@@ -96,8 +102,14 @@ def snapshot_for(match, viewer_sid):
         return formatted
 
     def primary_resource_for(sid):
-        config = resource_config_for(sid)
-        primary = config.get("primary", {"id": "mp", "label": "Mana", "color": "var(--mana-blue)"})
+        form_id = form_for(sid)
+        if form_id == "bear_form":
+            primary = {"id": "rage", "label": "Rage", "color": "var(--rage-red)"}
+        elif form_id == "cat_form":
+            primary = {"id": "energy", "label": "Energy", "color": "#FFF468"}
+        else:
+            config = resource_config_for(sid)
+            primary = config.get("primary", {"id": "mp", "label": "Mana", "color": "var(--mana-blue)"})
         return {
             "id": primary.get("id", "mp"),
             "label": primary.get("label", "Mana"),
@@ -117,6 +129,8 @@ def snapshot_for(match, viewer_sid):
         "enemy_resource": primary_resource_for(enemy),
         "you_stealthed": stealthed_for(you),
         "enemy_stealthed": stealthed_for(enemy),
+        "you_form": form_for(you),
+        "enemy_form": form_for(enemy),
         "log": [format_log_line(line) for line in match.log[-30:]],
         "winner": match.winner,
         "log_length": len(match.log),

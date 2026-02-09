@@ -27,6 +27,7 @@
         --warrior-color: #C69B6D;
         --mage-color: #3FC7EB;
         --rogue-color: #FFF468;
+        --druid-color: #FF7C0A;
         --item-green: #1eff00;
         --item-blue: #0070dd;
         --item-purple: #a335ee;
@@ -201,6 +202,22 @@
 
       .status-text.stealthed {
         color: var(--rogue-color);
+      }
+
+      .status-text.warrior {
+        color: var(--warrior-color);
+      }
+
+      .status-text.mage {
+        color: var(--mage-color);
+      }
+
+      .status-text.rogue {
+        color: var(--rogue-color);
+      }
+
+      .status-text.druid {
+        color: var(--druid-color);
       }
 
       .resource-bar {
@@ -499,6 +516,12 @@
         font-weight: 700;
       }
 
+      .log-class-druid,
+      .log-ability-druid {
+        color: var(--druid-color);
+        font-weight: 700;
+      }
+
       .log-item-green {
         color: var(--item-green);
         font-weight: 700;
@@ -785,6 +808,13 @@
             <p><span class="stat">Attack: 10</span> | <span class="stat">Intellect: 1</span> | <span class="stat">Defense: 4</span></p>
             <p><span class="stat">HP: 95</span> | <span class="stat">Energy: 100</span> | Speed: 9 | Crit: 8% | Accuracy: 97%</p>
             <p>Elusive striker with exceptional evasion. Uses Energy and excels at stealthy burst damage.</p>
+          </div>
+
+          <div class="doc-item">
+            <h4>Druid</h4>
+            <p><span class="stat">Attack: 6</span> | <span class="stat">Intellect: 6</span> | <span class="stat">Defense: 5</span></p>
+            <p><span class="stat">HP: 100</span> | <span class="stat">Mana: 80</span> | <span class="stat">Energy: 100</span> | Speed: 8 | Crit: 8% | Accuracy: 95%</p>
+            <p>Adaptive shapeshifter. Switches forms to access different resources and roles.</p>
           </div>
         </div>
       </div>
@@ -1083,6 +1113,48 @@
             <p>Powerful strike only usable after an Ambush proc. Scales with Attack (2.0x) and d6 power.</p>
           </div>
         </div>
+
+        <h4 class="doc-subtitle">Druid</h4>
+        <div class="doc-grid">
+          <div class="doc-item">
+            <h4>Bear Form</h4>
+            <p><span class="stat">Command: <span class="kbd">bear</span></span></p>
+            <p>Shift into Bear Form to access Rage-based abilities.</p>
+            <p><span class="stat">Maul:</span> <span class="kbd">maul</span> — Attack (0.3x) + d4, generates 3x damage as Rage.</p>
+            <p><span class="stat">Swipe:</span> <span class="kbd">swipe</span> — AOE Attack (0.5x) + d8, can hit stealthed targets (CD 10).</p>
+            <p><span class="stat">Frenzied Regeneration:</span> <span class="kbd">frenzied_regeneration</span> — consumes all Rage to heal over 4 turns (CD 30).</p>
+            <p><span class="stat">Barkskin:</span> <span class="kbd">barkskin</span> — 35% damage reduction for 3 turns (CD 15).</p>
+            <p><span class="stat">Passive:</span> The Rage Within — gain Rage equal to HP damage taken.</p>
+          </div>
+
+          <div class="doc-item">
+            <h4>Cat Form</h4>
+            <p><span class="stat">Command: <span class="kbd">cat</span></span></p>
+            <p>Shift into Cat Form to access Energy-based abilities.</p>
+            <p><span class="stat">Claw:</span> <span class="kbd">claw</span> — Attack (1.0x) + d4, 25% chance to enable Rip.</p>
+            <p><span class="stat">Shred:</span> <span class="kbd">shred</span> — Attack (1.5x) + d4 (CD 2).</p>
+            <p><span class="stat">Rip:</span> <span class="kbd">rip</span> — requires Rip proc, Attack (2.0x) + d8, restores 5 Energy.</p>
+            <p><span class="stat">Prowl:</span> <span class="kbd">prowl</span> — stealth for 3 turns, restores 15 Energy/turn (CD 15).</p>
+          </div>
+
+          <div class="doc-item">
+            <h4>Moonkin Form</h4>
+            <p><span class="stat">Command: <span class="kbd">moonkin</span></span></p>
+            <p>Shift into Moonkin Form to access Mana-based spells.</p>
+            <p><span class="stat">Wrath:</span> <span class="kbd">wrath</span> — Intellect (0.4x) + d6, 25% chance to enable Starfire.</p>
+            <p><span class="stat">Starfire:</span> <span class="kbd">starfire</span> — requires Starfire proc, Intellect (1.4x) + d6.</p>
+            <p><span class="stat">Cyclone:</span> <span class="kbd">cyclone</span> — enemy cannot act or take damage/heals for 2 turns (CD 20).</p>
+          </div>
+
+          <div class="doc-item">
+            <h4>Tree Form</h4>
+            <p><span class="stat">Command: <span class="kbd">tree</span></span></p>
+            <p>Shift into Tree Form to access powerful healing.</p>
+            <p><span class="stat">Wild Growth:</span> <span class="kbd">wild_growth</span> — (Intellect + Attack) (1.6x) + d8 heal.</p>
+            <p><span class="stat">Regrowth:</span> <span class="kbd">regrowth</span> — (Intellect + Attack) (1.5x) + d4 over 5 turns (CD 15).</p>
+            <p><span class="stat">Innervate:</span> <span class="kbd">innervate</span> — restore mana to full (CD 50).</p>
+          </div>
+        </div>
       </div>
 
       <div class="doc-section">
@@ -1109,7 +1181,7 @@
         <div class="doc-content">
           <p><strong>1. Join Queue:</strong> Click "Enter the Arena" to find an opponent.</p>
           
-          <p><strong>2. Prep Phase:</strong> Choose your class with <span class="kbd">/class warrior</span>, <span class="kbd">/class mage</span>, or <span class="kbd">/class rogue</span></p>
+          <p><strong>2. Prep Phase:</strong> Choose your class with <span class="kbd">/class warrior</span>, <span class="kbd">/class mage</span>, <span class="kbd">/class rogue</span>, or <span class="kbd">/class druid</span></p>
           
           <p><strong>3. Equip Items:</strong> Use <span class="kbd">/item weapon steel_long_sword</span> and <span class="kbd">/item armor plate_armor</span></p>
           
@@ -1203,6 +1275,27 @@
         "Ambush",
         "Thistle Tea",
       ];
+      const druidAbilities = [
+        "Bear Form",
+        "Cat Form",
+        "Moonkin Form",
+        "Tree Form",
+        "Maul",
+        "Swipe",
+        "Frenzied Regeneration",
+        "Barkskin",
+        "Claw",
+        "Shred",
+        "Rip",
+        "Prowl",
+        "Wrath",
+        "Starfire",
+        "Cyclone",
+        "Wild Growth",
+        "Regrowth",
+        "Innervate",
+        "The Rage Within",
+      ];
       const greenItems = [
         "Steel Long Sword",
         "Wand of Fire",
@@ -1259,8 +1352,11 @@
         if (text.includes("HOT STREAK") || text.includes("Can Use Execute")) {
           return escapeHtml(text);
         }
+        if (text.includes("Has Rip!") || text.includes("Has Starfire!")) {
+          return `<span class="log-class-druid">${escapeHtml(text)}</span>`;
+        }
         if (text.includes("Has Ambush!")) {
-          return escapeHtml(text);
+          return `<span class="log-class-rogue">${escapeHtml(text)}</span>`;
         }
 
         let output = escapeHtml(text);
@@ -1268,6 +1364,7 @@
           { pattern: /\bWarrior(\(you\))?\b/g, className: "log-class-warrior" },
           { pattern: /\bMage(\(you\))?\b/g, className: "log-class-mage" },
           { pattern: /\bRogue(\(you\))?\b/g, className: "log-class-rogue" },
+          { pattern: /\bDruid(\(you\))?\b/g, className: "log-class-druid" },
         ];
         classPatterns.forEach(({ pattern, className }) => {
           output = output.replace(pattern, `<span class="${className}">$&</span>`);
@@ -1284,6 +1381,10 @@
         rogueAbilities.forEach((ability) => {
           const pattern = new RegExp(`\\b${escapeRegExp(ability)}\\b`, "g");
           output = output.replace(pattern, `<span class="log-ability-rogue">$&</span>`);
+        });
+        druidAbilities.forEach((ability) => {
+          const pattern = new RegExp(`\\b${escapeRegExp(ability)}\\b`, "g");
+          output = output.replace(pattern, `<span class="log-ability-druid">$&</span>`);
         });
         greenItems.forEach((item) => {
           const escapedItem = escapeRegExp(item).replace(/'/g, "(?:'|&#039;)");
@@ -1467,15 +1568,47 @@
         elements.primaryBar.style.backgroundColor = resource.color || "var(--mana-blue)";
       }
 
-      function renderStatus(stealthed, element) {
+      function classKeyFromLabel(label) {
+        if (!label) {
+          return "";
+        }
+        return label.replace(" (YOU)", "").trim().toLowerCase();
+      }
+
+      function setStatusClass(element, classKey) {
+        if (!element) {
+          return;
+        }
+        element.classList.remove("warrior", "mage", "rogue", "druid");
+        if (classKey) {
+          element.classList.add(classKey);
+        }
+      }
+
+      function renderStatus(stealthed, formId, classKey, element) {
         if (!element) return;
+        const formMap = {
+          bear_form: "Bear Form",
+          cat_form: "Cat Form",
+          moonkin_form: "Moonkin Form",
+          tree_form: "Tree Form",
+        };
         if (stealthed) {
+          setStatusClass(element, classKey);
           element.textContent = "Stealthed";
           element.classList.add("stealthed");
-        } else {
-          element.textContent = "--";
-          element.classList.remove("stealthed");
+          return;
         }
+        const formLabel = formMap[formId];
+        if (formLabel) {
+          setStatusClass(element, classKey);
+          element.textContent = formLabel;
+          element.classList.remove("stealthed");
+          return;
+        }
+        setStatusClass(element, "");
+        element.textContent = "--";
+        element.classList.remove("stealthed");
       }
       
         renderRes(data.you, {
@@ -1486,7 +1619,12 @@
           primaryBar: friendlyPrimaryBar,
           primaryLabel: friendlyPrimaryLabel,
         }, data.you_resource || { id: "mp", label: "Mana", color: "var(--mana-blue)" });
-        renderStatus(Boolean(data.you_stealthed), friendlyStatus);
+        renderStatus(
+          Boolean(data.you_stealthed),
+          data.you_form,
+          classKeyFromLabel(data.you_class),
+          friendlyStatus
+        );
         
         renderRes(data.enemy, {
           hpText: enemyHpText,
@@ -1496,7 +1634,12 @@
           primaryBar: enemyPrimaryBar,
           primaryLabel: enemyPrimaryLabel,
         }, data.enemy_resource || { id: "mp", label: "Mana", color: "var(--mana-blue)" });
-        renderStatus(Boolean(data.enemy_stealthed), enemyStatus);
+        renderStatus(
+          Boolean(data.enemy_stealthed),
+          data.enemy_form,
+          classKeyFromLabel(data.enemy_class),
+          enemyStatus
+        );
         
         if (data.log) {
           const total = data.log_length ?? data.log.length;

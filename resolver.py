@@ -15,6 +15,7 @@ from .effects import (
     damage_multiplier_from_passives,
     end_of_turn,
     apply_effect_by_id,
+    apply_form,
     break_stealth_on_damage,
     has_effect,
     remove_effect,
@@ -27,6 +28,8 @@ from .effects import (
     add_absorb,
     consume_absorb,
     build_effect,
+    FORM_EFFECT_IDS,
+    current_form_id,
 )
 
 def cooldown_slots(ps: PlayerState, ability_id: str) -> list:
@@ -222,14 +225,20 @@ def resolve_turn(match: MatchState) -> None:
             overrides = dict(entry.get("overrides", {}) or {})
             if entry.get("duration"):
                 overrides["duration"] = int(entry.get("duration"))
-            apply_effect_by_id(actor, entry["id"], overrides=overrides or None)
+            if entry["id"] in FORM_EFFECT_IDS:
+                apply_form(actor, entry["id"], overrides=overrides or None)
+            else:
+                apply_effect_by_id(actor, entry["id"], overrides=overrides or None)
             if entry.get("log"):
                 log_parts.append(entry["log"])
         for entry in ability.get("target_effects", []) or []:
             overrides = dict(entry.get("overrides", {}) or {})
             if entry.get("duration"):
                 overrides["duration"] = int(entry.get("duration"))
-            apply_effect_by_id(target, entry["id"], overrides=overrides or None)
+            if entry["id"] in FORM_EFFECT_IDS:
+                apply_form(target, entry["id"], overrides=overrides or None)
+            else:
+                apply_effect_by_id(target, entry["id"], overrides=overrides or None)
             if entry.get("log"):
                 log_parts.append(entry["log"])
 
@@ -256,6 +265,13 @@ def resolve_turn(match: MatchState) -> None:
             return {
                 "damage": 0,
                 "log": f"{actor_sid[:5]} tried to use {ability['name']} but it is on cooldown.",
+            }
+
+        required_form = ability.get("requires_form")
+        if required_form and current_form_id(actor) != required_form:
+            return {
+                "damage": 0,
+                "log": ability.get("requires_form_log", "Must be in the correct form."),
             }
 
         required_effect = ability.get("requires_effect")
@@ -288,6 +304,7 @@ def resolve_turn(match: MatchState) -> None:
 
         has_target_effects = bool(ability.get("target_effects"))
         has_self_effects = bool(ability.get("self_effects"))
+        is_aoe = "aoe" in (ability.get("tags") or [])
         if "pass" in (ability.get("tags") or []):
             set_cooldown(actor, ability_id, ability)
             log_parts.append("Passes the turn.")
@@ -313,7 +330,7 @@ def resolve_turn(match: MatchState) -> None:
         has_damage = any(value for value in (dice_data, scaling, flat_damage))
 
         if has_damage or has_target_effects:
-            if stealth_targeting.get(target_sid, False):
+            if stealth_targeting.get(target_sid, False) and not is_aoe:
                 log_parts.append("Target is stealthed — no valid target.")
                 set_cooldown(actor, ability_id, ability)
                 if ability.get("consume_effect"):
@@ -350,6 +367,53 @@ def resolve_turn(match: MatchState) -> None:
             set_cooldown(actor, ability_id, ability)
             if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
                 remove_stealth(actor)
+            return {"damage": 0, "log": " ".join(log_parts)}
+
+        if ability_id == "frenzied_regeneration":
+            if actor.res.rage <= 0:
+                return {"damage": 0, "log": "not enough rage"}
+            total_heal = int(actor.res.rage)
+            per_tick = total_heal // 4
+            actor.res.rage = 0
+            apply_effect_by_id(
+                actor,
+                "frenzied_regeneration",
+                overrides={"duration": 4, "regen": {"hp": per_tick}},
+            )
+            log_parts.append("channels Frenzied Regeneration.")
+            set_cooldown(actor, ability_id, ability)
+            return {"damage": 0, "log": " ".join(log_parts)}
+
+        if ability_id == "wild_growth":
+            intellect = modify_stat(actor, "int", actor.stats.get("int", 0))
+            attack = modify_stat(actor, "atk", actor.stats.get("atk", 0))
+            roll_power = roll("d8", r)
+            heal_value = int((intellect + attack) * 1.6) + int(roll_power)
+            if not has_flag(actor, "cycloned"):
+                actor.res.hp = min(actor.res.hp + heal_value, actor.res.hp_max)
+            log_parts.append(f"Wild Growth heals {heal_value} HP.")
+            set_cooldown(actor, ability_id, ability)
+            return {"damage": 0, "log": " ".join(log_parts)}
+
+        if ability_id == "regrowth":
+            intellect = modify_stat(actor, "int", actor.stats.get("int", 0))
+            attack = modify_stat(actor, "atk", actor.stats.get("atk", 0))
+            roll_power = roll("d4", r)
+            total_heal = int((intellect + attack) * 1.5) + int(roll_power)
+            per_tick = total_heal // 5
+            apply_effect_by_id(
+                actor,
+                "regrowth",
+                overrides={"duration": 5, "regen": {"hp": per_tick}},
+            )
+            log_parts.append("Healing over time for 5 turns.")
+            set_cooldown(actor, ability_id, ability)
+            return {"damage": 0, "log": " ".join(log_parts)}
+
+        if ability_id == "innervate":
+            actor.res.mp = actor.res.mp_max
+            log_parts.append("restores their mana to full.")
+            set_cooldown(actor, ability_id, ability)
             return {"damage": 0, "log": " ".join(log_parts)}
 
         if not has_damage:
@@ -498,6 +562,8 @@ def resolve_turn(match: MatchState) -> None:
             for resource, gain in resource_gain.items():
                 if gain == "damage":
                     gain_value = total_damage
+                elif gain == "damage_x3":
+                    gain_value = total_damage * 3
                 else:
                     gain_value = int(gain)
                 if gain_value > 0 and hasattr(actor.res, resource):
@@ -544,6 +610,14 @@ def resolve_turn(match: MatchState) -> None:
             return {
                 "damage": 0,
                 "log": f"{actor_sid[:5]} tried to use {ability['name']} but it is on cooldown.",
+                "resolved": True,
+            }
+
+        required_form = ability.get("requires_form")
+        if required_form and current_form_id(actor) != required_form:
+            return {
+                "damage": 0,
+                "log": ability.get("requires_form_log", "Must be in the correct form."),
                 "resolved": True,
             }
 
@@ -652,6 +726,7 @@ def resolve_turn(match: MatchState) -> None:
         ability = ctx["ability"]
         ability_id = ctx["ability_id"]
         skip_self_effect_ids = ctx.get("pre_resolved_self_effects", set())
+        is_aoe = "aoe" in (ability.get("tags") or [])
 
         consume_costs(actor, ability.get("cost", {}))
 
@@ -661,7 +736,7 @@ def resolve_turn(match: MatchState) -> None:
         weapon_name = ITEMS.get(weapon_id, {}).get("name", "their bare hands")
         log_parts = [f"{actor_sid[:5]} uses {weapon_name} to cast {ability['name']}."]
 
-        if ability.get("target_effects") and stealth_targeting.get(target_sid, False):
+        if ability.get("target_effects") and stealth_targeting.get(target_sid, False) and not is_aoe:
             log_parts.append("Target is stealthed — no valid target.")
             set_cooldown(actor, ability_id, ability)
             ctx["damage"] = 0
@@ -722,12 +797,19 @@ def resolve_turn(match: MatchState) -> None:
     def apply_damage(target: PlayerState, incoming: int, target_sid: str) -> None:
         if incoming <= 0 or not target.res:
             return
+        if has_flag(target, "cycloned"):
+            match.log.append(f"{target_sid[:5]} is cycloned and takes no damage.")
+            return
         absorbed, remaining = consume_absorb(target, incoming)
         if absorbed > 0:
             match.log.append(f"Shield absorbs {absorbed} damage for {target_sid[:5]}.")
         if remaining > 0:
             target.res.hp -= remaining
             break_stealth_on_damage(target, remaining)
+            if current_form_id(target) == "bear_form":
+                current = target.res.rage
+                cap = target.res.rage_max
+                target.res.rage = min(current + remaining, cap)
 
     apply_damage(match.state[sids[1]], result1["damage"], sids[1])
     apply_damage(match.state[sids[0]], result2["damage"], sids[0])
