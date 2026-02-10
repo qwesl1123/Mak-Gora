@@ -70,8 +70,8 @@ ABILITIES = {
         "cooldown": 20,
         "charges": 2,
         "classes": ["warrior"],
-        "heal_scaling": {"atk": 2.2},
-        "heal_dice": {"type": "d6", "power_on": "roll"},
+        "heal_scaling": {"atk": 1.6},
+        "heal_dice": {"type": "d8", "power_on": "roll"},
         "resource_gain": {"rage": 5},
     },
     "mortal_strike": {
