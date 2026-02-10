@@ -914,6 +914,13 @@
           </div>
 
           <div class="doc-item">
+            <h4>Dragonwrath, Tarecgosa's Rest</h4>
+            <p><span class="stat">+7 Intellect</span></p>
+            <p><span class="stat">Passive: 20% chance on hit to duplicate offensive spells</span></p>
+            <p>Example: Fireball deals damage, then Dragonwrath may duplicate Fireball and roll a second spell hit.</p>
+          </div>
+
+          <div class="doc-item">
             <h4>Glock 19</h4>
             <p><span class="stat">+17 Physical Attack</span></p>
             <p><span class="stat">Passive: 55% chance to miss</span></p>
@@ -1152,6 +1159,7 @@
             <p><span class="stat">Swipe:</span> <span class="kbd">swipe</span> — AOE Attack (0.5x) + d8, can hit stealthed targets (CD 10).</p>
             <p><span class="stat">Frenzied Regeneration:</span> <span class="kbd">frenzied_regeneration</span> — consumes all Rage to heal over 4 turns (CD 30).</p>
             <p><span class="stat">Barkskin:</span> <span class="kbd">barkskin</span> — 35% damage reduction for 3 turns (CD 15).</p>
+            <p><span class="stat">Ironfur:</span> <span class="kbd">ironfur</span> — gain +3 Physical Reduction for 4 turns; persists through form shifts.</p>
             <p><span class="stat">Passive:</span> The Rage Within — gain Rage equal to HP damage taken.</p>
           </div>
 
@@ -1162,6 +1170,7 @@
             <p><span class="stat">Claw:</span> <span class="kbd">claw</span> — Attack (1.0x) + d4, 25% chance to enable Rip.</p>
             <p><span class="stat">Shred:</span> <span class="kbd">shred</span> — Attack (1.5x) + d4 (CD 2).</p>
             <p><span class="stat">Rip:</span> <span class="kbd">rip</span> — requires Rip proc, Attack (2.0x) + d8, restores 5 Energy.</p>
+            <p><span class="stat">Maim:</span> <span class="kbd">maim</span> — stuns enemy for 3 turns. Costs 10 Energy (CD 15).</p>
             <p><span class="stat">Prowl:</span> <span class="kbd">prowl</span> — stealth for 3 turns, restores 15 Energy/turn (CD 15).</p>
           </div>
 
@@ -1169,15 +1178,16 @@
             <h4>Moonkin Form</h4>
             <p><span class="stat">Command: <span class="kbd">moonkin</span></span></p>
             <p>Shift into Moonkin Form to access Mana-based spells.</p>
-            <p><span class="stat">Wrath:</span> <span class="kbd">wrath</span> — Intellect (0.4x) + d6, 25% chance to enable Starfire.</p>
-            <p><span class="stat">Starfire:</span> <span class="kbd">starfire</span> — requires Starfire proc, Intellect (1.4x) + d6.</p>
+            <p><span class="stat">Wrath:</span> <span class="kbd">wrath</span> — Intellect (1.0x) + d6, 25% chance to enable Starfire.</p>
+            <p><span class="stat">Starfire:</span> <span class="kbd">starfire</span> — requires Starfire proc, Intellect (2.0x) + d6.</p>
             <p><span class="stat">Cyclone:</span> <span class="kbd">cyclone</span> — enemy cannot act or take damage/heals for 2 turns (CD 20).</p>
+            <p><span class="stat">Typhoon:</span> <span class="kbd">typhoon</span> — blasts enemy, causing their attacks to miss this turn and next turn (CD 5).</p>
           </div>
 
           <div class="doc-item">
             <h4>Tree Form</h4>
             <p><span class="stat">Command: <span class="kbd">tree</span></span></p>
-            <p>Shift into Tree Form to access powerful healing.</p>
+            <p>Shift into Tree Form to access powerful healing. Grants 2 Magic Resist.</p>
             <p><span class="stat">Wild Growth:</span> <span class="kbd">wild_growth</span> — (Intellect + Attack) (1.6x) + d8 heal.</p>
             <p><span class="stat">Regrowth:</span> <span class="kbd">regrowth</span> — (Intellect + Attack) (1.5x) + d4 over 5 turns (CD 15).</p>
             <p><span class="stat">Innervate:</span> <span class="kbd">innervate</span> — restore mana to full (CD 50).</p>
@@ -1314,14 +1324,17 @@
         "Barkskin",
         "Claw",
         "Shred",
+        "Maim",
         "Rip",
         "Prowl",
         "Wrath",
         "Starfire",
         "Cyclone",
+        "Typhoon",
         "Wild Growth",
         "Regrowth",
         "Innervate",
+        "Ironfur",
         "The Rage Within",
       ];
       const greenItems = [
@@ -1346,6 +1359,7 @@
       ];
       const orangeItems = [
         "Thunderfury, Blessed Blade of the Windseeker",
+        "Dragonwrath, Tarecgosa's Rest",
       ];
 
       function itemClassForName(name) {

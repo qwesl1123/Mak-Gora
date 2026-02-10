@@ -319,6 +319,19 @@ ABILITIES = {
             {"id": "barkskin", "duration": 3, "log": "hardens their barkskin."}
         ],
     },
+    "ironfur": {
+        "name": "Ironfur",
+        "cost": {"rage": 0},
+        "dice": None,
+        "tags": ["defense"],
+        "cooldown": 0,
+        "classes": ["druid"],
+        "requires_form": "bear_form",
+        "requires_form_log": "Must be in Bear Form.",
+        "self_effects": [
+            {"id": "ironfur", "duration": 4, "log": "reinforces themselves with Ironfur."}
+        ],
+    },
     "cat": {
         "name": "Cat Form",
         "cost": {"mp": 0},
@@ -356,6 +369,19 @@ ABILITIES = {
         "classes": ["druid"],
         "requires_form": "cat_form",
         "requires_form_log": "Must be in Cat Form.",
+    },
+    "maim": {
+        "name": "Maim",
+        "cost": {"energy": 10},
+        "dice": None,
+        "tags": ["control"],
+        "cooldown": 15,
+        "classes": ["druid"],
+        "requires_form": "cat_form",
+        "requires_form_log": "Must be in Cat Form.",
+        "target_effects": [
+            {"id": "stunned", "duration": 3, "log": "is maimed and stunned."}
+        ],
     },
     "rip": {
         "name": "Rip",
@@ -405,7 +431,7 @@ ABILITIES = {
         "name": "Wrath",
         "cost": {"mp": 15},
         "dice": {"type": "d6", "power_on": "roll"},
-        "scaling": {"int": 0.4},
+        "scaling": {"int": 1.0},
         "damage_type": "magic",
         "tags": ["spell", "attack", "magic"],
         "cooldown": 0,
@@ -420,7 +446,7 @@ ABILITIES = {
         "name": "Starfire",
         "cost": {"mp": 20},
         "dice": {"type": "d6", "power_on": "roll"},
-        "scaling": {"int": 1.4},
+        "scaling": {"int": 2.0},
         "damage_type": "magic",
         "tags": ["spell", "attack", "magic"],
         "cooldown": 0,
@@ -441,6 +467,23 @@ ABILITIES = {
         "requires_form_log": "Must be in Moonkin Form.",
         "target_effects": [
             {"id": "cyclone", "duration": 2, "log": "is trapped in a cyclone."}
+        ],
+    },
+    "typhoon": {
+        "name": "Typhoon",
+        "cost": {"mp": 0},
+        "dice": None,
+        "tags": ["control", "spell"],
+        "cooldown": 5,
+        "classes": ["druid"],
+        "requires_form": "moonkin_form",
+        "requires_form_log": "Must be in Moonkin Form.",
+        "target_effects": [
+            {
+                "id": "typhoon_disoriented",
+                "duration": 2,
+                "log": "is blasted by Typhoon and their attacks miss this turn and next turn.",
+            }
         ],
     },
     "tree": {

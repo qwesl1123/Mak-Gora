@@ -86,6 +86,18 @@ ITEMS = {
             },
         ],
     },
+    "dragonwrath_tarecgosas_rest": {
+        "name": "Dragonwrath, Tarecgosa's Rest",
+        "slot": "weapon",
+        "mods": {"int": 7},
+        "damage_type": "magic",
+        "color": "#ff8000",
+        "passive": {
+            "type": "duplicate_offensive_spell",
+            "trigger": "on_hit",
+            "chance": 0.2,
+        },
+    },
     "glock_19": {
         "name": "Glock 19",
         "slot": "weapon",

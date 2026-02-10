@@ -124,7 +124,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "type": "stat_mods",
         "name": "Tree Form",
         "duration": 999,
-        "mods": {"int": 2, "def": 3, "magic_resist": 3},
+        "mods": {"int": 2, "def": 3, "magic_resist": 2},
     },
     "rip_ready": {
         "type": "status",
@@ -143,6 +143,18 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "name": "Barkskin",
         "duration": 3,
         "value": 0.35,
+    },
+    "ironfur": {
+        "type": "stat_mods",
+        "name": "Ironfur",
+        "duration": 4,
+        "mods": {"physical_reduction": 3},
+    },
+    "typhoon_disoriented": {
+        "type": "status",
+        "name": "Typhoon",
+        "duration": 2,
+        "flags": {"forced_miss": True},
     },
     "cyclone": {
         "type": "status",
@@ -397,6 +409,7 @@ def trigger_on_hit_passives(
     base_damage: int,
     damage_type: str,
     rng,
+    ability: Optional[Dict[str, Any]] = None,
 ) -> tuple[int, List[str], int]:
     """Run attacker item passives that trigger on_hit."""
     bonus_damage = 0
@@ -523,6 +536,70 @@ def trigger_on_hit_passives(
                 apply_effect_by_id(attacker, effect_id, overrides=overrides or None)
                 log_lines.append(
                     f"{attacker.sid[:5]} feels empowered by {effect.get('source_item', 'item')}."
+                )
+        elif passive.get("type") == "duplicate_offensive_spell":
+            if base_damage <= 0 or not ability:
+                continue
+            tags = ability.get("tags") or []
+            if "spell" not in tags or "attack" not in tags:
+                continue
+            chance = float(passive.get("chance", 0) or 0)
+            if chance <= 0 or rng.random() > chance:
+                continue
+
+            dice_data = ability.get("dice")
+            scaling = ability.get("scaling", {}) or {}
+            flat_damage = ability.get("flat_damage")
+
+            roll_power = 0
+            dice_type = None
+            if dice_data:
+                dice_type = dice_data.get("type")
+                if dice_type:
+                    roll_power = roll(dice_type, rng)
+
+            duplicate_raw = 0
+            if flat_damage is not None:
+                duplicate_raw = int(flat_damage)
+            elif "atk" in scaling:
+                duplicate_raw = calc_base_damage(
+                    modify_stat(attacker, "atk", attacker.stats.get("atk", 0)),
+                    scaling["atk"],
+                    roll_power,
+                )
+            elif "int" in scaling:
+                duplicate_raw = calc_base_damage(
+                    modify_stat(attacker, "int", attacker.stats.get("int", 0)),
+                    scaling["int"],
+                    roll_power,
+                )
+            if duplicate_raw <= 0:
+                continue
+
+            duplicate_reduced = mitigate(duplicate_raw, modify_stat(target, "def", target.stats.get("def", 0)))
+            if damage_type == "physical":
+                resist = modify_stat(target, "physical_reduction", target.stats.get("physical_reduction", 0))
+                duplicate_reduced = max(0, duplicate_reduced - resist)
+            elif damage_type == "magic":
+                resist = modify_stat(target, "magic_resist", target.stats.get("magic_resist", 0))
+                duplicate_reduced = max(0, duplicate_reduced - resist)
+
+            duplicate_reduced = int(duplicate_reduced * mitigation_multiplier(target))
+            if is_damage_immune(target, damage_type):
+                duplicate_reduced = 0
+            if duplicate_reduced <= 0:
+                continue
+
+            bonus_damage += duplicate_reduced
+            item_name = effect.get("source_item", "item")
+            ability_name = ability.get("name", "spell")
+            if dice_type:
+                log_lines.append(
+                    f"{item_name} duplicates {ability_name}! Roll {dice_type} = {roll_power}. Deals {duplicate_reduced} damage."
+                )
+            else:
+                log_lines.append(
+                    f"{item_name} duplicates {ability_name}! Deals {duplicate_reduced} damage."
                 )
 
     return bonus_damage, log_lines, bonus_healing

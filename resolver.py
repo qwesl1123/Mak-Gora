@@ -463,6 +463,10 @@ def resolve_turn(match: MatchState) -> None:
                 roll_power = roll(dice_data["type"], r)
                 log_parts.append(f"{prefix}Roll {dice_data['type']} = {roll_power}.")
 
+            if has_flag(actor, "forced_miss"):
+                log_parts.append(f"{prefix}Miss!")
+                continue
+
             if miss_chance > 0 and r.random() <= miss_chance:
                 log_parts.append(f"{prefix}Misfire!")
                 continue
@@ -565,6 +569,7 @@ def resolve_turn(match: MatchState) -> None:
                 on_hit_base_damage,
                 damage_type,
                 r,
+                ability=ability,
             )
             if bonus_damage > 0:
                 total_damage += bonus_damage
