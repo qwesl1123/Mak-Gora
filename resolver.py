@@ -740,6 +740,31 @@ def resolve_turn(match: MatchState) -> None:
     apply_pre_resolution_defensive(sids[0], contexts[sids[0]])
     apply_pre_resolution_defensive(sids[1], contexts[sids[1]])
 
+    def immediate_action_can_stun(actor_sid: str, target_sid: str, ctx: Dict[str, Any]) -> bool:
+        if ctx.get("resolved") or not ctx.get("immediate_only"):
+            return False
+        ability = ctx.get("ability") or {}
+        target_effects = ability.get("target_effects") or []
+        if not target_effects:
+            return False
+        is_aoe = "aoe" in (ability.get("tags") or [])
+        target = match.state[target_sid]
+        if stealth_targeting.get(target_sid, False) and not is_aoe:
+            return False
+        if has_flag(target, "untargetable") and not is_aoe:
+            return False
+        for entry in target_effects:
+            effect = build_effect(entry["id"], overrides=entry.get("overrides"))
+            flags = effect.get("flags", {}) or {}
+            if flags.get("stunned"):
+                return True
+        return False
+
+    incoming_immediate_stun = {
+        sids[0]: immediate_action_can_stun(sids[1], sids[0], contexts[sids[1]]),
+        sids[1]: immediate_action_can_stun(sids[0], sids[1], contexts[sids[0]]),
+    }
+
     def resolve_immediate_effects(actor_sid: str, target_sid: str, ctx: Dict[str, Any]) -> None:
         if ctx.get("resolved") or not ctx.get("immediate_only"):
             return
@@ -750,13 +775,22 @@ def resolve_turn(match: MatchState) -> None:
         skip_self_effect_ids = ctx.get("pre_resolved_self_effects", set())
         is_aoe = "aoe" in (ability.get("tags") or [])
 
-        consume_costs(actor, ability.get("cost", {}))
-
         weapon_id = None
         if actor.build and actor.build.items:
             weapon_id = actor.build.items.get("weapon")
         weapon_name = ITEMS.get(weapon_id, {}).get("name", "their bare hands")
         log_parts = [f"{actor_sid[:5]} uses {weapon_name} to cast {ability['name']}."]
+
+        actor_stunned = is_stunned(actor) or incoming_immediate_stun.get(actor_sid, False)
+        if actor_stunned and not ability.get("allow_while_stunned"):
+            ctx["damage"] = 0
+            ctx["log"] = (
+                f"{actor_sid[:5]} tries to use {ability['name']} but is stunned and cannot act."
+            )
+            ctx["resolved"] = True
+            return
+
+        consume_costs(actor, ability.get("cost", {}))
 
         if ability.get("target_effects") and stealth_targeting.get(target_sid, False) and not is_aoe:
             log_parts.append("Target is stealthed — no valid target.")
