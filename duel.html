@@ -498,6 +498,34 @@
         color: #88ddff;
       }
 
+      .log-summary {
+        display: grid;
+        gap: 6px;
+        margin: 6px 0;
+      }
+
+      .log-summary-title {
+        font-weight: 700;
+        color: #ffffff;
+      }
+
+      .log-summary-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        column-gap: 32px;
+        white-space: nowrap;
+      }
+
+      .log-summary-damage {
+        color: #ff4444;
+        font-weight: 700;
+      }
+
+      .log-summary-heal {
+        color: #44dd66;
+        font-weight: 700;
+      }
+
       .log-class-warrior,
       .log-ability-warrior {
         color: var(--warrior-color);
@@ -1349,6 +1377,31 @@
       }
 
       function highlightLogLine(text) {
+        if (text.startsWith("Post-Combat Summary|")) {
+          const parts = text.split("|");
+          const values = {};
+          parts.slice(1).forEach((entry) => {
+            const [key, value] = entry.split(":");
+            values[key] = value;
+          });
+          const friendlyDamage = values.FD ?? "0";
+          const friendlyHealing = values.FH ?? "0";
+          const enemyDamage = values.ED ?? "0";
+          const enemyHealing = values.EH ?? "0";
+          return `
+            <div class="log-summary">
+              <div class="log-summary-title">Post-Combat Summary:</div>
+              <div class="log-summary-row">
+                <span>Friendly Damage Done: <span class="log-summary-damage">${friendlyDamage}</span></span>
+                <span>Friendly Healing Done: <span class="log-summary-heal">${friendlyHealing}</span></span>
+              </div>
+              <div class="log-summary-row">
+                <span>Enemy Damage Done: <span class="log-summary-damage">${enemyDamage}</span></span>
+                <span>Enemy Healing Done: <span class="log-summary-heal">${enemyHealing}</span></span>
+              </div>
+            </div>
+          `;
+        }
         if (text.includes("HOT STREAK") || text.includes("Can Use Execute")) {
           return escapeHtml(text);
         }

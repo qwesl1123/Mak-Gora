@@ -60,6 +60,7 @@ def apply_prep_build(match: MatchState) -> None:
     Called once when both players have selected class + items.
     Creates PlayerState.res/stats from content + item modifiers.
     """
+    match.combat_totals = {sid: {"damage": 0, "healing": 0} for sid in match.players}
     for sid in match.players:
         pick = match.picks.get(sid)
         if isinstance(pick, PlayerBuild):
@@ -255,15 +256,16 @@ def resolve_turn(match: MatchState) -> None:
         ability_id = action.get("ability_id")
         ability = ABILITIES.get(ability_id)
         if not ability:
-            return {"damage": 0, "log": f"{actor_sid[:5]} fumbles (unknown ability)."}
+            return {"damage": 0, "healing": 0, "log": f"{actor_sid[:5]} fumbles (unknown ability)."}
 
         allowed_classes = ability.get("classes")
         if allowed_classes and actor.build.class_id not in allowed_classes:
-            return {"damage": 0, "log": f"{actor_sid[:5]} cannot use {ability['name']}."}
+            return {"damage": 0, "healing": 0, "log": f"{actor_sid[:5]} cannot use {ability['name']}."}
 
         if is_on_cooldown(actor, ability_id, ability):
             return {
                 "damage": 0,
+                "healing": 0,
                 "log": f"{actor_sid[:5]} tried to use {ability['name']} but it is on cooldown.",
             }
 
@@ -271,23 +273,28 @@ def resolve_turn(match: MatchState) -> None:
         if required_form and current_form_id(actor) != required_form:
             return {
                 "damage": 0,
+                "healing": 0,
                 "log": ability.get("requires_form_log", "Must be in the correct form."),
             }
 
         required_effect = ability.get("requires_effect")
         if required_effect and not has_effect(actor, required_effect):
-            return {"damage": 0, "log": f"{ability['name']} requires {effect_name(required_effect)}."}
+            return {"damage": 0, "healing": 0, "log": f"{ability['name']} requires {effect_name(required_effect)}."}
 
         target_hp_threshold = ability.get("requires_target_hp_below")
         if target_hp_threshold is not None:
             if target.res.hp / max(1, target.res.hp_max) >= float(target_hp_threshold):
-                return {"damage": 0, "log": f"{ability['name']} can only be used as an execute."}
+                return {"damage": 0, "healing": 0, "log": f"{ability['name']} can only be used as an execute."}
 
         ok, fail_reason = can_pay_costs(actor, ability.get("cost", {}))
         if not ok:
             if fail_reason == "not enough rage":
-                return {"damage": 0, "log": "not enough rage"}
-            return {"damage": 0, "log": f"{actor_sid[:5]} tried {ability['name']} but lacked resources."}
+                return {"damage": 0, "healing": 0, "log": "not enough rage"}
+            return {
+                "damage": 0,
+                "healing": 0,
+                "log": f"{actor_sid[:5]} tried {ability['name']} but lacked resources.",
+            }
 
         weapon_id = None
         if actor.build and actor.build.items:
@@ -297,6 +304,7 @@ def resolve_turn(match: MatchState) -> None:
         if is_stunned(actor) and not ability.get("allow_while_stunned"):
             return {
                 "damage": 0,
+                "healing": 0,
                 "log": f"{actor_sid[:5]} tries to use {ability['name']} but is stunned and cannot act.",
             }
 
@@ -308,7 +316,7 @@ def resolve_turn(match: MatchState) -> None:
         if "pass" in (ability.get("tags") or []):
             set_cooldown(actor, ability_id, ability)
             log_parts.append("Passes the turn.")
-            return {"damage": 0, "log": " ".join(log_parts)}
+            return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
 
         was_stealthed = has_effect(actor, "stealth")
         offensive_action = is_offensive_action(ability)
@@ -337,7 +345,7 @@ def resolve_turn(match: MatchState) -> None:
                     remove_effect(actor, ability["consume_effect"])
                 if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
                     remove_stealth(actor)
-                return {"damage": 0, "log": " ".join(log_parts)}
+                return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
             if has_flag(target, "untargetable"):
                 log_parts.append("Target blinks away — Miss.")
                 set_cooldown(actor, ability_id, ability)
@@ -345,7 +353,7 @@ def resolve_turn(match: MatchState) -> None:
                     remove_effect(actor, ability["consume_effect"])
                 if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
                     remove_stealth(actor)
-                return {"damage": 0, "log": " ".join(log_parts)}
+                return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
             if has_flag(target, "evade_all"):
                 log_parts.append("Evaded!")
                 set_cooldown(actor, ability_id, ability)
@@ -353,7 +361,7 @@ def resolve_turn(match: MatchState) -> None:
                     remove_effect(actor, ability["consume_effect"])
                 if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
                     remove_stealth(actor)
-                return {"damage": 0, "log": " ".join(log_parts)}
+                return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
 
         if has_self_effects or has_target_effects:
             apply_effect_entries(actor, target, ability, log_parts)
@@ -367,11 +375,11 @@ def resolve_turn(match: MatchState) -> None:
             set_cooldown(actor, ability_id, ability)
             if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
                 remove_stealth(actor)
-            return {"damage": 0, "log": " ".join(log_parts)}
+            return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
 
         if ability_id == "frenzied_regeneration":
             if actor.res.rage <= 0:
-                return {"damage": 0, "log": "not enough rage"}
+                return {"damage": 0, "healing": 0, "log": "not enough rage"}
             total_heal = int(actor.res.rage)
             per_tick = total_heal // 4
             actor.res.rage = 0
@@ -382,18 +390,21 @@ def resolve_turn(match: MatchState) -> None:
             )
             log_parts.append("channels Frenzied Regeneration.")
             set_cooldown(actor, ability_id, ability)
-            return {"damage": 0, "log": " ".join(log_parts)}
+            return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
 
         if ability_id == "wild_growth":
             intellect = modify_stat(actor, "int", actor.stats.get("int", 0))
             attack = modify_stat(actor, "atk", actor.stats.get("atk", 0))
             roll_power = roll("d8", r)
             heal_value = int((intellect + attack) * 1.6) + int(roll_power)
+            healing_done = 0
             if not has_flag(actor, "cycloned"):
+                before_hp = actor.res.hp
                 actor.res.hp = min(actor.res.hp + heal_value, actor.res.hp_max)
+                healing_done = actor.res.hp - before_hp
             log_parts.append(f"Wild Growth heals {heal_value} HP.")
             set_cooldown(actor, ability_id, ability)
-            return {"damage": 0, "log": " ".join(log_parts)}
+            return {"damage": 0, "healing": healing_done, "log": " ".join(log_parts)}
 
         if ability_id == "regrowth":
             intellect = modify_stat(actor, "int", actor.stats.get("int", 0))
@@ -408,24 +419,25 @@ def resolve_turn(match: MatchState) -> None:
             )
             log_parts.append("Healing over time for 5 turns.")
             set_cooldown(actor, ability_id, ability)
-            return {"damage": 0, "log": " ".join(log_parts)}
+            return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
 
         if ability_id == "innervate":
             actor.res.mp = actor.res.mp_max
             log_parts.append("restores their mana to full.")
             set_cooldown(actor, ability_id, ability)
-            return {"damage": 0, "log": " ".join(log_parts)}
+            return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
 
         if not has_damage:
             set_cooldown(actor, ability_id, ability)
             if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
                 remove_stealth(actor)
-            return {"damage": 0, "log": " ".join(log_parts)}
+            return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
 
         # Calculate base damage using appropriate stat
         damage_type = ability.get("damage_type", "physical")
         hits = int(ability.get("hits", 1) or 1)
         total_damage = 0
+        total_healing = 0
         empower_multiplier = 1.0
         consume_empower = False
         empower_logged = False
@@ -538,14 +550,16 @@ def resolve_turn(match: MatchState) -> None:
                         roll_power,
                     )
             if reduced > 0 and heal_on_hit > 0:
+                before_hp = actor.res.hp
                 actor.res.hp = min(actor.res.hp + heal_on_hit, actor.res.hp_max)
+                total_healing += actor.res.hp - before_hp
                 log_parts.append(f"{prefix}Heals {heal_on_hit} HP.")
 
             total_damage += reduced
 
         # Apply on-hit passive effects once per ability execution (weapons/trinkets etc.)
         if ability_hit_landed:
-            bonus_damage, passive_logs = trigger_on_hit_passives(
+            bonus_damage, passive_logs, bonus_healing = trigger_on_hit_passives(
                 actor,
                 target,
                 on_hit_base_damage,
@@ -554,6 +568,8 @@ def resolve_turn(match: MatchState) -> None:
             )
             if bonus_damage > 0:
                 total_damage += bonus_damage
+            if bonus_healing > 0:
+                total_healing += bonus_healing
             if passive_logs:
                 extra_logs.extend(passive_logs)
 
@@ -583,6 +599,7 @@ def resolve_turn(match: MatchState) -> None:
 
         return {
             "damage": total_damage,
+            "healing": total_healing,
             "log": " ".join(log_parts),
             "extra_logs": extra_logs,
         }
@@ -792,6 +809,10 @@ def resolve_turn(match: MatchState) -> None:
     match.log.extend(result1.get("extra_logs", []))
     match.log.append(result2["log"])
     match.log.extend(result2.get("extra_logs", []))
+    for sid, result in ((sids[0], result1), (sids[1], result2)):
+        totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
+        totals["damage"] += int(result.get("damage", 0) or 0)
+        totals["healing"] += int(result.get("healing", 0) or 0)
 
     # Apply damage
     def apply_damage(target: PlayerState, incoming: int, target_sid: str) -> None:
@@ -817,7 +838,12 @@ def resolve_turn(match: MatchState) -> None:
     # End of turn processing for both players (DoTs, passives, duration ticks, regen)
     for sid in sids:
         ps = match.state[sid]
-        end_of_turn(ps, match.log, sid[:5])
+        end_summary = end_of_turn(ps, match.log, sid[:5])
+        for source_sid, damage in end_summary.get("damage_sources", []):
+            totals = match.combat_totals.setdefault(source_sid, {"damage": 0, "healing": 0})
+            totals["damage"] += int(damage or 0)
+        totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
+        totals["healing"] += int(end_summary.get("healing_done", 0) or 0)
         tick_cooldowns(ps)
 
     # Check for winners
@@ -825,6 +851,10 @@ def resolve_turn(match: MatchState) -> None:
     p2_alive = match.state[sids[1]].res.hp > 0
     if not p1_alive or not p2_alive:
         match.phase = "ended"
+        match.log.append(
+            "Post-Combat Summary|FD:{friendly_damage}|FH:{friendly_healing}|"
+            "ED:{enemy_damage}|EH:{enemy_healing}"
+        )
         if p1_alive and not p2_alive:
             match.winner = sids[0]
             match.log.append(f"{sids[0][:5]} wins the duel.")

@@ -335,13 +335,21 @@ def mitigation_multiplier(target: PlayerState) -> float:
     return 1.0 - total
 
 
-def apply_burn(target: PlayerState, value: int, source_item: str = "Unknown", duration: int = 999) -> None:
+def apply_burn(
+    target: PlayerState,
+    value: int,
+    source_item: str = "Unknown",
+    duration: int = 999,
+    source_sid: Optional[str] = None,
+) -> None:
     """Attach a burn DoT to the target (matches your existing burn shape)."""
     for effect in target.effects:
         if effect.get("type") == "burn":
             effect["value"] = max(int(effect.get("value", 0) or 0), int(value))
             effect["duration"] = max(int(effect.get("duration", 0) or 0), int(duration))
             effect["source"] = str(source_item)
+            if source_sid is not None:
+                effect["source_sid"] = source_sid
             return
     target.effects.append(
         {
@@ -349,6 +357,7 @@ def apply_burn(target: PlayerState, value: int, source_item: str = "Unknown", du
             "value": int(value),
             "duration": int(duration),
             "source": str(source_item),
+            "source_sid": source_sid,
         }
     )
 
@@ -388,9 +397,10 @@ def trigger_on_hit_passives(
     base_damage: int,
     damage_type: str,
     rng,
-) -> tuple[int, List[str]]:
+) -> tuple[int, List[str], int]:
     """Run attacker item passives that trigger on_hit."""
     bonus_damage = 0
+    bonus_healing = 0
     log_lines: List[str] = []
     for effect in attacker.effects:
         if effect.get("type") != "item_passive":
@@ -407,6 +417,7 @@ def trigger_on_hit_passives(
                     value=burn_value,
                     source_item=str(effect.get("source_item", "Unknown")),
                     duration=999,
+                    source_sid=attacker.sid,
                 )
                 log_lines.append(
                     f"{attacker.sid[:5]} scorches the target with {effect.get('source_item', 'item')} ({burn_value} damage/turn)."
@@ -496,7 +507,9 @@ def trigger_on_hit_passives(
                     roll_power,
                 )
             if heal_value > 0 and attacker.res:
+                before_hp = attacker.res.hp
                 attacker.res.hp = min(attacker.res.hp + heal_value, attacker.res.hp_max)
+                bonus_healing += attacker.res.hp - before_hp
                 log_lines.append(
                     f"{attacker.sid[:5]} draws strength from {effect.get('source_item', 'item')}, healing {heal_value} HP."
                 )
@@ -512,7 +525,7 @@ def trigger_on_hit_passives(
                     f"{attacker.sid[:5]} feels empowered by {effect.get('source_item', 'item')}."
                 )
 
-    return bonus_damage, log_lines
+    return bonus_damage, log_lines, bonus_healing
 
 def damage_multiplier_from_passives(attacker: PlayerState) -> float:
     """Apply conditional damage multipliers from item passives."""
@@ -536,8 +549,9 @@ def damage_multiplier_from_passives(attacker: PlayerState) -> float:
                 multiplier *= float(passive.get("multiplier", 1.0) or 1.0)
     return multiplier
 
-def tick_dots(ps: PlayerState, log: List[str], label: str) -> None:
+def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[tuple[str, int]]:
     """Apply DoT damage (currently: burn)."""
+    damage_sources: list[tuple[str, int]] = []
     for effect in ps.effects:
         if effect.get("type") == "burn":
             burn_dmg = int(effect.get("value", 0) or 0)
@@ -545,10 +559,15 @@ def tick_dots(ps: PlayerState, log: List[str], label: str) -> None:
                 ps.res.hp -= burn_dmg
                 break_stealth_on_damage(ps, burn_dmg)
                 log.append(f"{label} burns for {burn_dmg} damage.")
+                source_sid = effect.get("source_sid")
+                if source_sid:
+                    damage_sources.append((source_sid, burn_dmg))
+    return damage_sources
 
 
-def trigger_end_of_turn_passives(ps: PlayerState, log: List[str], label: str) -> None:
+def trigger_end_of_turn_passives(ps: PlayerState, log: List[str], label: str) -> int:
     """Run end-of-turn item passives (currently: heal_self)."""
+    total_healing = 0
     for effect in ps.effects:
         if effect.get("type") != "item_passive":
             continue
@@ -559,7 +578,9 @@ def trigger_end_of_turn_passives(ps: PlayerState, log: List[str], label: str) ->
         if passive.get("type") == "heal_self":
             heal_value = int(passive.get("value", 0) or 0)
             if heal_value > 0:
+                before_hp = ps.res.hp
                 ps.res.hp = min(ps.res.hp + heal_value, ps.res.hp_max)
+                total_healing += ps.res.hp - before_hp
                 log.append(
                     f"{label} heals {heal_value} HP from {effect.get('source_item', 'item')}."
                 )
@@ -570,10 +591,12 @@ def trigger_end_of_turn_passives(ps: PlayerState, log: List[str], label: str) ->
                 log.append(
                     f"{label} gains {absorb_value} absorb from {effect.get('source_item', 'item')}."
                 )
+    return total_healing
 
 
-def trigger_end_of_turn_effects(ps: PlayerState, log: List[str], label: str) -> None:
+def trigger_end_of_turn_effects(ps: PlayerState, log: List[str], label: str) -> int:
     """Run end-of-turn status effects such as regeneration from buffs."""
+    total_healing = 0
     for effect in ps.effects:
         regen = effect.get("regen", {}) or {}
         if not regen:
@@ -582,7 +605,9 @@ def trigger_end_of_turn_effects(ps: PlayerState, log: List[str], label: str) -> 
         mp_gain = int(regen.get("mp", 0) or 0)
         energy_gain = int(regen.get("energy", 0) or 0)
         if hp_gain > 0:
+            before_hp = ps.res.hp
             ps.res.hp = min(ps.res.hp + hp_gain, ps.res.hp_max)
+            total_healing += ps.res.hp - before_hp
         if mp_gain > 0:
             ps.res.mp = min(ps.res.mp + mp_gain, ps.res.mp_max)
         if energy_gain > 0:
@@ -592,22 +617,25 @@ def trigger_end_of_turn_effects(ps: PlayerState, log: List[str], label: str) -> 
             log.append(
                 f"{label} recovers {hp_gain} HP, {mp_gain} MP, and {energy_gain} Energy from {effect_name}."
             )
+    return total_healing
 
 
-def end_of_turn(ps: PlayerState, log: List[str], label: str) -> None:
+def end_of_turn(ps: PlayerState, log: List[str], label: str) -> dict[str, Any]:
     """End-of-turn pipeline: DoTs, passives, duration tick, regen."""
     if not ps.res:
-        return
+        return {"damage_sources": [], "healing_done": 0}
 
     if has_flag(ps, "cycloned"):
         ps.effects = tick_durations(ps.effects)
-        return
+        return {"damage_sources": [], "healing_done": 0}
 
-    tick_dots(ps, log, label)
-    trigger_end_of_turn_passives(ps, log, label)
-    trigger_end_of_turn_effects(ps, log, label)
+    damage_sources = tick_dots(ps, log, label)
+    total_healing = 0
+    total_healing += trigger_end_of_turn_passives(ps, log, label)
+    total_healing += trigger_end_of_turn_effects(ps, log, label)
     ps.effects = tick_durations(ps.effects)
 
     if ps.res.hp > 0:
         ps.res.mp = min(ps.res.mp + DEFAULTS["mp_regen_per_turn"], ps.res.mp_max)
         ps.res.energy = min(ps.res.energy + DEFAULTS["energy_regen_per_turn"], ps.res.energy_max)
+    return {"damage_sources": damage_sources, "healing_done": total_healing}

@@ -17,6 +17,9 @@ def snapshot_for(match, viewer_sid):
     p1, p2 = match.players
     you = viewer_sid
     enemy = p2 if you == p1 else p1
+    totals = match.combat_totals or {}
+    friendly_totals = totals.get(you, {"damage": 0, "healing": 0})
+    enemy_totals = totals.get(enemy, {"damage": 0, "healing": 0})
 
     def class_name_for(sid):
         picked = match.picks.get(sid, {})
@@ -99,6 +102,13 @@ def snapshot_for(match, viewer_sid):
         formatted = line
         for sid in match.players:
             formatted = formatted.replace(sid[:5], display_name_for(sid))
+        if "{friendly_damage}" in formatted:
+            formatted = formatted.format(
+                friendly_damage=friendly_totals.get("damage", 0),
+                friendly_healing=friendly_totals.get("healing", 0),
+                enemy_damage=enemy_totals.get("damage", 0),
+                enemy_healing=enemy_totals.get("healing", 0),
+            )
         return formatted
 
     def primary_resource_for(sid):
@@ -133,6 +143,10 @@ def snapshot_for(match, viewer_sid):
         "enemy_form": form_for(enemy),
         "log": [format_log_line(line) for line in match.log[-30:]],
         "winner": match.winner,
+        "friendly_total_damage": friendly_totals.get("damage", 0),
+        "friendly_total_healing": friendly_totals.get("healing", 0),
+        "enemy_total_damage": enemy_totals.get("damage", 0),
+        "enemy_total_healing": enemy_totals.get("healing", 0),
         "log_length": len(match.log),
     }
 

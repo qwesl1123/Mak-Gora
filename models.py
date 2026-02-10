@@ -46,3 +46,4 @@ class MatchState:
     state: Dict[str, PlayerState] = field(default_factory=dict)         # sid -> PlayerState
     log: List[str] = field(default_factory=list)
     winner: Optional[str] = None
+    combat_totals: Dict[str, Dict[str, int]] = field(default_factory=dict)
