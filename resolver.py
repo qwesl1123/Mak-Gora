@@ -794,6 +794,8 @@ def resolve_turn(match: MatchState) -> None:
         if has_damage or ability.get("target_effects"):
             return False
         for entry in ability.get("self_effects", []) or []:
+            if not entry.get("id"):
+                continue
             effect = build_effect(entry["id"], overrides=entry.get("overrides"))
             flags = effect.get("flags", {}) or {}
             if flags.get("untargetable") or flags.get("evade_all"):
@@ -809,6 +811,8 @@ def resolve_turn(match: MatchState) -> None:
         actor = match.state[actor_sid]
         pre_applied: set[str] = set()
         for entry in ability.get("self_effects", []) or []:
+            if not entry.get("id"):
+                continue
             effect = build_effect(entry["id"], overrides=entry.get("overrides"))
             flags = effect.get("flags", {}) or {}
             if not (flags.get("untargetable") or flags.get("evade_all")):
