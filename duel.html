@@ -28,6 +28,7 @@
         --mage-color: #3FC7EB;
         --rogue-color: #FFF468;
         --druid-color: #FF7C0A;
+        --warlock-color: #8788EE;
         --item-green: #1eff00;
         --item-blue: #0070dd;
         --item-purple: #a335ee;
@@ -234,6 +235,10 @@
 
       .status-text.druid {
         color: var(--druid-color);
+      }
+
+      .status-text.warlock {
+        color: var(--warlock-color);
       }
 
       .resource-bar {
@@ -566,6 +571,12 @@
         font-weight: 700;
       }
 
+      .log-class-warlock,
+      .log-ability-warlock {
+        color: var(--warlock-color);
+        font-weight: 700;
+      }
+
       .log-item-green {
         color: var(--item-green);
         font-weight: 700;
@@ -796,7 +807,7 @@
 
             <div class="hint">
               <strong>Commands:</strong><br>
-              <span class="kbd">/class warrior</span>, <span class="kbd">/class mage</span>, or <span class="kbd">/class rogue</span> - Choose your class<br>
+              <span class="kbd">/class warrior</span>, <span class="kbd">/class mage</span>, <span class="kbd">/class rogue</span>, or <span class="kbd">/class warlock</span> - Choose your class<br>
               <span class="kbd">/item weapon steel_long_sword</span> - Equip weapon<br>
               <span class="kbd">/item armor leather_armor</span> - Equip armor<br>
               <span class="kbd">basic_attack</span>, <span class="kbd">fireball</span>, <span class="kbd">eviscerate</span>, <span class="kbd">blink</span>, <span class="kbd">cheap_shot</span> - Combat abilities<br>
@@ -859,6 +870,13 @@
             <p><span class="stat">Attack: 6</span> | <span class="stat">Intellect: 6</span> | <span class="stat">Defense: 5</span></p>
             <p><span class="stat">HP: 100</span> | <span class="stat">Mana: 80</span> | <span class="stat">Energy: 100</span> | Speed: 8 | Crit: 8% | Accuracy: 95%</p>
             <p>Adaptive shapeshifter. Switches forms to access different resources and roles.</p>
+          </div>
+
+          <div class="doc-item">
+            <h4>Warlock</h4>
+            <p><span class="stat">Attack: 3</span> | <span class="stat">Intellect: 15</span> | <span class="stat">Defense: 7</span></p>
+            <p><span class="stat">HP: 110</span> | <span class="stat">Mana: 100</span> | Speed: 9 | Crit: 4% | Accuracy: 96%</p>
+            <p>Master of curses and demons. Uses Mana only and specializes in magical afflictions.</p>
           </div>
         </div>
       </div>
@@ -1089,7 +1107,7 @@
             <h4>Ice Block</h4>
             <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 20</span></p>
             <p><span class="stat">Command: <span class="kbd">iceblock</span></span></p>
-            <p>Become immune to all damage for 3 turns. Restores 10 HP and 25 Mana each turn, but you cannot act.</p>
+            <p>Become immune to all damage for 3 turns. Restores 10 HP and 25 Mana each turn, but you cannot act. Also dispels your magical DoTs (does not remove physical bleeds/poisons).</p>
           </div>
 
           <div class="doc-item">
@@ -1128,6 +1146,13 @@
             <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 15</span></p>
             <p><span class="stat">Command: <span class="kbd">vanish</span></span></p>
             <p>Enter Stealth for 3 turns, restoring 15 HP and 5 Energy each turn. Stealth breaks if you take more than 5 damage.</p>
+          </div>
+
+          <div class="doc-item">
+            <h4>Cloak of Shadows</h4>
+            <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 20</span></p>
+            <p><span class="stat">Command: <span class="kbd">cloak</span></span></p>
+            <p>Become immune to magic damage for 1 turn and dispel all magical DoTs (physical bleeds/poisons remain).</p>
           </div>
 
           <div class="doc-item">
@@ -1213,6 +1238,70 @@
       </div>
 
       <div class="doc-section">
+        <h4 class="doc-subtitle">Warlock</h4>
+        <div class="doc-grid">
+          <div class="doc-item">
+            <h4>Agony</h4>
+            <p><span class="stat">Cost: 20 Mana</span> | <span class="stat">Cooldown: 15</span></p>
+            <p><span class="stat">Command: <span class="kbd">agony</span></span></p>
+            <p>Inflicts Agony for 15 turns. Deals increasing magical DoT damage from 1 up to 15. Not dispellable and not stackable.</p>
+          </div>
+          <div class="doc-item">
+            <h4>Corruption</h4>
+            <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Cooldown: 8</span></p>
+            <p><span class="stat">Command: <span class="kbd">corruption</span></span></p>
+            <p>Magical DoT over 8 turns. Damage uses Intellect (3.0x) + d4 and refreshes (no stacking).</p>
+          </div>
+          <div class="doc-item">
+            <h4>Unstable Affliction</h4>
+            <p><span class="stat">Cost: 20 Mana</span> | <span class="stat">Cooldown: 6</span></p>
+            <p><span class="stat">Command: <span class="kbd">unstable_affliction</span></span></p>
+            <p>Magical DoT over 6 turns. Damage uses Intellect (1.6x) + d4 and refreshes (no stacking).</p>
+          </div>
+          <div class="doc-item">
+            <h4>Drain Life</h4>
+            <p><span class="stat">Cost: 5 Mana</span> | <span class="stat">Cooldown: 3</span></p>
+            <p><span class="stat">Command: <span class="kbd">drain_life</span></span></p>
+            <p>Deals magical damage (Intellect 1.4x + d6) and heals for damage dealt.</p>
+          </div>
+          <div class="doc-item">
+            <h4>Healthstone</h4>
+            <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 8</span></p>
+            <p><span class="stat">Command: <span class="kbd">healthstone</span></span></p>
+            <p>Heals the warlock for 25% of max HP.</p>
+          </div>
+          <div class="doc-item">
+            <h4>Fear</h4>
+            <p><span class="stat">Cost: 5 Mana</span> | <span class="stat">Cooldown: 6</span></p>
+            <p><span class="stat">Command: <span class="kbd">fear</span></span></p>
+            <p>Fears the enemy for 1 turn (stun-like action denial).</p>
+          </div>
+          <div class="doc-item">
+            <h4>Summon Imp</h4>
+            <p><span class="stat">Cost: 15 Mana</span> | <span class="stat">Cooldown: 0</span></p>
+            <p><span class="stat">Command: <span class="kbd">summon_imp</span></span></p>
+            <p>Summons an Imp (max 3). Each Imp casts Firebolt at end of your turn.</p>
+          </div>
+          <div class="doc-item">
+            <h4>Demonic Gateway</h4>
+            <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 25</span></p>
+            <p><span class="stat">Command: <span class="kbd">demonic_gateway</span></span></p>
+            <p>The Warlock tears open a passage, steps through the Gateway to emerge from the other side. Causes enemy offensive abilities to miss for 2 turns.</p>
+          </div>
+          <div class="doc-item">
+            <h4>Demonic Circle</h4>
+            <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 0</span></p>
+            <p><span class="stat">Command: <span class="kbd">demonic_circle</span></span></p>
+            <p>Summons a persistent Demonic Circle.</p>
+          </div>
+          <div class="doc-item">
+            <h4>Demonic Circle: Teleport</h4>
+            <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 30</span></p>
+            <p><span class="stat">Command: <span class="kbd">teleport</span></span></p>
+            <p>Requires Demonic Circle. The Warlock teleports to their Demonic Circle. Causes enemy offensive abilities to miss for 2 turns.</p>
+          </div>
+        </div>
+
         <h3>Combat Mechanics</h3>
         <div class="doc-content">
           <p><strong>Damage Types:</strong> Physical damage is reduced by Physical Reduction. Magic damage is reduced by Magic Resist.</p>
@@ -1221,7 +1310,7 @@
           
           <p><strong>Accuracy & Evasion:</strong> Attacks can miss based on attacker's Accuracy vs defender's Evasion.</p>
           
-          <p><strong>Damage over Time (DoT):</strong> Burn effects deal damage at the end of each turn. Burns refresh but do not stack.</p>
+          <p><strong>Damage over Time (DoT):</strong> DoTs are typed by school. Burn is a magical, dispellable DoT that deals damage at the end of each turn and refreshes instead of stacking. Physical bleeds/poisons are not removed by magical dispels.</p>
           
           <p><strong>Passive Healing:</strong> Spirit Light Sword and Staff of Immortality heal automatically at turn end.</p>
           
@@ -1236,7 +1325,7 @@
         <div class="doc-content">
           <p><strong>1. Join Queue:</strong> Click "Enter the Arena" to find an opponent.</p>
           
-          <p><strong>2. Prep Phase:</strong> Choose your class with <span class="kbd">/class warrior</span>, <span class="kbd">/class mage</span>, <span class="kbd">/class rogue</span>, or <span class="kbd">/class druid</span></p>
+          <p><strong>2. Prep Phase:</strong> Choose your class with <span class="kbd">/class warrior</span>, <span class="kbd">/class mage</span>, <span class="kbd">/class rogue</span>, <span class="kbd">/class druid</span>, or <span class="kbd">/class warlock</span></p>
           
           <p><strong>3. Equip Items:</strong> Use <span class="kbd">/item weapon steel_long_sword</span> and <span class="kbd">/item armor plate_armor</span></p>
           
@@ -1324,11 +1413,24 @@
         "Cheap Shot",
         "Kidney Shot",
         "Vanish",
+        "Cloak of Shadows",
         "Eviscerate",
         "Evasion",
         "Shadow Blade",
         "Ambush",
         "Thistle Tea",
+      ];
+      const warlockAbilities = [
+        "Agony",
+        "Corruption",
+        "Unstable Affliction",
+        "Drain Life",
+        "Healthstone",
+        "Fear",
+        "Summon Imp",
+        "Demonic Gateway",
+        "Demonic Circle: Teleport",
+        "Demonic Circle",
       ];
       const druidAbilities = [
         "Bear Form",
@@ -1449,6 +1551,7 @@
           { pattern: /\bMage(\(you\))?\b/g, className: "log-class-mage" },
           { pattern: /\bRogue(\(you\))?\b/g, className: "log-class-rogue" },
           { pattern: /\bDruid(\(you\))?\b/g, className: "log-class-druid" },
+          { pattern: /\bWarlock(\(you\))?\b/g, className: "log-class-warlock" },
         ];
         classPatterns.forEach(({ pattern, className }) => {
           output = output.replace(pattern, `<span class="${className}">$&</span>`);
@@ -1465,6 +1568,10 @@
         rogueAbilities.forEach((ability) => {
           const pattern = new RegExp(`\\b${escapeRegExp(ability)}\\b`, "g");
           output = output.replace(pattern, `<span class="log-ability-rogue">$&</span>`);
+        });
+        warlockAbilities.forEach((ability) => {
+          const pattern = new RegExp(`\\b${escapeRegExp(ability)}\\b`, "g");
+          output = output.replace(pattern, `<span class="log-ability-warlock">$&</span>`);
         });
         druidAbilities.forEach((ability) => {
           const pattern = new RegExp(`\\b${escapeRegExp(ability)}\\b`, "g");
@@ -1663,7 +1770,7 @@
         if (!element) {
           return;
         }
-        element.classList.remove("warrior", "mage", "rogue", "druid");
+        element.classList.remove("warrior", "mage", "rogue", "druid", "warlock");
         if (classKey) {
           element.classList.add(classKey);
         }

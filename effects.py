@@ -34,6 +34,45 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "flags": {"immune_all": True, "stunned": True},
         "regen": {"hp": 10, "mp": 25},
     },
+    "cloak_of_shadows": {
+        "type": "status",
+        "name": "Cloak of Shadows",
+        "duration": 1,
+        "flags": {"immune_magic": True},
+    },
+    "agony": {
+        "type": "dot",
+        "name": "Agony",
+        "duration": 15,
+        "category": "dot",
+        "school": "magical",
+        "dispellable": False,
+        "tick": 1,
+    },
+    "corruption": {
+        "type": "dot",
+        "name": "Corruption",
+        "duration": 8,
+        "category": "dot",
+        "school": "magical",
+        "dispellable": True,
+        "tick_damage": 1,
+    },
+    "unstable_affliction": {
+        "type": "dot",
+        "name": "Unstable Affliction",
+        "duration": 6,
+        "category": "dot",
+        "school": "magical",
+        "dispellable": True,
+        "tick_damage": 1,
+    },
+    "demonic_circle": {
+        "type": "status",
+        "name": "Demonic Circle",
+        "duration": 999,
+        "flags": {"demonic_circle": True},
+    },
     "stunned": {
         "type": "status",
         "name": "Stunned",
@@ -194,7 +233,7 @@ FORM_CLEAR_EFFECT_IDS = ("stealth", "rip_ready", "starfire_ready")
 
 def is_permanent(effect: Dict[str, Any]) -> bool:
     """Effects we do not tick down with durations (until you add cleanse/removal)."""
-    return effect.get("type") in ("item_passive", "burn")
+    return effect.get("type") in ("item_passive", "burn") or effect.get("id") == "demonic_circle"
 
 
 def tick_durations(effects: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -357,6 +396,9 @@ def apply_burn(
     """Attach a burn DoT to the target (matches your existing burn shape)."""
     for effect in target.effects:
         if effect.get("type") == "burn":
+            effect["category"] = "dot"
+            effect["school"] = "magical"
+            effect["dispellable"] = True
             effect["value"] = max(int(effect.get("value", 0) or 0), int(value))
             effect["duration"] = max(int(effect.get("duration", 0) or 0), int(duration))
             effect["source"] = str(source_item)
@@ -366,12 +408,44 @@ def apply_burn(
     target.effects.append(
         {
             "type": "burn",
+            "category": "dot",
+            "school": "magical",
+            "dispellable": True,
             "value": int(value),
             "duration": int(duration),
             "source": str(source_item),
             "source_sid": source_sid,
         }
     )
+
+
+def dispel_effects(ps: PlayerState, *, category: Optional[str] = None, school: Optional[str] = None) -> int:
+    remaining: List[Dict[str, Any]] = []
+    removed = 0
+    for effect in ps.effects:
+        effect_category = effect.get("category")
+        effect_school = effect.get("school")
+        matches_category = category is None or effect_category == category
+        matches_school = school is None or effect_school == school
+        is_dispellable = bool(effect.get("dispellable", False))
+        if matches_category and matches_school and is_dispellable:
+            removed += 1
+            continue
+        remaining.append(effect)
+    ps.effects = remaining
+    return removed
+
+
+def refresh_dot_effect(target: PlayerState, effect_id: str, *, duration: int, tick_damage: int, source_sid: Optional[str] = None) -> bool:
+    for effect in target.effects:
+        if effect.get("id") != effect_id:
+            continue
+        effect["duration"] = int(duration)
+        effect["tick_damage"] = int(tick_damage)
+        if source_sid is not None:
+            effect["source_sid"] = source_sid
+        return True
+    return False
 
 
 def add_absorb(ps: PlayerState, amount: int, source_item: Optional[str] = None, cap: Optional[int] = None) -> int:
@@ -646,18 +720,46 @@ def damage_multiplier_from_passives(attacker: PlayerState) -> float:
     return multiplier
 
 def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[tuple[str, int]]:
-    """Apply DoT damage (currently: burn)."""
+    """Apply DoT damage with magical mitigation + absorb routing."""
     damage_sources: list[tuple[str, int]] = []
     for effect in ps.effects:
-        if effect.get("type") == "burn":
-            burn_dmg = int(effect.get("value", 0) or 0)
-            if burn_dmg > 0:
-                ps.res.hp -= burn_dmg
-                break_stealth_on_damage(ps, burn_dmg)
-                log.append(f"{label} burns for {burn_dmg} damage.")
-                source_sid = effect.get("source_sid")
-                if source_sid:
-                    damage_sources.append((source_sid, burn_dmg))
+        effect_id = effect.get("id")
+        effect_type = effect.get("type")
+        category = effect.get("category")
+        if effect_type != "burn" and category != "dot":
+            continue
+
+        if effect_id == "agony":
+            raw_damage = max(0, int(effect.get("tick", 1) or 1))
+            effect["tick"] = min(15, raw_damage + 1)
+        elif effect_id in ("corruption", "unstable_affliction"):
+            raw_damage = max(0, int(effect.get("tick_damage", 0) or 0))
+        else:
+            raw_damage = max(0, int(effect.get("value", 0) or 0))
+
+        if raw_damage <= 0:
+            continue
+
+        reduced = mitigate(raw_damage, modify_stat(ps, "def", ps.stats.get("def", 0)))
+        resist = modify_stat(ps, "magic_resist", ps.stats.get("magic_resist", 0))
+        reduced = max(0, reduced - resist)
+        reduced = int(reduced * mitigation_multiplier(ps))
+        if effect.get("school") == "magical" and is_damage_immune(ps, "magic"):
+            reduced = 0
+
+        absorbed, remaining = consume_absorb(ps, reduced)
+        if absorbed > 0:
+            log.append(f"Shield absorbs {absorbed} DoT damage for {label}.")
+        if remaining <= 0:
+            continue
+
+        ps.res.hp -= remaining
+        break_stealth_on_damage(ps, remaining)
+        effect_name = effect.get("name", "DoT")
+        log.append(f"{label} suffers {remaining} damage from {effect_name}.")
+        source_sid = effect.get("source_sid")
+        if source_sid:
+            damage_sources.append((source_sid, remaining))
     return damage_sources
 
 

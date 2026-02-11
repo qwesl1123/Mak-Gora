@@ -18,6 +18,12 @@ CLASSES = {
         "resources": {"hp": 95, "mp": 0, "energy": 100, "rage": 0, "rage_max": 0},
         "resource_display": {"primary": {"id": "energy", "label": "Energy", "color": "#FFF468"}},
     },
+    "warlock": {
+        "name": "Warlock",
+        "base_stats": {"atk": 3, "int": 15, "def": 7, "spd": 9, "crit": 4, "acc": 96, "eva": 2},
+        "resources": {"hp": 110, "mp": 100, "energy": 0, "rage": 0, "rage_max": 0},
+        "resource_display": {"primary": {"id": "mp", "label": "Mana", "color": "var(--mana-blue)"}},
+    },
     "druid": {
         "name": "Druid",
         "base_stats": {"atk": 6, "int": 6, "def": 5, "spd": 8, "crit": 8, "acc": 95, "eva": 5},

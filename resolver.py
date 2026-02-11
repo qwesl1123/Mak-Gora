@@ -28,6 +28,8 @@ from .effects import (
     add_absorb,
     consume_absorb,
     build_effect,
+    dispel_effects,
+    refresh_dot_effect,
     FORM_EFFECT_IDS,
     current_form_id,
 )
@@ -127,7 +129,7 @@ def apply_prep_build(match: MatchState) -> None:
             absorb_max=None,
         )
         
-        ps = PlayerState(sid=sid, build=build, res=res, stats=stats)
+        ps = PlayerState(sid=sid, build=build, res=res, stats=stats, minions={"imp": 0})
 
         if build.class_id == "rogue":
             apply_effect_by_id(ps, "stealth")
@@ -185,6 +187,9 @@ def resolve_turn(match: MatchState) -> None:
     def effect_name(effect_id: str) -> str:
         return effect_id.replace("_", " ").title()
 
+    def has_circle(ps: PlayerState) -> bool:
+        return has_flag(ps, "demonic_circle") or has_effect(ps, "demonic_circle")
+
     def consume_costs(ps: PlayerState, costs: Dict[str, int]) -> None:
         res = ps.res
         for key, value in costs.items():
@@ -210,6 +215,16 @@ def resolve_turn(match: MatchState) -> None:
                 updated[ability_id] = next_slots
         ps.cooldowns = updated
 
+    def untargetable_miss_log(target: PlayerState) -> str:
+        for effect in reversed(target.effects):
+            flags = effect.get("flags", {}) or {}
+            if not flags.get("untargetable"):
+                continue
+            custom = effect.get("miss_log") or effect.get("overrides", {}).get("miss_log")
+            if custom:
+                return str(custom)
+        return "Target blinks away — Miss."
+
     def apply_effect_entries(
         actor: PlayerState,
         target: PlayerState,
@@ -219,17 +234,31 @@ def resolve_turn(match: MatchState) -> None:
     ) -> None:
         skip_self_effect_ids = skip_self_effect_ids or set()
         for entry in ability.get("self_effects", []) or []:
-            if entry["id"] in skip_self_effect_ids:
+            if entry.get("type") == "dispel":
+                removed = dispel_effects(
+                    actor,
+                    category=entry.get("category"),
+                    school=entry.get("school"),
+                )
+                if removed > 0:
+                    school = entry.get("school")
+                    school_text = f" {school}" if school else ""
+                    log_parts.append(f"{actor.sid[:5]} dispels {removed}{school_text} effects.")
+                continue
+            effect_id = entry.get("id")
+            if not effect_id:
+                continue
+            if effect_id in skip_self_effect_ids:
                 if entry.get("log"):
                     log_parts.append(entry["log"])
                 continue
             overrides = dict(entry.get("overrides", {}) or {})
             if entry.get("duration"):
                 overrides["duration"] = int(entry.get("duration"))
-            if entry["id"] in FORM_EFFECT_IDS:
-                apply_form(actor, entry["id"], overrides=overrides or None)
+            if effect_id in FORM_EFFECT_IDS:
+                apply_form(actor, effect_id, overrides=overrides or None)
             else:
-                apply_effect_by_id(actor, entry["id"], overrides=overrides or None)
+                apply_effect_by_id(actor, effect_id, overrides=overrides or None)
             if entry.get("log"):
                 log_parts.append(entry["log"])
         for entry in ability.get("target_effects", []) or []:
@@ -285,6 +314,15 @@ def resolve_turn(match: MatchState) -> None:
         if target_hp_threshold is not None:
             if target.res.hp / max(1, target.res.hp_max) >= float(target_hp_threshold):
                 return {"damage": 0, "healing": 0, "log": f"{ability['name']} can only be used as an execute."}
+
+        if ability.get("requires_circle") and not has_circle(actor):
+            return {"damage": 0, "healing": 0, "log": "Demonic Circle is required."}
+
+        if ability_id == "agony" and has_effect(target, "agony"):
+            return {"damage": 0, "healing": 0, "log": "Agony is not stackable."}
+
+        if ability_id == "summon_imp" and int((actor.minions or {}).get("imp", 0)) >= 3:
+            return {"damage": 0, "healing": 0, "log": "3 Imps Maximum"}
 
         ok, fail_reason = can_pay_costs(actor, ability.get("cost", {}))
         if not ok:
@@ -347,7 +385,7 @@ def resolve_turn(match: MatchState) -> None:
                     remove_stealth(actor)
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
             if has_flag(target, "untargetable"):
-                log_parts.append("Target blinks away — Miss.")
+                log_parts.append(untargetable_miss_log(target))
                 set_cooldown(actor, ability_id, ability)
                 if ability.get("consume_effect"):
                     remove_effect(actor, ability["consume_effect"])
@@ -365,6 +403,45 @@ def resolve_turn(match: MatchState) -> None:
 
         if has_self_effects or has_target_effects:
             apply_effect_entries(actor, target, ability, log_parts)
+
+        if ability_id == "healthstone":
+            heal_value = max(1, int(actor.res.hp_max * 0.25))
+            before_hp = actor.res.hp
+            actor.res.hp = min(actor.res.hp + heal_value, actor.res.hp_max)
+            healed = actor.res.hp - before_hp
+            log_parts.append(f"Healthstone restores {healed} HP.")
+            set_cooldown(actor, ability_id, ability)
+            return {"damage": 0, "healing": healed, "log": " ".join(log_parts), "ability_id": ability_id}
+
+        if ability_id == "summon_imp":
+            actor.minions["imp"] = int((actor.minions or {}).get("imp", 0)) + 1
+            imp_count = actor.minions["imp"]
+            log_parts.append(f"summons an Imp ({imp_count}/3).")
+            set_cooldown(actor, ability_id, ability)
+            return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
+
+        if ability_id in ("corruption", "unstable_affliction"):
+            intellect = modify_stat(actor, "int", actor.stats.get("int", 0))
+            roll_power = roll("d4", r)
+            scale = float((ability.get("scaling") or {}).get("int", 0.0) or 0.0)
+            total_dot = int(intellect * scale) + int(roll_power)
+            dot_data = ability.get("dot", {})
+            duration = int(dot_data.get("duration", 1) or 1)
+            tick_damage = max(1, total_dot // max(1, duration))
+            dot_id = dot_data.get("id")
+            if dot_id and refresh_dot_effect(target, dot_id, duration=duration, tick_damage=tick_damage, source_sid=actor.sid):
+                log_parts.append(f"refreshes {effect_name(dot_id)}.")
+            elif dot_id:
+                apply_effect_by_id(target, dot_id, overrides={"duration": duration, "tick_damage": tick_damage, "source_sid": actor.sid})
+                log_parts.append(f"applies {effect_name(dot_id)}.")
+            set_cooldown(actor, ability_id, ability)
+            return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
+
+        if ability_id == "agony":
+            apply_effect_by_id(target, "agony", overrides={"duration": 15, "tick": 1, "source_sid": actor.sid})
+            log_parts.append("inflicts Agony.")
+            set_cooldown(actor, ability_id, ability)
+            return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
 
         if ability_id == "ice_barrier":
             intellect = modify_stat(actor, "int", actor.stats.get("int", 0))
@@ -607,6 +684,7 @@ def resolve_turn(match: MatchState) -> None:
             "healing": total_healing,
             "log": " ".join(log_parts),
             "extra_logs": extra_logs,
+            "ability_id": ability_id,
         }
 
     def build_immediate_resolution(actor_sid: str, target_sid: str, action: Dict[str, Any]) -> Dict[str, Any]:
@@ -655,6 +733,15 @@ def resolve_turn(match: MatchState) -> None:
         if target_hp_threshold is not None:
             if target.res.hp / max(1, target.res.hp_max) >= float(target_hp_threshold):
                 return {"damage": 0, "log": f"{ability['name']} can only be used as an execute.", "resolved": True}
+
+        if ability.get("requires_circle") and not has_circle(actor):
+            return {"damage": 0, "log": "Demonic Circle is required.", "resolved": True}
+
+        if ability_id == "agony" and has_effect(target, "agony"):
+            return {"damage": 0, "log": "Agony is not stackable.", "resolved": True}
+
+        if ability_id == "summon_imp" and int((actor.minions or {}).get("imp", 0)) >= 3:
+            return {"damage": 0, "log": "3 Imps Maximum", "resolved": True}
 
         ok, fail_reason = can_pay_costs(actor, ability.get("cost", {}))
         if not ok:
@@ -802,7 +889,7 @@ def resolve_turn(match: MatchState) -> None:
                 remove_stealth(actor)
             return
         if ability.get("target_effects") and has_flag(target, "untargetable"):
-            log_parts.append("Target blinks away — Miss.")
+            log_parts.append(untargetable_miss_log(target))
             set_cooldown(actor, ability_id, ability)
             ctx["damage"] = 0
             ctx["log"] = " ".join(log_parts)
@@ -854,12 +941,12 @@ def resolve_turn(match: MatchState) -> None:
         totals["healing"] += int(result.get("healing", 0) or 0)
 
     # Apply damage
-    def apply_damage(target: PlayerState, incoming: int, target_sid: str) -> None:
+    def apply_damage(target: PlayerState, incoming: int, target_sid: str) -> int:
         if incoming <= 0 or not target.res:
-            return
+            return 0
         if has_flag(target, "cycloned"):
             match.log.append(f"{target_sid[:5]} is cycloned and takes no damage.")
-            return
+            return 0
         absorbed, remaining = consume_absorb(target, incoming)
         if absorbed > 0:
             match.log.append(f"Shield absorbs {absorbed} damage for {target_sid[:5]}.")
@@ -870,17 +957,67 @@ def resolve_turn(match: MatchState) -> None:
                 current = target.res.rage
                 cap = target.res.rage_max
                 target.res.rage = min(current + remaining, cap)
+        return max(0, remaining)
 
-    apply_damage(match.state[sids[1]], result1["damage"], sids[1])
-    apply_damage(match.state[sids[0]], result2["damage"], sids[0])
+    dealt1 = apply_damage(match.state[sids[1]], result1["damage"], sids[1])
+    dealt2 = apply_damage(match.state[sids[0]], result2["damage"], sids[0])
+
+    for actor_sid, dealt, result in ((sids[0], dealt1, result1), (sids[1], dealt2, result2)):
+        ability = ABILITIES.get(result.get("ability_id", ""), {})
+        lifesteal = float(ability.get("heal_from_damage", 0) or 0)
+        if dealt > 0 and lifesteal > 0:
+            actor = match.state[actor_sid]
+            if actor.res and actor.res.hp > 0:
+                heal_value = int(dealt * lifesteal)
+                before_hp = actor.res.hp
+                actor.res.hp = min(actor.res.hp + heal_value, actor.res.hp_max)
+                gained = actor.res.hp - before_hp
+                if gained > 0:
+                    match.log.append(f"{actor_sid[:5]} drains {gained} life.")
+                    totals = match.combat_totals.setdefault(actor_sid, {"damage": 0, "healing": 0})
+                    totals["healing"] += gained
+
+    for source_sid, target_sid, dealt, result in ((sids[0], sids[1], dealt1, result1), (sids[1], sids[0], dealt2, result2)):
+        ability = ABILITIES.get(result.get("ability_id", ""), {})
+        if "aoe" not in (ability.get("tags") or []) or dealt <= 0:
+            continue
+        target = match.state[target_sid]
+        imp_count = int((target.minions or {}).get("imp", 0))
+        if imp_count > 0:
+            target.minions["imp"] = 0
+            match.log.append(f"{target_sid[:5]}'s Imps are destroyed by AoE damage.")
 
     # End of turn processing for both players (DoTs, passives, duration ticks, regen)
     for sid in sids:
         ps = match.state[sid]
+        opponent_sid = sids[1] if sid == sids[0] else sids[0]
+        opponent = match.state[opponent_sid]
         end_summary = end_of_turn(ps, match.log, sid[:5])
         for source_sid, damage in end_summary.get("damage_sources", []):
             totals = match.combat_totals.setdefault(source_sid, {"damage": 0, "healing": 0})
             totals["damage"] += int(damage or 0)
+
+        imp_count = int((ps.minions or {}).get("imp", 0))
+        if imp_count > 0 and ps.res and ps.res.hp > 0 and opponent.res and opponent.res.hp > 0:
+            for _ in range(imp_count):
+                fire_roll = roll("d4", r)
+                raw_fire = base_damage(modify_stat(ps, "int", ps.stats.get("int", 0)), 0.2, fire_roll)
+                reduced = mitigate(raw_fire, modify_stat(opponent, "def", opponent.stats.get("def", 0)))
+                resist = modify_stat(opponent, "magic_resist", opponent.stats.get("magic_resist", 0))
+                reduced = max(0, reduced - resist)
+                reduced = int(reduced * mitigation_multiplier(opponent))
+                if is_damage_immune(opponent, "magic"):
+                    reduced = 0
+                absorbed, remaining = consume_absorb(opponent, reduced)
+                if absorbed > 0:
+                    match.log.append(f"Shield absorbs {absorbed} Imp Firebolt damage for {opponent_sid[:5]}.")
+                if remaining > 0:
+                    opponent.res.hp -= remaining
+                    break_stealth_on_damage(opponent, remaining)
+                    match.log.append(f"{sid[:5]}'s Imp casts Firebolt for {remaining} damage.")
+                    totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
+                    totals["damage"] += remaining
+
         totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
         totals["healing"] += int(end_summary.get("healing_done", 0) or 0)
         tick_cooldowns(ps)
