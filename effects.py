@@ -348,8 +348,12 @@ def is_stealthed(target: PlayerState) -> bool:
     return has_flag(target, "stealthed")
 
 
+def is_immune_all(target: PlayerState) -> bool:
+    return has_flag(target, "immune_all")
+
+
 def is_damage_immune(target: PlayerState, damage_type: str) -> bool:
-    if has_flag(target, "immune_all"):
+    if is_immune_all(target):
         return True
     if damage_type == "physical" and has_flag(target, "immune_physical"):
         return True
@@ -721,6 +725,8 @@ def damage_multiplier_from_passives(attacker: PlayerState) -> float:
 
 def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[tuple[str, int]]:
     """Apply DoT damage with magical mitigation + absorb routing."""
+    if is_immune_all(ps):
+        return []
     damage_sources: list[tuple[str, int]] = []
     for effect in ps.effects:
         effect_id = effect.get("id")
@@ -754,6 +760,8 @@ def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[tuple[str, in
             continue
 
         ps.res.hp -= remaining
+        if current_form_id(ps) == "bear_form":
+            ps.res.rage = min(ps.res.rage + remaining, ps.res.rage_max)
         break_stealth_on_damage(ps, remaining)
         effect_name = effect.get("name", "DoT")
         log.append(f"{label} suffers {remaining} damage from {effect_name}.")
@@ -799,6 +807,10 @@ def trigger_end_of_turn_effects(ps: PlayerState, log: List[str], label: str) -> 
         regen = effect.get("regen", {}) or {}
         if not regen:
             continue
+        if is_immune_all(ps) and not (effect.get("flags", {}) or {}).get("immune_all"):
+            # While immune-all is active (e.g. Ice Block), suppress normal periodic
+            # ticks (HoTs/regen) but still allow immunity effect self-regen.
+            continue
         hp_gain = int(regen.get("hp", 0) or 0)
         mp_gain = int(regen.get("mp", 0) or 0)
         energy_gain = int(regen.get("energy", 0) or 0)
@@ -824,14 +836,12 @@ def end_of_turn(ps: PlayerState, log: List[str], label: str) -> dict[str, Any]:
         return {"damage_sources": [], "healing_done": 0}
 
     if has_flag(ps, "cycloned"):
-        ps.effects = tick_durations(ps.effects)
         return {"damage_sources": [], "healing_done": 0}
 
     damage_sources = tick_dots(ps, log, label)
     total_healing = 0
     total_healing += trigger_end_of_turn_passives(ps, log, label)
     total_healing += trigger_end_of_turn_effects(ps, log, label)
-    ps.effects = tick_durations(ps.effects)
 
     if ps.res.hp > 0:
         ps.res.mp = min(ps.res.mp + DEFAULTS["mp_regen_per_turn"], ps.res.mp_max)

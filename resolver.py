@@ -23,6 +23,7 @@ from .effects import (
     modify_stat,
     is_stunned,
     is_stealthed,
+    is_immune_all,
     is_damage_immune,
     has_flag,
     add_absorb,
@@ -30,6 +31,7 @@ from .effects import (
     build_effect,
     dispel_effects,
     refresh_dot_effect,
+    tick_durations,
     FORM_EFFECT_IDS,
     current_form_id,
 )
@@ -225,6 +227,9 @@ def resolve_turn(match: MatchState) -> None:
                 return str(custom)
         return "Target blinks away — Miss."
 
+    def target_immune_log(log_parts: list) -> None:
+        log_parts.append("Target is immune!")
+
     def apply_effect_entries(
         actor: PlayerState,
         target: PlayerState,
@@ -262,6 +267,9 @@ def resolve_turn(match: MatchState) -> None:
             if entry.get("log"):
                 log_parts.append(entry["log"])
         for entry in ability.get("target_effects", []) or []:
+            if is_immune_all(target):
+                target_immune_log(log_parts)
+                continue
             overrides = dict(entry.get("overrides", {}) or {})
             if entry.get("duration"):
                 overrides["duration"] = int(entry.get("duration"))
@@ -421,6 +429,10 @@ def resolve_turn(match: MatchState) -> None:
             return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
 
         if ability_id in ("corruption", "unstable_affliction"):
+            if is_immune_all(target):
+                target_immune_log(log_parts)
+                set_cooldown(actor, ability_id, ability)
+                return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
             intellect = modify_stat(actor, "int", actor.stats.get("int", 0))
             roll_power = roll("d4", r)
             scale = float((ability.get("scaling") or {}).get("int", 0.0) or 0.0)
@@ -438,6 +450,10 @@ def resolve_turn(match: MatchState) -> None:
             return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
 
         if ability_id == "agony":
+            if is_immune_all(target):
+                target_immune_log(log_parts)
+                set_cooldown(actor, ability_id, ability)
+                return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
             apply_effect_by_id(target, "agony", overrides={"duration": 15, "tick": 1, "source_sid": actor.sid})
             log_parts.append("inflicts Agony.")
             set_cooldown(actor, ability_id, ability)
@@ -1004,6 +1020,9 @@ def resolve_turn(match: MatchState) -> None:
         imp_count = int((ps.minions or {}).get("imp", 0))
         if imp_count > 0 and ps.res and ps.res.hp > 0 and opponent.res and opponent.res.hp > 0:
             for _ in range(imp_count):
+                if has_flag(opponent, "untargetable"):
+                    match.log.append(f"{sid[:5]}'s Imp casts Firebolt. {untargetable_miss_log(opponent)}")
+                    continue
                 fire_roll = roll("d4", r)
                 raw_fire = base_damage(modify_stat(ps, "int", ps.stats.get("int", 0)), 0.2, fire_roll)
                 reduced = mitigate(raw_fire, modify_stat(opponent, "def", opponent.stats.get("def", 0)))
@@ -1017,6 +1036,8 @@ def resolve_turn(match: MatchState) -> None:
                     match.log.append(f"Shield absorbs {absorbed} Imp Firebolt damage for {opponent_sid[:5]}.")
                 if remaining > 0:
                     opponent.res.hp -= remaining
+                    if current_form_id(opponent) == "bear_form":
+                        opponent.res.rage = min(opponent.res.rage + remaining, opponent.res.rage_max)
                     break_stealth_on_damage(opponent, remaining)
                     match.log.append(f"{sid[:5]}'s Imp casts Firebolt for {remaining} damage.")
                     totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
@@ -1024,6 +1045,10 @@ def resolve_turn(match: MatchState) -> None:
 
         totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
         totals["healing"] += int(end_summary.get("healing_done", 0) or 0)
+
+    for sid in sids:
+        ps = match.state[sid]
+        ps.effects = tick_durations(ps.effects)
         tick_cooldowns(ps)
 
     # Check for winners
