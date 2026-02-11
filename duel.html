@@ -1171,42 +1171,42 @@
             <h4>Bear Form</h4>
             <p><span class="stat">Command: <span class="kbd">bear</span></span></p>
             <p>Shift into Bear Form to access Rage-based abilities.</p>
-            <p><span class="stat">Maul:</span> <span class="kbd">maul</span> — Attack (0.3x) + d4, generates 3x damage as Rage.</p>
-            <p><span class="stat">Swipe:</span> <span class="kbd">swipe</span> — AOE Attack (0.5x) + d8, can hit stealthed targets (CD 10).</p>
-            <p><span class="stat">Frenzied Regeneration:</span> <span class="kbd">frenzied_regeneration</span> — consumes all Rage to heal over 4 turns (CD 30).</p>
-            <p><span class="stat">Barkskin:</span> <span class="kbd">barkskin</span> — 35% damage reduction for 3 turns (CD 15).</p>
-            <p><span class="stat">Ironfur:</span> <span class="kbd">ironfur</span> — gain +3 Physical Reduction for 4 turns; persists through form shifts.</p>
-            <p><span class="stat">Passive:</span> The Rage Within — gain Rage equal to HP damage taken.</p>
+            <p><span class="stat">Maul:</span> <span class="kbd">maul</span> — Cost: 0 Rage | Cooldown: 0 | Effect: Attack (0.3x) + d4. Generates Rage equal to 3x damage dealt.</p>
+            <p><span class="stat">Swipe:</span> <span class="kbd">swipe</span> — Cost: 5 Rage | Cooldown: 10 | Effect: AOE Attack (0.5x) + d8. Can hit stealthed targets.</p>
+            <p><span class="stat">Frenzied Regeneration:</span> <span class="kbd">frenzied_regeneration</span> — Cost: all current Rage | Cooldown: 30 | Effect: Heals over 4 turns based on consumed Rage.</p>
+            <p><span class="stat">Barkskin:</span> <span class="kbd">barkskin</span> — Cost: 0 Rage | Cooldown: 15 | Effect: Gain 35% damage reduction for 3 turns. Persists through form shifts.</p>
+            <p><span class="stat">Ironfur:</span> <span class="kbd">ironfur</span> — Cost: 10 Rage | Cooldown: 0 | Effect: Gain +3 Physical Reduction for 4 turns. Persists through form shifts.</p>
+            <p><span class="stat">Passive:</span> The Rage Within — Effect: Gain Rage equal to HP damage taken.</p>
           </div>
 
           <div class="doc-item">
             <h4>Cat Form</h4>
             <p><span class="stat">Command: <span class="kbd">cat</span></span></p>
             <p>Shift into Cat Form to access Energy-based abilities.</p>
-            <p><span class="stat">Claw:</span> <span class="kbd">claw</span> — Attack (1.0x) + d4, 25% chance to enable Rip.</p>
-            <p><span class="stat">Shred:</span> <span class="kbd">shred</span> — Attack (1.5x) + d4 (CD 2).</p>
-            <p><span class="stat">Rip:</span> <span class="kbd">rip</span> — requires Rip proc, Attack (2.0x) + d8, restores 5 Energy.</p>
-            <p><span class="stat">Maim:</span> <span class="kbd">maim</span> — stuns enemy for 3 turns. Costs 10 Energy (CD 15).</p>
-            <p><span class="stat">Prowl:</span> <span class="kbd">prowl</span> — stealth for 3 turns, restores 15 Energy/turn (CD 15).</p>
+            <p><span class="stat">Claw:</span> <span class="kbd">claw</span> — Cost: 10 Energy | Cooldown: 0 | Effect: Attack (1.0x) + d4. 25% chance to enable Rip.</p>
+            <p><span class="stat">Shred:</span> <span class="kbd">shred</span> — Cost: 15 Energy | Cooldown: 2 | Effect: Attack (1.5x) + d4.</p>
+            <p><span class="stat">Rip:</span> <span class="kbd">rip</span> — Cost: 0 Energy | Cooldown: 0 | Requirement: Rip proc | Effect: Attack (2.0x) + d8 and restores 5 Energy.</p>
+            <p><span class="stat">Maim:</span> <span class="kbd">maim</span> — Cost: 10 Energy | Cooldown: 15 | Effect: Stuns enemy for 3 turns.</p>
+            <p><span class="stat">Prowl:</span> <span class="kbd">prowl</span> — Cost: 0 Energy | Cooldown: 15 | Effect: Enter stealth for 3 turns and restore 15 Energy each turn.</p>
           </div>
 
           <div class="doc-item">
             <h4>Moonkin Form</h4>
             <p><span class="stat">Command: <span class="kbd">moonkin</span></span></p>
             <p>Shift into Moonkin Form to access Mana-based spells.</p>
-            <p><span class="stat">Wrath:</span> <span class="kbd">wrath</span> — Intellect (1.0x) + d6, 25% chance to enable Starfire.</p>
-            <p><span class="stat">Starfire:</span> <span class="kbd">starfire</span> — requires Starfire proc, Intellect (2.0x) + d6.</p>
-            <p><span class="stat">Cyclone:</span> <span class="kbd">cyclone</span> — enemy cannot act or take damage/heals for 2 turns (CD 20).</p>
-            <p><span class="stat">Typhoon:</span> <span class="kbd">typhoon</span> — blasts enemy, causing their attacks to miss this turn and next turn (CD 5).</p>
+            <p><span class="stat">Wrath:</span> <span class="kbd">wrath</span> — Cost: 15 Mana | Cooldown: 0 | Effect: Intellect (1.0x) + d6. 25% chance to enable Starfire.</p>
+            <p><span class="stat">Starfire:</span> <span class="kbd">starfire</span> — Cost: 20 Mana | Cooldown: 0 | Requirement: Starfire proc | Effect: Intellect (2.0x) + d6.</p>
+            <p><span class="stat">Cyclone:</span> <span class="kbd">cyclone</span> — Cost: 0 Mana | Cooldown: 20 | Effect: Traps enemy in a cyclone for 2 turns. Enemy cannot act, and cannot take damage or healing while affected.</p>
+            <p><span class="stat">Typhoon:</span> <span class="kbd">typhoon</span> — Cost: 0 Mana | Cooldown: 5 | Effect: Blasts enemy away and causes their attacks to miss this turn and next turn.</p>
           </div>
 
           <div class="doc-item">
             <h4>Tree Form</h4>
             <p><span class="stat">Command: <span class="kbd">tree</span></span></p>
             <p>Shift into Tree Form to access powerful healing. Grants 2 Magic Resist.</p>
-            <p><span class="stat">Wild Growth:</span> <span class="kbd">wild_growth</span> — (Intellect + Attack) (1.6x) + d8 heal.</p>
-            <p><span class="stat">Regrowth:</span> <span class="kbd">regrowth</span> — (Intellect + Attack) (1.5x) + d4 over 5 turns (CD 15).</p>
-            <p><span class="stat">Innervate:</span> <span class="kbd">innervate</span> — restore mana to full (CD 50).</p>
+            <p><span class="stat">Wild Growth:</span> <span class="kbd">wild_growth</span> — Cost: 70 Mana | Cooldown: 0 | Effect: Heal for (Intellect + Attack) (1.6x) + d8.</p>
+            <p><span class="stat">Regrowth:</span> <span class="kbd">regrowth</span> — Cost: 15 Mana | Cooldown: 15 | Effect: Heal over time for 5 turns using (Intellect + Attack) (1.5x) + d4 total scaling.</p>
+            <p><span class="stat">Innervate:</span> <span class="kbd">innervate</span> — Cost: 0 Mana | Cooldown: 50 | Effect: Restore Mana to full.</p>
           </div>
         </div>
       </div>

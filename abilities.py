@@ -380,7 +380,7 @@ ABILITIES = {
         "requires_form": "cat_form",
         "requires_form_log": "Must be in Cat Form.",
         "target_effects": [
-            {"id": "stunned", "duration": 3, "log": "is maimed and stunned."}
+            {"id": "stunned", "duration": 3, "log": "Stuns enemy."}
         ],
     },
     "rip": {
@@ -466,7 +466,7 @@ ABILITIES = {
         "requires_form": "moonkin_form",
         "requires_form_log": "Must be in Moonkin Form.",
         "target_effects": [
-            {"id": "cyclone", "duration": 2, "log": "is trapped in a cyclone."}
+            {"id": "cyclone", "duration": 2, "log": "Trapps enemy in a cyclone."}
         ],
     },
     "typhoon": {
@@ -482,7 +482,7 @@ ABILITIES = {
             {
                 "id": "typhoon_disoriented",
                 "duration": 2,
-                "log": "is blasted by Typhoon and their attacks miss this turn and next turn.",
+                "log": "Blasts enemy away.",
             }
         ],
     },
