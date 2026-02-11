@@ -86,7 +86,7 @@ ITEMS = {
             },
         ],
     },
-    "dragonwrath_tarecgosas_rest": {
+    "dragonwrath": {
         "name": "Dragonwrath, Tarecgosa's Rest",
         "slot": "weapon",
         "mods": {"int": 7},

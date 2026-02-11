@@ -550,57 +550,76 @@ def trigger_on_hit_passives(
             dice_data = ability.get("dice")
             scaling = ability.get("scaling", {}) or {}
             flat_damage = ability.get("flat_damage")
+            spell_damage_type = ability.get("damage_type", damage_type)
+            hits = max(1, int(ability.get("hits", 1) or 1))
 
-            roll_power = 0
-            dice_type = None
-            if dice_data:
-                dice_type = dice_data.get("type")
-                if dice_type:
-                    roll_power = roll(dice_type, rng)
-
-            duplicate_raw = 0
-            if flat_damage is not None:
-                duplicate_raw = int(flat_damage)
-            elif "atk" in scaling:
-                duplicate_raw = calc_base_damage(
-                    modify_stat(attacker, "atk", attacker.stats.get("atk", 0)),
-                    scaling["atk"],
-                    roll_power,
-                )
-            elif "int" in scaling:
-                duplicate_raw = calc_base_damage(
-                    modify_stat(attacker, "int", attacker.stats.get("int", 0)),
-                    scaling["int"],
-                    roll_power,
-                )
-            if duplicate_raw <= 0:
-                continue
-
-            duplicate_reduced = mitigate(duplicate_raw, modify_stat(target, "def", target.stats.get("def", 0)))
-            if damage_type == "physical":
-                resist = modify_stat(target, "physical_reduction", target.stats.get("physical_reduction", 0))
-                duplicate_reduced = max(0, duplicate_reduced - resist)
-            elif damage_type == "magic":
-                resist = modify_stat(target, "magic_resist", target.stats.get("magic_resist", 0))
-                duplicate_reduced = max(0, duplicate_reduced - resist)
-
-            duplicate_reduced = int(duplicate_reduced * mitigation_multiplier(target))
-            if is_damage_immune(target, damage_type):
-                duplicate_reduced = 0
-            if duplicate_reduced <= 0:
-                continue
-
-            bonus_damage += duplicate_reduced
             item_name = effect.get("source_item", "item")
             ability_name = ability.get("name", "spell")
-            if dice_type:
-                log_lines.append(
-                    f"{item_name} duplicates {ability_name}! Roll {dice_type} = {roll_power}. Deals {duplicate_reduced} damage."
-                )
+            duplicate_damage = 0
+            duplicate_segments: List[str] = []
+
+            for hit_index in range(1, hits + 1):
+                roll_power = 0
+                dice_type = None
+                if dice_data:
+                    dice_type = dice_data.get("type")
+                    if dice_type:
+                        roll_power = roll(dice_type, rng)
+
+                duplicate_raw = 0
+                if flat_damage is not None:
+                    duplicate_raw = int(flat_damage)
+                elif "atk" in scaling:
+                    duplicate_raw = calc_base_damage(
+                        modify_stat(attacker, "atk", attacker.stats.get("atk", 0)),
+                        scaling["atk"],
+                        roll_power,
+                    )
+                elif "int" in scaling:
+                    duplicate_raw = calc_base_damage(
+                        modify_stat(attacker, "int", attacker.stats.get("int", 0)),
+                        scaling["int"],
+                        roll_power,
+                    )
+                if duplicate_raw <= 0:
+                    continue
+
+                duplicate_reduced = mitigate(duplicate_raw, modify_stat(target, "def", target.stats.get("def", 0)))
+                if spell_damage_type == "physical":
+                    resist = modify_stat(target, "physical_reduction", target.stats.get("physical_reduction", 0))
+                    duplicate_reduced = max(0, duplicate_reduced - resist)
+                elif spell_damage_type == "magic":
+                    resist = modify_stat(target, "magic_resist", target.stats.get("magic_resist", 0))
+                    duplicate_reduced = max(0, duplicate_reduced - resist)
+
+                duplicate_reduced = int(duplicate_reduced * mitigation_multiplier(target))
+                if is_damage_immune(target, spell_damage_type):
+                    duplicate_reduced = 0
+                if duplicate_reduced <= 0:
+                    continue
+
+                duplicate_damage += duplicate_reduced
+                if hits > 1:
+                    if dice_type:
+                        duplicate_segments.append(
+                            f"Hit {hit_index}: Roll {dice_type} = {roll_power}. Deals {duplicate_reduced} damage."
+                        )
+                    else:
+                        duplicate_segments.append(f"Hit {hit_index}: Deals {duplicate_reduced} damage.")
+                elif dice_type:
+                    duplicate_segments.append(f"Roll {dice_type} = {roll_power}. Deals {duplicate_reduced} damage.")
+                else:
+                    duplicate_segments.append(f"Deals {duplicate_reduced} damage.")
+
+            if duplicate_damage <= 0:
+                continue
+
+            bonus_damage += duplicate_damage
+            if duplicate_segments:
+                log_lines.append(f"{item_name} duplicates {ability_name}! {' '.join(duplicate_segments)}")
             else:
-                log_lines.append(
-                    f"{item_name} duplicates {ability_name}! Deals {duplicate_reduced} damage."
-                )
+                log_lines.append(f"{item_name} duplicates {ability_name}!")
+
 
     return bonus_damage, log_lines, bonus_healing
 
