@@ -287,6 +287,19 @@ def resolve_turn(match: MatchState) -> None:
         has_target_effects = bool(ability.get("target_effects"))
         return has_damage or has_target_effects
 
+    def should_miss_due_to_stealth(
+        attacker: PlayerState,
+        target: PlayerState,
+        ability: Dict[str, Any] | None,
+        stealth_snapshot: Dict[str, bool],
+    ) -> bool:
+        if not ability:
+            return False
+        is_aoe = "aoe" in (ability.get("tags") or []) or not ability.get("requires_target", True)
+        if is_aoe:
+            return False
+        return bool(stealth_snapshot.get(target.sid, False))
+
     def resolve_action(actor_sid: str, target_sid: str, action: Dict[str, Any]) -> Dict[str, Any]:
         actor = match.state[actor_sid]
         target = match.state[target_sid]
@@ -384,8 +397,8 @@ def resolve_turn(match: MatchState) -> None:
         has_damage = any(value for value in (dice_data, scaling, flat_damage))
 
         if has_damage or has_target_effects:
-            if stealth_targeting.get(target_sid, False) and not is_aoe:
-                log_parts.append("Target is stealthed — no valid target.")
+            if should_miss_due_to_stealth(actor, target, ability, stealth_targeting):
+                log_parts.append("Target is stealthed — Miss!")
                 set_cooldown(actor, ability_id, ability)
                 if ability.get("consume_effect"):
                     remove_effect(actor, ability["consume_effect"])
@@ -450,6 +463,12 @@ def resolve_turn(match: MatchState) -> None:
             return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
 
         if ability_id == "agony":
+            if should_miss_due_to_stealth(actor, target, ability, stealth_targeting):
+                log_parts.append("Target is stealthed — Miss!")
+                set_cooldown(actor, ability_id, ability)
+                if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
+                    remove_stealth(actor)
+                return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
             if is_immune_all(target):
                 target_immune_log(log_parts)
                 set_cooldown(actor, ability_id, ability)
@@ -856,7 +875,7 @@ def resolve_turn(match: MatchState) -> None:
             return False
         is_aoe = "aoe" in (ability.get("tags") or [])
         target = match.state[target_sid]
-        if stealth_targeting.get(target_sid, False) and not is_aoe:
+        if should_miss_due_to_stealth(match.state[actor_sid], target, ability, stealth_targeting):
             return False
         if has_flag(target, "untargetable") and not is_aoe:
             return False
@@ -899,8 +918,8 @@ def resolve_turn(match: MatchState) -> None:
 
         consume_costs(actor, ability.get("cost", {}))
 
-        if ability.get("target_effects") and stealth_targeting.get(target_sid, False) and not is_aoe:
-            log_parts.append("Target is stealthed — no valid target.")
+        if ability.get("target_effects") and should_miss_due_to_stealth(actor, target, ability, stealth_targeting):
+            log_parts.append("Target is stealthed — Miss!")
             set_cooldown(actor, ability_id, ability)
             ctx["damage"] = 0
             ctx["log"] = " ".join(log_parts)
@@ -1027,6 +1046,12 @@ def resolve_turn(match: MatchState) -> None:
         imp_count = int((ps.minions or {}).get("imp", 0))
         if imp_count > 0 and ps.res and ps.res.hp > 0 and opponent.res and opponent.res.hp > 0:
             for _ in range(imp_count):
+                if is_immune_all(opponent):
+                    match.log.append(f"{sid[:5]}'s Imp casts Firebolt. Target is immune!")
+                    continue
+                if should_miss_due_to_stealth(ps, opponent, {"requires_target": True}, stealth_targeting) or is_stealthed(opponent):
+                    match.log.append(f"{sid[:5]}'s Imp casts Firebolt. Target is stealthed — Miss!")
+                    continue
                 if has_flag(opponent, "untargetable"):
                     match.log.append(f"{sid[:5]}'s Imp casts Firebolt. {untargetable_miss_log(opponent)}")
                     continue
