@@ -41,14 +41,6 @@ ABILITIES = {
         "classes": ["mage"],
         "hits": 3,
     },
-    "defend": {
-        "name": "Defend",
-        "cost": {"energy": 0},
-        "dice": None,
-        "effect": {"type": "mitigation", "value": 0.5, "duration": 1},
-        "tags": ["defense"],
-        "cooldown": 2,
-    },
     "overpower": {
         "name": "Overpower",
         "cost": {"rage": 0},
@@ -330,19 +322,6 @@ ABILITIES = {
         "requires_form_log": "Must be in Bear Form.",
         "self_effects": [
             {"id": "barkskin", "duration": 3, "log": "hardens their barkskin."}
-        ],
-    },
-    "ironfur": {
-        "name": "Ironfur",
-        "cost": {"rage": 0},
-        "dice": None,
-        "tags": ["defense"],
-        "cooldown": 0,
-        "classes": ["druid"],
-        "requires_form": "bear_form",
-        "requires_form_log": "Must be in Bear Form.",
-        "self_effects": [
-            {"id": "ironfur", "duration": 4, "log": "reinforces themselves with Ironfur."}
         ],
     },
     "cat": {
