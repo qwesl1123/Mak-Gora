@@ -300,6 +300,26 @@ def resolve_turn(match: MatchState) -> None:
             return False
         return bool(stealth_snapshot.get(target.sid, False))
 
+    def is_aoe_ability(ability: Dict[str, Any]) -> bool:
+        if "is_aoe" in ability:
+            return bool(ability.get("is_aoe"))
+        return "aoe" in (ability.get("tags") or []) or not ability.get("requires_target", True)
+
+    def is_single_target_ability(ability: Dict[str, Any]) -> bool:
+        if "is_single_target" in ability:
+            return bool(ability.get("is_single_target"))
+        return not is_aoe_ability(ability)
+
+    def can_evasion_force_miss(ability: Dict[str, Any], has_damage: bool) -> bool:
+        if not has_damage:
+            return False
+        damage_type = ability.get("damage_type", "physical")
+        return (
+            damage_type == "physical"
+            and not is_aoe_ability(ability)
+            and is_single_target_ability(ability)
+        )
+
     def resolve_action(actor_sid: str, target_sid: str, action: Dict[str, Any]) -> Dict[str, Any]:
         actor = match.state[actor_sid]
         target = match.state[target_sid]
@@ -371,7 +391,7 @@ def resolve_turn(match: MatchState) -> None:
 
         has_target_effects = bool(ability.get("target_effects"))
         has_self_effects = bool(ability.get("self_effects"))
-        is_aoe = "aoe" in (ability.get("tags") or [])
+        is_aoe = is_aoe_ability(ability)
         if "pass" in (ability.get("tags") or []):
             set_cooldown(actor, ability_id, ability)
             log_parts.append("Passes the turn.")
@@ -413,7 +433,7 @@ def resolve_turn(match: MatchState) -> None:
                 if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
                     remove_stealth(actor)
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
-            if has_flag(target, "evade_all"):
+            if has_flag(target, "evade_all") and can_evasion_force_miss(ability, has_damage):
                 log_parts.append("Evaded!")
                 set_cooldown(actor, ability_id, ability)
                 if ability.get("consume_effect"):
