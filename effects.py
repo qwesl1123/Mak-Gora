@@ -452,7 +452,7 @@ def refresh_dot_effect(target: PlayerState, effect_id: str, *, duration: int, ti
     return False
 
 
-def add_absorb(ps: PlayerState, amount: int, source_item: Optional[str] = None, cap: Optional[int] = None) -> int:
+def add_absorb(ps: PlayerState, amount: int, source_item: Optional[str] = None, cap: Optional[int] = None, source_name: Optional[str] = None) -> int:
     if not ps.res:
         return 0
     value = int(amount)
@@ -464,6 +464,10 @@ def add_absorb(ps: PlayerState, amount: int, source_item: Optional[str] = None, 
     else:
         next_value = max(0, next_value)
     ps.res.absorb = next_value
+    if source_name:
+        ps.res.absorb_source = source_name
+    elif ps.res.absorb <= 0:
+        ps.res.absorb_source = None
     if ps.res.absorb_max is not None:
         ps.res.absorb_max = max(ps.res.absorb_max, ps.res.absorb)
     return ps.res.absorb
@@ -477,6 +481,8 @@ def consume_absorb(ps: PlayerState, incoming: int) -> tuple[int, int]:
         return 0, incoming_value
     absorbed = min(ps.res.absorb, incoming_value)
     ps.res.absorb -= absorbed
+    if ps.res.absorb <= 0:
+        ps.res.absorb_source = None
     remaining = incoming_value - absorbed
     return absorbed, remaining
 
@@ -755,7 +761,8 @@ def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[tuple[str, in
 
         absorbed, remaining = consume_absorb(ps, reduced)
         if absorbed > 0:
-            log.append(f"Shield absorbs {absorbed} DoT damage for {label}.")
+            source_name = ps.res.absorb_source or "Shield"
+            log.append(f"{source_name} absorbs {absorbed} damage for {label}.")
         if remaining <= 0:
             continue
 

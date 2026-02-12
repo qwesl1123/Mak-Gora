@@ -583,7 +583,7 @@ ABILITIES = {
         "tags": ["spell", "control"],
         "cooldown": 6,
         "classes": ["warlock"],
-        "target_effects": [{"id": "stunned", "duration": 1, "log": "is feared and cannot act."}],
+        "target_effects": [{"id": "stunned", "duration": 1, "log": "Enemy is feared and cannot act."}],
     },
     "healthstone": {
         "name": "Healthstone",

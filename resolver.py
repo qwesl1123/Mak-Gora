@@ -463,7 +463,7 @@ def resolve_turn(match: MatchState) -> None:
             intellect = modify_stat(actor, "int", actor.stats.get("int", 0))
             roll_power = roll("d6", r)
             absorb_value = int(intellect * 0.9) + int(roll_power)
-            add_absorb(actor, absorb_value)
+            add_absorb(actor, absorb_value, source_name="Ice Barrier")
             log_parts.append(f"Ice Barrier grants {absorb_value} absorb.")
             set_cooldown(actor, ability_id, ability)
             if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
@@ -961,7 +961,7 @@ def resolve_turn(match: MatchState) -> None:
         totals["healing"] += int(result.get("healing", 0) or 0)
 
     # Apply damage
-    def apply_damage(target: PlayerState, incoming: int, target_sid: str) -> int:
+    def apply_damage(target: PlayerState, incoming: int, target_sid: str, source_ability_name: str) -> int:
         if incoming <= 0 or not target.res:
             return 0
         if has_flag(target, "cycloned"):
@@ -969,18 +969,24 @@ def resolve_turn(match: MatchState) -> None:
             return 0
         absorbed, remaining = consume_absorb(target, incoming)
         if absorbed > 0:
-            match.log.append(f"Shield absorbs {absorbed} damage for {target_sid[:5]}.")
+            source_name = (target.res.absorb_source if target.res else None) or "Shield"
+            match.log.append(f"{source_name} absorbs {absorbed} damage for {target_sid[:5]}.")
         if remaining > 0:
             target.res.hp -= remaining
+            was_stealthed = is_stealthed(target)
             break_stealth_on_damage(target, remaining)
+            if was_stealthed and not is_stealthed(target):
+                match.log.append(f"{target_sid[:5]} stealth broken by {source_ability_name}.")
             if current_form_id(target) == "bear_form":
                 current = target.res.rage
                 cap = target.res.rage_max
                 target.res.rage = min(current + remaining, cap)
         return max(0, remaining)
 
-    dealt1 = apply_damage(match.state[sids[1]], result1["damage"], sids[1])
-    dealt2 = apply_damage(match.state[sids[0]], result2["damage"], sids[0])
+    source_name_1 = ABILITIES.get(result1.get("ability_id", ""), {}).get("name", "attack")
+    source_name_2 = ABILITIES.get(result2.get("ability_id", ""), {}).get("name", "attack")
+    dealt1 = apply_damage(match.state[sids[1]], result1["damage"], sids[1], source_name_1)
+    dealt2 = apply_damage(match.state[sids[0]], result2["damage"], sids[0], source_name_2)
 
     for actor_sid, dealt, result in ((sids[0], dealt1, result1), (sids[1], dealt2, result2)):
         ability = ABILITIES.get(result.get("ability_id", ""), {})
@@ -1005,7 +1011,8 @@ def resolve_turn(match: MatchState) -> None:
         imp_count = int((target.minions or {}).get("imp", 0))
         if imp_count > 0:
             target.minions["imp"] = 0
-            match.log.append(f"{target_sid[:5]}'s Imps are destroyed by AoE damage.")
+            source_name = ability.get("name", "AoE damage")
+            match.log.append(f"{target_sid[:5]}'s Imps are destroyed by {source_name}.")
 
     # End of turn processing for both players (DoTs, passives, duration ticks, regen)
     for sid in sids:
@@ -1033,12 +1040,16 @@ def resolve_turn(match: MatchState) -> None:
                     reduced = 0
                 absorbed, remaining = consume_absorb(opponent, reduced)
                 if absorbed > 0:
-                    match.log.append(f"Shield absorbs {absorbed} Imp Firebolt damage for {opponent_sid[:5]}.")
+                    source_name = (opponent.res.absorb_source if opponent.res else None) or "Shield"
+                    match.log.append(f"{source_name} absorbs {absorbed} damage for {opponent_sid[:5]}.")
                 if remaining > 0:
                     opponent.res.hp -= remaining
                     if current_form_id(opponent) == "bear_form":
                         opponent.res.rage = min(opponent.res.rage + remaining, opponent.res.rage_max)
+                    was_stealthed = is_stealthed(opponent)
                     break_stealth_on_damage(opponent, remaining)
+                    if was_stealthed and not is_stealthed(opponent):
+                        match.log.append(f"{opponent_sid[:5]} stealth broken by Imp Firebolt.")
                     match.log.append(f"{sid[:5]}'s Imp casts Firebolt for {remaining} damage.")
                     totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
                     totals["damage"] += remaining
