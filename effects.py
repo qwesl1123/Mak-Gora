@@ -37,13 +37,13 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
     "cloak_of_shadows": {
         "type": "status",
         "name": "Cloak of Shadows",
-        "duration": 1,
+        "duration": 2,
         "flags": {"immune_magic": True},
     },
     "agony": {
         "type": "dot",
         "name": "Agony",
-        "duration": 15,
+        "duration": 10,
         "category": "dot",
         "school": "magical",
         "dispellable": False,
@@ -61,7 +61,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
     "unstable_affliction": {
         "type": "dot",
         "name": "Unstable Affliction",
-        "duration": 6,
+        "duration": 10,
         "category": "dot",
         "school": "magical",
         "dispellable": True,
