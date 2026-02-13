@@ -766,11 +766,14 @@ def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[tuple[str, in
         if remaining <= 0:
             continue
 
+        was_stealthed = is_stealthed(ps)
         ps.res.hp -= remaining
         if current_form_id(ps) == "bear_form":
             ps.res.rage = min(ps.res.rage + remaining, ps.res.rage_max)
         break_stealth_on_damage(ps, remaining)
         effect_name = effect.get("name", "DoT")
+        if was_stealthed and not is_stealthed(ps):
+            log.append(f"{label} stealth broken by {effect_name}.")
         log.append(f"{label} suffers {remaining} damage from {effect_name}.")
         source_sid = effect.get("source_sid")
         if source_sid:
