@@ -393,9 +393,48 @@
         border: 2px solid rgba(0, 0, 0, 0.5);
       }
 
+      .post-log-row {
+        display: grid;
+        grid-template-columns: 240px 1fr;
+        gap: 16px;
+        margin-top: 16px;
+        align-items: start;
+      }
+
+      .cooldown-section {
+        background: rgba(0, 0, 0, 0.55);
+        border: 2px solid var(--border-gold);
+        border-radius: 6px;
+        padding: 10px;
+      }
+
+      .cooldown-title {
+        font-family: 'Cinzel', serif;
+        font-size: 0.95rem;
+        color: var(--gold-dark);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        margin-bottom: 8px;
+      }
+
+      .cooldown-list {
+        display: grid;
+        gap: 6px;
+      }
+
+      .cooldown-entry {
+        font-size: 0.95rem;
+        color: var(--text-light);
+      }
+
+      .cooldown-empty {
+        color: var(--text-dark);
+        font-style: italic;
+      }
+
       /* Chat Section */
       .chat-section {
-        margin-top: 20px;
+        margin-top: 0;
       }
 
       .chat-header {
@@ -823,13 +862,22 @@
           <div class="panel-body">
             <div id="log" class="combat-log"></div>
             
-            <!-- Chat Section -->
-            <div class="chat-section">
-              <div class="chat-header">Chat</div>
-              <div id="chatBox" class="chat-box"></div>
-              <div class="chat-input-group">
-                <input id="chatInput" type="text" placeholder="Type your message..." autocomplete="off" />
-                <button id="chatSendBtn">Send</button>
+            <div class="post-log-row">
+              <div class="cooldown-section">
+                <div class="cooldown-title">Cooldown Tracker</div>
+                <div id="cooldownTracker" class="cooldown-list">
+                  <div class="cooldown-empty">No cooldowns active.</div>
+                </div>
+              </div>
+
+              <!-- Chat Section -->
+              <div class="chat-section">
+                <div class="chat-header">Chat</div>
+                <div id="chatBox" class="chat-box"></div>
+                <div class="chat-input-group">
+                  <input id="chatInput" type="text" placeholder="Type your message..." autocomplete="off" />
+                  <button id="chatSendBtn">Send</button>
+                </div>
               </div>
             </div>
           </div>
@@ -1353,6 +1401,7 @@
       const chatBox = document.getElementById("chatBox");
       const chatInput = document.getElementById("chatInput");
       const chatSendBtn = document.getElementById("chatSendBtn");
+      const cooldownTracker = document.getElementById("cooldownTracker");
 
       const connDot = document.getElementById("connDot");
       const connText = document.getElementById("connText");
@@ -1699,6 +1748,36 @@
       socket.on("duel_log", (msg) => appendLine(msg, "logLineTurn"));
       
       let lastLogLength = 0;
+
+      function renderFriendlyCooldowns(cooldowns, abilityMeta) {
+        if (!cooldownTracker) {
+          return;
+        }
+
+        const entries = Object.entries(cooldowns || {})
+          .filter(([, remainingTurns]) => Number(remainingTurns) > 0)
+          .sort((a, b) => Number(b[1]) - Number(a[1]));
+
+        cooldownTracker.innerHTML = "";
+
+        if (!entries.length) {
+          const emptyEl = document.createElement("div");
+          emptyEl.className = "cooldown-empty";
+          emptyEl.textContent = "No cooldowns active.";
+          cooldownTracker.appendChild(emptyEl);
+          return;
+        }
+
+        entries.forEach(([abilityId, remainingTurns]) => {
+          const line = document.createElement("div");
+          line.className = "cooldown-entry";
+          const abilityName = abilityMeta?.[abilityId]?.name || abilityId;
+          const turns = Number(remainingTurns);
+          line.textContent = `${abilityName} — ${turns} ${turns === 1 ? "turn" : "turns"}`;
+          cooldownTracker.appendChild(line);
+        });
+      }
+
       socket.on("duel_snapshot", (data) => {
         // Update class names
         if (data.you_class) {
@@ -1838,6 +1917,8 @@
           classKeyFromLabel(data.enemy_class),
           enemyStatus
         );
+
+        renderFriendlyCooldowns(data.friendly_cooldowns, data.ability_meta);
         
         if (data.log) {
           const total = data.log_length ?? data.log.length;

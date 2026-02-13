@@ -126,6 +126,22 @@ def snapshot_for(match, viewer_sid):
             "color": primary.get("color", "var(--mana-blue)"),
         }
 
+    friendly_cooldowns = {}
+    viewer_state = match.state.get(you)
+    if viewer_state:
+        for ability_id in viewer_state.cooldowns.keys():
+            remaining_turns = resolver.cooldown_remaining(viewer_state, ability_id, ABILITIES.get(ability_id, {}))
+            if remaining_turns > 0:
+                friendly_cooldowns[ability_id] = remaining_turns
+
+    ability_meta = {}
+    for ability_id in friendly_cooldowns.keys():
+        ability_data = ABILITIES.get(ability_id, {})
+        ability_meta[ability_id] = {
+            "name": ability_data.get("name", ability_id),
+            "icon": ability_data.get("icon"),
+        }
+
     return {
         "phase": match.phase,
         "turn": match.turn,
@@ -148,6 +164,8 @@ def snapshot_for(match, viewer_sid):
         "enemy_total_damage": enemy_totals.get("damage", 0),
         "enemy_total_healing": enemy_totals.get("healing", 0),
         "log_length": len(match.log),
+        "friendly_cooldowns": friendly_cooldowns,
+        "ability_meta": ability_meta,
     }
 
 def register_duel_socket_handlers(socketio):
