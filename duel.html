@@ -1732,7 +1732,7 @@
             // Avoid partial overlap with Paladin "Avenging Wrath"
             pattern = /(?<!Avenging\s)\bWrath\b/g;
           } else {
-            pattern = new RegExp(`\b${escapeRegExp(ability)}\b`, "g");
+            pattern = new RegExp(`\\b${escapeRegExp(ability)}\\b`, "g");
           }
           output = output.replace(pattern, `<span class="log-ability-druid">$&</span>`);
         });
