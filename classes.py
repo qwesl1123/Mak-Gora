@@ -40,7 +40,7 @@ CLASSES = {
     "paladin": {
         "name": "Paladin",
         "base_stats": {"atk": 10, "int": 7, "def": 6, "spd": 7, "crit": 5, "acc": 90, "eva": 3},
-        "resources": {"hp": 100, "mp": 80, "energy": 0, "rage": 0, "rage_max": 0},
+        "resources": {"hp": 100, "mp": 70, "energy": 0, "rage": 0, "rage_max": 0},
         "resource_display": {"primary": {"id": "mp", "label": "Mana", "color": "var(--mana-blue)"}},
     },
 }
