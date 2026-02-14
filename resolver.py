@@ -327,6 +327,9 @@ def resolve_turn(match: MatchState) -> None:
             and is_single_target_ability(ability)
         )
 
+    def can_cast_while_cc(ability: Dict[str, Any]) -> bool:
+        return bool(ability.get("allow_while_stunned") or ability.get("priority_defensive"))
+
     def resolve_action(actor_sid: str, target_sid: str, action: Dict[str, Any]) -> Dict[str, Any]:
         actor = match.state[actor_sid]
         target = match.state[target_sid]
@@ -387,7 +390,7 @@ def resolve_turn(match: MatchState) -> None:
             weapon_id = actor.build.items.get("weapon")
         weapon_name = ITEMS.get(weapon_id, {}).get("name", "their bare hands")
 
-        if is_stunned(actor) and not ability.get("allow_while_stunned"):
+        if is_stunned(actor) and not can_cast_while_cc(ability):
             reason = get_cant_act_reason(actor)
             if reason:
                 reason_text = f"is {reason} and cannot act"
@@ -803,7 +806,7 @@ def resolve_turn(match: MatchState) -> None:
         if not ability:
             return {"damage": 0, "log": f"{actor_sid[:5]} fumbles (unknown ability).", "resolved": True}
 
-        if stunned_at_start.get(actor_sid, False) and not ability.get("allow_while_stunned"):
+        if stunned_at_start.get(actor_sid, False) and not can_cast_while_cc(ability):
             reason = get_cant_act_reason(actor)
             if reason:
                 reason_text = f"is {reason} and cannot act"
@@ -893,54 +896,31 @@ def resolve_turn(match: MatchState) -> None:
         sids[1]: build_immediate_resolution(sids[1], sids[0], a2),
     }
 
-    def is_pre_resolution_defensive(ability: Dict[str, Any]) -> bool:
-        if "defense" not in (ability.get("tags") or []):
-            return False
-        has_damage = any(
-            value
-            for value in (
-                ability.get("dice"),
-                ability.get("scaling"),
-                ability.get("flat_damage"),
-            )
-        )
-        if has_damage or ability.get("target_effects"):
-            return False
-        for entry in ability.get("self_effects", []) or []:
-            if not entry.get("id"):
-                continue
-            effect = build_effect(entry["id"], overrides=entry.get("overrides"))
-            flags = effect.get("flags", {}) or {}
-            if flags.get("untargetable") or flags.get("evade_all"):
-                return True
-        return False
-
     def apply_pre_resolution_defensive(actor_sid: str, ctx: Dict[str, Any]) -> None:
         if ctx.get("resolved"):
             return
         ability = ctx.get("ability")
-        if not ability or not is_pre_resolution_defensive(ability):
+        if not ability or not ability.get("priority_defensive"):
             return
         actor = match.state[actor_sid]
         pre_applied: set[str] = set()
         for entry in ability.get("self_effects", []) or []:
-            if not entry.get("id"):
+            if entry.get("type") == "dispel":
                 continue
-            effect = build_effect(entry["id"], overrides=entry.get("overrides"))
-            flags = effect.get("flags", {}) or {}
-            if not (flags.get("untargetable") or flags.get("evade_all")):
+            effect_id = entry.get("id")
+            if not effect_id:
                 continue
             overrides = dict(entry.get("overrides", {}) or {})
             if entry.get("duration"):
                 overrides["duration"] = int(entry.get("duration"))
-            apply_effect_by_id(actor, entry["id"], overrides=overrides or None)
-            pre_applied.add(entry["id"])
+            if effect_id in FORM_EFFECT_IDS:
+                apply_form(actor, effect_id, overrides=overrides or None)
+            else:
+                apply_effect_by_id(actor, effect_id, overrides=overrides or None)
+            pre_applied.add(effect_id)
         if pre_applied:
             ctx["pre_resolved_self_effects"] = pre_applied
 
-    # Regression scenarios:
-    # - P1 Rogue Kidney Shot, P2 Mage Blink => stun avoided because Blink registers first.
-    # - P1 Mage Blink, P2 Rogue Kidney Shot => stun avoided (same outcome).
     apply_pre_resolution_defensive(sids[0], contexts[sids[0]])
     apply_pre_resolution_defensive(sids[1], contexts[sids[1]])
 
@@ -986,7 +966,7 @@ def resolve_turn(match: MatchState) -> None:
         log_parts = [f"{actor_sid[:5]} uses {weapon_name} to cast {ability['name']}."]
 
         actor_stunned = is_stunned(actor) or incoming_immediate_stun.get(actor_sid, False)
-        if actor_stunned and not ability.get("allow_while_stunned"):
+        if actor_stunned and not can_cast_while_cc(ability):
             reason = get_cant_act_reason(actor)
             if reason:
                 reason_text = f"is {reason} and cannot act"

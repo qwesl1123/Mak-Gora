@@ -116,6 +116,7 @@ ABILITIES = {
         "cost": {"mp": 0},
         "dice": None,
         "tags": ["defense", "spell"],
+        "priority_defensive": True,
         "cooldown": 20,
         "classes": ["mage"],
         "self_effects": [
@@ -180,6 +181,7 @@ ABILITIES = {
         "cost": {"energy": 0},
         "dice": None,
         "tags": ["stealth", "defense"],
+        "priority_defensive": True,
         "cooldown": 15,
         "classes": ["rogue"],
         "self_effects": [
@@ -395,6 +397,7 @@ ABILITIES = {
         "cost": {"energy": 0},
         "dice": None,
         "tags": ["stealth", "defense"],
+        "priority_defensive": True,
         "cooldown": 15,
         "classes": ["druid"],
         "requires_form": "cat_form",
@@ -693,6 +696,7 @@ ABILITIES = {
         "cost": {"mp": 0},
         "dice": None,
         "tags": ["spell", "defense"],
+        "priority_defensive": True,
         "cooldown": 25,
         "classes": ["paladin"],
         "self_effects": [
