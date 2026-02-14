@@ -22,6 +22,7 @@ from .effects import (
     remove_stealth,
     modify_stat,
     is_stunned,
+    get_cant_act_reason,
     is_stealthed,
     is_immune_all,
     is_damage_immune,
@@ -387,10 +388,15 @@ def resolve_turn(match: MatchState) -> None:
         weapon_name = ITEMS.get(weapon_id, {}).get("name", "their bare hands")
 
         if is_stunned(actor) and not ability.get("allow_while_stunned"):
+            reason = get_cant_act_reason(actor)
+            if reason:
+                reason_text = f"is {reason} and cannot act"
+            else:
+                reason_text = "cannot act"
             return {
                 "damage": 0,
                 "healing": 0,
-                "log": f"{actor_sid[:5]} tries to use {ability['name']} but is stunned and cannot act.",
+                "log": f"{actor_sid[:5]} tries to use {ability['name']} but {reason_text}.",
             }
 
         log_parts = [f"{actor_sid[:5]} uses {weapon_name} to cast {ability['name']}."]
@@ -798,9 +804,14 @@ def resolve_turn(match: MatchState) -> None:
             return {"damage": 0, "log": f"{actor_sid[:5]} fumbles (unknown ability).", "resolved": True}
 
         if stunned_at_start.get(actor_sid, False) and not ability.get("allow_while_stunned"):
+            reason = get_cant_act_reason(actor)
+            if reason:
+                reason_text = f"is {reason} and cannot act"
+            else:
+                reason_text = "cannot act"
             return {
                 "damage": 0,
-                "log": f"{actor_sid[:5]} tries to use {ability['name']} but is stunned and cannot act.",
+                "log": f"{actor_sid[:5]} tries to use {ability['name']} but {reason_text}.",
                 "resolved": True,
             }
 
@@ -976,10 +987,13 @@ def resolve_turn(match: MatchState) -> None:
 
         actor_stunned = is_stunned(actor) or incoming_immediate_stun.get(actor_sid, False)
         if actor_stunned and not ability.get("allow_while_stunned"):
+            reason = get_cant_act_reason(actor)
+            if reason:
+                reason_text = f"is {reason} and cannot act"
+            else:
+                reason_text = "cannot act"
             ctx["damage"] = 0
-            ctx["log"] = (
-                f"{actor_sid[:5]} tries to use {ability['name']} but is stunned and cannot act."
-            )
+            ctx["log"] = f"{actor_sid[:5]} tries to use {ability['name']} but {reason_text}."
             ctx["resolved"] = True
             return
 

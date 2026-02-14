@@ -78,6 +78,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "name": "Stunned",
         "duration": 1,
         "flags": {"stunned": True},
+        "cant_act_reason": "stunned",
     },
     "stealth": {
         "type": "stealth",
@@ -369,6 +370,25 @@ def has_flag(target: PlayerState, flag: str) -> bool:
 
 def is_stunned(target: PlayerState) -> bool:
     return has_flag(target, "stunned")
+
+
+def get_cant_act_reason(target: PlayerState) -> Optional[str]:
+    priority = {"stunned": 0, "frozen": 1, "feared": 2}
+    best_reason: Optional[str] = None
+    best_rank = len(priority)
+
+    for effect in target.effects:
+        reason = effect.get("cant_act_reason")
+        if not reason and effect.get("flags", {}).get("stunned"):
+            reason = "stunned"
+        if reason not in priority:
+            continue
+        rank = priority[reason]
+        if rank < best_rank:
+            best_rank = rank
+            best_reason = reason
+
+    return best_reason
 
 
 def is_stealthed(target: PlayerState) -> bool:

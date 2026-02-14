@@ -142,7 +142,7 @@ ABILITIES = {
         "cooldown": 3,
         "classes": ["mage"],
         "target_effects": [
-            {"id": "stunned", "duration": 1, "log": "freezes the enemy solid."}
+            {"id": "stunned", "duration": 1, "overrides": {"cant_act_reason": "frozen"}, "log": "freezes the enemy solid."}
         ],
     },
     "ice_barrier": {
@@ -562,7 +562,7 @@ ABILITIES = {
         "tags": ["spell", "control"],
         "cooldown": 6,
         "classes": ["warlock"],
-        "target_effects": [{"id": "stunned", "duration": 1, "log": "Enemy is feared and cannot act."}],
+        "target_effects": [{"id": "stunned", "duration": 1, "overrides": {"cant_act_reason": "feared"}, "log": "Enemy is feared and cannot act."}],
     },
     "healthstone": {
         "name": "Healthstone",
@@ -685,7 +685,7 @@ ABILITIES = {
         "cooldown": 15,
         "classes": ["paladin"],
         "target_effects": [
-            {"id": "stunned", "duration": 3, "log": "Enemy is stunned."}
+            {"id": "stunned", "duration": 2, "log": "Enemy is stunned."}
         ],
     },
     "divine_shield": {
