@@ -634,4 +634,97 @@ ABILITIES = {
         "classes": ["warrior"],
         "hits": 2,
     },
+
+    "crusader_strike": {
+        "name": "Crusader Strike",
+        "cost": {"mp": 0},
+        "resource_gain": {"mp": 5},
+        "dice": {"type": "d6", "power_on": "roll"},
+        "scaling": {"atk": 0.5},
+        "damage_type": "physical",
+        "tags": ["attack", "physical"],
+        "cooldown": 0,
+        "classes": ["paladin"],
+        "on_hit_effects": [
+            {"id": "paladin_final_verdict_empowered", "chance": 0.3, "log": "Has Final Verdict Empowered!"}
+        ],
+    },
+    "judgment": {
+        "name": "Judgment",
+        "cost": {"mp": 5},
+        "dice": {"type": "d6", "power_on": "roll"},
+        "scaling": {"atk": 1.0},
+        "damage_type": "magic",
+        "tags": ["spell", "attack", "magic"],
+        "cooldown": 2,
+        "classes": ["paladin"],
+    },
+    "final_verdict": {
+        "name": "Final Verdict",
+        "cost": {"mp": 10},
+        "dice": {"type": "d8", "power_on": "roll"},
+        "scaling": {"atk": 1.4},
+        "damage_type": "physical",
+        "tags": ["attack", "physical"],
+        "cooldown": 6,
+        "classes": ["paladin"],
+    },
+    "holy_light": {
+        "name": "Holy Light",
+        "cost": {"mp": 30},
+        "dice": None,
+        "tags": ["spell", "defense"],
+        "cooldown": 0,
+        "classes": ["paladin"],
+    },
+    "hammer_of_justice": {
+        "name": "Hammer of Justice",
+        "cost": {"mp": 0},
+        "dice": None,
+        "tags": ["control"],
+        "cooldown": 15,
+        "classes": ["paladin"],
+        "target_effects": [
+            {"id": "stunned", "duration": 3, "log": "Enemy is stunned."}
+        ],
+    },
+    "divine_shield": {
+        "name": "Divine Shield",
+        "cost": {"mp": 0},
+        "dice": None,
+        "tags": ["spell", "defense"],
+        "cooldown": 25,
+        "classes": ["paladin"],
+        "self_effects": [
+            {"id": "divine_shield", "duration": 2, "log": "is protected by Divine Shield."},
+            {"type": "dispel", "category": "dot", "school": "magical"},
+        ],
+    },
+    "shield_of_vengeance": {
+        "name": "Shield of Vengeance",
+        "cost": {"mp": 10},
+        "dice": None,
+        "tags": ["spell", "defense"],
+        "cooldown": 25,
+        "classes": ["paladin"],
+    },
+    "lay_on_hands": {
+        "name": "Lay on Hands",
+        "cost": {"mp": 20},
+        "dice": None,
+        "tags": ["spell", "defense"],
+        "cooldown": 50,
+        "classes": ["paladin"],
+    },
+    "avenging_wrath": {
+        "name": "Avenging Wrath",
+        "cost": {"mp": 20},
+        "dice": None,
+        "tags": ["spell", "buff"],
+        "cooldown": 20,
+        "classes": ["paladin"],
+        "self_effects": [
+            {"id": "avenging_wrath", "duration": 4, "log": "Abilities are empowered by Avenging Wrath!"}
+        ],
+    },
 }

@@ -34,6 +34,8 @@ from .effects import (
     tick_durations,
     FORM_EFFECT_IDS,
     current_form_id,
+    get_effect,
+    outgoing_damage_multiplier,
 )
 
 def cooldown_slots(ps: PlayerState, ability_id: str) -> list:
@@ -195,7 +197,11 @@ def resolve_turn(match: MatchState) -> None:
     def consume_costs(ps: PlayerState, costs: Dict[str, int]) -> None:
         res = ps.res
         for key, value in costs.items():
-            setattr(res, key, getattr(res, key) - value)
+            new_value = getattr(res, key) - value
+            cap = getattr(res, f"{key}_max", None)
+            if cap is not None:
+                new_value = max(0, min(new_value, cap))
+            setattr(res, key, new_value)
 
     def set_cooldown(ps: PlayerState, ability_id: str, ability: Dict[str, Any]) -> None:
         cooldown = int(ability.get("cooldown", 0) or 0)
@@ -559,6 +565,34 @@ def resolve_turn(match: MatchState) -> None:
             set_cooldown(actor, ability_id, ability)
             return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
 
+        if ability_id == "holy_light":
+            intellect = modify_stat(actor, "int", actor.stats.get("int", 0))
+            heal_value = int(intellect * 2.0) + int(roll("d4", r))
+            before_hp = actor.res.hp
+            actor.res.hp = min(actor.res.hp + heal_value, actor.res.hp_max)
+            healed = actor.res.hp - before_hp
+            log_parts.append(f"Holy Light restores {healed} HP.")
+            set_cooldown(actor, ability_id, ability)
+            return {"damage": 0, "healing": healed, "log": " ".join(log_parts), "ability_id": ability_id}
+
+        if ability_id == "lay_on_hands":
+            before_hp = actor.res.hp
+            actor.res.hp = actor.res.hp_max
+            healed = actor.res.hp - before_hp
+            log_parts.append("Lay on Hands restores health to full.")
+            set_cooldown(actor, ability_id, ability)
+            return {"damage": 0, "healing": healed, "log": " ".join(log_parts), "ability_id": ability_id}
+
+        if ability_id == "shield_of_vengeance":
+            attack = modify_stat(actor, "atk", actor.stats.get("atk", 0))
+            absorb_value = int(attack * 0.8) + int(roll("d6", r))
+            add_absorb(actor, absorb_value, source_name="Shield of Vengeance")
+            remove_effect(actor, "shield_of_vengeance")
+            apply_effect_by_id(actor, "shield_of_vengeance", overrides={"duration": 3, "absorb_total": 0})
+            log_parts.append(f"Shield of Vengeance grants {absorb_value} absorb.")
+            set_cooldown(actor, ability_id, ability)
+            return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
+
         if not has_damage:
             set_cooldown(actor, ability_id, ability)
             if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
@@ -573,6 +607,7 @@ def resolve_turn(match: MatchState) -> None:
         empower_multiplier = 1.0
         consume_empower = False
         empower_logged = False
+        outgoing_mult = outgoing_damage_multiplier(actor)
         if offensive_action and has_damage:
             for effect in actor.effects:
                 if effect.get("flags", {}).get("empower_next_offense"):
@@ -610,12 +645,20 @@ def resolve_turn(match: MatchState) -> None:
             ability_hit_landed = True
 
             raw = 0
+            local_scaling = dict(scaling)
+            if ability_id == "final_verdict" and has_effect(actor, "paladin_final_verdict_empowered"):
+                local_scaling = {"atk": 2.0}
+            elif ability_id == "crusader_strike" and has_effect(actor, "avenging_wrath"):
+                local_scaling = {"atk": 1.0}
+            elif ability_id == "judgment" and has_effect(actor, "avenging_wrath"):
+                local_scaling = {"atk": 1.4}
+
             if flat_damage is not None:
                 raw = int(flat_damage)
-            elif "atk" in scaling:
-                raw = base_damage(modify_stat(actor, "atk", actor.stats.get("atk", 0)), scaling["atk"], roll_power)
-            elif "int" in scaling:
-                raw = base_damage(modify_stat(actor, "int", actor.stats.get("int", 0)), scaling["int"], roll_power)
+            elif "atk" in local_scaling:
+                raw = base_damage(modify_stat(actor, "atk", actor.stats.get("atk", 0)), local_scaling["atk"], roll_power)
+            elif "int" in local_scaling:
+                raw = base_damage(modify_stat(actor, "int", actor.stats.get("int", 0)), local_scaling["int"], roll_power)
 
             # Apply critical hit
             if raw > 0 and r.randint(1, 100) <= modify_stat(actor, "crit", actor.stats.get("crit", 0)):
@@ -648,6 +691,8 @@ def resolve_turn(match: MatchState) -> None:
                     if not empower_logged:
                         log_parts.append(f"{prefix}Empowered strike!")
                         empower_logged = True
+                if outgoing_mult != 1.0:
+                    reduced = int(reduced * outgoing_mult)
                 log_parts.append(f"{prefix}Deals {reduced} damage.")
 
             if reduced > 0 and on_hit_base_damage == 0:
@@ -722,10 +767,12 @@ def resolve_turn(match: MatchState) -> None:
                 if gain_value > 0 and hasattr(actor.res, resource):
                     current = getattr(actor.res, resource)
                     cap = getattr(actor.res, f"{resource}_max", current)
-                    setattr(actor.res, resource, min(current + gain_value, cap))
+                    setattr(actor.res, resource, max(0, min(current + gain_value, cap)))
 
         if ability.get("consume_effect"):
             remove_effect(actor, ability["consume_effect"])
+        if ability_id == "final_verdict" and has_effect(actor, "paladin_final_verdict_empowered"):
+            remove_effect(actor, "paladin_final_verdict_empowered")
 
         if consume_empower and empower_multiplier != 1.0:
             remove_effect(actor, "crusader_empower")
@@ -1003,13 +1050,16 @@ def resolve_turn(match: MatchState) -> None:
     def apply_damage(target: PlayerState, incoming: int, target_sid: str, source_ability_name: str) -> int:
         if incoming <= 0 or not target.res:
             return 0
+        if is_immune_all(target):
+            match.log.append(f"{target_sid[:5]} is immune and takes no damage.")
+            return 0
         if has_flag(target, "cycloned"):
             match.log.append(f"{target_sid[:5]} is cycloned and takes no damage.")
             return 0
+        absorb_source_name = (target.res.absorb_source if target.res else None) or "Shield"
         absorbed, remaining = consume_absorb(target, incoming)
         if absorbed > 0:
-            source_name = (target.res.absorb_source if target.res else None) or "Shield"
-            match.log.append(f"{source_name} absorbs {absorbed} damage for {target_sid[:5]}.")
+            match.log.append(f"{absorb_source_name} absorbs {absorbed} damage for {target_sid[:5]}.")
         if remaining > 0:
             target.res.hp -= remaining
             was_stealthed = is_stealthed(target)
@@ -1021,6 +1071,30 @@ def resolve_turn(match: MatchState) -> None:
                 cap = target.res.rage_max
                 target.res.rage = min(current + remaining, cap)
         return max(0, remaining)
+
+    def trigger_shield_of_vengeance_explosion(owner_sid: str, enemy_sid: str) -> None:
+        owner = match.state[owner_sid]
+        enemy = match.state[enemy_sid]
+        shield_fx = get_effect(owner, "shield_of_vengeance")
+        if not shield_fx:
+            return
+        if owner.res.absorb > 0 and int(shield_fx.get("duration", 0) or 0) > 1:
+            return
+        absorbed_total = int(shield_fx.get("absorb_total", 0) or 0)
+        remove_effect(owner, "shield_of_vengeance")
+        if absorbed_total <= 0:
+            return
+        if is_immune_all(enemy):
+            match.log.append(f"{enemy_sid[:5]} is immune to Shield of Vengeance explosion.")
+            return
+        enemy.res.hp -= absorbed_total
+        match.log.append(f"Shield of Vengeance explodes for {absorbed_total} magic damage.")
+        imp_count = int((enemy.minions or {}).get("imp", 0))
+        if imp_count > 0:
+            enemy.minions["imp"] = 0
+            match.log.append(f"{enemy_sid[:5]}'s Imps are destroyed by Shield of Vengeance.")
+        totals = match.combat_totals.setdefault(owner_sid, {"damage": 0, "healing": 0})
+        totals["damage"] += absorbed_total
 
     source_name_1 = ABILITIES.get(result1.get("ability_id", ""), {}).get("name", "attack")
     source_name_2 = ABILITIES.get(result2.get("ability_id", ""), {}).get("name", "attack")
@@ -1083,10 +1157,10 @@ def resolve_turn(match: MatchState) -> None:
                 reduced = int(reduced * mitigation_multiplier(opponent))
                 if is_damage_immune(opponent, "magic"):
                     reduced = 0
+                absorb_source_name = (opponent.res.absorb_source if opponent.res else None) or "Shield"
                 absorbed, remaining = consume_absorb(opponent, reduced)
                 if absorbed > 0:
-                    source_name = (opponent.res.absorb_source if opponent.res else None) or "Shield"
-                    match.log.append(f"{source_name} absorbs {absorbed} damage for {opponent_sid[:5]}.")
+                    match.log.append(f"{absorb_source_name} absorbs {absorbed} damage for {opponent_sid[:5]}.")
                 if remaining > 0:
                     opponent.res.hp -= remaining
                     if current_form_id(opponent) == "bear_form":
@@ -1101,6 +1175,9 @@ def resolve_turn(match: MatchState) -> None:
 
         totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
         totals["healing"] += int(end_summary.get("healing_done", 0) or 0)
+
+    trigger_shield_of_vengeance_explosion(sids[0], sids[1])
+    trigger_shield_of_vengeance_explosion(sids[1], sids[0])
 
     for sid in sids:
         ps = match.state[sid]

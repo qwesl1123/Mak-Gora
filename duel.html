@@ -29,6 +29,7 @@
         --rogue-color: #FFF468;
         --druid-color: #FF7C0A;
         --warlock-color: #8788EE;
+        --paladin-color: #F48CBA;
         --item-green: #1eff00;
         --item-blue: #0070dd;
         --item-purple: #a335ee;
@@ -239,6 +240,10 @@
 
       .status-text.warlock {
         color: var(--warlock-color);
+      }
+
+      .status-text.paladin {
+        color: var(--paladin-color);
       }
 
       .resource-bar {
@@ -542,6 +547,12 @@
         text-shadow: 0 0 12px rgba(255, 244, 104, 0.95);
       }
 
+      .logLinePaladinProc {
+        color: var(--paladin-color);
+        font-weight: 700;
+        text-shadow: 0 0 12px rgba(244, 140, 186, 0.95);
+      }
+
       .logLineExecute {
         color: #ff4444;
         font-weight: 700;
@@ -613,6 +624,12 @@
       .log-class-warlock,
       .log-ability-warlock {
         color: var(--warlock-color);
+        font-weight: 700;
+      }
+
+      .log-class-paladin,
+      .log-ability-paladin {
+        color: var(--paladin-color);
         font-weight: 700;
       }
 
@@ -925,6 +942,13 @@
             <p><span class="stat">Attack: 3</span> | <span class="stat">Intellect: 15</span> | <span class="stat">Defense: 7</span></p>
             <p><span class="stat">HP: 110</span> | <span class="stat">Mana: 100</span> | Speed: 9 | Crit: 4% | Accuracy: 96%</p>
             <p>Master of curses and demons. Uses Mana only and specializes in magical afflictions.</p>
+          </div>
+
+          <div class="doc-item">
+            <h4>Paladin</h4>
+            <p><span class="stat">Attack: 10</span> | <span class="stat">Intellect: 7</span> | <span class="stat">Defense: 6</span></p>
+            <p><span class="stat">HP: 100</span> | <span class="stat">Mana: 80</span> | Speed: 7 | Crit: 5% | Accuracy: 90%</p>
+            <p>Holy warrior of the Light. Mixes weapon strikes, shielding, and support magic for balanced offense and defense.</p>
           </div>
         </div>
       </div>
@@ -1358,6 +1382,64 @@
           </div>
         </div>
 
+        <h4 class="doc-subtitle">Paladin</h4>
+        <div class="doc-grid">
+          <div class="doc-item">
+            <h4>Crusader Strike</h4>
+            <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 0</span></p>
+            <p><span class="stat">Command: <span class="kbd">crusader_strike</span></span></p>
+            <p>Deals physical damage (Attack 0.5x + d6) and generates 5 Mana. 30% chance to empower Final Verdict.</p>
+          </div>
+          <div class="doc-item">
+            <h4>Judgment</h4>
+            <p><span class="stat">Cost: 5 Mana</span> | <span class="stat">Cooldown: 2</span></p>
+            <p><span class="stat">Command: <span class="kbd">judgment</span></span></p>
+            <p>Deals magic damage (Attack 1.0x + d6).</p>
+          </div>
+          <div class="doc-item">
+            <h4>Final Verdict</h4>
+            <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Cooldown: 6</span></p>
+            <p><span class="stat">Command: <span class="kbd">final_verdict</span></span></p>
+            <p>Deals physical damage (Attack 1.4x + d8). If empowered, deals (Attack 2.0x + d8) once.</p>
+          </div>
+          <div class="doc-item">
+            <h4>Holy Light</h4>
+            <p><span class="stat">Cost: 30 Mana</span> | <span class="stat">Cooldown: 0</span></p>
+            <p><span class="stat">Command: <span class="kbd">holy_light</span></span></p>
+            <p>Heals self for (Intellect 2.0x + d4).</p>
+          </div>
+          <div class="doc-item">
+            <h4>Hammer of Justice</h4>
+            <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 15</span></p>
+            <p><span class="stat">Command: <span class="kbd">hammer_of_justice</span></span></p>
+            <p>Stuns the enemy for 3 turns.</p>
+          </div>
+          <div class="doc-item">
+            <h4>Divine Shield</h4>
+            <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 25</span></p>
+            <p><span class="stat">Command: <span class="kbd">divine_shield</span></span></p>
+            <p>Become immune to incoming damage and debuffs for 2 turns, can still act, and dispels magical DoTs on cast.</p>
+          </div>
+          <div class="doc-item">
+            <h4>Shield of Vengeance</h4>
+            <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Cooldown: 25</span></p>
+            <p><span class="stat">Command: <span class="kbd">shield_of_vengeance</span></span></p>
+            <p>Gain an absorb shield for 3 turns (Attack 0.8x + d6). On expiry or full consume, explodes for absorbed total as AoE magic damage.</p>
+          </div>
+          <div class="doc-item">
+            <h4>Lay on Hands</h4>
+            <p><span class="stat">Cost: 20 Mana</span> | <span class="stat">Cooldown: 50</span></p>
+            <p><span class="stat">Command: <span class="kbd">lay_on_hands</span></span></p>
+            <p>Restore your HP to full.</p>
+          </div>
+          <div class="doc-item">
+            <h4>Avenging Wrath</h4>
+            <p><span class="stat">Cost: 20 Mana</span> | <span class="stat">Cooldown: 20</span></p>
+            <p><span class="stat">Command: <span class="kbd">avenging_wrath</span></span></p>
+            <p>For 4 turns, increases outgoing damage by 20%. Also empowers Crusader Strike and Judgment multipliers.</p>
+          </div>
+        </div>
+
         <h3>Combat Mechanics</h3>
         <div class="doc-content">
           <p><strong>Damage Types:</strong> Physical damage is reduced by Physical Reduction. Magic damage is reduced by Magic Resist.</p>
@@ -1381,7 +1463,7 @@
         <div class="doc-content">
           <p><strong>1. Join Queue:</strong> Click "Enter the Arena" to find an opponent.</p>
           
-          <p><strong>2. Prep Phase:</strong> Choose your class with <span class="kbd">/class warrior</span>, <span class="kbd">/class mage</span>, <span class="kbd">/class rogue</span>, <span class="kbd">/class druid</span>, or <span class="kbd">/class warlock</span></p>
+          <p><strong>2. Prep Phase:</strong> Choose your class with <span class="kbd">/class warrior</span>, <span class="kbd">/class mage</span>, <span class="kbd">/class rogue</span>, <span class="kbd">/class druid</span>, <span class="kbd">/class warlock</span>, or <span class="kbd">/class paladin</span></p>
           
           <p><strong>3. Equip Items:</strong> Use <span class="kbd">/item weapon steel_long_sword</span> and <span class="kbd">/item armor plate_armor</span></p>
           
@@ -1488,6 +1570,17 @@
         "Demonic Gateway",
         "Demonic Circle: Teleport",
         "Demonic Circle",
+      ];
+      const paladinAbilities = [
+        "Crusader Strike",
+        "Judgment",
+        "Final Verdict",
+        "Holy Light",
+        "Hammer of Justice",
+        "Divine Shield",
+        "Shield of Vengeance",
+        "Lay on Hands",
+        "Avenging Wrath",
       ];
       const druidAbilities = [
         "Bear Form",
@@ -1600,6 +1693,9 @@
         if (text.includes("Has Ambush!")) {
           return `<span class="log-class-rogue">${escapeHtml(text)}</span>`;
         }
+        if (text.includes("Has Final Verdict Empowered!")) {
+          return `<span class="log-class-paladin logLinePaladinProc">${escapeHtml(text)}</span>`;
+        }
 
         let output = escapeHtml(text);
         const classPatterns = [
@@ -1608,6 +1704,7 @@
           { pattern: /\bRogue(\(you\))?\b/g, className: "log-class-rogue" },
           { pattern: /\bDruid(\(you\))?\b/g, className: "log-class-druid" },
           { pattern: /\bWarlock(\(you\))?\b/g, className: "log-class-warlock" },
+          { pattern: /\bPaladin(\(you\))?\b/g, className: "log-class-paladin" },
         ];
         classPatterns.forEach(({ pattern, className }) => {
           output = output.replace(pattern, `<span class="${className}">$&</span>`);
@@ -1630,8 +1727,18 @@
           output = output.replace(pattern, `<span class="log-ability-warlock">$&</span>`);
         });
         druidAbilities.forEach((ability) => {
-          const pattern = new RegExp(`\\b${escapeRegExp(ability)}\\b`, "g");
+          let pattern;
+          if (ability === "Wrath") {
+            // Avoid partial overlap with Paladin "Avenging Wrath"
+            pattern = /(?<!Avenging\s)\bWrath\b/g;
+          } else {
+            pattern = new RegExp(`\b${escapeRegExp(ability)}\b`, "g");
+          }
           output = output.replace(pattern, `<span class="log-ability-druid">$&</span>`);
+        });
+        paladinAbilities.forEach((ability) => {
+          const pattern = new RegExp(`\\b${escapeRegExp(ability)}\\b`, "g");
+          output = output.replace(pattern, `<span class="log-ability-paladin">$&</span>`);
         });
         greenItems.forEach((item) => {
           const escapedItem = escapeRegExp(item).replace(/'/g, "(?:'|&#039;)");
@@ -1668,6 +1775,9 @@
         }
         if (msg.includes("Has Ambush!")) {
           classes.push("logLineAmbush");
+        }
+        if (msg.includes("Has Final Verdict Empowered!")) {
+          classes.push("logLinePaladinProc");
         }
         if (msg.includes("Can Use Execute")) {
           classes.push("logLineExecute");
@@ -1856,7 +1966,7 @@
         if (!element) {
           return;
         }
-        element.classList.remove("warrior", "mage", "rogue", "druid", "warlock");
+        element.classList.remove("warrior", "mage", "rogue", "druid", "warlock", "paladin");
         if (classKey) {
           element.classList.add(classKey);
         }

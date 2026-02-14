@@ -117,6 +117,33 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "damage_mult": 1.2,
         "flags": {"empower_next_offense": True},
     },
+    "paladin_final_verdict_empowered": {
+        "type": "status",
+        "name": "Final Verdict Empowered",
+        "duration": 999,
+        "flags": {"paladin_final_verdict_empowered": True},
+    },
+    "divine_shield": {
+        "type": "status",
+        "name": "Divine Shield",
+        "duration": 2,
+        "flags": {"immune_all": True},
+    },
+    "shield_of_vengeance": {
+        "type": "status",
+        "name": "Shielded",
+        "duration": 3,
+        "category": "absorb",
+        "flags": {"shield_of_vengeance": True},
+        "absorb_total": 0,
+    },
+    "avenging_wrath": {
+        "type": "status",
+        "name": "Avenging Wrath",
+        "duration": 4,
+        "outgoing_damage_mult": 1.2,
+        "flags": {"avenging_wrath": True},
+    },
     "bear_form": {
         "type": "form",
         "name": "Bear Form",
@@ -473,6 +500,20 @@ def add_absorb(ps: PlayerState, amount: int, source_item: Optional[str] = None, 
     return ps.res.absorb
 
 
+def get_effect(target: PlayerState, effect_id: str) -> Optional[Dict[str, Any]]:
+    for effect in target.effects:
+        if effect.get("id") == effect_id:
+            return effect
+    return None
+
+
+def outgoing_damage_multiplier(target: PlayerState) -> float:
+    mult = 1.0
+    for effect in target.effects:
+        mult *= float(effect.get("outgoing_damage_mult", 1.0) or 1.0)
+    return mult
+
+
 def consume_absorb(ps: PlayerState, incoming: int) -> tuple[int, int]:
     if not ps.res:
         return 0, incoming
@@ -481,6 +522,11 @@ def consume_absorb(ps: PlayerState, incoming: int) -> tuple[int, int]:
         return 0, incoming_value
     absorbed = min(ps.res.absorb, incoming_value)
     ps.res.absorb -= absorbed
+
+    shield_fx = get_effect(ps, "shield_of_vengeance")
+    if shield_fx and absorbed > 0:
+        shield_fx["absorb_total"] = int(shield_fx.get("absorb_total", 0) or 0) + int(absorbed)
+
     if ps.res.absorb <= 0:
         ps.res.absorb_source = None
     remaining = incoming_value - absorbed
@@ -759,10 +805,10 @@ def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[tuple[str, in
         if effect.get("school") == "magical" and is_damage_immune(ps, "magic"):
             reduced = 0
 
+        absorb_source_name = ps.res.absorb_source or "Shield"
         absorbed, remaining = consume_absorb(ps, reduced)
         if absorbed > 0:
-            source_name = ps.res.absorb_source or "Shield"
-            log.append(f"{source_name} absorbs {absorbed} damage for {label}.")
+            log.append(f"{absorb_source_name} absorbs {absorbed} damage for {label}.")
         if remaining <= 0:
             continue
 
