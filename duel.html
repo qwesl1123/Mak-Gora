@@ -781,12 +781,22 @@
         display: inline-block;
         white-space: nowrap;
         color: inherit;
-        text-shadow: 0 0 8px rgba(255, 128, 0, 0.45);
+      }
+
+      /*
+       * Keep the legendary text in its own plain span so it renders exactly like
+       * other .log-item-orange entries; lightning is drawn in a separate overlay.
+       */
+      .fx.fx_thunderfury .fx-thunderfury-overlay {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
       }
 
       .fx.fx_thunderfury .bolt-inner {
         position: absolute;
-        inset: -20px;
+        /* Align the lightning SVG to the exact text box; negative inset shifted it upward. */
+        inset: 0;
         pointer-events: none;
         opacity: 0;
         mix-blend-mode: screen;
@@ -1788,7 +1798,7 @@
           const fxId = match[1];
           const value = match[2];
           if (fxId === "fx_thunderfury") {
-            html += `<span class="fx fx_thunderfury log-item-orange">${escapeHtml(value)}</span>`;
+            html += `<span class="fx fx_thunderfury"><span class="log-item-orange fx-thunderfury-text">${escapeHtml(value)}</span><span class="fx-thunderfury-overlay" aria-hidden="true"></span></span>`;
           } else {
             html += escapeHtml(value);
           }
@@ -1826,13 +1836,13 @@
       }
 
       function buildMainStrike(W, H) {
-        // Create a more natural lightning bolt that branches from text
-        const startX = W * randomInRange(0.3, 0.7);  // Start somewhere in middle of text
-        const startY = H * randomInRange(0.3, 0.7);
-        
-        // Pick a random direction for the bolt to strike
-        const angle = randomInRange(-Math.PI * 0.4, Math.PI * 0.4); // -72° to +72°
-        const length = Math.max(W, H) * randomInRange(1.2, 1.8);
+        // Spread origins across almost the full label so left-side words (e.g. "Thunderfury") can be hit.
+        const startX = W * randomInRange(0.05, 0.95);
+        const startY = H * randomInRange(0.2, 0.8);
+
+        // Use 360° direction + diagonal-based travel so paths can sweep both left and right words.
+        const angle = randomInRange(-Math.PI, Math.PI);
+        const length = Math.hypot(W, H) * randomInRange(1.1, 1.6);
         
         const segments = Math.floor(randomInRange(6, 10));
         const stepLen = length / segments;
@@ -1898,7 +1908,8 @@
         if (!fx) {
           return;
         }
-        const rect = span.getBoundingClientRect();
+        const anchorEl = fx.textNode || span;
+        const rect = anchorEl.getBoundingClientRect();
         const W = rect.width;
         const H = rect.height;
         if (!W || !H) {
@@ -1907,7 +1918,7 @@
         fx.innerSvg.setAttribute("viewBox", `0 0 ${W} ${H}`);
         fx.maskText.setAttribute("x", W / 2);
         fx.maskText.setAttribute("y", H / 2);
-        const computed = window.getComputedStyle(span);
+        const computed = window.getComputedStyle(anchorEl);
         fx.maskText.setAttribute("font-size", computed.fontSize);
         fx.maskText.setAttribute("font-family", computed.fontFamily);
         fx.maskText.setAttribute("font-weight", computed.fontWeight || "700");
@@ -1937,7 +1948,9 @@
       function mountThunderfuryFx(span) {
         const maskId = `thunderfuryMask_${thunderfuryFxCounter}`;
         thunderfuryFxCounter += 1;
-        const text = span.textContent;
+        const textNode = span.querySelector(".fx-thunderfury-text");
+        const overlayHost = span.querySelector(".fx-thunderfury-overlay") || span;
+        const text = textNode ? textNode.textContent : span.textContent;
         const innerSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
         innerSvg.setAttribute("class", "bolt-inner");
         innerSvg.setAttribute("preserveAspectRatio", "none");
@@ -1957,7 +1970,7 @@
             <path class="inner-path"></path>
           </g>
         `;
-        span.appendChild(innerSvg);
+        overlayHost.appendChild(innerSvg);
         const maskText = innerSvg.querySelector("text");
         const paths = innerSvg.querySelectorAll("path");
         const mainGlow1 = paths[0];
@@ -1966,9 +1979,11 @@
         const mainStrike1 = paths[3];
         const mainStrike2 = paths[4];
         const mainStrike3 = paths[5];
-        span._thunderfuryFx = { 
-          innerSvg, 
-          maskText, 
+        span._thunderfuryFx = {
+          // Track the visible text span so mask sizing/color follows normal legendary text.
+          textNode,
+          innerSvg,
+          maskText,
           strikes: [
             { glow: mainGlow1, path: mainStrike1 },
             { glow: mainGlow2, path: mainStrike2 },
@@ -1999,7 +2014,7 @@
         let html = output;
         fxTokens.forEach(({ token, fxId, value }) => {
           const replacement = fxId === "fx_thunderfury"
-            ? `<span class="fx fx_thunderfury log-item-orange">${escapeHtml(value)}</span>`
+            ? `<span class="fx fx_thunderfury"><span class="log-item-orange fx-thunderfury-text">${escapeHtml(value)}</span><span class="fx-thunderfury-overlay" aria-hidden="true"></span></span>`
             : escapeHtml(value);
           html = html.replace(token, replacement);
         });
