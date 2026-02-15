@@ -212,6 +212,11 @@
         color: var(--item-orange);
       }
 
+      .stat-row strong .fx.fx_thunderfury {
+        display: inline;
+        white-space: normal;
+      }
+
       .status-text {
         font-weight: 700;
         text-transform: uppercase;
@@ -769,10 +774,123 @@
         color: var(--text-light);
         font-weight: bold;
       }
+
+
+      .fx.fx_thunderfury {
+        position: relative;
+        display: inline-block;
+        white-space: nowrap;
+        color: inherit;
+        text-shadow: 0 0 8px rgba(255, 128, 0, 0.45);
+      }
+
+      .fx.fx_thunderfury .bolt-inner {
+        position: absolute;
+        inset: -20px;
+        pointer-events: none;
+        opacity: 0;
+        mix-blend-mode: screen;
+      }
+
+      .fx.fx_thunderfury.is-zapped .bolt-inner {
+        animation: boltFade 450ms ease-out forwards;
+      }
+
+      .fx.fx_thunderfury .inner-glow {
+        fill: none;
+        stroke: rgba(80, 160, 255, 0.8);
+        stroke-width: 5;
+        stroke-linecap: round;
+        stroke-linejoin: miter;
+        stroke-miterlimit: 10;
+        filter: url(#blueGlow);
+        opacity: 0;
+      }
+
+      .fx.fx_thunderfury .inner-path {
+        fill: none;
+        stroke: rgba(255, 255, 255, 1);
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: miter;
+        stroke-miterlimit: 10;
+        filter: url(#boltGlowInner);
+        opacity: 0;
+      }
+
+      .fx.fx_thunderfury.is-zapped .inner-glow,
+      .fx.fx_thunderfury.is-zapped .inner-path {
+        opacity: 1;
+        animation: boltDraw 120ms ease-out forwards, boltFlicker 450ms steps(1, end) forwards;
+      }
+
+      @keyframes boltDraw {
+        from { stroke-dashoffset: var(--dash, 1000); }
+        to { stroke-dashoffset: 0; }
+      }
+
+      @keyframes boltFlicker {
+        0% { opacity: 0; }
+        5% { opacity: 1; }
+        12% { opacity: 0.3; }
+        18% { opacity: 1; }
+        25% { opacity: 0.4; }
+        32% { opacity: 1; }
+        45% { opacity: 0.2; }
+        58% { opacity: 0.8; }
+        70% { opacity: 0; }
+        100% { opacity: 0; }
+      }
+
+      @keyframes boltFade {
+        0% { opacity: 0; }
+        4% { opacity: 1; }
+        65% { opacity: 0.6; }
+        100% { opacity: 0; }
+      }
+
+      @keyframes glowCycle {
+        0% { opacity: 0; }
+        6% { opacity: 1; }
+        12% { opacity: 0; }
+        18% { opacity: 1; }
+        24% { opacity: 0; }
+        49% { opacity: 0; }
+        55% { opacity: 1; }
+        61% { opacity: 0; }
+        67% { opacity: 1; }
+        73% { opacity: 0; }
+        100% { opacity: 0; }
+      }
     </style>
   </head>
 
   <body>
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+      <filter id="boltGlowInner" x="-100%" y="-100%" width="300%" height="300%">
+        <feGaussianBlur stdDeviation="0.8" result="b1" />
+        <feGaussianBlur stdDeviation="2" result="b2" />
+        <feGaussianBlur stdDeviation="4" result="b3" />
+        <feMerge>
+          <feMergeNode in="b3" />
+          <feMergeNode in="b2" />
+          <feMergeNode in="b1" />
+          <feMergeNode in="SourceGraphic" />
+        </feMerge>
+      </filter>
+      <filter id="blueGlow" x="-100%" y="-100%" width="300%" height="300%">
+        <feGaussianBlur stdDeviation="3" result="g1" />
+        <feGaussianBlur stdDeviation="6" result="g2" />
+        <feGaussianBlur stdDeviation="10" result="g3" />
+        <feMerge>
+          <feMergeNode in="g3" />
+          <feMergeNode in="g2" />
+          <feMergeNode in="g1" />
+          <feMergeNode in="SourceGraphic" />
+        </feMerge>
+      </filter>
+    </svg>
+
     <div class="container">
       <div class="header">
         <a href="/" style="display:inline-block; margin-bottom:15px; color: var(--gold); text-decoration: none; font-size: 1.1rem; transition: color 0.3s;">
@@ -1649,18 +1767,254 @@
         return "";
       }
 
+      const fxTagPattern = /\[\[fx:(fx_thunderfury)\]\]([\s\S]*?)\[\[\/fx\]\]/g;
+      let thunderfuryFxCounter = 0;
+
+      function stripFxTags(text) {
+        if (!text) {
+          return text;
+        }
+        return text.replace(fxTagPattern, "$2");
+      }
+
+      function renderTextWithFxTags(text) {
+        const source = String(text || "");
+        let html = "";
+        let lastIndex = 0;
+        fxTagPattern.lastIndex = 0;
+        let match;
+        while ((match = fxTagPattern.exec(source)) !== null) {
+          html += escapeHtml(source.slice(lastIndex, match.index));
+          const fxId = match[1];
+          const value = match[2];
+          if (fxId === "fx_thunderfury") {
+            html += `<span class="fx fx_thunderfury log-item-orange">${escapeHtml(value)}</span>`;
+          } else {
+            html += escapeHtml(value);
+          }
+          lastIndex = match.index + match[0].length;
+        }
+        html += escapeHtml(source.slice(lastIndex));
+        return html;
+      }
+
       function setItemLabel(element, name) {
-        element.textContent = name || "--";
+        const plainName = stripFxTags(name || "");
         element.classList.remove("log-item-green", "log-item-blue", "log-item-purple", "log-item-orange");
-        const itemClass = itemClassForName(name);
+        if (!name) {
+          element.textContent = "--";
+          return;
+        }
+        const itemClass = itemClassForName(plainName);
         if (itemClass) {
           element.classList.add(itemClass);
         }
+        element.innerHTML = renderTextWithFxTags(name);
+        initThunderfuryFx(element);
+      }
+
+
+      function randomInRange(min, max) {
+        return min + Math.random() * (max - min);
+      }
+
+      function setDash(pathEl) {
+        const len = pathEl.getTotalLength();
+        pathEl.style.strokeDasharray = `${len}`;
+        pathEl.style.strokeDashoffset = `${len}`;
+        pathEl.style.setProperty("--dash", len);
+      }
+
+      function buildMainStrike(W, H) {
+        // Create a more natural lightning bolt that branches from text
+        const startX = W * randomInRange(0.3, 0.7);  // Start somewhere in middle of text
+        const startY = H * randomInRange(0.3, 0.7);
+        
+        // Pick a random direction for the bolt to strike
+        const angle = randomInRange(-Math.PI * 0.4, Math.PI * 0.4); // -72° to +72°
+        const length = Math.max(W, H) * randomInRange(1.2, 1.8);
+        
+        const segments = Math.floor(randomInRange(6, 10));
+        const stepLen = length / segments;
+        
+        let x = startX;
+        let y = startY;
+        let currentAngle = angle;
+        let d = `M ${x.toFixed(1)} ${y.toFixed(1)}`;
+        
+        for (let i = 1; i <= segments; i++) {
+          // Add jagged variation to angle
+          currentAngle += randomInRange(-0.5, 0.5);
+          
+          // Move in the angled direction with some randomness
+          x += Math.cos(currentAngle) * stepLen + randomInRange(-stepLen * 0.3, stepLen * 0.3);
+          y += Math.sin(currentAngle) * stepLen + randomInRange(-stepLen * 0.2, stepLen * 0.2);
+          
+          d += ` L ${x.toFixed(1)} ${y.toFixed(1)}`;
+        }
+        
+        return d;
+      }
+
+      function pathToPoints(d) {
+        const parts = d.replace(/[ML]/g, "").trim().split(/\s+/).map(Number);
+        const pts = [];
+        for (let i = 0; i < parts.length; i += 2) {
+          pts.push([parts[i], parts[i + 1]]);
+        }
+        return pts;
+      }
+
+      function buildBranchStrike(W, H, mainPoints) {
+        if (mainPoints.length < 2) return "";
+        
+        // Pick a point along the main strike (not too early, not too late)
+        const idx = Math.floor(mainPoints.length * randomInRange(0.25, 0.65));
+        const p0 = mainPoints[idx];
+        
+        // Create a short branch off the main bolt
+        const segments = Math.floor(randomInRange(2, 4));
+        const branchAngle = randomInRange(-Math.PI * 0.8, Math.PI * 0.8);
+        const branchLen = Math.max(W, H) * randomInRange(0.2, 0.4);
+        const stepLen = branchLen / segments;
+        
+        let x = p0[0];
+        let y = p0[1];
+        let currentAngle = branchAngle;
+        let d = `M ${x.toFixed(1)} ${y.toFixed(1)}`;
+        
+        for (let i = 1; i <= segments; i++) {
+          currentAngle += randomInRange(-0.6, 0.6);
+          x += Math.cos(currentAngle) * stepLen + randomInRange(-stepLen * 0.4, stepLen * 0.4);
+          y += Math.sin(currentAngle) * stepLen + randomInRange(-stepLen * 0.3, stepLen * 0.3);
+          d += ` L ${x.toFixed(1)} ${y.toFixed(1)}`;
+        }
+        
+        return d;
+      }
+
+      function zapThunderfury(span) {
+        const fx = span._thunderfuryFx;
+        if (!fx) {
+          return;
+        }
+        const rect = span.getBoundingClientRect();
+        const W = rect.width;
+        const H = rect.height;
+        if (!W || !H) {
+          return;
+        }
+        fx.innerSvg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+        fx.maskText.setAttribute("x", W / 2);
+        fx.maskText.setAttribute("y", H / 2);
+        const computed = window.getComputedStyle(span);
+        fx.maskText.setAttribute("font-size", computed.fontSize);
+        fx.maskText.setAttribute("font-family", computed.fontFamily);
+        fx.maskText.setAttribute("font-weight", computed.fontWeight || "700");
+        fx.maskText.setAttribute("letter-spacing", computed.letterSpacing || "normal");
+        
+        // Create 3 lightning strikes
+        fx.strikes.forEach((strike) => {
+          const mainD = buildMainStrike(W, H);
+          const points = pathToPoints(mainD);
+          const branchD = buildBranchStrike(W, H, points);
+          
+          // Combine main and branch into one path
+          const combinedD = mainD + " " + branchD;
+          
+          strike.glow.setAttribute("d", combinedD);
+          strike.path.setAttribute("d", combinedD);
+          setDash(strike.glow);
+          setDash(strike.path);
+        });
+        
+        span.classList.remove("is-zapped");
+        void span.offsetWidth;
+        span.classList.add("is-zapped");
+        setTimeout(() => span.classList.remove("is-zapped"), 650);
+      }
+
+      function mountThunderfuryFx(span) {
+        const maskId = `thunderfuryMask_${thunderfuryFxCounter}`;
+        thunderfuryFxCounter += 1;
+        const text = span.textContent;
+        const innerSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        innerSvg.setAttribute("class", "bolt-inner");
+        innerSvg.setAttribute("preserveAspectRatio", "none");
+        innerSvg.innerHTML = `
+          <defs>
+            <mask id="${maskId}">
+              <rect width="100%" height="100%" fill="black"></rect>
+              <text text-anchor="middle" dominant-baseline="middle" fill="white">${escapeHtml(text)}</text>
+            </mask>
+          </defs>
+          <g mask="url(#${maskId})">
+            <path class="inner-glow"></path>
+            <path class="inner-glow"></path>
+            <path class="inner-glow"></path>
+            <path class="inner-path"></path>
+            <path class="inner-path"></path>
+            <path class="inner-path"></path>
+          </g>
+        `;
+        span.appendChild(innerSvg);
+        const maskText = innerSvg.querySelector("text");
+        const paths = innerSvg.querySelectorAll("path");
+        const mainGlow1 = paths[0];
+        const mainGlow2 = paths[1];
+        const mainGlow3 = paths[2];
+        const mainStrike1 = paths[3];
+        const mainStrike2 = paths[4];
+        const mainStrike3 = paths[5];
+        span._thunderfuryFx = { 
+          innerSvg, 
+          maskText, 
+          strikes: [
+            { glow: mainGlow1, path: mainStrike1 },
+            { glow: mainGlow2, path: mainStrike2 },
+            { glow: mainGlow3, path: mainStrike3 }
+          ]
+        };
+        span.dataset.fxInit = "1";
+        span.addEventListener("click", () => zapThunderfury(span));
+        span._thunderfuryTimer = setInterval(() => {
+          if (Math.random() < 0.45) {  // Less frequent but more noticeable
+            zapThunderfury(span);
+          }
+        }, 1200);  // Longer intervals between strikes
+        zapThunderfury(span);
+      }
+
+      function initThunderfuryFx(root = document) {
+        const spans = root.querySelectorAll(".fx_thunderfury");
+        spans.forEach((span) => {
+          if (span.dataset.fxInit === "1") {
+            return;
+          }
+          mountThunderfuryFx(span);
+        });
+      }
+
+      function applyFxTokensToHtml(output, fxTokens) {
+        let html = output;
+        fxTokens.forEach(({ token, fxId, value }) => {
+          const replacement = fxId === "fx_thunderfury"
+            ? `<span class="fx fx_thunderfury log-item-orange">${escapeHtml(value)}</span>`
+            : escapeHtml(value);
+          html = html.replace(token, replacement);
+        });
+        return html;
       }
 
       function highlightLogLine(text) {
-        if (text.startsWith("Post-Combat Summary|")) {
-          const parts = text.split("|");
+        const fxTokens = [];
+        const textWithoutFx = String(text).replace(fxTagPattern, (_, fxId, value) => {
+          const token = `__FX_TOKEN_${fxTokens.length}__`;
+          fxTokens.push({ token, fxId, value });
+          return token;
+        });
+        if (textWithoutFx.startsWith("Post-Combat Summary|")) {
+          const parts = textWithoutFx.split("|");
           const values = {};
           parts.slice(1).forEach((entry) => {
             const [key, value] = entry.split(":");
@@ -1684,20 +2038,20 @@
             </div>
           `;
         }
-        if (text.includes("HOT STREAK") || text.includes("Can Use Execute")) {
-          return escapeHtml(text);
+        if (textWithoutFx.includes("HOT STREAK") || textWithoutFx.includes("Can Use Execute")) {
+          return applyFxTokensToHtml(renderTextWithFxTags(textWithoutFx), fxTokens);
         }
-        if (text.includes("Has Rip!") || text.includes("Has Starfire!")) {
-          return `<span class="log-class-druid">${escapeHtml(text)}</span>`;
+        if (textWithoutFx.includes("Has Rip!") || textWithoutFx.includes("Has Starfire!")) {
+          return applyFxTokensToHtml(`<span class="log-class-druid">${renderTextWithFxTags(textWithoutFx)}</span>`, fxTokens);
         }
-        if (text.includes("Has Ambush!")) {
-          return `<span class="log-class-rogue">${escapeHtml(text)}</span>`;
+        if (textWithoutFx.includes("Has Ambush!")) {
+          return applyFxTokensToHtml(`<span class="log-class-rogue">${renderTextWithFxTags(textWithoutFx)}</span>`, fxTokens);
         }
-        if (text.includes("Has Final Verdict Empowered!")) {
-          return `<span class="log-class-paladin logLinePaladinProc">${escapeHtml(text)}</span>`;
+        if (textWithoutFx.includes("Has Final Verdict Empowered!")) {
+          return applyFxTokensToHtml(`<span class="log-class-paladin logLinePaladinProc">${renderTextWithFxTags(textWithoutFx)}</span>`, fxTokens);
         }
 
-        let output = escapeHtml(text);
+        let output = escapeHtml(textWithoutFx);
         const classPatterns = [
           { pattern: /\bWarrior(\(you\))?\b/g, className: "log-class-warrior" },
           { pattern: /\bMage(\(you\))?\b/g, className: "log-class-mage" },
@@ -1761,7 +2115,7 @@
           output = output.replace(pattern, `<span class="log-item-orange">$&</span>`);
         });
 
-        return output;
+        return applyFxTokensToHtml(output, fxTokens);
       }
 
       function appendLine(msg, cls = "") {
@@ -1790,6 +2144,7 @@
         }
         line.className = classes.join(" ");
         line.innerHTML = highlightLogLine(msg);
+        initThunderfuryFx(line);
         logDiv.appendChild(line);
         logDiv.scrollTop = logDiv.scrollHeight;
       }

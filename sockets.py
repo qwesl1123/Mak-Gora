@@ -10,6 +10,17 @@ from .content.classes import CLASSES
 from .content.items import ITEMS
 from .content.abilities import ABILITIES
 
+THUNDERFURY_NAME = "Thunderfury, Blessed Blade of the Windseeker"
+
+
+def apply_item_fx_markup(text):
+    if not isinstance(text, str):
+        return text
+    return text.replace(
+        THUNDERFURY_NAME,
+        f"[[fx:fx_thunderfury]]{THUNDERFURY_NAME}[[/fx]]",
+    )
+
 def snapshot_for(match, viewer_sid):
     """
     Returns a UI-friendly snapshot with friendly/enemy HP/Mana/Energy/Rage.
@@ -61,7 +72,7 @@ def snapshot_for(match, viewer_sid):
                 if allowed_classes and ps.build.class_id not in allowed_classes:
                     equipped[slot] = None
                 else:
-                    equipped[slot] = item["name"]
+                    equipped[slot] = apply_item_fx_markup(item["name"])
             else:
                 equipped[slot] = None
         return equipped
@@ -109,7 +120,7 @@ def snapshot_for(match, viewer_sid):
                 enemy_damage=enemy_totals.get("damage", 0),
                 enemy_healing=enemy_totals.get("healing", 0),
             )
-        return formatted
+        return apply_item_fx_markup(formatted)
 
     def primary_resource_for(sid):
         form_id = form_for(sid)

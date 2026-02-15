@@ -64,7 +64,9 @@ ITEMS = {
         "passive": {"type": "void_blade", "trigger": "on_hit", "int_multiplier": 0.4, "dice": "d4"},
     },
     "thunderfury": {
+        "item_id": "thunderfury",
         "name": "Thunderfury, Blessed Blade of the Windseeker",
+        "fx_id": "fx_thunderfury",
         "slot": "weapon",
         "mods": {"atk": 8, "magic_resist": 1},
         "damage_type": "physical",
