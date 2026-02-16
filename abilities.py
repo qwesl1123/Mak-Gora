@@ -115,8 +115,8 @@ ABILITIES = {
     "dragon_roar": {
         "name": "Dragon Roar",
         "cost": {"rage": 10},
-        "dice": {"type": "d6", "power_on": "roll"},
-        "scaling": {"atk": 1.0},
+        "dice": {"type": "d8", "power_on": "roll"},
+        "scaling": {"atk": 1.3},
         "damage_type": "physical",
         "tags": ["attack", "physical", "aoe"],
         "requires_target": False,
@@ -124,7 +124,7 @@ ABILITIES = {
         "classes": ["warrior"],
         "always_crit": True,
         "ignore_physical_reduction": True,
-        "dot": {"id": "dragon_roar_bleed", "duration": 8, "school": "physical", "from_dealt_damage": True},
+        "dot": {"id": "dragon_roar_bleed", "duration": 4, "school": "physical", "from_dealt_damage": True},
     },
     "ignore_pain": {
         "name": "Ignore Pain",

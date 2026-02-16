@@ -147,7 +147,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
     "dragon_roar_bleed": {
         "type": "dot",
         "name": "Dragon Roar Bleed",
-        "duration": 8,
+        "duration": 4,
         "category": "dot",
         "school": "physical",
         "dispellable": True,
