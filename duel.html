@@ -212,7 +212,8 @@
         color: var(--item-orange);
       }
 
-      .stat-row strong .fx.fx_thunderfury {
+      .stat-row strong .fx.fx_thunderfury,
+      .stat-row strong .fx.fx_dragonwrath {
         display: inline;
         white-space: normal;
       }
@@ -834,6 +835,84 @@
         animation: boltDraw 120ms ease-out forwards, boltFlicker 450ms steps(1, end) forwards;
       }
 
+
+
+      .fx.fx_dragonwrath {
+        position: relative;
+        display: inline-block;
+        white-space: nowrap;
+        color: inherit;
+      }
+
+      .fx.fx_dragonwrath .arcane-container {
+        position: absolute;
+        inset: -20px;
+        pointer-events: none;
+        overflow: visible;
+      }
+
+      .fx.fx_dragonwrath .arcane-orb {
+        position: absolute;
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(180, 230, 255, 1) 0%, rgba(100, 200, 255, 0.9) 30%, rgba(80, 180, 255, 0) 100%);
+        box-shadow: 0 0 6px rgba(120, 210, 255, 0.9), 0 0 12px rgba(100, 200, 255, 0.6), 0 0 18px rgba(80, 180, 255, 0.4);
+        opacity: 1;
+        transform: translate(-50%, -50%);
+      }
+
+      .fx.fx_dragonwrath .arcane-orb::before {
+        content: "";
+        position: absolute;
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: rgba(150, 220, 255, 0.6);
+        box-shadow: 0 0 10px rgba(120, 210, 255, 0.8), 0 0 20px rgba(100, 200, 255, 0.6), 0 0 30px rgba(80, 180, 255, 0.4);
+        left: 50%;
+        top: 50%;
+        transform: translate(-50%, -50%);
+        opacity: 0.9;
+        pointer-events: none;
+      }
+
+      .fx.fx_dragonwrath .arcane-trail {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        opacity: 0.6;
+        overflow: visible;
+      }
+
+      .fx.fx_dragonwrath .trail-segment {
+        fill: none;
+        stroke: rgba(150, 220, 255, 0.8);
+        stroke-width: 3;
+        stroke-linecap: round;
+        filter: url(#dragonwrathArcaneGlow);
+      }
+
+      .fx.fx_dragonwrath.fx_dragonwrath-log .arcane-container {
+        inset: -12px;
+      }
+
+      .fx.fx_dragonwrath.fx_dragonwrath-log .arcane-orb {
+        width: 4.5px;
+        height: 4.5px;
+      }
+
+      .fx.fx_dragonwrath.fx_dragonwrath-log .arcane-orb::before {
+        width: 9px;
+        height: 9px;
+      }
+
+      .fx.fx_dragonwrath.fx_dragonwrath-log .trail-segment {
+        stroke-width: 2.25;
+      }
       @keyframes boltDraw {
         from { stroke-dashoffset: var(--dash, 1000); }
         to { stroke-dashoffset: 0; }
@@ -896,6 +975,17 @@
           <feMergeNode in="g3" />
           <feMergeNode in="g2" />
           <feMergeNode in="g1" />
+          <feMergeNode in="SourceGraphic" />
+        </feMerge>
+      </filter>
+      <filter id="dragonwrathArcaneGlow" x="-100%" y="-100%" width="300%" height="300%">
+        <feGaussianBlur stdDeviation="2" result="dragonBlur1" />
+        <feGaussianBlur stdDeviation="4" result="dragonBlur2" />
+        <feGaussianBlur stdDeviation="6" result="dragonBlur3" />
+        <feMerge>
+          <feMergeNode in="dragonBlur3" />
+          <feMergeNode in="dragonBlur2" />
+          <feMergeNode in="dragonBlur1" />
           <feMergeNode in="SourceGraphic" />
         </feMerge>
       </filter>
@@ -1777,8 +1867,9 @@
         return "";
       }
 
-      const fxTagPattern = /\[\[fx:(fx_thunderfury)\]\]([\s\S]*?)\[\[\/fx\]\]/g;
+      const fxTagPattern = /\[\[fx:(fx_thunderfury|fx_dragonwrath)\]\]([\s\S]*?)\[\[\/fx\]\]/g;
       let thunderfuryFxCounter = 0;
+      let dragonwrathFxCounter = 0;
 
       function stripFxTags(text) {
         if (!text) {
@@ -1799,6 +1890,8 @@
           const value = match[2];
           if (fxId === "fx_thunderfury") {
             html += `<span class="fx fx_thunderfury"><span class="log-item-orange fx-thunderfury-text">${escapeHtml(value)}</span><span class="fx-thunderfury-overlay" aria-hidden="true"></span></span>`;
+          } else if (fxId === "fx_dragonwrath") {
+            html += `<span class="fx fx_dragonwrath"><span class="log-item-orange">${escapeHtml(value)}</span></span>`;
           } else {
             html += escapeHtml(value);
           }
@@ -1821,6 +1914,7 @@
         }
         element.innerHTML = renderTextWithFxTags(name);
         initThunderfuryFx(element);
+        initDragonwrathFx(element);
       }
 
 
@@ -1903,7 +1997,7 @@
         return d;
       }
 
-      function zapThunderfury(span) {
+      function triggerThunderfuryFlash(span) {
         const fx = span._thunderfuryFx;
         if (!fx) {
           return;
@@ -1923,26 +2017,46 @@
         fx.maskText.setAttribute("font-family", computed.fontFamily);
         fx.maskText.setAttribute("font-weight", computed.fontWeight || "700");
         fx.maskText.setAttribute("letter-spacing", computed.letterSpacing || "normal");
-        
+
         // Create 3 lightning strikes
         fx.strikes.forEach((strike) => {
           const mainD = buildMainStrike(W, H);
           const points = pathToPoints(mainD);
           const branchD = buildBranchStrike(W, H, points);
-          
+
           // Combine main and branch into one path
           const combinedD = mainD + " " + branchD;
-          
+
           strike.glow.setAttribute("d", combinedD);
           strike.path.setAttribute("d", combinedD);
           setDash(strike.glow);
           setDash(strike.path);
         });
-        
+
         span.classList.remove("is-zapped");
         void span.offsetWidth;
         span.classList.add("is-zapped");
         setTimeout(() => span.classList.remove("is-zapped"), 650);
+      }
+
+      function zapThunderfury(span) {
+        const fx = span._thunderfuryFx;
+        if (!fx) {
+          return;
+        }
+
+        if (fx.secondFlashTimer) {
+          clearTimeout(fx.secondFlashTimer);
+        }
+
+        triggerThunderfuryFlash(span);
+        fx.secondFlashTimer = setTimeout(() => {
+          if (!span.isConnected) {
+            return;
+          }
+          // Re-roll the paths so the second burst is distinct from the first.
+          triggerThunderfuryFlash(span);
+        }, 140);
       }
 
       function mountThunderfuryFx(span) {
@@ -1988,7 +2102,8 @@
             { glow: mainGlow1, path: mainStrike1 },
             { glow: mainGlow2, path: mainStrike2 },
             { glow: mainGlow3, path: mainStrike3 }
-          ]
+          ],
+          secondFlashTimer: null,
         };
         span.dataset.fxInit = "1";
         span.addEventListener("click", () => zapThunderfury(span));
@@ -2010,12 +2125,188 @@
         });
       }
 
+
+
+      function createDragonwrathArcaneOrb(container, index) {
+        const orb = document.createElement("div");
+        orb.className = "arcane-orb";
+        container.appendChild(orb);
+
+        const trailSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        trailSvg.setAttribute("class", "arcane-trail");
+        trailSvg.style.position = "absolute";
+        trailSvg.style.left = "0";
+        trailSvg.style.top = "0";
+        trailSvg.style.width = "100%";
+        trailSvg.style.height = "100%";
+        trailSvg.style.pointerEvents = "none";
+        trailSvg.style.overflow = "visible";
+
+        const trailPath = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        trailPath.setAttribute("class", "trail-segment");
+        trailSvg.appendChild(trailPath);
+        container.appendChild(trailSvg);
+
+        return {
+          orb,
+          trailSvg,
+          trailPath,
+          offset: index * 1.57,
+          trailPoints: [],
+          lastPos: null,
+          direction: { x: 1, y: 0 },
+        };
+      }
+
+      function updateDragonwrathOrbPosition(orbit, bounds, time, profile) {
+        const rangeX = bounds.width * profile.rangeXFactor;
+        const rangeY = bounds.height * profile.rangeYFactor;
+        const centerX = bounds.centerX;
+        const centerY = bounds.centerY;
+
+        const x1 = Math.sin(time * 1.2 + orbit.offset) * rangeX;
+        const y1 = Math.cos(time * 0.9 + orbit.offset) * rangeY;
+
+        const x2 = Math.sin(time * 2.3 - orbit.offset * 0.5) * (rangeX * 0.6);
+        const y2 = Math.cos(time * 1.8 + orbit.offset * 0.7) * (rangeY * 0.6);
+
+        const x3 = Math.cos(time * 3.1 + orbit.offset * 1.3) * (rangeX * 0.3);
+        const y3 = Math.sin(time * 2.5 - orbit.offset * 0.9) * (rangeY * 0.3);
+
+        const driftX = Math.sin(time * 0.3 + orbit.offset) * (rangeX * 0.4);
+        const driftY = Math.cos(time * 0.4 - orbit.offset) * (rangeY * profile.driftYFactor);
+
+        const x = centerX + x1 + x2 + x3 + driftX;
+        const y = centerY + y1 + y2 + y3 + driftY;
+
+        orbit.orb.style.left = `${x}px`;
+        orbit.orb.style.top = `${y}px`;
+
+        orbit.trailPoints.push({ x, y, opacity: 1, time });
+        orbit.trailPoints = orbit.trailPoints.filter((point) => {
+          point.opacity = Math.max(0, 1 - (time - point.time) * 3.5);
+          return point.opacity > 0.05;
+        });
+
+        if (orbit.trailPoints.length > 30) {
+          orbit.trailPoints.shift();
+        }
+
+        if (orbit.trailPoints.length > 1) {
+          let pathD = `M ${orbit.trailPoints[0].x} ${orbit.trailPoints[0].y}`;
+          for (let i = 1; i < orbit.trailPoints.length; i += 1) {
+            pathD += ` L ${orbit.trailPoints[i].x} ${orbit.trailPoints[i].y}`;
+          }
+          orbit.trailPath.setAttribute("d", pathD);
+
+          const avgOpacity = orbit.trailPoints.reduce((sum, point) => sum + point.opacity, 0) / orbit.trailPoints.length;
+          orbit.trailPath.style.opacity = avgOpacity * 0.8;
+        }
+
+        orbit.lastPos = { x, y };
+      }
+
+      function animateDragonwrath(span) {
+        const fx = span._dragonwrathFx;
+        if (!fx || !fx.container) {
+          return;
+        }
+
+        const rect = span.getBoundingClientRect();
+        const width = rect.width;
+        const height = rect.height;
+        const pad = fx.profile.pad;
+        const boundsW = width + pad * 2;
+        const boundsH = height + pad * 2;
+
+        fx.orbits.forEach((orbit) => {
+          orbit.trailSvg.setAttribute("viewBox", `0 0 ${boundsW} ${boundsH}`);
+          orbit.trailSvg.setAttribute("width", boundsW);
+          orbit.trailSvg.setAttribute("height", boundsH);
+          orbit.trailSvg.style.width = `${boundsW}px`;
+          orbit.trailSvg.style.height = `${boundsH}px`;
+        });
+
+        const bounds = {
+          width: boundsW,
+          height: boundsH,
+          centerX: boundsW / 2,
+          centerY: boundsH / 2,
+        };
+
+        const startTime = performance.now();
+        function frame() {
+          const currentTime = performance.now();
+          const time = (currentTime - startTime) / 1000;
+          fx.orbits.forEach((orbit) => updateDragonwrathOrbPosition(orbit, bounds, time, fx.profile));
+          fx.animationId = requestAnimationFrame(frame);
+        }
+
+        frame();
+      }
+
+      function mountDragonwrathFx(span) {
+        const inCombatLog = Boolean(span.closest(".log-line"));
+        if (inCombatLog) {
+          span.classList.add("fx_dragonwrath-log");
+        }
+        const container = document.createElement("div");
+        container.className = "arcane-container";
+        container.id = `dragonwrathMask_${dragonwrathFxCounter}`;
+        dragonwrathFxCounter += 1;
+        span.appendChild(container);
+
+        const orbits = [
+          createDragonwrathArcaneOrb(container, 0),
+          createDragonwrathArcaneOrb(container, 1),
+          createDragonwrathArcaneOrb(container, 2),
+          createDragonwrathArcaneOrb(container, 3),
+          createDragonwrathArcaneOrb(container, 4),
+        ];
+
+        const profile = inCombatLog
+          ? {
+              pad: 12,
+              rangeXFactor: 0.34,
+              rangeYFactor: 0.22,
+              driftYFactor: 0.2,
+            }
+          : {
+              pad: 20,
+              rangeXFactor: 0.45,
+              rangeYFactor: 0.45,
+              driftYFactor: 0.4,
+            };
+
+        span._dragonwrathFx = {
+          container,
+          orbits,
+          animationId: null,
+          profile,
+        };
+
+        span.dataset.dragonwrathFxInit = "1";
+        animateDragonwrath(span);
+      }
+
+      function initDragonwrathFx(root = document) {
+        const spans = root.querySelectorAll(".fx_dragonwrath");
+        spans.forEach((span) => {
+          if (span.dataset.dragonwrathFxInit === "1") {
+            return;
+          }
+          mountDragonwrathFx(span);
+        });
+      }
+
       function applyFxTokensToHtml(output, fxTokens) {
         let html = output;
         fxTokens.forEach(({ token, fxId, value }) => {
           const replacement = fxId === "fx_thunderfury"
             ? `<span class="fx fx_thunderfury"><span class="log-item-orange fx-thunderfury-text">${escapeHtml(value)}</span><span class="fx-thunderfury-overlay" aria-hidden="true"></span></span>`
-            : escapeHtml(value);
+            : fxId === "fx_dragonwrath"
+              ? `<span class="fx fx_dragonwrath"><span class="log-item-orange">${escapeHtml(value)}</span></span>`
+              : escapeHtml(value);
           html = html.replace(token, replacement);
         });
         return html;
@@ -2159,8 +2450,9 @@
         }
         line.className = classes.join(" ");
         line.innerHTML = highlightLogLine(msg);
-        initThunderfuryFx(line);
         logDiv.appendChild(line);
+        initThunderfuryFx(line);
+        initDragonwrathFx(line);
         logDiv.scrollTop = logDiv.scrollHeight;
       }
 

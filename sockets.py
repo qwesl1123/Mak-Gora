@@ -11,15 +11,20 @@ from .content.items import ITEMS
 from .content.abilities import ABILITIES
 
 THUNDERFURY_NAME = "Thunderfury, Blessed Blade of the Windseeker"
+DRAGONWRATH_NAME = "Dragonwrath, Tarecgosa's Rest"
+ITEM_FX_MARKUP = [
+    (THUNDERFURY_NAME, "fx_thunderfury"),
+    (DRAGONWRATH_NAME, "fx_dragonwrath"),
+]
 
 
 def apply_item_fx_markup(text):
     if not isinstance(text, str):
         return text
-    return text.replace(
-        THUNDERFURY_NAME,
-        f"[[fx:fx_thunderfury]]{THUNDERFURY_NAME}[[/fx]]",
-    )
+    formatted = text
+    for item_name, fx_id in ITEM_FX_MARKUP:
+        formatted = formatted.replace(item_name, f"[[fx:{fx_id}]]{item_name}[[/fx]]")
+    return formatted
 
 def snapshot_for(match, viewer_sid):
     """

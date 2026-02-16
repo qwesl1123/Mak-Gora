@@ -89,7 +89,9 @@ ITEMS = {
         ],
     },
     "dragonwrath": {
+        "item_id": "dragonwrath",
         "name": "Dragonwrath, Tarecgosa's Rest",
+        "fx_id": "fx_dragonwrath",
         "slot": "weapon",
         "mods": {"int": 7},
         "damage_type": "magic",
