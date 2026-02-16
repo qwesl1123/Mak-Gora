@@ -30,6 +30,19 @@ ABILITIES = {
             {"id": "hot_streak", "chance": 0.2, "log": "Has HOT STREAK!"}
         ],
     },
+    "fire_blast": {
+        "name": "Fire Blast",
+        "cost": {"mp": 15},
+        "dice": {"type": "d4", "power_on": "roll"},
+        "scaling": {"int": 0.4},
+        "damage_type": "magic",
+        "tags": ["spell", "attack", "magic"],
+        "cooldown": 8,
+        "classes": ["mage"],
+        "on_hit_effects": [
+            {"id": "hot_streak", "chance": 1.0, "log": "Has HOT STREAK!"}
+        ],
+    },
     "arcane_barrage": {
         "name": "Arcane Barrage",
         "cost": {"mp": 15},
@@ -98,6 +111,36 @@ ABILITIES = {
         "cooldown": 1,
         "classes": ["warrior"],
         "requires_target_hp_below": 0.2,
+    },
+    "dragon_roar": {
+        "name": "Dragon Roar",
+        "cost": {"rage": 10},
+        "dice": {"type": "d6", "power_on": "roll"},
+        "scaling": {"atk": 1.0},
+        "damage_type": "physical",
+        "tags": ["attack", "physical", "aoe"],
+        "requires_target": False,
+        "cooldown": 25,
+        "classes": ["warrior"],
+        "always_crit": True,
+        "ignore_physical_reduction": True,
+        "dot": {"id": "dragon_roar_bleed", "duration": 8, "school": "physical", "from_dealt_damage": True},
+    },
+    "ignore_pain": {
+        "name": "Ignore Pain",
+        "cost": {"rage": 5},
+        "dice": None,
+        "tags": ["defense"],
+        "cooldown": 6,
+        "classes": ["warrior"],
+        "absorb": {
+            "scaling": {"atk": 0.5},
+            "dice": {"type": "d4", "power_on": "roll"},
+            "source_name": "Ignore Pain",
+        },
+        "self_effects": [
+            {"id": "shielded", "duration": 2, "log": "Fights through pain."}
+        ],
     },
     "pyroblast": {
         "name": "Pyroblast",
@@ -253,6 +296,9 @@ ABILITIES = {
         "classes": ["rogue"],
         "on_hit_effects": [
             {"id": "ambush", "chance": 0.2, "log": "Has Ambush!"}
+        ],
+        "stealth_on_hit_effects": [
+            {"id": "ambush", "chance": 1.0, "log": "Has Ambush!"}
         ],
     },
     "ambush": {

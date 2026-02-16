@@ -602,6 +602,35 @@ def resolve_turn(match: MatchState) -> None:
             set_cooldown(actor, ability_id, ability)
             return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
 
+        absorb_data = ability.get("absorb") or {}
+        if absorb_data:
+            absorb_scaling = absorb_data.get("scaling", {}) or {}
+            absorb_dice = absorb_data.get("dice") or {}
+            absorb_roll = 0
+            if absorb_dice.get("type"):
+                absorb_roll = roll(absorb_dice["type"], r)
+            absorb_value = int(absorb_data.get("flat", 0) or 0)
+            if "atk" in absorb_scaling:
+                absorb_value += base_damage(
+                    modify_stat(actor, "atk", actor.stats.get("atk", 0)),
+                    absorb_scaling["atk"],
+                    absorb_roll,
+                )
+            elif "int" in absorb_scaling:
+                absorb_value += base_damage(
+                    modify_stat(actor, "int", actor.stats.get("int", 0)),
+                    absorb_scaling["int"],
+                    absorb_roll,
+                )
+            absorb_value = max(0, int(absorb_value))
+            if absorb_value > 0:
+                add_absorb(actor, absorb_value, source_name=absorb_data.get("source_name") or ability.get("name") or "Shield")
+            log_parts.append(f"{ability.get('name', 'Shield')} grants {absorb_value} absorb.")
+            set_cooldown(actor, ability_id, ability)
+            if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
+                remove_stealth(actor)
+            return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
+
         if not has_damage:
             set_cooldown(actor, ability_id, ability)
             if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
@@ -670,7 +699,9 @@ def resolve_turn(match: MatchState) -> None:
                 raw = base_damage(modify_stat(actor, "int", actor.stats.get("int", 0)), local_scaling["int"], roll_power)
 
             # Apply critical hit
-            if raw > 0 and r.randint(1, 100) <= modify_stat(actor, "crit", actor.stats.get("crit", 0)):
+            crit_chance = modify_stat(actor, "crit", actor.stats.get("crit", 0))
+            did_crit = bool(ability.get("always_crit")) or (raw > 0 and r.randint(1, 100) <= crit_chance)
+            if raw > 0 and did_crit:
                 raw = int(raw * 1.5)
                 log_parts.append(f"{prefix}Critical hit!")
 
@@ -679,7 +710,9 @@ def resolve_turn(match: MatchState) -> None:
 
             # Apply damage type specific resistance
             if damage_type == "physical":
-                resist = modify_stat(target, "physical_reduction", target.stats.get("physical_reduction", 0))
+                resist = 0
+                if not ability.get("ignore_physical_reduction"):
+                    resist = modify_stat(target, "physical_reduction", target.stats.get("physical_reduction", 0))
                 reduced = max(0, reduced - resist)
             elif damage_type == "magic":
                 resist = modify_stat(target, "magic_resist", target.stats.get("magic_resist", 0))
@@ -708,7 +741,10 @@ def resolve_turn(match: MatchState) -> None:
                 on_hit_base_damage = reduced
 
             if reduced > 0:
-                for effect in ability.get("on_hit_effects", []):
+                effects_on_hit = ability.get("stealth_on_hit_effects") if was_stealthed else None
+                if not effects_on_hit:
+                    effects_on_hit = ability.get("on_hit_effects", [])
+                for effect in effects_on_hit:
                     chance = float(effect.get("chance", 0) or 0)
                     if chance > 0 and r.random() <= chance:
                         if not has_effect(actor, effect["id"]):
@@ -1012,6 +1048,35 @@ def resolve_turn(match: MatchState) -> None:
                 skip_self_effect_ids=skip_self_effect_ids,
             )
 
+        absorb_data = ability.get("absorb") or {}
+        if absorb_data:
+            absorb_scaling = absorb_data.get("scaling", {}) or {}
+            absorb_dice = absorb_data.get("dice") or {}
+            absorb_roll = 0
+            if absorb_dice.get("type"):
+                absorb_roll = roll(absorb_dice["type"], r)
+            absorb_value = int(absorb_data.get("flat", 0) or 0)
+            if "atk" in absorb_scaling:
+                absorb_value += base_damage(
+                    modify_stat(actor, "atk", actor.stats.get("atk", 0)),
+                    absorb_scaling["atk"],
+                    absorb_roll,
+                )
+            elif "int" in absorb_scaling:
+                absorb_value += base_damage(
+                    modify_stat(actor, "int", actor.stats.get("int", 0)),
+                    absorb_scaling["int"],
+                    absorb_roll,
+                )
+            absorb_value = max(0, int(absorb_value))
+            if absorb_value > 0:
+                add_absorb(
+                    actor,
+                    absorb_value,
+                    source_name=absorb_data.get("source_name") or ability.get("name") or "Shield",
+                )
+            log_parts.append(f"{ability.get('name', 'Shield')} grants {absorb_value} absorb.")
+
         set_cooldown(actor, ability_id, ability)
         ctx["damage"] = 0
         ctx["log"] = " ".join(log_parts)
@@ -1109,6 +1174,28 @@ def resolve_turn(match: MatchState) -> None:
                     match.log.append(f"{actor_sid[:5]} drains {gained} life.")
                     totals = match.combat_totals.setdefault(actor_sid, {"damage": 0, "healing": 0})
                     totals["healing"] += gained
+
+        dot_data = ability.get("dot") or {}
+        if dealt > 0 and dot_data.get("from_dealt_damage"):
+            target_sid = sids[1] if actor_sid == sids[0] else sids[0]
+            target = match.state[target_sid]
+            dot_id = dot_data.get("id")
+            duration = int(dot_data.get("duration", 1) or 1)
+            school = dot_data.get("school", "magical")
+            tick_damage = max(1, int(dealt // max(1, duration)))
+            if dot_id and refresh_dot_effect(target, dot_id, duration=duration, tick_damage=tick_damage, source_sid=actor_sid):
+                for effect in target.effects:
+                    if effect.get("id") == dot_id:
+                        effect["school"] = school
+                        break
+                match.log.append(f"{actor_sid[:5]} refreshes {effect_name(dot_id)} for {tick_damage} per turn.")
+            elif dot_id:
+                apply_effect_by_id(
+                    target,
+                    dot_id,
+                    overrides={"duration": duration, "tick_damage": tick_damage, "source_sid": actor_sid, "school": school},
+                )
+                match.log.append(f"{actor_sid[:5]} applies {effect_name(dot_id)} for {tick_damage} per turn.")
 
     for source_sid, target_sid, dealt, result in ((sids[0], sids[1], dealt1, result1), (sids[1], sids[0], dealt2, result2)):
         ability = ABILITIES.get(result.get("ability_id", ""), {})

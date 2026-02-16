@@ -1370,6 +1370,20 @@
             <p><span class="stat">Command: <span class="kbd">die_by_sword</span></span></p>
             <p>Become immune to physical damage and reduce all incoming damage by 30% for 2 turns.</p>
           </div>
+
+          <div class="doc-item">
+            <h4>Dragon Roar</h4>
+            <p><span class="stat">Cost: 10 Rage</span> | <span class="stat">Type: Physical (AoE)</span> | <span class="stat">Cooldown: 25</span></p>
+            <p><span class="stat">Command: <span class="kbd">dragon_roar</span></span></p>
+            <p>Roar ferociously to damage all enemies for Attack (1.0x) + d6. Always critically strikes, ignores Physical Reduction, and applies an 8-turn physical bleed based on damage dealt. As AoE, it can reveal stealth and destroys Imps when it deals damage.</p>
+          </div>
+
+          <div class="doc-item">
+            <h4>Ignore Pain</h4>
+            <p><span class="stat">Cost: 5 Rage</span> | <span class="stat">Cooldown: 6</span></p>
+            <p><span class="stat">Command: <span class="kbd">ignore_pain</span></span></p>
+            <p>Gain an absorb shield equal to Attack (0.5x) + d4.</p>
+          </div>
         </div>
 
         <h4 class="doc-subtitle">Mage</h4>
@@ -1379,6 +1393,13 @@
             <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Type: Magic</span> | <span class="stat">Cooldown: 1</span></p>
             <p><span class="stat">Command: <span class="kbd">fireball</span></span></p>
             <p>Throws a fiery ball to the enemy. Damage scales with Intellect (0.4x) and d6 power. 20% chance to trigger Hot Streak.</p>
+          </div>
+
+          <div class="doc-item">
+            <h4>Fire Blast</h4>
+            <p><span class="stat">Cost: 15 Mana</span> | <span class="stat">Type: Magic</span> | <span class="stat">Cooldown: 8</span></p>
+            <p><span class="stat">Command: <span class="kbd">fire_blast</span></span></p>
+            <p>Blast the enemy for Intellect (0.4x) + d4 magic damage. Always triggers Hot Streak on hit.</p>
           </div>
 
           <div class="doc-item">
@@ -1479,7 +1500,7 @@
             <h4>Shadow Blade</h4>
             <p><span class="stat">Cost: 15 Energy</span> | <span class="stat">Type: Physical</span></p>
             <p><span class="stat">Command: <span class="kbd">shadow_blade</span></span></p>
-            <p>Quick strike that scales with Attack (0.5x) and d6 power. While stealthed, it scales with Attack (1.3x) and d8 power. 20% chance to proc Ambush.</p>
+            <p>Quick strike that scales with Attack (0.5x) and d6 power. While stealthed, it scales with Attack (1.3x) and d8 power. 20% chance to proc Ambush when not stealthed, and 100% chance when stealthed.</p>
           </div>
 
           <div class="doc-item">
@@ -1756,9 +1777,12 @@
         "Mortal Strike",
         "Execute",
         "Die by the Sword",
+        "Dragon Roar",
+        "Ignore Pain",
       ];
       const mageAbilities = [
         "Fireball",
+        "Fire Blast",
         "Arcane Barrage",
         "Pyroblast",
         "Ice Block",

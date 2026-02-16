@@ -132,11 +132,26 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
     },
     "shield_of_vengeance": {
         "type": "status",
-        "name": "Shielded",
+        "name": "Shield of Vengeance",
         "duration": 3,
         "category": "absorb",
         "flags": {"shield_of_vengeance": True},
         "absorb_total": 0,
+    },
+    "shielded": {
+        "type": "status",
+        "name": "Shielded",
+        "duration": 2,
+        "category": "absorb",
+    },
+    "dragon_roar_bleed": {
+        "type": "dot",
+        "name": "Dragon Roar Bleed",
+        "duration": 8,
+        "category": "dot",
+        "school": "physical",
+        "dispellable": True,
+        "tick_damage": 1,
     },
     "avenging_wrath": {
         "type": "status",
@@ -796,7 +811,7 @@ def damage_multiplier_from_passives(attacker: PlayerState) -> float:
     return multiplier
 
 def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[tuple[str, int]]:
-    """Apply DoT damage with magical mitigation + absorb routing."""
+    """Apply DoT damage with typed mitigation + absorb routing."""
     if is_immune_all(ps):
         return []
     damage_sources: list[tuple[str, int]] = []
@@ -810,20 +825,25 @@ def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[tuple[str, in
         if effect_id == "agony":
             raw_damage = max(0, int(effect.get("tick", 1) or 1))
             effect["tick"] = min(15, raw_damage + 1)
-        elif effect_id in ("corruption", "unstable_affliction"):
-            raw_damage = max(0, int(effect.get("tick_damage", 0) or 0))
         else:
-            raw_damage = max(0, int(effect.get("value", 0) or 0))
+            raw_damage = max(0, int(effect.get("tick_damage", effect.get("value", 0)) or 0))
 
         if raw_damage <= 0:
             continue
 
         reduced = mitigate(raw_damage, modify_stat(ps, "def", ps.stats.get("def", 0)))
-        resist = modify_stat(ps, "magic_resist", ps.stats.get("magic_resist", 0))
-        reduced = max(0, reduced - resist)
+        school = effect.get("school")
+        if school == "physical":
+            resist = modify_stat(ps, "physical_reduction", ps.stats.get("physical_reduction", 0))
+            reduced = max(0, reduced - resist)
+            if is_damage_immune(ps, "physical"):
+                reduced = 0
+        else:
+            resist = modify_stat(ps, "magic_resist", ps.stats.get("magic_resist", 0))
+            reduced = max(0, reduced - resist)
+            if school == "magical" and is_damage_immune(ps, "magic"):
+                reduced = 0
         reduced = int(reduced * mitigation_multiplier(ps))
-        if effect.get("school") == "magical" and is_damage_immune(ps, "magic"):
-            reduced = 0
 
         absorb_source_name = ps.res.absorb_source or "Shield"
         absorbed, remaining = consume_absorb(ps, reduced)
