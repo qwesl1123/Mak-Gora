@@ -115,8 +115,8 @@ ABILITIES = {
     "dragon_roar": {
         "name": "Dragon Roar",
         "cost": {"rage": 10},
-        "dice": {"type": "d8", "power_on": "roll"},
-        "scaling": {"atk": 1.3},
+        "dice": {"type": "d6", "power_on": "roll"},
+        "scaling": {"atk": 0.8},
         "damage_type": "physical",
         "tags": ["attack", "physical", "aoe"],
         "requires_target": False,
