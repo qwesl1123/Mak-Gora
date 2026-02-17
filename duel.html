@@ -621,6 +621,11 @@
         font-weight: 700;
       }
 
+      .log-ability-azzinoth {
+        color: #1EFF00;
+        font-weight: 700;
+      }
+
       .log-class-druid,
       .log-ability-druid {
         color: var(--druid-color);
@@ -913,6 +918,51 @@
       .fx.fx_dragonwrath.fx_dragonwrath-log .trail-segment {
         stroke-width: 2.25;
       }
+
+      .fx.fx_twin_blades_azzinoth {
+        position: relative;
+        display: inline-block;
+        white-space: nowrap;
+        color: inherit;
+      }
+
+      .fx.fx_twin_blades_azzinoth .slash-container {
+        position: absolute;
+        inset: -24px;
+        pointer-events: none;
+        overflow: visible;
+      }
+
+      .fx.fx_twin_blades_azzinoth .slash-svg {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 100%;
+        height: 100%;
+        pointer-events: none;
+        overflow: visible;
+      }
+
+      .fx.fx_twin_blades_azzinoth .slash-path {
+        fill: none;
+        stroke: url(#bladeGradient);
+        stroke-width: 1;
+        stroke-linecap: round;
+        filter: url(#felSlashGlow);
+        opacity: 0;
+      }
+
+      .fx.fx_twin_blades_azzinoth .slash-path.slashing {
+        animation: slashAppear 1s ease-out forwards;
+      }
+
+      @keyframes slashAppear {
+        0% { stroke-dashoffset: var(--length, 1000); opacity: 0; stroke-width: 1; }
+        10% { opacity: 1; stroke-width: 4; }
+        14% { stroke-dashoffset: 0; opacity: 1; stroke-width: 6; }
+        30% { stroke-width: 1; opacity: 0.5; }
+        100% { stroke-dashoffset: 0; opacity: 0; stroke-width: 1; }
+      }
       @keyframes boltDraw {
         from { stroke-dashoffset: var(--dash, 1000); }
         to { stroke-dashoffset: 0; }
@@ -956,6 +1006,17 @@
 
   <body>
     <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <defs>
+      <!-- Blade color gradient for Twin Blades of Azzinoth slashes -->
+      <linearGradient id="bladeGradient" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%" style="stop-color:rgba(80, 255, 80, 0);stop-opacity:0" />
+        <stop offset="15%" style="stop-color:rgba(80, 255, 80, 1);stop-opacity:1" />
+        <stop offset="50%" style="stop-color:rgba(120, 255, 120, 1);stop-opacity:1" />
+        <stop offset="85%" style="stop-color:rgba(80, 255, 80, 1);stop-opacity:1" />
+        <stop offset="100%" style="stop-color:rgba(80, 255, 80, 0);stop-opacity:0" />
+      </linearGradient>
+    </defs>
+
       <filter id="boltGlowInner" x="-100%" y="-100%" width="300%" height="300%">
         <feGaussianBlur stdDeviation="0.8" result="b1" />
         <feGaussianBlur stdDeviation="2" result="b2" />
@@ -986,6 +1047,27 @@
           <feMergeNode in="dragonBlur3" />
           <feMergeNode in="dragonBlur2" />
           <feMergeNode in="dragonBlur1" />
+          <feMergeNode in="SourceGraphic" />
+        </feMerge>
+      </filter>
+      <filter id="felSlashGlow" x="-50%" y="-50%" width="200%" height="200%">
+        <feGaussianBlur stdDeviation="1.5" result="blur1" />
+        <feGaussianBlur stdDeviation="3" result="blur2" />
+        <feColorMatrix in="blur2" type="matrix" values="
+          0 0 0 0 0.2
+          0 0 0 0 1
+          0 0 0 0 0.2
+          0 0 0 0.9 0
+        " result="green2" />
+        <feColorMatrix in="blur1" type="matrix" values="
+          0 0 0 0 0.4
+          0 0 0 0 1
+          0 0 0 0 0.4
+          0 0 0 0.7 0
+        " result="green1" />
+        <feMerge>
+          <feMergeNode in="green2" />
+          <feMergeNode in="green1" />
           <feMergeNode in="SourceGraphic" />
         </feMerge>
       </filter>
@@ -1255,6 +1337,14 @@
           </div>
 
           <div class="doc-item">
+            <h4>Twin Blades of Azzinoth</h4>
+            <p><span class="stat">Command: <span class="kbd">/item weapon twin_blades_azzinoth</span></span></p>
+            <p><span class="stat">+7 Physical Attack</span></p>
+            <p><span class="stat">Passive: 30% chance on successful damaging hit to strike again for 40% of the hit damage</span></p>
+            <p><span class="stat">Active: <span class="kbd">fury_of_azzinoth</span> — 4 strikes (Attack x0.2 + d6 each), heal for total damage dealt.</span></p>
+          </div>
+
+          <div class="doc-item">
             <h4>Glock 19</h4>
             <p><span class="stat">Command: <span class="kbd">/item weapon glock_19</span></span></p>
             <p><span class="stat">+17 Physical Attack</span></p>
@@ -1508,6 +1598,13 @@
             <p><span class="stat">Cost: 15 Energy</span> | <span class="stat">Type: Physical</span></p>
             <p><span class="stat">Command: <span class="kbd">ambush</span></span></p>
             <p>Powerful strike only usable after an Ambush proc. Scales with Attack (2.0x) and d6 power.</p>
+          </div>
+
+          <div class="doc-item">
+            <h4>Fury of Azzinoth</h4>
+            <p><span class="stat">Cost: Free</span> | <span class="stat">Type: Physical</span> | <span class="stat">Cooldown: 25</span></p>
+            <p><span class="stat">Command: <span class="kbd">fury_of_azzinoth</span></span></p>
+            <p>Requires Twin Blades of Azzinoth. Strikes 4 times for Attack (0.2x) + d6 each hit and heals for total real damage dealt.</p>
           </div>
         </div>
 
@@ -1800,6 +1897,7 @@
         "Shadow Blade",
         "Ambush",
         "Thistle Tea",
+        "Fury of Azzinoth",
       ];
       const warlockAbilities = [
         "Agony",
@@ -1870,6 +1968,7 @@
       const orangeItems = [
         "Thunderfury, Blessed Blade of the Windseeker",
         "Dragonwrath, Tarecgosa's Rest",
+        "Twin Blades of Azzinoth",
       ];
 
       function itemClassForName(name) {
@@ -1891,9 +1990,10 @@
         return "";
       }
 
-      const fxTagPattern = /\[\[fx:(fx_thunderfury|fx_dragonwrath)\]\]([\s\S]*?)\[\[\/fx\]\]/g;
+      const fxTagPattern = /\[\[fx:(fx_thunderfury|fx_dragonwrath|fx_twin_blades_azzinoth)\]\]([\s\S]*?)\[\[\/fx\]\]/g;
       let thunderfuryFxCounter = 0;
       let dragonwrathFxCounter = 0;
+      let twinBladesFxCounter = 0;
 
       function stripFxTags(text) {
         if (!text) {
@@ -1916,6 +2016,8 @@
             html += `<span class="fx fx_thunderfury"><span class="log-item-orange fx-thunderfury-text">${escapeHtml(value)}</span><span class="fx-thunderfury-overlay" aria-hidden="true"></span></span>`;
           } else if (fxId === "fx_dragonwrath") {
             html += `<span class="fx fx_dragonwrath"><span class="log-item-orange">${escapeHtml(value)}</span></span>`;
+          } else if (fxId === "fx_twin_blades_azzinoth") {
+            html += `<span class="fx fx_twin_blades_azzinoth"><span class="log-item-orange">${escapeHtml(value)}</span></span>`;
           } else {
             html += escapeHtml(value);
           }
@@ -1939,6 +2041,7 @@
         element.innerHTML = renderTextWithFxTags(name);
         initThunderfuryFx(element);
         initDragonwrathFx(element);
+        initTwinBladesFx(element);
       }
 
 
@@ -2323,6 +2426,162 @@
         });
       }
 
+      // --- Twin Blades of Azzinoth (click-positioned X slashes with tapered tips) ---
+      function clamp(v, min, max) {
+        return Math.max(min, Math.min(max, v));
+      }
+
+      function setTwinSlashPathData(path, d, width, height) {
+        path.setAttribute("d", d);
+        // Approximate path length for dash animation
+        const approxLength = Math.hypot(width, height) * 1.15;
+        path.style.strokeDasharray = `${approxLength}`;
+        path.style.strokeDashoffset = `${approxLength}`;
+        path.style.setProperty("--length", `${approxLength}`);
+      }
+
+      function generateTwinBladesXPaths(width, height, cx, cy) {
+        const w = width;
+        const h = height;
+        const diagHalf = Math.hypot(w, h) / 2;
+
+        // Slash reach: near corner-to-corner (fixes short slashes on wide text)
+        const halfLen1 = diagHalf * randomInRange(0.78, 0.95);
+        const halfLen2 = diagHalf * randomInRange(0.78, 0.95);
+
+        // Slight angle/curve variation to feel like real swings, but consistent
+        const angJitter = randomInRange(-0.14, 0.14);
+        const a1 = Math.PI / 4 + angJitter;
+        const a2 = -Math.PI / 4 + angJitter;
+
+        const pad = 2;
+
+        function makeSlash(angle, halfLen) {
+          const dx = Math.cos(angle);
+          const dy = Math.sin(angle);
+
+          const x1 = clamp(cx - dx * halfLen, pad, w - pad);
+          const y1 = clamp(cy - dy * halfLen, pad, h - pad);
+          const x2 = clamp(cx + dx * halfLen, pad, w - pad);
+          const y2 = clamp(cy + dy * halfLen, pad, h - pad);
+
+          // Perpendicular arch for a blade swing arc
+          const mx = (x1 + x2) / 2;
+          const my = (y1 + y2) / 2;
+          const px = -dy;
+          const py = dx;
+          const arch = randomInRange(-0.22, 0.22) * halfLen;
+
+          const cx1 = clamp(mx + px * arch, pad, w - pad);
+          const cy1 = clamp(my + py * arch, pad, h - pad);
+
+          return `M ${x1} ${y1} Q ${cx1} ${cy1} ${x2} ${y2}`;
+        }
+
+        return [makeSlash(a1, halfLen1), makeSlash(a2, halfLen2)];
+      }
+
+      function executeTwinBladesSlash(fx, width, height, cx, cy) {
+        if (fx.secondSlashTimeout) {
+          clearTimeout(fx.secondSlashTimeout);
+          fx.secondSlashTimeout = null;
+        }
+
+        const pathsD = generateTwinBladesXPaths(width, height, cx, cy);
+
+        // Reset animations
+        fx.paths.forEach((p) => {
+          p.classList.remove("slashing");
+          p.style.animation = "none";
+        });
+
+        // Force reflow so re-adding the class restarts animation
+        void fx.paths[0].getBoundingClientRect();
+
+        // Apply new geometry + dash settings
+        setTwinSlashPathData(fx.paths[0], pathsD[0], width, height);
+        setTwinSlashPathData(fx.paths[1], pathsD[1], width, height);
+
+        // Trigger first slash
+        fx.paths[0].style.animation = "";
+        fx.paths[0].classList.add("slashing");
+
+        // Trigger second slash after a short delay for the "X"
+        fx.secondSlashTimeout = setTimeout(() => {
+          fx.paths[1].style.animation = "";
+          fx.paths[1].classList.add("slashing");
+          fx.secondSlashTimeout = null;
+        }, 300);
+      }
+
+      function animateTwinBladesSlash(span, evt = null) {
+        const fx = span._twinBladesFx;
+        if (!fx) return;
+
+        const rect = span.getBoundingClientRect();
+        const width = Math.max(1, rect.width + 48);
+        const height = Math.max(1, rect.height + 48);
+
+        fx.svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+        fx.svg.setAttribute("width", width);
+        fx.svg.setAttribute("height", height);
+
+        // Default: center of text overlay
+        let cx = width / 2;
+        let cy = height / 2;
+
+        // If user clicked, place the X center at the cursor position within the text box
+        if (evt && typeof evt.clientX === "number") {
+          const inset = 24; // matches .slash-container inset:-24px
+          cx = clamp(evt.clientX - rect.left + inset, 2, width - 2);
+          cy = clamp(evt.clientY - rect.top + inset, 2, height - 2);
+        }
+
+        executeTwinBladesSlash(fx, width, height, cx, cy);
+      }
+
+      function mountTwinBladesFx(span) {
+        const container = document.createElement("div");
+        container.className = "slash-container";
+        container.id = `twinBladesSlash_${twinBladesFxCounter}`;
+        twinBladesFxCounter += 1;
+        span.appendChild(container);
+
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        svg.setAttribute("class", "slash-svg");
+        container.appendChild(svg);
+
+        const path1 = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path1.setAttribute("class", "slash-path");
+        svg.appendChild(path1);
+
+        const path2 = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path2.setAttribute("class", "slash-path");
+        svg.appendChild(path2);
+
+        span._twinBladesFx = { container, svg, paths: [path1, path2], secondSlashTimeout: null };
+        span.dataset.twinBladesFxInit = "1";
+
+        // Auto-play once on mount
+        animateTwinBladesSlash(span);
+
+        // Click to play again, centered on cursor
+        span.addEventListener("click", (e) => {
+          animateTwinBladesSlash(span, e);
+        });
+      }
+
+
+      function initTwinBladesFx(root = document) {
+        const spans = root.querySelectorAll(".fx_twin_blades_azzinoth");
+        spans.forEach((span) => {
+          if (span.dataset.twinBladesFxInit === "1") {
+            return;
+          }
+          mountTwinBladesFx(span);
+        });
+      }
+
       function applyFxTokensToHtml(output, fxTokens) {
         let html = output;
         fxTokens.forEach(({ token, fxId, value }) => {
@@ -2330,7 +2589,9 @@
             ? `<span class="fx fx_thunderfury"><span class="log-item-orange fx-thunderfury-text">${escapeHtml(value)}</span><span class="fx-thunderfury-overlay" aria-hidden="true"></span></span>`
             : fxId === "fx_dragonwrath"
               ? `<span class="fx fx_dragonwrath"><span class="log-item-orange">${escapeHtml(value)}</span></span>`
-              : escapeHtml(value);
+              : fxId === "fx_twin_blades_azzinoth"
+                ? `<span class="fx fx_twin_blades_azzinoth"><span class="log-item-orange">${escapeHtml(value)}</span></span>`
+                : escapeHtml(value);
           html = html.replace(token, replacement);
         });
         return html;
@@ -2404,7 +2665,8 @@
         });
         rogueAbilities.forEach((ability) => {
           const pattern = new RegExp(`\\b${escapeRegExp(ability)}\\b`, "g");
-          output = output.replace(pattern, `<span class="log-ability-rogue">$&</span>`);
+          const abilityClass = ability === "Fury of Azzinoth" ? "log-ability-azzinoth" : "log-ability-rogue";
+          output = output.replace(pattern, `<span class="${abilityClass}">$&</span>`);
         });
         warlockAbilities.forEach((ability) => {
           const pattern = new RegExp(`\\b${escapeRegExp(ability)}\\b`, "g");
@@ -2477,6 +2739,7 @@
         logDiv.appendChild(line);
         initThunderfuryFx(line);
         initDragonwrathFx(line);
+        initTwinBladesFx(line);
         logDiv.scrollTop = logDiv.scrollHeight;
       }
 
