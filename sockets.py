@@ -12,9 +12,11 @@ from .content.abilities import ABILITIES
 
 THUNDERFURY_NAME = "Thunderfury, Blessed Blade of the Windseeker"
 DRAGONWRATH_NAME = "Dragonwrath, Tarecgosa's Rest"
+TWIN_BLADES_AZZINOTH_NAME = "Twin Blades of Azzinoth"
 ITEM_FX_MARKUP = [
     (THUNDERFURY_NAME, "fx_thunderfury"),
     (DRAGONWRATH_NAME, "fx_dragonwrath"),
+    (TWIN_BLADES_AZZINOTH_NAME, "fx_twin_blades_azzinoth"),
 ]
 
 

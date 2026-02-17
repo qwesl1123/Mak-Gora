@@ -575,6 +575,8 @@ def trigger_on_hit_passives(
     damage_type: str,
     rng,
     ability: Optional[Dict[str, Any]] = None,
+    include_strike_again: bool = True,
+    only_strike_again: bool = False,
 ) -> tuple[int, List[str], int]:
     """Run attacker item passives that trigger on_hit."""
     bonus_damage = 0
@@ -587,7 +589,11 @@ def trigger_on_hit_passives(
         if passive.get("trigger") != "on_hit":
             continue
 
-        if passive.get("type") == "burn":
+        passive_type = passive.get("type")
+        if only_strike_again and passive_type != "strike_again":
+            continue
+
+        if passive_type == "burn":
             burn_value = int(passive.get("value", 0) or 0)
             if burn_value > 0:
                 apply_burn(
@@ -600,7 +606,9 @@ def trigger_on_hit_passives(
                 log_lines.append(
                     f"{attacker.sid[:5]} scorches the target with {effect.get('source_item', 'item')} ({burn_value} damage/turn)."
                 )
-        elif passive.get("type") == "strike_again":
+        elif passive_type == "strike_again":
+            if not include_strike_again:
+                continue
             chance = float(passive.get("chance", 0) or 0)
             multiplier = float(passive.get("multiplier", 0) or 0)
             if base_damage > 0 and chance > 0 and multiplier > 0 and rng.random() <= chance:
@@ -610,7 +618,7 @@ def trigger_on_hit_passives(
                     log_lines.append(
                         f"{attacker.sid[:5]} strikes again with {effect.get('source_item', 'item')} for {extra} bonus damage."
                     )
-        elif passive.get("type") == "void_blade":
+        elif passive_type == "void_blade":
             if base_damage <= 0:
                 continue
             int_multiplier = float(passive.get("int_multiplier", 0.4) or 0.4)
@@ -631,7 +639,7 @@ def trigger_on_hit_passives(
                 log_lines.append(
                     f"{attacker.sid[:5]} calls upon the void with {effect.get('source_item', 'item')}. Roll {dice} = {roll_power}. Deals {reduced} magic damage."
                 )
-        elif passive.get("type") == "lightning_blast":
+        elif passive_type == "lightning_blast":
             chance = float(passive.get("chance", 0) or 0)
             scaling = passive.get("scaling", {}) or {}
             dice = passive.get("dice", "d3")
@@ -664,7 +672,7 @@ def trigger_on_hit_passives(
                 log_lines.append(
                     f"{attacker.sid[:5]} blasts the target with lightning from {effect.get('source_item', 'item')}. Roll {dice} = {roll_power}. Deals {reduced} magic damage."
                 )
-        elif passive.get("type") == "heal_on_hit":
+        elif passive_type == "heal_on_hit":
             chance = float(passive.get("chance", 0) or 0)
             scaling = passive.get("scaling", {}) or {}
             dice = passive.get("dice", "d3")
@@ -691,7 +699,7 @@ def trigger_on_hit_passives(
                 log_lines.append(
                     f"{attacker.sid[:5]} draws strength from {effect.get('source_item', 'item')}, healing {heal_value} HP."
                 )
-        elif passive.get("type") == "empower_next_offense":
+        elif passive_type == "empower_next_offense":
             chance = float(passive.get("chance", 0) or 0)
             effect_id = passive.get("effect_id", "crusader_empower")
             if chance > 0 and rng.random() <= chance and not has_effect(attacker, effect_id):
@@ -702,7 +710,7 @@ def trigger_on_hit_passives(
                 log_lines.append(
                     f"{attacker.sid[:5]} feels empowered by {effect.get('source_item', 'item')}."
                 )
-        elif passive.get("type") == "duplicate_offensive_spell":
+        elif passive_type == "duplicate_offensive_spell":
             if base_damage <= 0 or not ability:
                 continue
             tags = ability.get("tags") or []

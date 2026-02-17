@@ -102,6 +102,21 @@ ITEMS = {
             "chance": 0.2,
         },
     },
+    "twin_blades_azzinoth": {
+        "item_id": "twin_blades_azzinoth",
+        "name": "Twin Blades of Azzinoth",
+        "fx_id": "fx_twin_blades_azzinoth",
+        "slot": "weapon",
+        "mods": {"atk": 7},
+        "damage_type": "physical",
+        "color": "#ff8000",
+        "passive": {
+            "type": "strike_again",
+            "trigger": "on_hit",
+            "chance": 0.3,
+            "multiplier": 0.4,
+        },
+    },
     "glock_19": {
         "name": "Glock 19",
         "slot": "weapon",

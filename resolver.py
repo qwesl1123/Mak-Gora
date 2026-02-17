@@ -342,6 +342,10 @@ def resolve_turn(match: MatchState) -> None:
         if allowed_classes and actor.build.class_id not in allowed_classes:
             return {"damage": 0, "healing": 0, "log": f"{actor_sid[:5]} cannot use {ability['name']}."}
 
+        weapon_id = None
+        if actor.build and actor.build.items:
+            weapon_id = actor.build.items.get("weapon")
+
         if is_on_cooldown(actor, ability_id, ability):
             return {
                 "damage": 0,
@@ -360,6 +364,14 @@ def resolve_turn(match: MatchState) -> None:
         required_effect = ability.get("requires_effect")
         if required_effect and not has_effect(actor, required_effect):
             return {"damage": 0, "healing": 0, "log": f"{ability['name']} requires {effect_name(required_effect)}."}
+
+        required_weapon = ability.get("requires_weapon")
+        if required_weapon and weapon_id != required_weapon:
+            return {
+                "damage": 0,
+                "healing": 0,
+                "log": ability.get("requires_weapon_log", "The required weapon is not equipped."),
+            }
 
         target_hp_threshold = ability.get("requires_target_hp_below")
         if target_hp_threshold is not None:
@@ -385,9 +397,6 @@ def resolve_turn(match: MatchState) -> None:
                 "log": f"{actor_sid[:5]} tried {ability['name']} but lacked resources.",
             }
 
-        weapon_id = None
-        if actor.build and actor.build.items:
-            weapon_id = actor.build.items.get("weapon")
         weapon_name = ITEMS.get(weapon_id, {}).get("name", "their bare hands")
 
         if is_stunned(actor) and not can_cast_while_cc(ability):
@@ -661,6 +670,7 @@ def resolve_turn(match: MatchState) -> None:
         extra_logs: list[str] = []
         ability_hit_landed = False
         on_hit_base_damage = 0
+        per_hit_damage_values: list[int] = []
         for hit_index in range(1, hits + 1):
             prefix = f"Hit {hit_index}: " if hits > 1 else ""
             roll_power = 0
@@ -739,6 +749,8 @@ def resolve_turn(match: MatchState) -> None:
 
             if reduced > 0 and on_hit_base_damage == 0:
                 on_hit_base_damage = reduced
+            if reduced > 0:
+                per_hit_damage_values.append(reduced)
 
             if reduced > 0:
                 effects_on_hit = ability.get("stealth_on_hit_effects") if was_stealthed else None
@@ -783,7 +795,7 @@ def resolve_turn(match: MatchState) -> None:
 
             total_damage += reduced
 
-        # Apply on-hit passive effects once per ability execution (weapons/trinkets etc.)
+        # Apply non-strike-again on-hit passive effects once per ability execution.
         if ability_hit_landed:
             bonus_damage, passive_logs, bonus_healing = trigger_on_hit_passives(
                 actor,
@@ -792,6 +804,7 @@ def resolve_turn(match: MatchState) -> None:
                 damage_type,
                 r,
                 ability=ability,
+                include_strike_again=False,
             )
             if bonus_damage > 0:
                 total_damage += bonus_damage
@@ -799,6 +812,23 @@ def resolve_turn(match: MatchState) -> None:
                 total_healing += bonus_healing
             if passive_logs:
                 extra_logs.extend(passive_logs)
+
+        # Strike-again passives can proc per successful damaging strike.
+        for strike_damage in per_hit_damage_values:
+            strike_bonus_damage, strike_logs, _ = trigger_on_hit_passives(
+                actor,
+                target,
+                strike_damage,
+                damage_type,
+                r,
+                ability=ability,
+                include_strike_again=True,
+                only_strike_again=True,
+            )
+            if strike_bonus_damage > 0:
+                total_damage += strike_bonus_damage
+            if strike_logs:
+                extra_logs.extend(strike_logs)
 
         resource_gain = ability.get("resource_gain", {})
         if total_damage > 0 and resource_gain:
@@ -858,6 +888,10 @@ def resolve_turn(match: MatchState) -> None:
         if allowed_classes and actor.build.class_id not in allowed_classes:
             return {"damage": 0, "log": f"{actor_sid[:5]} cannot use {ability['name']}.", "resolved": True}
 
+        weapon_id = None
+        if actor.build and actor.build.items:
+            weapon_id = actor.build.items.get("weapon")
+
         if is_on_cooldown(actor, ability_id, ability):
             return {
                 "damage": 0,
@@ -878,6 +912,14 @@ def resolve_turn(match: MatchState) -> None:
             return {
                 "damage": 0,
                 "log": f"{ability['name']} requires {effect_name(required_effect)}.",
+                "resolved": True,
+            }
+
+        required_weapon = ability.get("requires_weapon")
+        if required_weapon and weapon_id != required_weapon:
+            return {
+                "damage": 0,
+                "log": ability.get("requires_weapon_log", "The required weapon is not equipped."),
                 "resolved": True,
             }
 
@@ -1159,6 +1201,19 @@ def resolve_turn(match: MatchState) -> None:
     source_name_2 = ABILITIES.get(result2.get("ability_id", ""), {}).get("name", "attack")
     dealt1 = apply_damage(match.state[sids[1]], result1["damage"], sids[1], source_name_1)
     dealt2 = apply_damage(match.state[sids[0]], result2["damage"], sids[0], source_name_2)
+
+    for actor_sid, dealt, result in ((sids[0], dealt1, result1), (sids[1], dealt2, result2)):
+        ability = ABILITIES.get(result.get("ability_id", ""), {})
+        if dealt > 0 and ability.get("heal_from_dealt_damage"):
+            actor = match.state[actor_sid]
+            if actor.res and actor.res.hp > 0:
+                before_hp = actor.res.hp
+                actor.res.hp = min(actor.res.hp + dealt, actor.res.hp_max)
+                gained = actor.res.hp - before_hp
+                if gained > 0:
+                    match.log.append(f"{actor_sid[:5]} heals {gained} HP from {ability.get('name', 'their attack')}.")
+                    totals = match.combat_totals.setdefault(actor_sid, {"damage": 0, "healing": 0})
+                    totals["healing"] += gained
 
     for actor_sid, dealt, result in ((sids[0], dealt1, result1), (sids[1], dealt2, result2)):
         ability = ABILITIES.get(result.get("ability_id", ""), {})
