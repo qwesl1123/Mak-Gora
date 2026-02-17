@@ -277,6 +277,9 @@ def resolve_turn(match: MatchState) -> None:
             if is_immune_all(target):
                 target_immune_log(log_parts)
                 continue
+            if target_effect_requires_visible_target(ability, entry) and is_stealthed(target):
+                log_parts.append("Target is stealthed — no valid target. Miss!")
+                continue
             overrides = dict(entry.get("overrides", {}) or {})
             if entry.get("duration"):
                 overrides["duration"] = int(entry.get("duration"))
@@ -305,7 +308,7 @@ def resolve_turn(match: MatchState) -> None:
         is_aoe = "aoe" in (ability.get("tags") or []) or not ability.get("requires_target", True)
         if is_aoe:
             return False
-        return bool(stealth_snapshot.get(target.sid, False))
+        return bool(stealth_snapshot.get(target.sid, False) or is_stealthed(target))
 
     def is_aoe_ability(ability: Dict[str, Any]) -> bool:
         if "is_aoe" in ability:
@@ -316,6 +319,16 @@ def resolve_turn(match: MatchState) -> None:
         if "is_single_target" in ability:
             return bool(ability.get("is_single_target"))
         return not is_aoe_ability(ability)
+
+    def target_effect_requires_visible_target(ability: Dict[str, Any], entry: Dict[str, Any]) -> bool:
+        if not is_single_target_ability(ability):
+            return False
+        effect = build_effect(entry["id"], overrides=entry.get("overrides"))
+        flags = effect.get("flags", {}) or {}
+        if flags.get("stunned"):
+            return True
+        reason = effect.get("cant_act_reason")
+        return reason in {"stunned", "feared", "frozen"}
 
     def can_evasion_force_miss(ability: Dict[str, Any], has_damage: bool) -> bool:
         if not has_damage:
@@ -1001,6 +1014,7 @@ def resolve_turn(match: MatchState) -> None:
 
     apply_pre_resolution_defensive(sids[0], contexts[sids[0]])
     apply_pre_resolution_defensive(sids[1], contexts[sids[1]])
+    stealth_targeting = {sid: is_stealthed(match.state[sid]) for sid in sids}
 
     def immediate_action_can_stun(actor_sid: str, target_sid: str, ctx: Dict[str, Any]) -> bool:
         if ctx.get("resolved") or not ctx.get("immediate_only"):
