@@ -144,6 +144,64 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 2,
         "category": "absorb",
     },
+    "mind_blast_empowered": {
+        "type": "status",
+        "name": "Mind Blast Empowered",
+        "duration": 999,
+        "flags": {"mind_blast_empowered": True},
+    },
+    "shadowy_insight": {
+        "type": "status",
+        "name": "Shadowy Insight",
+        "duration": 999,
+        "flags": {"shadowy_insight": True},
+    },
+    "vampiric_touch": {
+        "type": "dot",
+        "name": "Vampiric Touch",
+        "duration": 6,
+        "category": "dot",
+        "school": "magical",
+        "dispellable": True,
+        "tick_damage": 1,
+        "lifesteal_pct": 0.4,
+    },
+    "devouring_plague": {
+        "type": "dot",
+        "name": "Devouring Plague",
+        "duration": 4,
+        "category": "dot",
+        "school": "magical",
+        "dispellable": False,
+        "tick_damage": 1,
+        "lifesteal_pct": 0.3,
+        "refresh_only": True,
+    },
+    "pain_suppression": {
+        "type": "mitigation",
+        "name": "Pain Suppression",
+        "duration": 3,
+        "value": 0.4,
+    },
+    "mindgames": {
+        "type": "status",
+        "name": "Mindgames",
+        "duration": 1,
+        "flags": {"mindgames": True},
+    },
+    "psychic_scream": {
+        "type": "status",
+        "name": "Psychic Scream",
+        "duration": 1,
+        "flags": {"stunned": True},
+        "cant_act_reason": "terrified",
+    },
+    "shadowfiend": {
+        "type": "status",
+        "name": "Shadowfiend",
+        "duration": 5,
+        "flags": {"shadowfiend": True},
+    },
     "dragon_roar_bleed": {
         "type": "dot",
         "name": "Dragon Roar Bleed",
@@ -388,7 +446,7 @@ def is_stunned(target: PlayerState) -> bool:
 
 
 def get_cant_act_reason(target: PlayerState) -> Optional[str]:
-    priority = {"stunned": 0, "frozen": 1, "feared": 2}
+    priority = {"stunned": 0, "frozen": 1, "feared": 2, "terrified": 3}
     best_reason: Optional[str] = None
     best_rank = len(priority)
 
@@ -818,11 +876,11 @@ def damage_multiplier_from_passives(attacker: PlayerState) -> float:
                 multiplier *= float(passive.get("multiplier", 1.0) or 1.0)
     return multiplier
 
-def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[tuple[str, int]]:
+def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[dict[str, Any]]:
     """Apply DoT damage with typed mitigation + absorb routing."""
     if is_immune_all(ps):
         return []
-    damage_sources: list[tuple[str, int]] = []
+    damage_sources: list[dict[str, Any]] = []
     for effect in ps.effects:
         effect_id = effect.get("id")
         effect_type = effect.get("type")
@@ -871,7 +929,12 @@ def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[tuple[str, in
             log.append(f"{label} stealth broken by {effect_name}.")
         source_sid = effect.get("source_sid")
         if source_sid:
-            damage_sources.append((source_sid, remaining))
+            damage_sources.append({
+                "source_sid": source_sid,
+                "damage": remaining,
+                "effect_id": effect.get("id"),
+                "lifesteal_pct": float(effect.get("lifesteal_pct", 0) or 0),
+            })
     return damage_sources
 
 
@@ -919,9 +982,14 @@ def trigger_end_of_turn_effects(ps: PlayerState, log: List[str], label: str) -> 
         mp_gain = int(regen.get("mp", 0) or 0)
         energy_gain = int(regen.get("energy", 0) or 0)
         if hp_gain > 0:
-            before_hp = ps.res.hp
-            ps.res.hp = min(ps.res.hp + hp_gain, ps.res.hp_max)
-            total_healing += ps.res.hp - before_hp
+            if has_effect(ps, "mindgames"):
+                ps.res.hp = max(0, ps.res.hp - hp_gain)
+                if log is not None:
+                    log.append(f"{label} is twisted by Mindgames and takes {hp_gain} self-damage instead of healing.")
+            else:
+                before_hp = ps.res.hp
+                ps.res.hp = min(ps.res.hp + hp_gain, ps.res.hp_max)
+                total_healing += ps.res.hp - before_hp
         if mp_gain > 0:
             ps.res.mp = min(ps.res.mp + mp_gain, ps.res.mp_max)
         if energy_gain > 0:

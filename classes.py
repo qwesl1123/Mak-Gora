@@ -43,4 +43,10 @@ CLASSES = {
         "resources": {"hp": 100, "mp": 70, "energy": 0, "rage": 0, "rage_max": 0},
         "resource_display": {"primary": {"id": "mp", "label": "Mana", "color": "var(--mana-blue)"}},
     },
+    "priest": {
+        "name": "Priest",
+        "base_stats": {"atk": 3, "int": 12, "def": 5, "spd": 8, "crit": 7, "acc": 95, "eva": 4},
+        "resources": {"hp": 95, "mp": 110, "energy": 0, "rage": 0, "rage_max": 0},
+        "resource_display": {"primary": {"id": "mp", "label": "Mana", "color": "var(--mana-blue)"}},
+    },
 }

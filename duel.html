@@ -30,6 +30,7 @@
         --druid-color: #FF7C0A;
         --warlock-color: #8788EE;
         --paladin-color: #F48CBA;
+        --priest-color: #FFFFFF;
         --item-green: #1eff00;
         --item-blue: #0070dd;
         --item-purple: #a335ee;
@@ -250,6 +251,10 @@
 
       .status-text.paladin {
         color: var(--paladin-color);
+      }
+
+      .status-text.priest {
+        color: var(--priest-color);
       }
 
       .resource-bar {
@@ -565,6 +570,12 @@
         text-shadow: 0 0 12px rgba(255, 68, 68, 0.85);
       }
 
+      .logLinePriestGlow {
+        color: #FFFFFF;
+        font-weight: 700;
+        text-shadow: 0 0 12px rgba(255, 255, 255, 0.95);
+      }
+
       .logLineOutcome {
         font-size: 2em;
         font-weight: 700;
@@ -641,6 +652,12 @@
       .log-class-paladin,
       .log-ability-paladin {
         color: var(--paladin-color);
+        font-weight: 700;
+      }
+
+      .log-class-priest,
+      .log-ability-priest {
+        color: var(--priest-color);
         font-weight: 700;
       }
 
@@ -1163,7 +1180,7 @@
 
             <div class="hint">
               <strong>Commands:</strong><br>
-              <span class="kbd">/class warrior</span>, <span class="kbd">/class mage</span>, <span class="kbd">/class rogue</span>, or <span class="kbd">/class warlock</span> - Choose your class<br>
+              <span class="kbd">/class warrior</span>, <span class="kbd">/class mage</span>, <span class="kbd">/class rogue</span>, or <span class="kbd">/class warlock</span>, or <span class="kbd">/class priest</span> - Choose your class<br>
               <span class="kbd">/item weapon steel_long_sword</span> - Equip weapon<br>
               <span class="kbd">/item armor leather_armor</span> - Equip armor<br>
               <span class="kbd">basic_attack</span>, <span class="kbd">fireball</span>, <span class="kbd">eviscerate</span>, <span class="kbd">blink</span>, <span class="kbd">cheap_shot</span> - Combat abilities<br>
@@ -1250,6 +1267,7 @@
             <p><span class="stat">HP: 100</span> | <span class="stat">Mana: 70</span> | Speed: 7 | Crit: 5% | Accuracy: 90%</p>
             <p>Holy warrior of the Light. Mixes weapon strikes, shielding, and support magic for balanced offense and defense.</p>
           </div>
+
         </div>
       </div>
 
@@ -1351,6 +1369,7 @@
             <p><span class="stat">Passive: 55% chance to miss</span></p>
             <p>A risky firearm with devastating potential. High damage, but with a cost...</p>
           </div>
+
         </div>
       </div>
 
@@ -1380,6 +1399,7 @@
             <p><span class="stat">Magic Resist: 0</span></p>
             <p>Heavy steel plating. Exceptional physical protection but vulnerable to magic.</p>
           </div>
+
         </div>
       </div>
 
@@ -1401,6 +1421,7 @@
             <p><span class="stat">Passive: Deal 15% more damage while below 30% HP</span></p>
             <p>A volatile crystal that empowers desperate finishing blows.</p>
           </div>
+
         </div>
       </div>
 
@@ -1644,6 +1665,7 @@
             <p><span class="stat">Regrowth:</span> <span class="kbd">regrowth</span> — Cost: 15 Mana | Cooldown: 15 | Effect: Heal over time for 5 turns using (Intellect + Attack) (1.5x) + d4 total scaling.</p>
             <p><span class="stat">Innervate:</span> <span class="kbd">innervate</span> — Cost: 0 Mana | Cooldown: 50 | Effect: Restore Mana to full.</p>
           </div>
+
         </div>
       </div>
 
@@ -1770,6 +1792,81 @@
           </div>
         </div>
 
+        <h4 class="doc-subtitle">Priest</h4>
+        <div class="doc-grid">
+          <div class="doc-item">
+            <h4>Power Word: Shield</h4>
+            <p><span class="stat">Cost: 20 Mana</span> | <span class="stat">Type: Defensive Spell</span> | <span class="stat">Cooldown: 8</span></p>
+            <p><span class="stat">Command: <span class="kbd">shield</span></span></p>
+            <p>Applies an absorb shield equal to <strong>floor(Intellect × 1.0) + d6</strong>. This absorb is not dispellable for now.</p>
+          </div>
+          <div class="doc-item">
+            <h4>Mind Flay</h4>
+            <p><span class="stat">Cost: 5 Mana</span> | <span class="stat">Type: Magic Damage</span> | <span class="stat">Cooldown: 0</span></p>
+            <p><span class="stat">Command: <span class="kbd">mind_flay</span></span></p>
+            <p>Deals <strong>floor(Intellect × 0.4) + d4</strong> magic damage. 40% chance to empower your next Mind Blast. Empower lasts until consumed and does not stack.</p>
+          </div>
+          <div class="doc-item">
+            <h4>Mind Blast</h4>
+            <p><span class="stat">Cost: 15 Mana</span> | <span class="stat">Type: Magic Damage</span> | <span class="stat">Cooldown: 3</span></p>
+            <p><span class="stat">Command: <span class="kbd">mind_blast</span></span></p>
+            <p><strong>Normal:</strong> floor(Intellect × 0.9) + d6 magic damage.<br><strong>Empowered (from Mind Flay):</strong> floor(Intellect × 1.3) + d8 magic damage.</p>
+            <p>Each cast has a 40% chance to grant Shadowy Insight (non-stacking, lasts until used).</p>
+          </div>
+          <div class="doc-item">
+            <h4>Vampiric Touch</h4>
+            <p><span class="stat">Cost: 12 Mana</span> | <span class="stat">Type: Magical DoT</span> | <span class="stat">Cooldown: 8</span></p>
+            <p><span class="stat">Command: <span class="kbd">vampiric_touch</span></span></p>
+            <p>Applies a 6-turn magical DoT. Total damage = <strong>floor(Intellect × 3.0) + d6</strong>, then split as <strong>floor(total/6)</strong> per end-of-turn tick.</p>
+            <p>Each tick heals the Priest for 40% of actual tick damage dealt. This DoT is dispellable (magical).</p>
+          </div>
+          <div class="doc-item">
+            <h4>Devouring Plague</h4>
+            <p><span class="stat">Cost: 25 Mana</span> | <span class="stat">Type: Magical DoT</span> | <span class="stat">Cooldown: 0</span></p>
+            <p><span class="stat">Command: <span class="kbd">devouring_plague</span></span></p>
+            <p>Requires Shadowy Insight. Applies a 4-turn magical DoT. Total damage = <strong>floor(Intellect × 2.0) + d4</strong>, then split as <strong>floor(total/4)</strong> per end-of-turn tick.</p>
+            <p>Does not stack; recasting refreshes duration. Each tick heals Priest for 30% of actual tick damage dealt.</p>
+          </div>
+          <div class="doc-item">
+            <h4>Penance</h4>
+            <p><span class="stat">Cost: 12 Mana</span> | <span class="stat">Type: Magic Damage / Self-Heal</span> | <span class="stat">Cooldown: 8 (shared)</span></p>
+            <p><span class="stat">Commands: <span class="kbd">penance</span> and <span class="kbd">penance_self</span></span></p>
+            <p><strong>penance:</strong> 3 magic hits, each <strong>floor(Intellect × 0.4) + d4</strong>.<br><strong>penance_self:</strong> 3 self-heal hits, each <strong>floor(Intellect × 0.4) + d4</strong>.</p>
+            <p><strong>Shared cooldown:</strong> casting either command puts both on an 8-turn cooldown.</p>
+          </div>
+          <div class="doc-item">
+            <h4>Pain Suppression</h4>
+            <p><span class="stat">Cost: Free</span> | <span class="stat">Type: Defensive Cooldown</span> | <span class="stat">Cooldown: 20</span></p>
+            <p><span class="stat">Command: <span class="kbd">pain_supp</span></span></p>
+            <p>For 3 turns, reduces all incoming damage by 40%.</p>
+          </div>
+          <div class="doc-item">
+            <h4>Mindgames</h4>
+            <p><span class="stat">Cost: 15 Mana</span> | <span class="stat">Type: Control Debuff</span> | <span class="stat">Cooldown: 20</span></p>
+            <p><span class="stat">Command: <span class="kbd">mindgames</span></span></p>
+            <p>Applies a 1-turn debuff before actions resolve. While active on the target: damage they deal is converted into healing on their target; healing they produce is converted into self-damage. Affects direct effects and periodic ticks in that window.</p>
+          </div>
+          <div class="doc-item">
+            <h4>Psychic Scream</h4>
+            <p><span class="stat">Cost: Free</span> | <span class="stat">Type: Control</span> | <span class="stat">Cooldown: 8</span></p>
+            <p><span class="stat">Command: <span class="kbd">psychic_scream</span></span></p>
+            <p>Applies 1-turn fear-style action denial (cant_act_reason: <em>terrified</em>).</p>
+          </div>
+          <div class="doc-item">
+            <h4>Shadow Word: Death</h4>
+            <p><span class="stat">Cost: Free</span> | <span class="stat">Type: Magic Damage</span> | <span class="stat">Cooldown: 5</span></p>
+            <p><span class="stat">Command: <span class="kbd">death</span></span></p>
+            <p>Deals <strong>floor(Intellect × 1.0) + d6</strong> magic damage. If target HP is below 20%, damage is doubled.</p>
+            <p>If target survives, Priest takes backlash equal to 100% of damage dealt.</p>
+          </div>
+          <div class="doc-item">
+            <h4>Shadowfiend</h4>
+            <p><span class="stat">Cost: 20 Mana</span> | <span class="stat">Type: Summon</span> | <span class="stat">Cooldown: 50</span></p>
+            <p><span class="stat">Command: <span class="kbd">shadowfiend</span></span></p>
+            <p>Summons a Shadowfiend for 5 turns. At end of turn, it attacks for <strong>floor(Intellect × 0.6) + d4</strong> <strong>physical</strong> damage (uses physical mitigation, not magic resist) and restores 13 mana to the Priest on successful hits.</p>
+          </div>
+        </div>
+
         <h3>Combat Mechanics</h3>
         <div class="doc-content">
           <p><strong>Damage Types:</strong> Physical damage is reduced by Physical Reduction. Magic damage is reduced by Magic Resist.</p>
@@ -1793,7 +1890,7 @@
         <div class="doc-content">
           <p><strong>1. Join Queue:</strong> Click "Enter the Arena" to find an opponent.</p>
           
-          <p><strong>2. Prep Phase:</strong> Choose your class with <span class="kbd">/class warrior</span>, <span class="kbd">/class mage</span>, <span class="kbd">/class rogue</span>, <span class="kbd">/class druid</span>, <span class="kbd">/class warlock</span>, or <span class="kbd">/class paladin</span></p>
+          <p><strong>2. Prep Phase:</strong> Choose your class with <span class="kbd">/class warrior</span>, <span class="kbd">/class mage</span>, <span class="kbd">/class rogue</span>, <span class="kbd">/class druid</span>, <span class="kbd">/class warlock</span>, or <span class="kbd">/class paladin</span>, or <span class="kbd">/class priest</span></p>
           
           <p><strong>3. Equip Items:</strong> Use <span class="kbd">/item weapon steel_long_sword</span> and <span class="kbd">/item armor plate_armor</span></p>
           
@@ -1915,6 +2012,20 @@
         "Shield of Vengeance",
         "Lay on Hands",
         "Avenging Wrath",
+      ];
+      const priestAbilities = [
+        "Power Word: Shield",
+        "Mind Flay",
+        "Mind Blast",
+        "Vampiric Touch",
+        "Devouring Plague",
+        "Penance",
+        "Penance (Self)",
+        "Pain Suppression",
+        "Mindgames",
+        "Psychic Scream",
+        "Shadow Word: Death",
+        "Shadowfiend",
       ];
       const druidAbilities = [
         "Bear Form",
@@ -2635,6 +2746,13 @@
         if (textWithoutFx.includes("Has Final Verdict Empowered!")) {
           return applyFxTokensToHtml(`<span class="log-class-paladin logLinePaladinProc">${renderTextWithFxTags(textWithoutFx)}</span>`, fxTokens);
         }
+        if (
+          textWithoutFx.includes("Has Shadowy Insight!")
+          || textWithoutFx.includes("Mind Blast is empowered!")
+          || textWithoutFx.includes("Shadow Word: Death Damage Doubled!")
+        ) {
+          return applyFxTokensToHtml(`<span class="logLinePriestGlow">${renderTextWithFxTags(textWithoutFx)}</span>`, fxTokens);
+        }
 
         let output = escapeHtml(textWithoutFx);
         const classPatterns = [
@@ -2644,6 +2762,7 @@
           { pattern: /\bDruid(\(you\))?\b/g, className: "log-class-druid" },
           { pattern: /\bWarlock(\(you\))?\b/g, className: "log-class-warlock" },
           { pattern: /\bPaladin(\(you\))?\b/g, className: "log-class-paladin" },
+          { pattern: /\bPriest(\(you\))?\b/g, className: "log-class-priest" },
         ];
         classPatterns.forEach(({ pattern, className }) => {
           output = output.replace(pattern, `<span class="${className}">$&</span>`);
@@ -2679,6 +2798,10 @@
         paladinAbilities.forEach((ability) => {
           const pattern = new RegExp(`\\b${escapeRegExp(ability)}\\b`, "g");
           output = output.replace(pattern, `<span class="log-ability-paladin">$&</span>`);
+        });
+        priestAbilities.forEach((ability) => {
+          const pattern = new RegExp(`\\b${escapeRegExp(ability)}\\b`, "g");
+          output = output.replace(pattern, `<span class="log-ability-priest">$&</span>`);
         });
         greenItems.forEach((item) => {
           const escapedItem = escapeRegExp(item).replace(/'/g, "(?:'|&#039;)");
@@ -2721,6 +2844,13 @@
         }
         if (msg.includes("Can Use Execute")) {
           classes.push("logLineExecute");
+        }
+        if (
+          msg.includes("Has Shadowy Insight!")
+          || msg.includes("Mind Blast is empowered!")
+          || msg.includes("Shadow Word: Death Damage Doubled!")
+        ) {
+          classes.push("logLinePriestGlow");
         }
         if (msg.startsWith("Turn ")) {
           classes.push("logLineTurnHeader");
@@ -2909,7 +3039,7 @@
         if (!element) {
           return;
         }
-        element.classList.remove("warrior", "mage", "rogue", "druid", "warlock", "paladin");
+        element.classList.remove("warrior", "mage", "rogue", "druid", "warlock", "paladin", "priest");
         if (classKey) {
           element.classList.add(classKey);
         }

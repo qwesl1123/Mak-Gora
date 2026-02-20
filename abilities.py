@@ -780,6 +780,7 @@ ABILITIES = {
         "cooldown": 50,
         "classes": ["paladin"],
     },
+
     "avenging_wrath": {
         "name": "Avenging Wrath",
         "cost": {"mp": 20},
@@ -791,4 +792,159 @@ ABILITIES = {
             {"id": "avenging_wrath", "duration": 4, "log": "Abilities are empowered by Avenging Wrath!"}
         ],
     },
+    "shield": {
+        "name": "Power Word: Shield",
+        "display_color": "#FFFFFF",
+        "cost": {"mp": 20},
+        "dice": None,
+        "tags": ["spell", "defense"],
+        "cooldown": 8,
+        "classes": ["priest"],
+        "absorb": {
+            "scaling": {"int": 1.0},
+            "dice": {"type": "d6", "power_on": "roll"},
+            "source_name": "Power Word: Shield",
+        },
+        "self_effects": [
+            {"id": "shielded", "duration": 8, "log": "is shielded by holy magic."}
+        ],
+    },
+    "mind_flay": {
+        "name": "Mind Flay",
+        "display_color": "#FFFFFF",
+        "cost": {"mp": 5},
+        "dice": {"type": "d4", "power_on": "roll"},
+        "scaling": {"int": 0.4},
+        "damage_type": "magic",
+        "tags": ["spell", "attack", "magic"],
+        "cooldown": 0,
+        "classes": ["priest"],
+        "on_hit_effects": [
+            {"id": "mind_blast_empowered", "chance": 0.4, "log": "Mind Blast is empowered!"}
+        ],
+    },
+    "mind_blast": {
+        "name": "Mind Blast",
+        "display_color": "#FFFFFF",
+        "cost": {"mp": 15},
+        "dice": {"type": "d6", "power_on": "roll"},
+        "scaling": {"int": 0.9},
+        "damage_type": "magic",
+        "tags": ["spell", "attack", "magic"],
+        "cooldown": 3,
+        "classes": ["priest"],
+        "on_hit_effects": [
+            {"id": "shadowy_insight", "chance": 0.4, "log": "Has Shadowy Insight!"}
+        ],
+    },
+    "vampiric_touch": {
+        "name": "Vampiric Touch",
+        "display_color": "#FFFFFF",
+        "cost": {"mp": 12},
+        "dice": {"type": "d6", "power_on": "roll"},
+        "scaling": {"int": 3.0},
+        "damage_type": "magic",
+        "tags": ["spell", "attack", "magic"],
+        "cooldown": 8,
+        "classes": ["priest"],
+        "dot": {"id": "vampiric_touch", "duration": 6},
+    },
+    "devouring_plague": {
+        "name": "Devouring Plague",
+        "display_color": "#FFFFFF",
+        "cost": {"mp": 25},
+        "dice": {"type": "d4", "power_on": "roll"},
+        "scaling": {"int": 2.0},
+        "damage_type": "magic",
+        "tags": ["spell", "attack", "magic"],
+        "cooldown": 0,
+        "classes": ["priest"],
+        "dot": {"id": "devouring_plague", "duration": 4},
+        "requires_effect": "shadowy_insight",
+        "consume_effect": "shadowy_insight",
+    },
+    "penance": {
+        "name": "Penance",
+        "display_color": "#FFFFFF",
+        "cost": {"mp": 12},
+        "dice": {"type": "d4", "power_on": "roll"},
+        "scaling": {"int": 0.4},
+        "damage_type": "magic",
+        "tags": ["spell", "attack", "magic"],
+        "cooldown": 8,
+        "classes": ["priest"],
+        "hits": 3,
+        "shared_cooldown_with": ["penance_self"],
+    },
+    "penance_self": {
+        "name": "Penance (Self)",
+        "display_color": "#FFFFFF",
+        "cost": {"mp": 12},
+        "dice": None,
+        "tags": ["spell", "defense"],
+        "cooldown": 8,
+        "classes": ["priest"],
+        "shared_cooldown_with": ["penance"],
+    },
+    "pain_supp": {
+        "name": "Pain Suppression",
+        "display_color": "#FFFFFF",
+        "cost": {"mp": 0},
+        "dice": None,
+        "tags": ["spell", "defense"],
+        "cooldown": 20,
+        "classes": ["priest"],
+        "self_effects": [
+            {"id": "pain_suppression", "duration": 3, "log": "reduces incoming damage with Pain Suppression."}
+        ],
+    },
+    "mindgames": {
+        "name": "Mindgames",
+        "display_color": "#FFFFFF",
+        "cost": {"mp": 15},
+        "dice": None,
+        "tags": ["spell", "control"],
+        "cooldown": 20,
+        "classes": ["priest"],
+        "priority_control": True,
+        "target_effects": [
+            {"id": "mindgames", "duration": 1, "log": "Assaults the enemy's mind."}
+        ],
+    },
+    "psychic_scream": {
+        "name": "Psychic Scream",
+        "display_color": "#FFFFFF",
+        "cost": {"mp": 0},
+        "dice": None,
+        "tags": ["spell", "control"],
+        "cooldown": 8,
+        "classes": ["priest"],
+        "target_effects": [
+            {"id": "psychic_scream", "duration": 1, "overrides": {"cant_act_reason": "terrified"}, "log": "Enemy is terrified and cannot act."}
+        ],
+    },
+    "death": {
+        "name": "Shadow Word: Death",
+        "display_color": "#FFFFFF",
+        "cost": {"mp": 0},
+        "dice": {"type": "d6", "power_on": "roll"},
+        "scaling": {"int": 1.0},
+        "damage_type": "magic",
+        "tags": ["spell", "attack", "magic"],
+        "cooldown": 5,
+        "classes": ["priest"],
+    },
+    "shadowfiend": {
+        "name": "Shadowfiend",
+        "display_color": "#FFFFFF",
+        "cost": {"mp": 20},
+        "dice": None,
+        "tags": ["spell", "defense"],
+        "cooldown": 50,
+        "classes": ["priest"],
+        "self_effects": [
+            {"id": "shadowfiend", "duration": 5, "log": "summons a Shadowfiend."}
+        ],
+    },
+
 }
