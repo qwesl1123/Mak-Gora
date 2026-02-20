@@ -134,7 +134,7 @@ def apply_prep_build(match: MatchState) -> None:
             absorb_max=None,
         )
         
-        ps = PlayerState(sid=sid, build=build, res=res, stats=stats, minions={"imp": 0})
+        ps = PlayerState(sid=sid, build=build, res=res, stats=stats, minions={"imp": 0, "shadowfiend": 0})
 
         if build.class_id == "rogue":
             apply_effect_by_id(ps, "stealth")
@@ -280,6 +280,8 @@ def resolve_turn(match: MatchState) -> None:
                 apply_form(actor, effect_id, overrides=overrides or None)
             else:
                 apply_effect_by_id(actor, effect_id, overrides=overrides or None)
+            if effect_id == "shadowfiend":
+                actor.minions["shadowfiend"] = 1
             if entry.get("log"):
                 log_parts.append(entry["log"])
         for entry in ability.get("target_effects", []) or []:
@@ -712,6 +714,7 @@ def resolve_turn(match: MatchState) -> None:
         if ability_id == "shadowfiend":
             remove_effect(actor, "shadowfiend")
             apply_effect_by_id(actor, "shadowfiend", overrides={"duration": 5})
+            actor.minions["shadowfiend"] = 1
             set_cooldown(actor, ability_id, ability)
             return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
 
@@ -1484,6 +1487,11 @@ def resolve_turn(match: MatchState) -> None:
             target.minions["imp"] = 0
             source_name = ability.get("name", "AoE damage")
             match.log.append(f"{target_sid[:5]}'s Imps are destroyed by {source_name}.")
+        if int((target.minions or {}).get("shadowfiend", 0)) > 0:
+            target.minions["shadowfiend"] = 0
+            remove_effect(target, "shadowfiend")
+            source_name = ability.get("name", "AoE damage")
+            match.log.append(f"{target_sid[:5]}'s Shadowfiend is slain by {source_name}.")
 
     # End of turn processing for both players (DoTs, passives, duration ticks, regen)
     for sid in sids:
@@ -1550,33 +1558,62 @@ def resolve_turn(match: MatchState) -> None:
                     totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
                     totals["damage"] += remaining
 
-        if has_effect(ps, "shadowfiend") and ps.res and ps.res.hp > 0 and opponent.res and opponent.res.hp > 0:
-            fiend_roll = roll("d4", r)
-            fiend_raw = base_damage(modify_stat(ps, "int", ps.stats.get("int", 0)), 0.6, fiend_roll)
-            fiend_reduced = mitigate(fiend_raw, modify_stat(opponent, "def", opponent.stats.get("def", 0)))
-            fiend_reduced = max(0, fiend_reduced - modify_stat(opponent, "physical_reduction", opponent.stats.get("physical_reduction", 0)))
-            fiend_reduced = int(fiend_reduced * mitigation_multiplier(opponent))
-            if is_damage_immune(opponent, "physical"):
-                fiend_reduced = 0
-            if fiend_reduced > 0:
-                absorb_source_name = (opponent.res.absorb_source if opponent.res else None) or "Shield"
-                absorbed, remaining = consume_absorb(opponent, fiend_reduced)
-                if remaining > 0:
-                    opponent.res.hp -= remaining
-                    match.log.append(
-                        f"Shadowfiend melee attacks {opponent_sid[:5]} for {remaining} damage"
-                        f"{absorb_suffix(absorbed, absorb_source_name)}"
-                    )
-                    fiend_totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
-                    fiend_totals["damage"] += remaining
-                elif absorbed > 0:
-                    match.log.append(
-                        f"Shadowfiend melee attacks {opponent_sid[:5]} for 0 damage"
-                        f"{absorb_suffix(absorbed, absorb_source_name)}"
-                    )
-                if absorbed > 0 or remaining > 0:
-                    ps.res.mp = min(ps.res.mp + 13, ps.res.mp_max)
-                    match.log.append(f"Shadowfiend restores 13 mana for {sid[:5]}.")
+        shadowfiend_alive = (
+            int((ps.minions or {}).get("shadowfiend", 0)) > 0
+            and has_effect(ps, "shadowfiend")
+        )
+        if shadowfiend_alive and ps.res and ps.res.hp > 0 and opponent.res and opponent.res.hp > 0:
+            shadowfiend_ability = {
+                "requires_target": True,
+                "damage_type": "physical",
+                "tags": ["attack", "physical"],
+            }
+            shadowfiend_misses = False
+            if should_miss_due_to_stealth(ps, opponent, shadowfiend_ability, stealth_targeting) or is_stealthed(opponent):
+                match.log.append("Shadowfiend melee attacks. Target is stealthed — Miss!")
+                shadowfiend_misses = True
+            elif has_flag(opponent, "untargetable"):
+                match.log.append(f"Shadowfiend melee attacks. {untargetable_miss_log(opponent)}")
+                shadowfiend_misses = True
+            elif has_flag(opponent, "evade_all") and can_evasion_force_miss(shadowfiend_ability, True):
+                match.log.append("Shadowfiend melee attacks. Target evades the attack — Miss!")
+                shadowfiend_misses = True
+            else:
+                accuracy = hit_chance(
+                    modify_stat(ps, "acc", ps.stats.get("acc", 0)),
+                    modify_stat(opponent, "eva", opponent.stats.get("eva", 0)),
+                )
+                if r.randint(1, 100) > accuracy:
+                    match.log.append("Shadowfiend melee attacks. Miss!")
+                    shadowfiend_misses = True
+
+            if not shadowfiend_misses:
+                fiend_roll = roll("d4", r)
+                fiend_raw = base_damage(modify_stat(ps, "int", ps.stats.get("int", 0)), 0.6, fiend_roll)
+                fiend_reduced = mitigate(fiend_raw, modify_stat(opponent, "def", opponent.stats.get("def", 0)))
+                fiend_reduced = max(0, fiend_reduced - modify_stat(opponent, "physical_reduction", opponent.stats.get("physical_reduction", 0)))
+                fiend_reduced = int(fiend_reduced * mitigation_multiplier(opponent))
+                if is_damage_immune(opponent, "physical"):
+                    fiend_reduced = 0
+                if fiend_reduced > 0:
+                    absorb_source_name = (opponent.res.absorb_source if opponent.res else None) or "Shield"
+                    absorbed, remaining = consume_absorb(opponent, fiend_reduced)
+                    if remaining > 0:
+                        opponent.res.hp -= remaining
+                        match.log.append(
+                            f"Shadowfiend melee attacks {opponent_sid[:5]} for {remaining} damage"
+                            f"{absorb_suffix(absorbed, absorb_source_name)}"
+                        )
+                        fiend_totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
+                        fiend_totals["damage"] += remaining
+                    elif absorbed > 0:
+                        match.log.append(
+                            f"Shadowfiend melee attacks {opponent_sid[:5]} for 0 damage"
+                            f"{absorb_suffix(absorbed, absorb_source_name)}"
+                        )
+                    if absorbed > 0 or remaining > 0:
+                        ps.res.mp = min(ps.res.mp + 13, ps.res.mp_max)
+                        match.log.append(f"Shadowfiend restores 13 mana for {sid[:5]}.")
 
         totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
         totals["healing"] += int(end_summary.get("healing_done", 0) or 0)
@@ -1587,6 +1624,8 @@ def resolve_turn(match: MatchState) -> None:
     for sid in sids:
         ps = match.state[sid]
         ps.effects = tick_durations(ps.effects)
+        if not has_effect(ps, "shadowfiend"):
+            ps.minions["shadowfiend"] = 0
         tick_cooldowns(ps)
 
     # Check for winners
