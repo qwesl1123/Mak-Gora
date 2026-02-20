@@ -913,8 +913,9 @@ def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[dict[str, Any
 
         absorb_source_name = ps.res.absorb_source or "Shield"
         absorbed, remaining = consume_absorb(ps, reduced)
-        if absorbed > 0:
-            log.append(f"{absorb_source_name} absorbs {absorbed} damage for {label}.")
+        effect_name = effect.get("name", "DoT")
+        absorb_suffix = f" ({absorbed} absorbed by {absorb_source_name})" if absorbed > 0 else ""
+        log.append(f"{label} suffers {remaining} damage from {effect_name}{absorb_suffix}.")
         if remaining <= 0:
             continue
 
@@ -923,8 +924,6 @@ def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[dict[str, Any
         if current_form_id(ps) == "bear_form":
             ps.res.rage = min(ps.res.rage + remaining, ps.res.rage_max)
         break_stealth_on_damage(ps, remaining)
-        effect_name = effect.get("name", "DoT")
-        log.append(f"{label} suffers {remaining} damage from {effect_name}.")
         if was_stealthed and not is_stealthed(ps):
             log.append(f"{label} stealth broken by {effect_name}.")
         source_sid = effect.get("source_sid")

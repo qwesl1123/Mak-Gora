@@ -860,7 +860,10 @@ def resolve_turn(match: MatchState) -> None:
                 if death_doubled and reduced > 0:
                     reduced *= 2
                     log_parts.append(f"{prefix}Damage Doubled!")
-                log_parts.append(f"{prefix}Deals {reduced} damage.")
+                if reduced > 0:
+                    log_parts.append(f"{prefix}Deals __DMG_{len(per_hit_damage_values)}__ damage.")
+                else:
+                    log_parts.append(f"{prefix}Deals 0 damage.")
 
             if reduced > 0 and on_hit_base_damage == 0:
                 on_hit_base_damage = reduced
@@ -980,8 +983,13 @@ def resolve_turn(match: MatchState) -> None:
         if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
             remove_stealth(actor)
 
+        damage_instances = [value for value in per_hit_damage_values if value > 0]
+        if total_damage > sum(damage_instances):
+            damage_instances.append(total_damage - sum(damage_instances))
+
         return {
             "damage": total_damage,
+            "damage_instances": damage_instances,
             "healing": total_healing,
             "log": " ".join(log_parts),
             "extra_logs": extra_logs,
@@ -1271,40 +1279,91 @@ def resolve_turn(match: MatchState) -> None:
     # Resolve both actions
     result1 = finalize_action(sids[0], sids[1], a1, contexts[sids[0]])
     result2 = finalize_action(sids[1], sids[0], a2, contexts[sids[1]])
-    match.log.append(result1["log"])
-    match.log.extend(result1.get("extra_logs", []))
-    match.log.append(result2["log"])
-    match.log.extend(result2.get("extra_logs", []))
     for sid, result in ((sids[0], result1), (sids[1], result2)):
         totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
         totals["damage"] += int(result.get("damage", 0) or 0)
         totals["healing"] += int(result.get("healing", 0) or 0)
 
+    def absorb_suffix(absorbed: int, absorb_source_name: str) -> str:
+        if absorbed <= 0:
+            return ""
+        return f" ({absorbed} absorbed by {absorb_source_name})"
+
+    def format_damage_log(log_text: str, damage_breakdown: Dict[str, Any]) -> str:
+        if not log_text:
+            return ""
+        instances = list(damage_breakdown.get("instances", []) or [])
+        if not instances:
+            absorbed = int(damage_breakdown.get("absorbed", 0) or 0)
+            if absorbed > 0:
+                source_name = damage_breakdown.get("absorb_source") or "Shield"
+                return f"{log_text}{absorb_suffix(absorbed, source_name)}"
+            return log_text
+        updated = log_text
+        for idx, instance in enumerate(instances):
+            token = f"__DMG_{idx}__"
+            token_with_damage = f"{token} damage"
+            hp_damage = int(instance.get("hp_damage", 0) or 0)
+            absorbed = int(instance.get("absorbed", 0) or 0)
+            source_name = instance.get("absorb_source") or damage_breakdown.get("absorb_source") or "Shield"
+            replacement = f"{hp_damage} damage{absorb_suffix(absorbed, source_name)}"
+            if token_with_damage in updated:
+                updated = updated.replace(token_with_damage, replacement, 1)
+            else:
+                updated = updated.replace(token, str(hp_damage), 1)
+        return updated
+
     # Apply damage
-    def apply_damage(target: PlayerState, incoming: int, target_sid: str, source_ability_name: str) -> int:
+    def apply_damage(
+        target: PlayerState,
+        incoming: int,
+        target_sid: str,
+        source_ability_name: str,
+        damage_instances: list[int] | None = None,
+    ) -> Dict[str, Any]:
         if incoming <= 0 or not target.res:
-            return 0
+            return {"hp_damage": 0, "absorbed": 0, "absorb_source": "Shield", "instances": []}
         if is_immune_all(target):
             match.log.append(f"{target_sid[:5]} is immune and takes no damage.")
-            return 0
+            return {"hp_damage": 0, "absorbed": 0, "absorb_source": "Shield", "instances": []}
         if has_flag(target, "cycloned"):
             match.log.append(f"{target_sid[:5]} is cycloned and takes no damage.")
-            return 0
+            return {"hp_damage": 0, "absorbed": 0, "absorb_source": "Shield", "instances": []}
+
         absorb_source_name = (target.res.absorb_source if target.res else None) or "Shield"
-        absorbed, remaining = consume_absorb(target, incoming)
-        if absorbed > 0:
-            match.log.append(f"{absorb_source_name} absorbs {absorbed} damage for {target_sid[:5]}.")
-        if remaining > 0:
-            target.res.hp -= remaining
+        instance_values = [max(0, int(value or 0)) for value in (damage_instances or []) if int(value or 0) > 0]
+        accounted = sum(instance_values)
+        if incoming > accounted:
+            instance_values.append(incoming - accounted)
+        if not instance_values:
+            instance_values = [incoming]
+
+        instance_results: list[Dict[str, Any]] = []
+        total_absorbed = 0
+        total_remaining = 0
+        for value in instance_values:
+            source_name = (target.res.absorb_source if target.res else None) or absorb_source_name
+            absorbed, remaining = consume_absorb(target, value)
+            total_absorbed += absorbed
+            total_remaining += remaining
+            instance_results.append({"absorbed": absorbed, "hp_damage": remaining, "absorb_source": source_name})
+
+        if total_remaining > 0:
+            target.res.hp -= total_remaining
             was_stealthed = is_stealthed(target)
-            break_stealth_on_damage(target, remaining)
+            break_stealth_on_damage(target, total_remaining)
             if was_stealthed and not is_stealthed(target):
                 match.log.append(f"{target_sid[:5]} stealth broken by {source_ability_name}.")
             if current_form_id(target) == "bear_form":
                 current = target.res.rage
                 cap = target.res.rage_max
-                target.res.rage = min(current + remaining, cap)
-        return max(0, remaining)
+                target.res.rage = min(current + total_remaining, cap)
+        return {
+            "hp_damage": max(0, total_remaining),
+            "absorbed": total_absorbed,
+            "absorb_source": absorb_source_name,
+            "instances": instance_results,
+        }
 
     def trigger_shield_of_vengeance_explosion(owner_sid: str, enemy_sid: str) -> None:
         owner = match.state[owner_sid]
@@ -1332,8 +1391,27 @@ def resolve_turn(match: MatchState) -> None:
 
     source_name_1 = ABILITIES.get(result1.get("ability_id", ""), {}).get("name", "attack")
     source_name_2 = ABILITIES.get(result2.get("ability_id", ""), {}).get("name", "attack")
-    dealt1 = apply_damage(match.state[sids[1]], result1["damage"], sids[1], source_name_1)
-    dealt2 = apply_damage(match.state[sids[0]], result2["damage"], sids[0], source_name_2)
+    dealt1_data = apply_damage(
+        match.state[sids[1]],
+        result1["damage"],
+        sids[1],
+        source_name_1,
+        result1.get("damage_instances"),
+    )
+    dealt2_data = apply_damage(
+        match.state[sids[0]],
+        result2["damage"],
+        sids[0],
+        source_name_2,
+        result2.get("damage_instances"),
+    )
+    dealt1 = int(dealt1_data.get("hp_damage", 0) or 0)
+    dealt2 = int(dealt2_data.get("hp_damage", 0) or 0)
+
+    match.log.append(format_damage_log(result1["log"], dealt1_data))
+    match.log.extend(result1.get("extra_logs", []))
+    match.log.append(format_damage_log(result2["log"], dealt2_data))
+    match.log.extend(result2.get("extra_logs", []))
 
     for actor_sid, dealt, result in ((sids[0], dealt1, result1), (sids[1], dealt2, result2)):
         ability = ABILITIES.get(result.get("ability_id", ""), {})
@@ -1455,8 +1533,6 @@ def resolve_turn(match: MatchState) -> None:
                     reduced = 0
                 absorb_source_name = (opponent.res.absorb_source if opponent.res else None) or "Shield"
                 absorbed, remaining = consume_absorb(opponent, reduced)
-                if absorbed > 0:
-                    match.log.append(f"{absorb_source_name} absorbs {absorbed} damage for {opponent_sid[:5]}.")
                 if remaining > 0:
                     opponent.res.hp -= remaining
                     if current_form_id(opponent) == "bear_form":
@@ -1465,7 +1541,12 @@ def resolve_turn(match: MatchState) -> None:
                     break_stealth_on_damage(opponent, remaining)
                     if was_stealthed and not is_stealthed(opponent):
                         match.log.append(f"{opponent_sid[:5]} stealth broken by Imp Firebolt.")
-                    match.log.append(f"{sid[:5]}'s Imp casts Firebolt for {remaining} damage.")
+                if absorbed > 0 or remaining > 0:
+                    match.log.append(
+                        f"{sid[:5]}'s Imp casts Firebolt for {remaining} damage"
+                        f"{absorb_suffix(absorbed, absorb_source_name)}."
+                    )
+                if remaining > 0:
                     totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
                     totals["damage"] += remaining
 
@@ -1480,13 +1561,19 @@ def resolve_turn(match: MatchState) -> None:
             if fiend_reduced > 0:
                 absorb_source_name = (opponent.res.absorb_source if opponent.res else None) or "Shield"
                 absorbed, remaining = consume_absorb(opponent, fiend_reduced)
-                if absorbed > 0:
-                    match.log.append(f"{absorb_source_name} absorbs {absorbed} damage for {opponent_sid[:5]}.")
                 if remaining > 0:
                     opponent.res.hp -= remaining
-                    match.log.append(f"Shadowfiend melee attacks {opponent_sid[:5]} for {remaining} damage")
+                    match.log.append(
+                        f"Shadowfiend melee attacks {opponent_sid[:5]} for {remaining} damage"
+                        f"{absorb_suffix(absorbed, absorb_source_name)}"
+                    )
                     fiend_totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
                     fiend_totals["damage"] += remaining
+                elif absorbed > 0:
+                    match.log.append(
+                        f"Shadowfiend melee attacks {opponent_sid[:5]} for 0 damage"
+                        f"{absorb_suffix(absorbed, absorb_source_name)}"
+                    )
                 if absorbed > 0 or remaining > 0:
                     ps.res.mp = min(ps.res.mp + 13, ps.res.mp_max)
                     match.log.append(f"Shadowfiend restores 13 mana for {sid[:5]}.")
