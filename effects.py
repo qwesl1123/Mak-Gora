@@ -914,8 +914,9 @@ def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[dict[str, Any
         absorb_source_name = ps.res.absorb_source or "Shield"
         absorbed, remaining = consume_absorb(ps, reduced)
         effect_name = effect.get("name", "DoT")
+        total_incoming = remaining + absorbed
         absorb_suffix = f" ({absorbed} absorbed by {absorb_source_name})" if absorbed > 0 else ""
-        log.append(f"{label} suffers {remaining} damage from {effect_name}{absorb_suffix}.")
+        log.append(f"{label} suffers {total_incoming} damage from {effect_name}{absorb_suffix}.")
         if remaining <= 0:
             continue
 

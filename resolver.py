@@ -1308,12 +1308,13 @@ def resolve_turn(match: MatchState) -> None:
             token_with_damage = f"{token} damage"
             hp_damage = int(instance.get("hp_damage", 0) or 0)
             absorbed = int(instance.get("absorbed", 0) or 0)
+            total_incoming = hp_damage + absorbed
             source_name = instance.get("absorb_source") or damage_breakdown.get("absorb_source") or "Shield"
-            replacement = f"{hp_damage} damage{absorb_suffix(absorbed, source_name)}"
+            replacement = f"{total_incoming} damage{absorb_suffix(absorbed, source_name)}"
             if token_with_damage in updated:
                 updated = updated.replace(token_with_damage, replacement, 1)
             else:
-                updated = updated.replace(token, str(hp_damage), 1)
+                updated = updated.replace(token, str(total_incoming), 1)
         return updated
 
     # Apply damage
@@ -1550,8 +1551,9 @@ def resolve_turn(match: MatchState) -> None:
                     if was_stealthed and not is_stealthed(opponent):
                         match.log.append(f"{opponent_sid[:5]} stealth broken by Imp Firebolt.")
                 if absorbed > 0 or remaining > 0:
+                    total_incoming = remaining + absorbed
                     match.log.append(
-                        f"{sid[:5]}'s Imp casts Firebolt for {remaining} damage"
+                        f"{sid[:5]}'s Imp casts Firebolt for {total_incoming} damage"
                         f"{absorb_suffix(absorbed, absorb_source_name)}."
                     )
                 if remaining > 0:
@@ -1598,17 +1600,18 @@ def resolve_turn(match: MatchState) -> None:
                 if fiend_reduced > 0:
                     absorb_source_name = (opponent.res.absorb_source if opponent.res else None) or "Shield"
                     absorbed, remaining = consume_absorb(opponent, fiend_reduced)
+                    total_incoming = remaining + absorbed
                     if remaining > 0:
                         opponent.res.hp -= remaining
                         match.log.append(
-                            f"Shadowfiend melee attacks {opponent_sid[:5]} for {remaining} damage"
+                            f"Shadowfiend melee attacks {opponent_sid[:5]} for {total_incoming} damage"
                             f"{absorb_suffix(absorbed, absorb_source_name)}"
                         )
                         fiend_totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
                         fiend_totals["damage"] += remaining
                     elif absorbed > 0:
                         match.log.append(
-                            f"Shadowfiend melee attacks {opponent_sid[:5]} for 0 damage"
+                            f"Shadowfiend melee attacks {opponent_sid[:5]} for {total_incoming} damage"
                             f"{absorb_suffix(absorbed, absorb_source_name)}"
                         )
                     if absorbed > 0 or remaining > 0:
