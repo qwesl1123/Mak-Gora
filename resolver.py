@@ -1437,12 +1437,7 @@ def resolve_turn(match: MatchState) -> None:
         if flipped_heal > 0:
             formatted = f"{formatted} Mindgames flips damage into {flipped_heal} healing for the target."
         match.log.append(formatted)
-        hp_damage = int(dealt_data.get("hp_damage", 0) or 0)
-        if hp_damage > 0 and int((target_ps.minions or {}).get("shadowfiend", 0)) > 0:
-            target_ps.minions["shadowfiend"] = 0
-            remove_effect(target_ps, "shadowfiend")
-            match.log.append(f"{target_sid[:5]}'s Shadowfiend is slain by {dot_name}.")
-        return hp_damage
+        return int(dealt_data.get("hp_damage", 0) or 0)
 
     source_name_1 = ABILITIES.get(result1.get("ability_id", ""), {}).get("name", "attack")
     source_name_2 = ABILITIES.get(result2.get("ability_id", ""), {}).get("name", "attack")
