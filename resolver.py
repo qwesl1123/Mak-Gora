@@ -965,12 +965,7 @@ def resolve_turn(match: MatchState) -> None:
                     cap = getattr(actor.res, f"{resource}_max", current)
                     setattr(actor.res, resource, max(0, min(current + gain_value, cap)))
 
-        if has_effect(actor, "mindgames") and total_damage > 0:
-            before_hp = target.res.hp
-            target.res.hp = min(target.res.hp + total_damage, target.res.hp_max)
-            healed = target.res.hp - before_hp
-            log_parts.append(f"Mindgames flips damage into {healed} healing for the target.")
-            total_damage = 0
+        mindgames_flip_damage = bool(has_effect(actor, "mindgames") and total_damage > 0)
 
         if ability.get("consume_effect"):
             remove_effect(actor, ability["consume_effect"])
@@ -997,6 +992,7 @@ def resolve_turn(match: MatchState) -> None:
             "log": " ".join(log_parts),
             "extra_logs": extra_logs,
             "ability_id": ability_id,
+            "mindgames_flip_damage": mindgames_flip_damage,
         }
 
     def build_immediate_resolution(actor_sid: str, target_sid: str, action: Dict[str, Any]) -> Dict[str, Any]:
@@ -1296,11 +1292,14 @@ def resolve_turn(match: MatchState) -> None:
         if not log_text:
             return ""
         instances = list(damage_breakdown.get("instances", []) or [])
+        absorb_notes: list[str] = []
         if not instances:
             absorbed = int(damage_breakdown.get("absorbed", 0) or 0)
             if absorbed > 0:
                 source_name = damage_breakdown.get("absorb_source") or "Shield"
-                return f"{log_text}{absorb_suffix(absorbed, source_name)}"
+                absorb_notes.append(absorb_suffix(absorbed, source_name).strip())
+            if absorb_notes:
+                return f"{log_text} {' '.join(absorb_notes)}"
             return log_text
         updated = log_text
         for idx, instance in enumerate(instances):
@@ -1310,29 +1309,35 @@ def resolve_turn(match: MatchState) -> None:
             absorbed = int(instance.get("absorbed", 0) or 0)
             total_incoming = hp_damage + absorbed
             source_name = instance.get("absorb_source") or damage_breakdown.get("absorb_source") or "Shield"
-            replacement = f"{total_incoming} damage{absorb_suffix(absorbed, source_name)}"
+            if absorbed > 0:
+                absorb_notes.append(absorb_suffix(absorbed, source_name).strip())
+            replacement = f"{total_incoming} damage"
             if token_with_damage in updated:
                 updated = updated.replace(token_with_damage, replacement, 1)
             else:
                 updated = updated.replace(token, str(total_incoming), 1)
+        if absorb_notes:
+            updated = f"{updated} {' '.join(absorb_notes)}"
         return updated
 
     # Apply damage
     def apply_damage(
+        source: PlayerState,
         target: PlayerState,
         incoming: int,
         target_sid: str,
         source_ability_name: str,
+        mindgames_flip_damage: bool = False,
         damage_instances: list[int] | None = None,
     ) -> Dict[str, Any]:
         if incoming <= 0 or not target.res:
-            return {"hp_damage": 0, "absorbed": 0, "absorb_source": "Shield", "instances": []}
+            return {"hp_damage": 0, "absorbed": 0, "absorb_source": "Shield", "instances": [], "mindgames_healing": 0}
         if is_immune_all(target):
             match.log.append(f"{target_sid[:5]} is immune and takes no damage.")
-            return {"hp_damage": 0, "absorbed": 0, "absorb_source": "Shield", "instances": []}
+            return {"hp_damage": 0, "absorbed": 0, "absorb_source": "Shield", "instances": [], "mindgames_healing": 0}
         if has_flag(target, "cycloned"):
             match.log.append(f"{target_sid[:5]} is cycloned and takes no damage.")
-            return {"hp_damage": 0, "absorbed": 0, "absorb_source": "Shield", "instances": []}
+            return {"hp_damage": 0, "absorbed": 0, "absorb_source": "Shield", "instances": [], "mindgames_healing": 0}
 
         absorb_source_name = (target.res.absorb_source if target.res else None) or "Shield"
         instance_values = [max(0, int(value or 0)) for value in (damage_instances or []) if int(value or 0) > 0]
@@ -1341,6 +1346,18 @@ def resolve_turn(match: MatchState) -> None:
             instance_values.append(incoming - accounted)
         if not instance_values:
             instance_values = [incoming]
+
+        if mindgames_flip_damage and source.sid != target.sid:
+            before_hp = target.res.hp
+            target.res.hp = min(target.res.hp + incoming, target.res.hp_max)
+            instance_results = [{"absorbed": 0, "hp_damage": value, "absorb_source": absorb_source_name} for value in instance_values]
+            return {
+                "hp_damage": 0,
+                "absorbed": 0,
+                "absorb_source": absorb_source_name,
+                "instances": instance_results,
+                "mindgames_healing": incoming,
+            }
 
         instance_results: list[Dict[str, Any]] = []
         total_absorbed = 0
@@ -1367,6 +1384,7 @@ def resolve_turn(match: MatchState) -> None:
             "absorbed": total_absorbed,
             "absorb_source": absorb_source_name,
             "instances": instance_results,
+            "mindgames_healing": 0,
         }
 
     def trigger_shield_of_vengeance_explosion(owner_sid: str, enemy_sid: str) -> None:
@@ -1393,28 +1411,77 @@ def resolve_turn(match: MatchState) -> None:
         totals = match.combat_totals.setdefault(owner_sid, {"damage": 0, "healing": 0})
         totals["damage"] += absorbed_total
 
+    def resolve_dot_tick(source_sid: str, target_sid: str, source: Dict[str, Any]) -> int:
+        source_ps = match.state.get(source_sid)
+        target_ps = match.state.get(target_sid)
+        if not source_ps or not target_ps or not target_ps.res:
+            return 0
+        incoming = int(source.get("incoming", 0) or 0)
+        if incoming <= 0:
+            return 0
+        dot_name = source.get("effect_name") or effect_name(source.get("effect_id") or "dot")
+        dealt_data = apply_damage(
+            source_ps,
+            target_ps,
+            incoming,
+            target_sid,
+            dot_name,
+            bool(has_effect(source_ps, "mindgames")),
+            [incoming],
+        )
+        formatted = format_damage_log(
+            f"{target_sid[:5]} suffers __DMG_0__ damage from {dot_name}.",
+            dealt_data,
+        )
+        flipped_heal = int(dealt_data.get("mindgames_healing", 0) or 0)
+        if flipped_heal > 0:
+            formatted = f"{formatted} Mindgames flips damage into {flipped_heal} healing for the target."
+        match.log.append(formatted)
+        hp_damage = int(dealt_data.get("hp_damage", 0) or 0)
+        if hp_damage > 0 and int((target_ps.minions or {}).get("shadowfiend", 0)) > 0:
+            target_ps.minions["shadowfiend"] = 0
+            remove_effect(target_ps, "shadowfiend")
+            match.log.append(f"{target_sid[:5]}'s Shadowfiend is slain by {dot_name}.")
+        return hp_damage
+
     source_name_1 = ABILITIES.get(result1.get("ability_id", ""), {}).get("name", "attack")
     source_name_2 = ABILITIES.get(result2.get("ability_id", ""), {}).get("name", "attack")
     dealt1_data = apply_damage(
+        match.state[sids[0]],
         match.state[sids[1]],
         result1["damage"],
         sids[1],
         source_name_1,
+        bool(result1.get("mindgames_flip_damage")),
         result1.get("damage_instances"),
     )
     dealt2_data = apply_damage(
+        match.state[sids[1]],
         match.state[sids[0]],
         result2["damage"],
         sids[0],
         source_name_2,
+        bool(result2.get("mindgames_flip_damage")),
         result2.get("damage_instances"),
     )
     dealt1 = int(dealt1_data.get("hp_damage", 0) or 0)
     dealt2 = int(dealt2_data.get("hp_damage", 0) or 0)
 
-    match.log.append(format_damage_log(result1["log"], dealt1_data))
+    result1_log = format_damage_log(result1["log"], dealt1_data)
+    if int(dealt1_data.get("mindgames_healing", 0) or 0) > 0:
+        result1_log = (
+            f"{result1_log} Mindgames flips damage into "
+            f"{int(dealt1_data.get('mindgames_healing', 0) or 0)} healing for the target."
+        )
+    match.log.append(result1_log)
     match.log.extend(result1.get("extra_logs", []))
-    match.log.append(format_damage_log(result2["log"], dealt2_data))
+    result2_log = format_damage_log(result2["log"], dealt2_data)
+    if int(dealt2_data.get("mindgames_healing", 0) or 0) > 0:
+        result2_log = (
+            f"{result2_log} Mindgames flips damage into "
+            f"{int(dealt2_data.get('mindgames_healing', 0) or 0)} healing for the target."
+        )
+    match.log.append(result2_log)
     match.log.extend(result2.get("extra_logs", []))
 
     for actor_sid, dealt, result in ((sids[0], dealt1, result1), (sids[1], dealt2, result2)):
@@ -1502,8 +1569,10 @@ def resolve_turn(match: MatchState) -> None:
         end_summary = end_of_turn(ps, match.log, sid[:5])
         for source in end_summary.get("damage_sources", []):
             source_sid = source.get("source_sid")
-            damage = int(source.get("damage", 0) or 0)
-            if not source_sid or damage <= 0:
+            if not source_sid:
+                continue
+            damage = resolve_dot_tick(source_sid, sid, source)
+            if damage <= 0:
                 continue
             totals = match.combat_totals.setdefault(source_sid, {"damage": 0, "healing": 0})
             totals["damage"] += damage
@@ -1552,10 +1621,10 @@ def resolve_turn(match: MatchState) -> None:
                         match.log.append(f"{opponent_sid[:5]} stealth broken by Imp Firebolt.")
                 if absorbed > 0 or remaining > 0:
                     total_incoming = remaining + absorbed
-                    match.log.append(
-                        f"{sid[:5]}'s Imp casts Firebolt for {total_incoming} damage"
-                        f"{absorb_suffix(absorbed, absorb_source_name)}."
-                    )
+                    imp_log = f"{sid[:5]}'s Imp casts Firebolt for {total_incoming} damage."
+                    if absorbed > 0:
+                        imp_log = f"{imp_log} {absorb_suffix(absorbed, absorb_source_name).strip()}"
+                    match.log.append(imp_log)
                 if remaining > 0:
                     totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
                     totals["damage"] += remaining
@@ -1603,17 +1672,17 @@ def resolve_turn(match: MatchState) -> None:
                     total_incoming = remaining + absorbed
                     if remaining > 0:
                         opponent.res.hp -= remaining
-                        match.log.append(
-                            f"Shadowfiend melee attacks {opponent_sid[:5]} for {total_incoming} damage"
-                            f"{absorb_suffix(absorbed, absorb_source_name)}"
-                        )
+                        fiend_log = f"Shadowfiend melee attacks {opponent_sid[:5]} for {total_incoming} damage."
+                        if absorbed > 0:
+                            fiend_log = f"{fiend_log} {absorb_suffix(absorbed, absorb_source_name).strip()}"
+                        match.log.append(fiend_log)
                         fiend_totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
                         fiend_totals["damage"] += remaining
                     elif absorbed > 0:
-                        match.log.append(
-                            f"Shadowfiend melee attacks {opponent_sid[:5]} for {total_incoming} damage"
-                            f"{absorb_suffix(absorbed, absorb_source_name)}"
-                        )
+                        fiend_log = f"Shadowfiend melee attacks {opponent_sid[:5]} for {total_incoming} damage."
+                        if absorbed > 0:
+                            fiend_log = f"{fiend_log} {absorb_suffix(absorbed, absorb_source_name).strip()}"
+                        match.log.append(fiend_log)
                     if absorbed > 0 or remaining > 0:
                         ps.res.mp = min(ps.res.mp + 13, ps.res.mp_max)
                         match.log.append(f"Shadowfiend restores 13 mana for {sid[:5]}.")

@@ -877,7 +877,7 @@ def damage_multiplier_from_passives(attacker: PlayerState) -> float:
     return multiplier
 
 def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[dict[str, Any]]:
-    """Apply DoT damage with typed mitigation + absorb routing."""
+    """Compute DoT tick events after mitigation; resolution/logging happens in resolver."""
     if is_immune_all(ps):
         return []
     damage_sources: list[dict[str, Any]] = []
@@ -911,30 +911,14 @@ def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[dict[str, Any
                 reduced = 0
         reduced = int(reduced * mitigation_multiplier(ps))
 
-        absorb_source_name = ps.res.absorb_source or "Shield"
-        absorbed, remaining = consume_absorb(ps, reduced)
-        effect_name = effect.get("name", "DoT")
-        total_incoming = remaining + absorbed
-        absorb_suffix = f" ({absorbed} absorbed by {absorb_source_name})" if absorbed > 0 else ""
-        log.append(f"{label} suffers {total_incoming} damage from {effect_name}{absorb_suffix}.")
-        if remaining <= 0:
-            continue
-
-        was_stealthed = is_stealthed(ps)
-        ps.res.hp -= remaining
-        if current_form_id(ps) == "bear_form":
-            ps.res.rage = min(ps.res.rage + remaining, ps.res.rage_max)
-        break_stealth_on_damage(ps, remaining)
-        if was_stealthed and not is_stealthed(ps):
-            log.append(f"{label} stealth broken by {effect_name}.")
         source_sid = effect.get("source_sid")
-        if source_sid:
-            damage_sources.append({
-                "source_sid": source_sid,
-                "damage": remaining,
-                "effect_id": effect.get("id"),
-                "lifesteal_pct": float(effect.get("lifesteal_pct", 0) or 0),
-            })
+        damage_sources.append({
+            "source_sid": source_sid,
+            "incoming": reduced,
+            "effect_id": effect.get("id"),
+            "effect_name": effect.get("name", "DoT"),
+            "lifesteal_pct": float(effect.get("lifesteal_pct", 0) or 0),
+        })
     return damage_sources
 
 
