@@ -133,16 +133,37 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
     "shield_of_vengeance": {
         "type": "status",
         "name": "Shield of Vengeance",
-        "duration": 3,
+        "duration": 8,
         "category": "absorb",
+        "dispellable": True,
         "flags": {"shield_of_vengeance": True},
-        "absorb_total": 0,
+        "absorbed": 0,
+    },
+    "ignore_pain": {
+        "type": "status",
+        "name": "Ignore Pain",
+        "duration": 8,
+        "category": "absorb",
     },
     "shielded": {
         "type": "status",
         "name": "Shielded",
         "duration": 2,
         "category": "absorb",
+    },
+    "power_word_shield": {
+        "type": "status",
+        "name": "Power Word: Shield",
+        "duration": 8,
+        "category": "absorb",
+        "dispellable": True,
+    },
+    "ice_barrier": {
+        "type": "status",
+        "name": "Ice Barrier",
+        "duration": 8,
+        "category": "absorb",
+        "dispellable": True,
     },
     "mind_blast_empowered": {
         "type": "status",
@@ -215,6 +236,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "type": "status",
         "name": "Avenging Wrath",
         "duration": 4,
+        "dispellable": True,
         "outgoing_damage_mult": 1.2,
         "flags": {"avenging_wrath": True},
     },
@@ -306,6 +328,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "type": "status",
         "name": "Frenzied Regeneration",
         "duration": 4,
+        "dispellable": False,
         "regen": {"hp": 0},
     },
     "regrowth": {
@@ -352,6 +375,23 @@ def tick_durations(effects: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return new_list
 
 
+def tick_player_effects(ps: PlayerState) -> None:
+    """Tick effect durations while ensuring expiry goes through remove_effect()."""
+    expired_ids: List[str] = []
+    for effect in list(ps.effects):
+        if is_permanent(effect):
+            continue
+        next_duration = int(effect.get("duration", 0) or 0) - 1
+        if next_duration > 0:
+            effect["duration"] = next_duration
+            continue
+        effect_id = effect.get("id")
+        if effect_id:
+            expired_ids.append(effect_id)
+    for effect_id in expired_ids:
+        remove_effect(ps, effect_id)
+
+
 def build_effect(effect_id: str, overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     if effect_id not in EFFECT_TEMPLATES:
         return {}
@@ -374,6 +414,8 @@ def apply_effect_by_id(
     effect = build_effect(effect_id, overrides=overrides)
     if not effect:
         return
+    if effect.get("category") == "absorb":
+        remove_effect(target, effect_id)
     target.effects.append(effect)
     if log is not None and log_message:
         prefix = f"{label} " if label else ""
@@ -419,6 +461,8 @@ def apply_form(
 
 def remove_effect(target: PlayerState, effect_id: str) -> None:
     target.effects = [effect for effect in target.effects if effect.get("id") != effect_id]
+    if target.res and effect_id in target.res.absorbs:
+        del target.res.absorbs[effect_id]
 
 
 def remove_stealth(target: PlayerState) -> None:
@@ -544,8 +588,7 @@ def apply_burn(
 
 
 def dispel_effects(ps: PlayerState, *, category: Optional[str] = None, school: Optional[str] = None) -> int:
-    remaining: List[Dict[str, Any]] = []
-    removed = 0
+    to_remove: List[str] = []
     for effect in ps.effects:
         effect_category = effect.get("category")
         effect_school = effect.get("school")
@@ -553,11 +596,18 @@ def dispel_effects(ps: PlayerState, *, category: Optional[str] = None, school: O
         matches_school = school is None or effect_school == school
         is_dispellable = bool(effect.get("dispellable", False))
         if matches_category and matches_school and is_dispellable:
-            removed += 1
-            continue
-        remaining.append(effect)
-    ps.effects = remaining
-    return removed
+            effect_id = effect.get("id")
+            if effect_id:
+                to_remove.append(effect_id)
+    for effect_id in to_remove:
+        remove_effect(ps, effect_id)
+    return len(to_remove)
+
+
+def absorb_total(ps: PlayerState) -> int:
+    if not ps.res:
+        return 0
+    return sum(max(0, int(layer.get("remaining", 0) or 0)) for layer in ps.res.absorbs.values())
 
 
 def refresh_dot_effect(target: PlayerState, effect_id: str, *, duration: int, tick_damage: int, source_sid: Optional[str] = None) -> bool:
@@ -572,25 +622,33 @@ def refresh_dot_effect(target: PlayerState, effect_id: str, *, duration: int, ti
     return False
 
 
-def add_absorb(ps: PlayerState, amount: int, source_item: Optional[str] = None, cap: Optional[int] = None, source_name: Optional[str] = None) -> int:
+def add_absorb(
+    ps: PlayerState,
+    amount: int,
+    source_item: Optional[str] = None,
+    cap: Optional[int] = None,
+    source_name: Optional[str] = None,
+    effect_id: Optional[str] = None,
+) -> int:
     if not ps.res:
         return 0
     value = int(amount)
     if value == 0:
-        return ps.res.absorb
-    next_value = ps.res.absorb + value
+        return absorb_total(ps)
+
+    layer_id = effect_id or (source_name or source_item or "shield").lower().replace(" ", "_")
+    next_value = value
     if cap is not None:
         next_value = max(0, min(next_value, int(cap)))
     else:
         next_value = max(0, next_value)
-    ps.res.absorb = next_value
-    if source_name:
-        ps.res.absorb_source = source_name
-    elif ps.res.absorb <= 0:
-        ps.res.absorb_source = None
-    if ps.res.absorb_max is not None:
-        ps.res.absorb_max = max(ps.res.absorb_max, ps.res.absorb)
-    return ps.res.absorb
+
+    ps.res.absorbs[layer_id] = {
+        "name": source_name or source_item or "Shield",
+        "remaining": int(next_value),
+        "max": int(next_value),
+    }
+    return absorb_total(ps)
 
 
 def get_effect(target: PlayerState, effect_id: str) -> Optional[Dict[str, Any]]:
@@ -607,23 +665,41 @@ def outgoing_damage_multiplier(target: PlayerState) -> float:
     return mult
 
 
-def consume_absorb(ps: PlayerState, incoming: int) -> tuple[int, int]:
+def consume_absorbs(ps: PlayerState, incoming: int) -> tuple[int, int, List[Dict[str, Any]]]:
     if not ps.res:
-        return 0, incoming
+        return incoming, 0, []
     incoming_value = max(0, int(incoming))
-    if incoming_value <= 0 or ps.res.absorb <= 0:
-        return 0, incoming_value
-    absorbed = min(ps.res.absorb, incoming_value)
-    ps.res.absorb -= absorbed
+    if incoming_value <= 0 or not ps.res.absorbs:
+        return incoming_value, 0, []
 
-    shield_fx = get_effect(ps, "shield_of_vengeance")
-    if shield_fx and absorbed > 0:
-        shield_fx["absorb_total"] = int(shield_fx.get("absorb_total", 0) or 0) + int(absorbed)
+    remaining = incoming_value
+    absorbed_total = 0
+    breakdown: List[Dict[str, Any]] = []
 
-    if ps.res.absorb <= 0:
-        ps.res.absorb_source = None
-    remaining = incoming_value - absorbed
-    return absorbed, remaining
+    for effect_id in list(ps.res.absorbs.keys()):
+        if remaining <= 0:
+            break
+        layer = ps.res.absorbs.get(effect_id)
+        if not layer:
+            continue
+        current = max(0, int(layer.get("remaining", 0) or 0))
+        if current <= 0:
+            del ps.res.absorbs[effect_id]
+            continue
+        absorbed = min(current, remaining)
+        layer["remaining"] = current - absorbed
+        remaining -= absorbed
+        absorbed_total += absorbed
+        if absorbed > 0:
+            breakdown.append({"effect_id": effect_id, "name": layer.get("name", "Shield"), "amount": absorbed})
+            if effect_id == "shield_of_vengeance":
+                shield_fx = get_effect(ps, "shield_of_vengeance")
+                if shield_fx:
+                    shield_fx["absorbed"] = int(shield_fx.get("absorbed", 0) or 0) + int(absorbed)
+        if int(layer.get("remaining", 0) or 0) <= 0:
+            del ps.res.absorbs[effect_id]
+
+    return remaining, absorbed_total, breakdown
 
 
 def trigger_on_hit_passives(

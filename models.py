@@ -12,9 +12,7 @@ class Resources:
     energy_max: int
     rage: int
     rage_max: int
-    absorb: int = 0
-    absorb_max: Optional[int] = None
-    absorb_source: Optional[str] = None
+    absorbs: Dict[str, Dict[str, Any]] = field(default_factory=dict)
 
 @dataclass
 class PlayerBuild:

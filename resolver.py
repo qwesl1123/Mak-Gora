@@ -28,11 +28,12 @@ from .effects import (
     is_damage_immune,
     has_flag,
     add_absorb,
-    consume_absorb,
+    consume_absorbs,
+    absorb_total,
     build_effect,
     dispel_effects,
     refresh_dot_effect,
-    tick_durations,
+    tick_player_effects,
     FORM_EFFECT_IDS,
     current_form_id,
     get_effect,
@@ -130,8 +131,7 @@ def apply_prep_build(match: MatchState) -> None:
             energy_max=energy_max,
             rage=res_data.get("rage", DEFAULTS["rage"]),
             rage_max=rage_max,
-            absorb=0,
-            absorb_max=None,
+            absorbs={},
         )
         
         ps = PlayerState(sid=sid, build=build, res=res, stats=stats, minions={"imp": 0, "shadowfiend": 0})
@@ -551,17 +551,6 @@ def resolve_turn(match: MatchState) -> None:
             set_cooldown(actor, ability_id, ability)
             return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
 
-        if ability_id == "ice_barrier":
-            intellect = modify_stat(actor, "int", actor.stats.get("int", 0))
-            roll_power = roll("d6", r)
-            absorb_value = int(intellect * 0.9) + int(roll_power)
-            add_absorb(actor, absorb_value, source_name="Ice Barrier")
-            log_parts.append(f"Ice Barrier grants {absorb_value} absorb.")
-            set_cooldown(actor, ability_id, ability)
-            if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
-                remove_stealth(actor)
-            return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
-
         if ability_id == "frenzied_regeneration":
             if actor.res.rage <= 0:
                 return {"damage": 0, "healing": 0, "log": "not enough rage"}
@@ -632,6 +621,68 @@ def resolve_turn(match: MatchState) -> None:
             set_cooldown(actor, ability_id, ability)
             return {"damage": 0, "healing": healed, "log": " ".join(log_parts), "ability_id": ability_id}
 
+        if ability_id == "flash_heal":
+            intellect = modify_stat(actor, "int", actor.stats.get("int", 0))
+            heal_value = int(intellect * 0.9) + int(roll("d8", r))
+            if has_effect(actor, "mindgames"):
+                actor.res.hp = max(0, actor.res.hp - heal_value)
+                log_parts.append(f"Mindgames twists healing into {heal_value} self-damage.")
+                set_cooldown(actor, ability_id, ability)
+                return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
+            before_hp = actor.res.hp
+            actor.res.hp = min(actor.res.hp + heal_value, actor.res.hp_max)
+            healed = actor.res.hp - before_hp
+            log_parts.append(f"Flash Heal restores {healed} HP.")
+            set_cooldown(actor, ability_id, ability)
+            return {"damage": 0, "healing": healed, "log": " ".join(log_parts), "ability_id": ability_id}
+
+        if ability_id == "mass_dispel":
+            removed_names = []
+            self_removed = 0
+            actor_remaining_effects = []
+            for effect in actor.effects:
+                if (
+                    effect.get("category") == "dot"
+                    and effect.get("school") == "magical"
+                    and bool(effect.get("dispellable", False))
+                ):
+                    self_removed += 1
+                    removed_names.append(effect.get("name") or effect_name(effect.get("id")) or "Effect")
+                    continue
+                actor_remaining_effects.append(effect)
+            actor.effects = actor_remaining_effects
+
+            enemy_removed = 0
+
+            def remove_enemy_effect(effect_id: str, display_name: str | None = None) -> None:
+                nonlocal enemy_removed
+                if not has_effect(target, effect_id):
+                    return
+                remove_effect(target, effect_id)
+                enemy_removed += 1
+                removed_names.append(display_name or effect_name(effect_id))
+
+            if has_effect(target, "regrowth"):
+                remove_enemy_effect("regrowth", "Regrowth")
+            if has_effect(target, "stealth"):
+                remove_enemy_effect("stealth", "Stealth")
+            if has_effect(target, "iceblock"):
+                remove_enemy_effect("iceblock", "Ice Block")
+            if has_effect(target, "divine_shield"):
+                remove_enemy_effect("divine_shield", "Divine Shield")
+            if has_effect(target, "ice_barrier"):
+                remove_enemy_effect("ice_barrier", "Ice Barrier")
+            if has_effect(target, "avenging_wrath"):
+                remove_enemy_effect("avenging_wrath", "Avenging Wrath")
+            if has_effect(target, "power_word_shield"):
+                remove_enemy_effect("power_word_shield", "Power Word: Shield")
+
+            if removed_names:
+                log_parts.append(f"{', '.join(removed_names)} removed by Mass Dispel!")
+            log_parts.append(f"Dispels {self_removed} effects on self and {enemy_removed} effects on enemy")
+            set_cooldown(actor, ability_id, ability)
+            return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
+
         if ability_id == "lay_on_hands":
             if has_effect(actor, "mindgames"):
                 backlash = actor.res.hp
@@ -645,16 +696,6 @@ def resolve_turn(match: MatchState) -> None:
             log_parts.append("Lay on Hands restores health to full.")
             set_cooldown(actor, ability_id, ability)
             return {"damage": 0, "healing": healed, "log": " ".join(log_parts), "ability_id": ability_id}
-
-        if ability_id == "shield_of_vengeance":
-            attack = modify_stat(actor, "atk", actor.stats.get("atk", 0))
-            absorb_value = int(attack * 0.8) + int(roll("d6", r))
-            add_absorb(actor, absorb_value, source_name="Shield of Vengeance")
-            remove_effect(actor, "shield_of_vengeance")
-            apply_effect_by_id(actor, "shield_of_vengeance", overrides={"duration": 3, "absorb_total": 0})
-            log_parts.append(f"Shield of Vengeance grants {absorb_value} absorb.")
-            set_cooldown(actor, ability_id, ability)
-            return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
 
         if ability_id in ("vampiric_touch", "devouring_plague"):
             if is_immune_all(target):
@@ -740,7 +781,13 @@ def resolve_turn(match: MatchState) -> None:
                 )
             absorb_value = max(0, int(absorb_value))
             if absorb_value > 0:
-                add_absorb(actor, absorb_value, source_name=absorb_data.get("source_name") or ability.get("name") or "Shield")
+                absorb_effect_id = absorb_data.get("effect_id") or (ability.get("self_effects") or [{}])[0].get("id")
+                add_absorb(
+                    actor,
+                    absorb_value,
+                    source_name=absorb_data.get("source_name") or ability.get("name") or "Shield",
+                    effect_id=absorb_effect_id,
+                )
             log_parts.append(f"{ability.get('name', 'Shield')} grants {absorb_value} absorb.")
             set_cooldown(actor, ability_id, ability)
             if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
@@ -1252,10 +1299,12 @@ def resolve_turn(match: MatchState) -> None:
                 )
             absorb_value = max(0, int(absorb_value))
             if absorb_value > 0:
+                absorb_effect_id = absorb_data.get("effect_id") or (ability.get("self_effects") or [{}])[0].get("id")
                 add_absorb(
                     actor,
                     absorb_value,
                     source_name=absorb_data.get("source_name") or ability.get("name") or "Shield",
+                    effect_id=absorb_effect_id,
                 )
             log_parts.append(f"{ability.get('name', 'Shield')} grants {absorb_value} absorb.")
 
@@ -1273,20 +1322,42 @@ def resolve_turn(match: MatchState) -> None:
     def finalize_action(actor_sid: str, target_sid: str, action: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
         if ctx.get("resolved"):
             return ctx
+        if action.get("ability_id") == "mass_dispel":
+            return {
+                "damage": 0,
+                "healing": 0,
+                "log": "",
+                "ability_id": "mass_dispel",
+                "deferred": True,
+            }
         return resolve_action(actor_sid, target_sid, action)
 
     # Resolve both actions
     result1 = finalize_action(sids[0], sids[1], a1, contexts[sids[0]])
     result2 = finalize_action(sids[1], sids[0], a2, contexts[sids[1]])
+
+    if result1.get("deferred"):
+        result1 = resolve_action(sids[0], sids[1], a1)
+    if result2.get("deferred"):
+        result2 = resolve_action(sids[1], sids[0], a2)
+
     for sid, result in ((sids[0], result1), (sids[1], result2)):
         totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
         totals["damage"] += int(result.get("damage", 0) or 0)
         totals["healing"] += int(result.get("healing", 0) or 0)
 
-    def absorb_suffix(absorbed: int, absorb_source_name: str) -> str:
+    def absorb_suffix(absorbed: int, absorbed_breakdown: list[Dict[str, Any]] | None = None) -> str:
         if absorbed <= 0:
             return ""
-        return f" ({absorbed} absorbed by {absorb_source_name})"
+        parts = []
+        for entry in absorbed_breakdown or []:
+            amount = int(entry.get("amount", 0) or 0)
+            if amount <= 0:
+                continue
+            parts.append(f"{amount} absorbed by {entry.get('name') or 'Shield'}")
+        if not parts:
+            return f" ({absorbed} absorbed by Shield)"
+        return f" ({', '.join(parts)})"
 
     def format_damage_log(log_text: str, damage_breakdown: Dict[str, Any]) -> str:
         if not log_text:
@@ -1296,8 +1367,7 @@ def resolve_turn(match: MatchState) -> None:
         if not instances:
             absorbed = int(damage_breakdown.get("absorbed", 0) or 0)
             if absorbed > 0:
-                source_name = damage_breakdown.get("absorb_source") or "Shield"
-                absorb_notes.append(absorb_suffix(absorbed, source_name).strip())
+                absorb_notes.append(absorb_suffix(absorbed, damage_breakdown.get("absorbed_breakdown", [])).strip())
             if absorb_notes:
                 return f"{log_text} {' '.join(absorb_notes)}"
             return log_text
@@ -1308,9 +1378,8 @@ def resolve_turn(match: MatchState) -> None:
             hp_damage = int(instance.get("hp_damage", 0) or 0)
             absorbed = int(instance.get("absorbed", 0) or 0)
             total_incoming = hp_damage + absorbed
-            source_name = instance.get("absorb_source") or damage_breakdown.get("absorb_source") or "Shield"
             if absorbed > 0:
-                absorb_notes.append(absorb_suffix(absorbed, source_name).strip())
+                absorb_notes.append(absorb_suffix(absorbed, instance.get("absorbed_breakdown", [])).strip())
             replacement = f"{total_incoming} damage"
             if token_with_damage in updated:
                 updated = updated.replace(token_with_damage, replacement, 1)
@@ -1331,15 +1400,13 @@ def resolve_turn(match: MatchState) -> None:
         damage_instances: list[int] | None = None,
     ) -> Dict[str, Any]:
         if incoming <= 0 or not target.res:
-            return {"hp_damage": 0, "absorbed": 0, "absorb_source": "Shield", "instances": [], "mindgames_healing": 0}
+            return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0}
         if is_immune_all(target):
             match.log.append(f"{target_sid[:5]} is immune and takes no damage.")
-            return {"hp_damage": 0, "absorbed": 0, "absorb_source": "Shield", "instances": [], "mindgames_healing": 0}
+            return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0}
         if has_flag(target, "cycloned"):
             match.log.append(f"{target_sid[:5]} is cycloned and takes no damage.")
-            return {"hp_damage": 0, "absorbed": 0, "absorb_source": "Shield", "instances": [], "mindgames_healing": 0}
-
-        absorb_source_name = (target.res.absorb_source if target.res else None) or "Shield"
+            return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0}
         instance_values = [max(0, int(value or 0)) for value in (damage_instances or []) if int(value or 0) > 0]
         accounted = sum(instance_values)
         if incoming > accounted:
@@ -1350,11 +1417,11 @@ def resolve_turn(match: MatchState) -> None:
         if mindgames_flip_damage and source.sid != target.sid:
             before_hp = target.res.hp
             target.res.hp = min(target.res.hp + incoming, target.res.hp_max)
-            instance_results = [{"absorbed": 0, "hp_damage": value, "absorb_source": absorb_source_name} for value in instance_values]
+            instance_results = [{"absorbed": 0, "hp_damage": value, "absorbed_breakdown": []} for value in instance_values]
             return {
                 "hp_damage": 0,
                 "absorbed": 0,
-                "absorb_source": absorb_source_name,
+                "absorbed_breakdown": [],
                 "instances": instance_results,
                 "mindgames_healing": incoming,
             }
@@ -1362,12 +1429,13 @@ def resolve_turn(match: MatchState) -> None:
         instance_results: list[Dict[str, Any]] = []
         total_absorbed = 0
         total_remaining = 0
+        total_breakdown: list[Dict[str, Any]] = []
         for value in instance_values:
-            source_name = (target.res.absorb_source if target.res else None) or absorb_source_name
-            absorbed, remaining = consume_absorb(target, value)
+            remaining, absorbed, breakdown = consume_absorbs(target, value)
             total_absorbed += absorbed
             total_remaining += remaining
-            instance_results.append({"absorbed": absorbed, "hp_damage": remaining, "absorb_source": source_name})
+            instance_results.append({"absorbed": absorbed, "hp_damage": remaining, "absorbed_breakdown": breakdown})
+            total_breakdown.extend(breakdown)
 
         if total_remaining > 0:
             target.res.hp -= total_remaining
@@ -1382,7 +1450,7 @@ def resolve_turn(match: MatchState) -> None:
         return {
             "hp_damage": max(0, total_remaining),
             "absorbed": total_absorbed,
-            "absorb_source": absorb_source_name,
+            "absorbed_breakdown": total_breakdown,
             "instances": instance_results,
             "mindgames_healing": 0,
         }
@@ -1393,9 +1461,12 @@ def resolve_turn(match: MatchState) -> None:
         shield_fx = get_effect(owner, "shield_of_vengeance")
         if not shield_fx:
             return
-        if owner.res.absorb > 0 and int(shield_fx.get("duration", 0) or 0) > 1:
+        if shield_fx.get("exploded"):
             return
-        absorbed_total = int(shield_fx.get("absorb_total", 0) or 0)
+        if absorb_total(owner) > 0 and int(shield_fx.get("duration", 0) or 0) > 1:
+            return
+        absorbed_total = int(shield_fx.get("absorbed", 0) or 0)
+        shield_fx["exploded"] = True
         remove_effect(owner, "shield_of_vengeance")
         if absorbed_total <= 0:
             return
@@ -1519,26 +1590,54 @@ def resolve_turn(match: MatchState) -> None:
                     totals["healing"] += gained
 
         dot_data = ability.get("dot") or {}
-        if dealt > 0 and dot_data.get("from_dealt_damage"):
+        if dealt > 0 and dot_data:
             target_sid = sids[1] if actor_sid == sids[0] else sids[0]
             target = match.state[target_sid]
             dot_id = dot_data.get("id")
             duration = int(dot_data.get("duration", 1) or 1)
             school = dot_data.get("school", "magical")
-            tick_damage = max(1, int(dealt // max(1, duration)))
+            if dot_data.get("from_dealt_damage"):
+                tick_damage = max(1, int(dealt // max(1, duration)))
+            else:
+                dot_scaling = dot_data.get("scaling", {}) or {}
+                dot_dice = dot_data.get("dice", {}) or {}
+                dot_roll = roll(dot_dice.get("type", "d0"), r) if dot_dice.get("type") else 0
+                if "atk" in dot_scaling:
+                    tick_damage = base_damage(
+                        modify_stat(match.state[actor_sid], "atk", match.state[actor_sid].stats.get("atk", 0)),
+                        dot_scaling["atk"],
+                        dot_roll,
+                    )
+                elif "int" in dot_scaling:
+                    tick_damage = base_damage(
+                        modify_stat(match.state[actor_sid], "int", match.state[actor_sid].stats.get("int", 0)),
+                        dot_scaling["int"],
+                        dot_roll,
+                    )
+                else:
+                    tick_damage = int(dot_data.get("tick_damage", 0) or 0)
+                tick_damage = max(1, int(tick_damage))
             if dot_id and refresh_dot_effect(target, dot_id, duration=duration, tick_damage=tick_damage, source_sid=actor_sid):
                 for effect in target.effects:
                     if effect.get("id") == dot_id:
                         effect["school"] = school
                         break
-                match.log.append(f"{actor_sid[:5]} refreshes {effect_name(dot_id)} for {tick_damage} per turn.")
+                if dot_id == "dragon_roar_bleed":
+                    target_class = CLASSES.get(target.build.class_id, {}).get("name", "target")
+                    match.log.append(f"Dragon Roar applies bleed on {target_class}.")
+                else:
+                    match.log.append(f"{actor_sid[:5]} refreshes {effect_name(dot_id)} for {tick_damage} per turn.")
             elif dot_id:
                 apply_effect_by_id(
                     target,
                     dot_id,
                     overrides={"duration": duration, "tick_damage": tick_damage, "source_sid": actor_sid, "school": school},
                 )
-                match.log.append(f"{actor_sid[:5]} applies {effect_name(dot_id)} for {tick_damage} per turn.")
+                if dot_id == "dragon_roar_bleed":
+                    target_class = CLASSES.get(target.build.class_id, {}).get("name", "target")
+                    match.log.append(f"Dragon Roar applies bleed on {target_class}.")
+                else:
+                    match.log.append(f"{actor_sid[:5]} applies {effect_name(dot_id)} for {tick_damage} per turn.")
 
     for source_sid, target_sid, dealt, result in ((sids[0], sids[1], dealt1, result1), (sids[1], sids[0], dealt2, result2)):
         ability = ABILITIES.get(result.get("ability_id", ""), {})
@@ -1555,6 +1654,13 @@ def resolve_turn(match: MatchState) -> None:
             remove_effect(target, "shadowfiend")
             source_name = ability.get("name", "AoE damage")
             match.log.append(f"{target_sid[:5]}'s Shadowfiend is slain by {source_name}.")
+            owner = match.state[target_sid]
+            before_hp = owner.res.hp
+            heal_amount = int(owner.res.hp_max * 0.15)
+            owner.res.hp = min(owner.res.hp + heal_amount, owner.res.hp_max)
+            gained = owner.res.hp - before_hp
+            owner.res.mp = min(owner.res.mp + 40, owner.res.mp_max)
+            match.log.append(f"{target_sid[:5]} gains 40 mana and heals {gained} HP as Shadowfiend dies.")
 
     # End of turn processing for both players (DoTs, passives, duration ticks, regen)
     for sid in sids:
@@ -1604,8 +1710,7 @@ def resolve_turn(match: MatchState) -> None:
                 reduced = int(reduced * mitigation_multiplier(opponent))
                 if is_damage_immune(opponent, "magic"):
                     reduced = 0
-                absorb_source_name = (opponent.res.absorb_source if opponent.res else None) or "Shield"
-                absorbed, remaining = consume_absorb(opponent, reduced)
+                remaining, absorbed, breakdown = consume_absorbs(opponent, reduced)
                 if remaining > 0:
                     opponent.res.hp -= remaining
                     if current_form_id(opponent) == "bear_form":
@@ -1618,7 +1723,7 @@ def resolve_turn(match: MatchState) -> None:
                     total_incoming = remaining + absorbed
                     imp_log = f"{sid[:5]}'s Imp casts Firebolt for {total_incoming} damage."
                     if absorbed > 0:
-                        imp_log = f"{imp_log} {absorb_suffix(absorbed, absorb_source_name).strip()}"
+                        imp_log = f"{imp_log} {absorb_suffix(absorbed, breakdown).strip()}"
                     match.log.append(imp_log)
                 if remaining > 0:
                     totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
@@ -1662,21 +1767,20 @@ def resolve_turn(match: MatchState) -> None:
                 if is_damage_immune(opponent, "physical"):
                     fiend_reduced = 0
                 if fiend_reduced > 0:
-                    absorb_source_name = (opponent.res.absorb_source if opponent.res else None) or "Shield"
-                    absorbed, remaining = consume_absorb(opponent, fiend_reduced)
+                    remaining, absorbed, breakdown = consume_absorbs(opponent, fiend_reduced)
                     total_incoming = remaining + absorbed
                     if remaining > 0:
                         opponent.res.hp -= remaining
                         fiend_log = f"Shadowfiend melee attacks {opponent_sid[:5]} for {total_incoming} damage."
                         if absorbed > 0:
-                            fiend_log = f"{fiend_log} {absorb_suffix(absorbed, absorb_source_name).strip()}"
+                            fiend_log = f"{fiend_log} {absorb_suffix(absorbed, breakdown).strip()}"
                         match.log.append(fiend_log)
                         fiend_totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
                         fiend_totals["damage"] += remaining
                     elif absorbed > 0:
                         fiend_log = f"Shadowfiend melee attacks {opponent_sid[:5]} for {total_incoming} damage."
                         if absorbed > 0:
-                            fiend_log = f"{fiend_log} {absorb_suffix(absorbed, absorb_source_name).strip()}"
+                            fiend_log = f"{fiend_log} {absorb_suffix(absorbed, breakdown).strip()}"
                         match.log.append(fiend_log)
                     if absorbed > 0 or remaining > 0:
                         ps.res.mp = min(ps.res.mp + 13, ps.res.mp_max)
@@ -1690,7 +1794,7 @@ def resolve_turn(match: MatchState) -> None:
 
     for sid in sids:
         ps = match.state[sid]
-        ps.effects = tick_durations(ps.effects)
+        tick_player_effects(ps)
         if not has_effect(ps, "shadowfiend"):
             ps.minions["shadowfiend"] = 0
         tick_cooldowns(ps)

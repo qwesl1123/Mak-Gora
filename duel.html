@@ -1493,7 +1493,7 @@
             <h4>Dragon Roar</h4>
             <p><span class="stat">Cost: 10 Rage</span> | <span class="stat">Type: Physical (AoE)</span> | <span class="stat">Cooldown: 25</span></p>
             <p><span class="stat">Command: <span class="kbd">dragon_roar</span></span></p>
-            <p>Roar ferociously to damage all enemies for Attack (0.8x) + d6. Always critically strikes, ignores Physical Reduction, and applies a 4-turn physical bleed based on damage dealt. As AoE, it can reveal stealth and destroys Imps when it deals damage.</p>
+            <p>Roar ferociously to damage all enemies for [Attack (0.8x) + d6] damage. Always critically strikes, ignores Physical Reduction, and applies a 4-turn physical bleed on hit, dealing [Attack (0.4x) + d2] damage each turn. As AoE, it can reveal stealth and destroys Imps when it deals damage.</p>
           </div>
 
           <div class="doc-item">
@@ -1803,74 +1803,75 @@
         <div class="doc-grid">
           <div class="doc-item">
             <h4>Power Word: Shield</h4>
-            <p><span class="stat">Cost: 20 Mana</span> | <span class="stat">Type: Defensive Spell</span> | <span class="stat">Cooldown: 8</span></p>
+            <p><span class="stat">Cost: 20 Mana</span> | <span class="stat">Cooldown: 8</span></p>
             <p><span class="stat">Command: <span class="kbd">shield</span></span></p>
-            <p>Applies an absorb shield equal to <strong>floor(Intellect × 1.0) + d6</strong>. This absorb is not dispellable for now.</p>
+            <p>Gain an absorb shield for [Intellect (1.0x) + d6].</p>
           </div>
           <div class="doc-item">
             <h4>Mind Flay</h4>
-            <p><span class="stat">Cost: 5 Mana</span> | <span class="stat">Type: Magic Damage</span> | <span class="stat">Cooldown: 0</span></p>
+            <p><span class="stat">Cost: 5 Mana</span> | <span class="stat">Cooldown: 0</span></p>
             <p><span class="stat">Command: <span class="kbd">mind_flay</span></span></p>
-            <p>Deals <strong>floor(Intellect × 0.4) + d4</strong> magic damage. 40% chance to empower your next Mind Blast. Empower lasts until consumed and does not stack.</p>
+            <p>Deals [Intellect (0.4x) + d4] magic damage. 40% chance to empower your next Mind Blast.</p>
           </div>
           <div class="doc-item">
             <h4>Mind Blast</h4>
-            <p><span class="stat">Cost: 15 Mana</span> | <span class="stat">Type: Magic Damage</span> | <span class="stat">Cooldown: 3</span></p>
+            <p><span class="stat">Cost: 15 Mana</span> | <span class="stat">Cooldown: 3</span></p>
             <p><span class="stat">Command: <span class="kbd">mind_blast</span></span></p>
-            <p><strong>Normal:</strong> floor(Intellect × 0.9) + d6 magic damage.<br><strong>Empowered (from Mind Flay):</strong> floor(Intellect × 1.3) + d8 magic damage.</p>
-            <p>Each cast has a 40% chance to grant Shadowy Insight (non-stacking, lasts until used).</p>
+            <p>Deals [Intellect (0.9x) + d6] magic damage, or [Intellect (1.3x) + d8] while empowered.</p>
           </div>
           <div class="doc-item">
             <h4>Vampiric Touch</h4>
-            <p><span class="stat">Cost: 12 Mana</span> | <span class="stat">Type: Magical DoT</span> | <span class="stat">Cooldown: 8</span></p>
+            <p><span class="stat">Cost: 12 Mana</span> | <span class="stat">Cooldown: 8</span></p>
             <p><span class="stat">Command: <span class="kbd">vampiric_touch</span></span></p>
-            <p>Applies a 6-turn magical DoT. Total damage = <strong>floor(Intellect × 3.0) + d6</strong>, then split as <strong>floor(total/6)</strong> per end-of-turn tick.</p>
-            <p>Each tick heals the Priest for 40% of actual tick damage dealt. This DoT is dispellable (magical).</p>
+            <p>Applies a 6-turn magical DoT from [Intellect (3.0x) + d6] total damage. Priest heals for 40% of tick damage dealt.</p>
           </div>
           <div class="doc-item">
             <h4>Devouring Plague</h4>
-            <p><span class="stat">Cost: 25 Mana</span> | <span class="stat">Type: Magical DoT</span> | <span class="stat">Cooldown: 0</span></p>
+            <p><span class="stat">Cost: 25 Mana</span> | <span class="stat">Cooldown: 0</span></p>
             <p><span class="stat">Command: <span class="kbd">devouring_plague</span></span></p>
-            <p>Requires Shadowy Insight. Applies a 4-turn magical DoT. Total damage = <strong>floor(Intellect × 2.0) + d4</strong>, then split as <strong>floor(total/4)</strong> per end-of-turn tick.</p>
-            <p>Does not stack; recasting refreshes duration. Each tick heals Priest for 30% of actual tick damage dealt.</p>
+            <p>Requires Shadowy Insight. Applies a 4-turn magical DoT from [Intellect (2.0x) + d4] total damage and heals for 30% of tick damage dealt.</p>
           </div>
           <div class="doc-item">
             <h4>Penance</h4>
-            <p><span class="stat">Cost: 12 Mana</span> | <span class="stat">Type: Magic Damage / Self-Heal</span> | <span class="stat">Cooldown: 8 (shared)</span></p>
-            <p><span class="stat">Commands: <span class="kbd">penance</span> and <span class="kbd">penance_self</span></span></p>
-            <p><strong>penance:</strong> 3 magic hits, each <strong>floor(Intellect × 0.4) + d4</strong>.<br><strong>penance_self:</strong> 3 self-heal hits, each <strong>floor(Intellect × 0.4) + d4</strong>.</p>
-            <p><strong>Shared cooldown:</strong> casting either command puts both on an 8-turn cooldown.</p>
+            <p><span class="stat">Cost: 12 Mana</span> | <span class="stat">Cooldown: 8 (shared)</span></p>
+            <p><span class="stat">Commands: <span class="kbd">penance</span>, <span class="kbd">penance_self</span></span></p>
+            <p>3 hits per cast. Penance deals [Intellect (0.4x) + d4] magic damage per hit; Penance (Self) heals [Intellect (0.4x) + d4] per hit.</p>
+          </div>
+          <div class="doc-item">
+            <h4>Flash Heal</h4>
+            <p><span class="stat">Cost: 25 Mana</span> | <span class="stat">Cooldown: 3</span></p>
+            <p><span class="stat">Command: <span class="kbd">flash_heal</span></span></p>
+            <p>Heals self for [Intellect (0.9x) + d8].</p>
           </div>
           <div class="doc-item">
             <h4>Pain Suppression</h4>
-            <p><span class="stat">Cost: Free</span> | <span class="stat">Type: Defensive Cooldown</span> | <span class="stat">Cooldown: 20</span></p>
+            <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 20</span></p>
             <p><span class="stat">Command: <span class="kbd">pain_supp</span></span></p>
-            <p>For 3 turns, reduces all incoming damage by 40%.</p>
+            <p>Reduces all incoming damage by 40% for 3 turns.</p>
           </div>
           <div class="doc-item">
             <h4>Mindgames</h4>
-            <p><span class="stat">Cost: 15 Mana</span> | <span class="stat">Type: Control Debuff</span> | <span class="stat">Cooldown: 20</span></p>
+            <p><span class="stat">Cost: 15 Mana</span> | <span class="stat">Cooldown: 20</span></p>
             <p><span class="stat">Command: <span class="kbd">mindgames</span></span></p>
-            <p>Applies a 1-turn debuff before actions resolve. While active on the target: damage they deal is converted into healing on their target; healing they produce is converted into self-damage. Affects direct effects and periodic ticks in that window.</p>
+            <p>Applies a 1-turn debuff that flips target damage into healing and target healing into self-damage.</p>
           </div>
           <div class="doc-item">
-            <h4>Psychic Scream</h4>
-            <p><span class="stat">Cost: Free</span> | <span class="stat">Type: Control</span> | <span class="stat">Cooldown: 8</span></p>
-            <p><span class="stat">Command: <span class="kbd">psychic_scream</span></span></p>
-            <p>Applies 1-turn fear-style action denial (cant_act_reason: <em>terrified</em>).</p>
+            <h4>Mass Dispel</h4>
+            <p><span class="stat">Cost: 12 Mana</span> | <span class="stat">Cooldown: 20</span></p>
+            <p><span class="stat">Command: <span class="kbd">mass_dispel</span></span></p>
+            <p>Dispels all magical DoTs on self, dispels enemy HoTs (Regrowth), and removes enemy Stealth, Ice Block, and Divine Shield.</p>
           </div>
           <div class="doc-item">
             <h4>Shadow Word: Death</h4>
-            <p><span class="stat">Cost: Free</span> | <span class="stat">Type: Magic Damage</span> | <span class="stat">Cooldown: 5</span></p>
+            <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 5</span></p>
             <p><span class="stat">Command: <span class="kbd">death</span></span></p>
-            <p>Deals <strong>floor(Intellect × 1.0) + d6</strong> magic damage. If target HP is below 20%, damage is doubled.</p>
-            <p>If target survives, Priest takes backlash equal to 100% of damage dealt.</p>
+            <p>Deals [Intellect (1.0x) + d6] magic damage. If target HP is below 20%, damage is doubled.</p>
           </div>
           <div class="doc-item">
             <h4>Shadowfiend</h4>
-            <p><span class="stat">Cost: 20 Mana</span> | <span class="stat">Type: Summon</span> | <span class="stat">Cooldown: 50</span></p>
+            <p><span class="stat">Cost: 20 Mana</span> | <span class="stat">Cooldown: 50</span></p>
             <p><span class="stat">Command: <span class="kbd">shadowfiend</span></span></p>
-            <p>Summons a Shadowfiend for 5 turns. At end of turn, it attacks for <strong>floor(Intellect × 0.6) + d4</strong> <strong>physical</strong> damage (uses physical mitigation, not magic resist) and restores 13 mana to the Priest on successful hits.</p>
+            <p>Summons a Shadowfiend for 5 turns. It attacks each turn for [Intellect (0.6x) + d4] physical damage and restores 13 mana on successful hits. If enemies kill it, Priest gains 40 mana and heals 15% max HP.</p>
           </div>
         </div>
 
@@ -2030,7 +2031,8 @@
         "Penance (Self)",
         "Pain Suppression",
         "Mindgames",
-        "Psychic Scream",
+        "Flash Heal",
+        "Mass Dispel",
         "Shadow Word: Death",
         "Shadowfiend",
       ];

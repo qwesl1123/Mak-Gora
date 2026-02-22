@@ -124,7 +124,13 @@ ABILITIES = {
         "classes": ["warrior"],
         "always_crit": True,
         "ignore_physical_reduction": True,
-        "dot": {"id": "dragon_roar_bleed", "duration": 4, "school": "physical", "from_dealt_damage": True},
+        "dot": {
+            "id": "dragon_roar_bleed",
+            "duration": 4,
+            "school": "physical",
+            "scaling": {"atk": 0.4},
+            "dice": {"type": "d2", "power_on": "roll"},
+        },
     },
     "ignore_pain": {
         "name": "Ignore Pain",
@@ -137,9 +143,10 @@ ABILITIES = {
             "scaling": {"atk": 0.5},
             "dice": {"type": "d4", "power_on": "roll"},
             "source_name": "Ignore Pain",
+            "effect_id": "ignore_pain",
         },
         "self_effects": [
-            {"id": "shielded", "duration": 2, "log": "Fights through pain."}
+            {"id": "ignore_pain", "duration": 8, "log": "Fights through pain."}
         ],
     },
     "pyroblast": {
@@ -196,6 +203,14 @@ ABILITIES = {
         "tags": ["spell", "defense"],
         "cooldown": 15,
         "classes": ["mage"],
+        "absorb": {
+            "scaling": {"int": 0.9},
+            "dice": {"type": "d6", "power_on": "roll"},
+            "source_name": "Ice Barrier",
+        },
+        "self_effects": [
+            {"id": "ice_barrier", "duration": 8},
+        ],
     },
     "cheap_shot": {
         "name": "Cheap Shot",
@@ -771,6 +786,15 @@ ABILITIES = {
         "tags": ["spell", "defense"],
         "cooldown": 25,
         "classes": ["paladin"],
+        "absorb": {
+            "scaling": {"atk": 0.8},
+            "dice": {"type": "d6", "power_on": "roll"},
+            "source_name": "Shield of Vengeance",
+            "effect_id": "shield_of_vengeance",
+        },
+        "self_effects": [
+            {"id": "shield_of_vengeance", "duration": 8}
+        ],
     },
     "lay_on_hands": {
         "name": "Lay on Hands",
@@ -806,7 +830,7 @@ ABILITIES = {
             "source_name": "Power Word: Shield",
         },
         "self_effects": [
-            {"id": "shielded", "duration": 8, "log": "is shielded by holy magic."}
+            {"id": "power_word_shield", "duration": 8, "log": "is shielded by holy magic."}
         ],
     },
     "mind_flay": {
@@ -911,17 +935,23 @@ ABILITIES = {
             {"id": "mindgames", "duration": 1, "log": "Assaults the enemy's mind."}
         ],
     },
-    "psychic_scream": {
-        "name": "Psychic Scream",
+    "flash_heal": {
+        "name": "Flash Heal",
         "display_color": "#FFFFFF",
-        "cost": {"mp": 0},
+        "cost": {"mp": 25},
+        "dice": {"type": "d8", "power_on": "roll"},
+        "tags": ["spell", "defense"],
+        "cooldown": 3,
+        "classes": ["priest"],
+    },
+    "mass_dispel": {
+        "name": "Mass Dispel",
+        "display_color": "#FFFFFF",
+        "cost": {"mp": 12},
         "dice": None,
         "tags": ["spell", "control"],
-        "cooldown": 8,
+        "cooldown": 20,
         "classes": ["priest"],
-        "target_effects": [
-            {"id": "psychic_scream", "duration": 1, "overrides": {"cant_act_reason": "terrified"}, "log": "Enemy is terrified and cannot act."}
-        ],
     },
     "death": {
         "name": "Shadow Word: Death",
