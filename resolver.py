@@ -38,6 +38,8 @@ from .effects import (
     current_form_id,
     get_effect,
     outgoing_damage_multiplier,
+    is_dispellable_by,
+    effect_template,
 )
 
 def cooldown_slots(ps: PlayerState, ability_id: str) -> list:
@@ -639,43 +641,52 @@ def resolve_turn(match: MatchState) -> None:
         if ability_id == "mass_dispel":
             removed_names = []
             self_removed = 0
-            actor_remaining_effects = []
-            for effect in actor.effects:
-                if (
-                    effect.get("category") == "dot"
-                    and effect.get("school") == "magical"
-                    and bool(effect.get("dispellable", False))
-                ):
-                    self_removed += 1
-                    removed_names.append(effect.get("name") or effect_name(effect.get("id")) or "Effect")
-                    continue
-                actor_remaining_effects.append(effect)
-            actor.effects = actor_remaining_effects
-
             enemy_removed = 0
 
-            def remove_enemy_effect(effect_id: str, display_name: str | None = None) -> None:
-                nonlocal enemy_removed
-                if not has_effect(target, effect_id):
-                    return
+            def dispel_name(effect: Dict[str, Any]) -> str:
+                effect_id = effect.get("id")
+                template_name = effect_template(effect_id).get("name") if effect_id else None
+                return str(effect.get("name") or template_name or "Effect")
+
+            actor_to_remove = []
+            for effect in list(actor.effects):
+                effect_id = effect.get("id")
+                if not effect_id:
+                    continue
+                if not is_dispellable_by(effect, dispel_type="mass_dispel", kind="magic"):
+                    continue
+                effect_category = str(effect.get("category") or effect_template(effect_id).get("category") or "").lower()
+                if effect_category not in {"dot", "debuff"}:
+                    continue
+                actor_to_remove.append(effect)
+
+            for effect in actor_to_remove:
+                effect_id = effect.get("id")
+                if not effect_id:
+                    continue
+                removed_names.append(dispel_name(effect))
+                remove_effect(actor, effect_id)
+                self_removed += 1
+
+            enemy_to_remove = []
+            for effect in list(target.effects):
+                effect_id = effect.get("id")
+                if not effect_id:
+                    continue
+                if not is_dispellable_by(effect, dispel_type="mass_dispel", kind="magic"):
+                    continue
+                effect_category = str(effect.get("category") or effect_template(effect_id).get("category") or "").lower()
+                if effect_category in {"dot", "debuff"}:
+                    continue
+                enemy_to_remove.append(effect)
+
+            for effect in enemy_to_remove:
+                effect_id = effect.get("id")
+                if not effect_id:
+                    continue
+                removed_names.append(dispel_name(effect))
                 remove_effect(target, effect_id)
                 enemy_removed += 1
-                removed_names.append(display_name or effect_name(effect_id))
-
-            if has_effect(target, "regrowth"):
-                remove_enemy_effect("regrowth", "Regrowth")
-            if has_effect(target, "stealth"):
-                remove_enemy_effect("stealth", "Stealth")
-            if has_effect(target, "iceblock"):
-                remove_enemy_effect("iceblock", "Ice Block")
-            if has_effect(target, "divine_shield"):
-                remove_enemy_effect("divine_shield", "Divine Shield")
-            if has_effect(target, "ice_barrier"):
-                remove_enemy_effect("ice_barrier", "Ice Barrier")
-            if has_effect(target, "avenging_wrath"):
-                remove_enemy_effect("avenging_wrath", "Avenging Wrath")
-            if has_effect(target, "power_word_shield"):
-                remove_enemy_effect("power_word_shield", "Power Word: Shield")
 
             if removed_names:
                 log_parts.append(f"{', '.join(removed_names)} removed by Mass Dispel!")

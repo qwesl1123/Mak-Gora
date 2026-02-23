@@ -31,6 +31,8 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "type": "status",
         "name": "Ice Block",
         "duration": 3,
+        "dispellable": True,
+        "school": "magical",
         "flags": {"immune_all": True, "stunned": True},
         "regen": {"hp": 10, "mp": 25},
     },
@@ -84,6 +86,8 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "type": "stealth",
         "name": "Stealth",
         "duration": 3,
+        "dispellable": True,
+        "school": "magical",
         "flags": {"stealthed": True},
         "break_on_damage_over": 5,
     },
@@ -128,6 +132,8 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "type": "status",
         "name": "Divine Shield",
         "duration": 2,
+        "dispellable": True,
+        "school": "magical",
         "flags": {"immune_all": True},
     },
     "shield_of_vengeance": {
@@ -136,6 +142,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 8,
         "category": "absorb",
         "dispellable": True,
+        "school": "magical",
         "flags": {"shield_of_vengeance": True},
         "absorbed": 0,
     },
@@ -157,6 +164,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 8,
         "category": "absorb",
         "dispellable": True,
+        "school": "magical",
     },
     "ice_barrier": {
         "type": "status",
@@ -164,6 +172,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 8,
         "category": "absorb",
         "dispellable": True,
+        "school": "magical",
     },
     "mind_blast_empowered": {
         "type": "status",
@@ -229,7 +238,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 4,
         "category": "dot",
         "school": "physical",
-        "dispellable": True,
+        "dispellable": False,
         "tick_damage": 1,
     },
     "avenging_wrath": {
@@ -237,6 +246,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "name": "Avenging Wrath",
         "duration": 4,
         "dispellable": True,
+        "school": "magical",
         "outgoing_damage_mult": 1.2,
         "flags": {"avenging_wrath": True},
     },
@@ -335,6 +345,9 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "type": "status",
         "name": "Regrowth",
         "duration": 5,
+        "category": "hot",
+        "dispellable": True,
+        "school": "magical",
         "regen": {"hp": 0},
     },
 }
@@ -401,6 +414,37 @@ def build_effect(effect_id: str, overrides: Optional[Dict[str, Any]] = None) -> 
     if overrides:
         effect.update(overrides)
     return effect
+
+
+def effect_template(effect_id: str) -> Dict[str, Any]:
+    return EFFECT_TEMPLATES.get(effect_id, {})
+
+
+def is_dispellable_by(
+    effect_or_id: str | Dict[str, Any],
+    dispel_type: str = "mass_dispel",
+    kind: str = "magic",
+) -> bool:
+    effect: Dict[str, Any] = (
+        build_effect(effect_or_id) if isinstance(effect_or_id, str) else dict(effect_or_id)
+    )
+    if not effect:
+        return False
+
+    if not bool(effect.get("dispellable", False)):
+        return False
+
+    normalized_kind = "magical" if kind == "magic" else kind
+    dispel_kind = str(effect.get("dispel_kind") or effect.get("school") or "magical").lower()
+    if dispel_kind != normalized_kind:
+        return False
+
+    allowed_dispellers = effect.get("dispel_by")
+    if allowed_dispellers is None:
+        return True
+    if isinstance(allowed_dispellers, (list, tuple, set)):
+        return dispel_type in allowed_dispellers
+    return dispel_type == str(allowed_dispellers)
 
 
 def apply_effect_by_id(
