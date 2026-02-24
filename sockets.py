@@ -89,10 +89,25 @@ def snapshot_for(match, viewer_sid):
         if not ps or not ps.res:
             return None
         r = ps.res
+        absorb_layers = []
+        for effect_id, layer in getattr(r, "absorbs", {}).items():
+            remaining = max(0, int(layer.get("remaining", 0) or 0))
+            max_value = max(0, int(layer.get("max", remaining) or 0))
+            absorb_layers.append({
+                "id": effect_id,
+                "name": layer.get("name", "Shield"),
+                "remaining": remaining,
+                "max": max_value,
+            })
+
+        absorb_remaining_total = sum(layer["remaining"] for layer in absorb_layers)
+        absorb_max_total = sum(layer["max"] for layer in absorb_layers)
+
         return {
             "hp": r.hp, "hp_max": r.hp_max,
-            "absorb": sum(max(0, int(layer.get("remaining", 0) or 0)) for layer in getattr(r, "absorbs", {}).values()),
-            "absorb_total": sum(max(0, int(layer.get("remaining", 0) or 0)) for layer in getattr(r, "absorbs", {}).values()),
+            "absorb": absorb_remaining_total,
+            "absorb_max": absorb_max_total,
+            "absorb_layers": absorb_layers,
             "mp": r.mp, "mp_max": r.mp_max,
             "energy": r.energy, "energy_max": r.energy_max,
             "rage": r.rage, "rage_max": r.rage_max,

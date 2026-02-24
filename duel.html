@@ -280,6 +280,7 @@
         transition: width 0.3s ease;
         position: relative;
         overflow: hidden;
+        flex: 0 0 auto;
       }
 
       .bar-fill.health {
@@ -3017,9 +3018,9 @@
         
         const clampedHp = Math.max(0, Math.min(res.hp, res.hp_max));
         const hpPercent = res.hp_max ? (clampedHp / res.hp_max) * 100 : 0;
-        const absorbValue = Math.max(0, res.absorb || 0);
-        const absorbPercent = res.hp_max ? (absorbValue / res.hp_max) * 100 : 0;
-        const absorbWidth = Math.min(absorbPercent, Math.max(0, 100 - hpPercent));
+        const absorbRemaining = Math.max(0, res.absorb || 0);
+        const absorbPercentOfHp = res.hp_max ? (absorbRemaining / res.hp_max) * 100 : 0;
+        const absorbWidth = Math.min(absorbPercentOfHp, Math.max(0, 100 - hpPercent));
         const primaryResource = primaryResourceFrom(res, resource);
         const primaryPercent = primaryResource.max ? (primaryResource.value / primaryResource.max) * 100 : 0;
         

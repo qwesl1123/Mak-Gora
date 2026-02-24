@@ -49,7 +49,8 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "category": "dot",
         "school": "magical",
         "dispellable": False,
-        "tick": 1,
+        "tick_damage": 1,
+        "dot_mode": "ramp",
     },
     "corruption": {
         "type": "dot",
@@ -423,7 +424,7 @@ def effect_template(effect_id: str) -> Dict[str, Any]:
 def is_dispellable_by(
     effect_or_id: str | Dict[str, Any],
     dispel_type: str = "mass_dispel",
-    kind: str = "magic",
+    kind: str = "magical",
 ) -> bool:
     effect: Dict[str, Any] = (
         build_effect(effect_or_id) if isinstance(effect_or_id, str) else dict(effect_or_id)
@@ -434,8 +435,16 @@ def is_dispellable_by(
     if not bool(effect.get("dispellable", False)):
         return False
 
-    normalized_kind = "magical" if kind == "magic" else kind
-    dispel_kind = str(effect.get("dispel_kind") or effect.get("school") or "magical").lower()
+    normalized_kind = str(kind).lower()
+    if normalized_kind == "magic":
+        normalized_kind = "magical"
+
+    dispel_kind_raw = effect.get("dispel_kind") or effect.get("school")
+    if dispel_kind_raw is None:
+        return False
+    dispel_kind = str(dispel_kind_raw).lower()
+    if dispel_kind == "magic":
+        dispel_kind = "magical"
     if dispel_kind != normalized_kind:
         return False
 
@@ -1009,8 +1018,8 @@ def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[dict[str, Any
             continue
 
         if effect_id == "agony":
-            raw_damage = max(0, int(effect.get("tick", 1) or 1))
-            effect["tick"] = min(15, raw_damage + 1)
+            raw_damage = max(0, int(effect.get("tick_damage", 1) or 1))
+            effect["tick_damage"] = min(15, raw_damage + 1)
         else:
             raw_damage = max(0, int(effect.get("tick_damage", effect.get("value", 0)) or 0))
 

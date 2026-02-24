@@ -548,7 +548,11 @@ def resolve_turn(match: MatchState) -> None:
                 target_immune_log(log_parts)
                 set_cooldown(actor, ability_id, ability)
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
-            apply_effect_by_id(target, "agony", overrides={"duration": 15, "tick": 1, "source_sid": actor.sid})
+            apply_effect_by_id(
+                target,
+                "agony",
+                overrides={"duration": 15, "tick_damage": 1, "source_sid": actor.sid, "dot_mode": "ramp"},
+            )
             log_parts.append("inflicts Agony.")
             set_cooldown(actor, ability_id, ability)
             return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
@@ -653,7 +657,7 @@ def resolve_turn(match: MatchState) -> None:
                 effect_id = effect.get("id")
                 if not effect_id:
                     continue
-                if not is_dispellable_by(effect, dispel_type="mass_dispel", kind="magic"):
+                if not is_dispellable_by(effect, dispel_type="mass_dispel", kind="magical"):
                     continue
                 effect_category = str(effect.get("category") or effect_template(effect_id).get("category") or "").lower()
                 if effect_category not in {"dot", "debuff"}:
@@ -673,7 +677,7 @@ def resolve_turn(match: MatchState) -> None:
                 effect_id = effect.get("id")
                 if not effect_id:
                     continue
-                if not is_dispellable_by(effect, dispel_type="mass_dispel", kind="magic"):
+                if not is_dispellable_by(effect, dispel_type="mass_dispel", kind="magical"):
                     continue
                 effect_category = str(effect.get("category") or effect_template(effect_id).get("category") or "").lower()
                 if effect_category in {"dot", "debuff"}:
