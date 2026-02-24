@@ -830,7 +830,7 @@ ABILITIES = {
             "source_name": "Power Word: Shield",
         },
         "self_effects": [
-            {"id": "power_word_shield", "duration": 8, "log": "is shielded by holy magic."}
+            {"id": "power_word_shield", "duration": 8, "log": "Shielded by the Light."}
         ],
     },
     "mind_flay": {
