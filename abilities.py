@@ -320,7 +320,7 @@ ABILITIES = {
         "name": "Ambush",
         "cost": {"energy": 15},
         "dice": {"type": "d6", "power_on": "roll"},
-        "scaling": {"atk": 2.0},
+        "scaling": {"atk": 1.7},
         "damage_type": "physical",
         "tags": ["attack", "physical"],
         "cooldown": 0,

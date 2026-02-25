@@ -107,7 +107,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
     "ambush": {
         "type": "status",
         "name": "Ambush",
-        "duration": 999,
+        "duration": 2,
         "flags": {"ambush_ready": True},
     },
     "thistle_tea": {
