@@ -34,6 +34,12 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "dispellable": True,
         "school": "magical",
         "flags": {"immune_all": True, "stunned": True},
+        "display": {
+            "war_council": True,
+            "label": "Immune",
+            "color": "#3385cc",
+            "priority": 90,
+        },
         "regen": {"hp": 10, "mp": 25},
     },
     "cloak_of_shadows": {
@@ -82,6 +88,12 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 1,
         "flags": {"stunned": True},
         "cant_act_reason": "stunned",
+        "display": {
+            "war_council": True,
+            "label": "Stunned",
+            "color": "#cc3333",
+            "priority": 85,
+        },
     },
     "stealth": {
         "type": "stealth",
@@ -91,6 +103,12 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "school": "magical",
         "flags": {"stealthed": True},
         "break_on_damage_over": 5,
+        "display": {
+            "war_council": True,
+            "label": "Stealthed",
+            "color": "#FFF468",
+            "priority": 80,
+        },
     },
     "blink": {
         "type": "status",
@@ -136,6 +154,12 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "dispellable": True,
         "school": "magical",
         "flags": {"immune_all": True},
+        "display": {
+            "war_council": True,
+            "label": "Immune",
+            "color": "#F48CBA",
+            "priority": 90,
+        },
     },
     "shield_of_vengeance": {
         "type": "status",
@@ -250,12 +274,24 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "school": "magical",
         "outgoing_damage_mult": 1.2,
         "flags": {"avenging_wrath": True},
+        "display": {
+            "war_council": True,
+            "label": "Empowered",
+            "color": "#F48CBA",
+            "priority": 70,
+        },
     },
     "bear_form": {
         "type": "form",
         "name": "Bear Form",
         "duration": 999,
         "flags": {"form": "bear", "bear_form": True},
+        "display": {
+            "war_council": True,
+            "label": "Bear Form",
+            "color": "#FF7C0A",
+            "priority": 75,
+        },
     },
     "bear_form_stats": {
         "type": "stat_mods",
@@ -268,6 +304,12 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "name": "Cat Form",
         "duration": 999,
         "flags": {"form": "cat", "cat_form": True},
+        "display": {
+            "war_council": True,
+            "label": "Cat Form",
+            "color": "#FF7C0A",
+            "priority": 75,
+        },
     },
     "cat_form_stats": {
         "type": "stat_mods",
@@ -280,6 +322,12 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "name": "Moonkin Form",
         "duration": 999,
         "flags": {"form": "moonkin", "moonkin_form": True},
+        "display": {
+            "war_council": True,
+            "label": "Moonkin Form",
+            "color": "#FF7C0A",
+            "priority": 75,
+        },
     },
     "moonkin_form_stats": {
         "type": "stat_mods",
@@ -292,6 +340,12 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "name": "Tree Form",
         "duration": 999,
         "flags": {"form": "tree", "tree_form": True},
+        "display": {
+            "war_council": True,
+            "label": "Tree Form",
+            "color": "#FF7C0A",
+            "priority": 75,
+        },
     },
     "tree_form_stats": {
         "type": "stat_mods",

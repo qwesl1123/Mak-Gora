@@ -5,7 +5,7 @@ import time
 
 from . import state
 from .engine import resolver
-from .engine.effects import current_form_id, is_stealthed
+from .engine.effects import current_form_id, effect_template, is_stealthed
 from .content.classes import CLASSES
 from .content.items import ITEMS
 from .content.abilities import ABILITIES
@@ -124,6 +124,28 @@ def snapshot_for(match, viewer_sid):
         if not ps:
             return None
         return current_form_id(ps)
+    def effects_for(sid):
+        ps = match.state.get(sid)
+        if not ps:
+            return []
+        packed_effects = []
+        for effect in ps.effects:
+            effect_id = effect.get("id")
+            if not effect_id:
+                continue
+            template = effect_template(effect_id)
+            display = template.get("display")
+            if not isinstance(display, dict) or not display.get("war_council"):
+                continue
+            packed_effects.append({
+                "id": effect_id,
+                "display": {
+                    "label": display.get("label"),
+                    "color": display.get("color"),
+                    "priority": int(display.get("priority", 0) or 0),
+                },
+            })
+        return packed_effects
 
     def display_name_for(sid):
         class_name = class_name_for(sid)
@@ -190,6 +212,8 @@ def snapshot_for(match, viewer_sid):
         "enemy_stealthed": stealthed_for(enemy),
         "you_form": form_for(you),
         "enemy_form": form_for(enemy),
+        "you_effects": effects_for(you),
+        "enemy_effects": effects_for(enemy),
         "log": [format_log_line(line) for line in match.log[-30:]],
         "winner": match.winner,
         "friendly_total_damage": friendly_totals.get("damage", 0),

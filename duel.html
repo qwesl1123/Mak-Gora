@@ -3059,31 +3059,37 @@
           element.classList.add(classKey);
         }
       }
-
-      function renderStatus(stealthed, formId, classKey, element) {
+      function renderStatus(effects, stealthed, formId, classKey, element) {
         if (!element) return;
-        const formMap = {
-          bear_form: "Bear Form",
-          cat_form: "Cat Form",
-          moonkin_form: "Moonkin Form",
-          tree_form: "Tree Form",
-        };
-        if (stealthed) {
+        const sortedStatuses = (Array.isArray(effects) ? effects : [])
+          .map((effect) => ({
+            id: effect?.id,
+            display: effect?.display || {},
+          }))
+          .filter((effect) => effect.display?.label)
+          .sort((a, b) => (Number(b.display?.priority) || 0) - (Number(a.display?.priority) || 0));
+
+        const seenLabels = new Set();
+        const uniqueStatuses = sortedStatuses.filter((effect) => {
+          const label = effect.display?.label;
+          if (!label || seenLabels.has(label)) {
+            return false;
+          }
+          seenLabels.add(label);
+          return true;
+        });
+
+        if (uniqueStatuses.length > 0) {
           setStatusClass(element, classKey);
-          element.textContent = "Stealthed";
-          element.classList.add("stealthed");
-          return;
-        }
-        const formLabel = formMap[formId];
-        if (formLabel) {
-          setStatusClass(element, classKey);
-          element.textContent = formLabel;
           element.classList.remove("stealthed");
+          element.textContent = uniqueStatuses[0].display?.label || "--";
           return;
         }
-        setStatusClass(element, "");
-        element.textContent = "--";
-        element.classList.remove("stealthed");
+
+        const fallbackLabel = stealthed ? "Stealthed" : "--";
+        setStatusClass(element, stealthed ? classKey : "");
+        element.textContent = fallbackLabel;
+        element.classList.toggle("stealthed", Boolean(stealthed));
       }
       
         renderRes(data.you, {
@@ -3095,6 +3101,7 @@
           primaryLabel: friendlyPrimaryLabel,
         }, data.you_resource || { id: "mp", label: "Mana", color: "var(--mana-blue)" });
         renderStatus(
+          data.you_effects,
           Boolean(data.you_stealthed),
           data.you_form,
           classKeyFromLabel(data.you_class),
@@ -3110,6 +3117,7 @@
           primaryLabel: enemyPrimaryLabel,
         }, data.enemy_resource || { id: "mp", label: "Mana", color: "var(--mana-blue)" });
         renderStatus(
+          data.enemy_effects,
           Boolean(data.enemy_stealthed),
           data.enemy_form,
           classKeyFromLabel(data.enemy_class),
