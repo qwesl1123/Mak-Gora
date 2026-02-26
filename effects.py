@@ -48,6 +48,20 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 2,
         "flags": {"immune_magic": True},
     },
+    "item_passive_template": {
+        "type": "item_passive",
+        "name": "Item Passive",
+        "duration": 999,
+    },
+    "burn": {
+        "type": "burn",
+        "name": "Burn",
+        "duration": 999,
+        "category": "dot",
+        "school": "magical",
+        "dispellable": True,
+        "tick_damage": 1,
+    },
     "agony": {
         "type": "dot",
         "name": "Agony",
@@ -587,13 +601,13 @@ def current_form_id(target: PlayerState) -> Optional[str]:
 
 
 def clear_forms(target: PlayerState) -> None:
-    target.effects = [
-        effect
-        for effect in target.effects
-        if effect.get("id") not in FORM_EFFECT_IDS
-        and effect.get("id") not in FORM_STAT_EFFECT_IDS
-        and effect.get("id") not in FORM_CLEAR_EFFECT_IDS
-    ]
+    remove_ids: List[str] = []
+    for effect in target.effects:
+        effect_id = effect.get("id")
+        if effect_id in FORM_EFFECT_IDS or effect_id in FORM_STAT_EFFECT_IDS or effect_id in FORM_CLEAR_EFFECT_IDS:
+            remove_ids.append(effect_id)
+    for effect_id in remove_ids:
+        remove_effect(target, effect_id)
 
 
 def apply_form(
@@ -712,27 +726,25 @@ def apply_burn(
 ) -> None:
     """Attach a burn DoT to the target (matches your existing burn shape)."""
     for effect in target.effects:
-        if effect.get("type") == "burn":
+        if effect.get("id") == "burn" or effect.get("type") == "burn":
             effect["category"] = "dot"
             effect["school"] = "magical"
             effect["dispellable"] = True
-            effect["value"] = max(int(effect.get("value", 0) or 0), int(value))
+            effect["tick_damage"] = max(int(effect.get("tick_damage", effect.get("value", 0)) or 0), int(value))
             effect["duration"] = max(int(effect.get("duration", 0) or 0), int(duration))
             effect["source"] = str(source_item)
             if source_sid is not None:
                 effect["source_sid"] = source_sid
             return
-    target.effects.append(
-        {
-            "type": "burn",
-            "category": "dot",
-            "school": "magical",
-            "dispellable": True,
-            "value": int(value),
+    apply_effect_by_id(
+        target,
+        "burn",
+        overrides={
+            "tick_damage": int(value),
             "duration": int(duration),
             "source": str(source_item),
             "source_sid": source_sid,
-        }
+        },
     )
 
 
@@ -1177,9 +1189,10 @@ def trigger_end_of_turn_passives(ps: PlayerState, log: List[str], label: str) ->
     return total_healing
 
 
-def trigger_end_of_turn_effects(ps: PlayerState, log: List[str], label: str) -> int:
+def trigger_end_of_turn_effects(ps: PlayerState, log: List[str], label: str) -> tuple[int, List[Dict[str, Any]]]:
     """Run end-of-turn status effects such as regeneration from buffs."""
     total_healing = 0
+    pending_mindgames_damage: List[Dict[str, Any]] = []
     for effect in ps.effects:
         regen = effect.get("regen", {}) or {}
         if not regen:
@@ -1193,7 +1206,7 @@ def trigger_end_of_turn_effects(ps: PlayerState, log: List[str], label: str) -> 
         energy_gain = int(regen.get("energy", 0) or 0)
         if hp_gain > 0:
             if has_effect(ps, "mindgames"):
-                ps.res.hp = max(0, ps.res.hp - hp_gain)
+                pending_mindgames_damage.append({"source_sid": ps.sid, "incoming": hp_gain, "effect_id": "mindgames", "effect_name": "Mindgames", "school": "magical"})
                 if log is not None:
                     log.append(f"{label} is twisted by Mindgames and takes {hp_gain} self-damage instead of healing.")
             else:
@@ -1209,23 +1222,24 @@ def trigger_end_of_turn_effects(ps: PlayerState, log: List[str], label: str) -> 
             log.append(
                 f"{label} recovers {hp_gain} HP, {mp_gain} MP, and {energy_gain} Energy from {effect_name}."
             )
-    return total_healing
+    return total_healing, pending_mindgames_damage
 
 
 def end_of_turn(ps: PlayerState, log: List[str], label: str) -> dict[str, Any]:
     """End-of-turn pipeline: DoTs, passives, duration tick, regen."""
     if not ps.res:
-        return {"damage_sources": [], "healing_done": 0}
+        return {"damage_sources": [], "healing_done": 0, "self_damage_sources": []}
 
     if has_flag(ps, "cycloned"):
-        return {"damage_sources": [], "healing_done": 0}
+        return {"damage_sources": [], "healing_done": 0, "self_damage_sources": []}
 
     damage_sources = tick_dots(ps, log, label)
     total_healing = 0
     total_healing += trigger_end_of_turn_passives(ps, log, label)
-    total_healing += trigger_end_of_turn_effects(ps, log, label)
+    effect_healing, self_damage_sources = trigger_end_of_turn_effects(ps, log, label)
+    total_healing += effect_healing
 
     if ps.res.hp > 0:
         ps.res.mp = min(ps.res.mp + DEFAULTS["mp_regen_per_turn"], ps.res.mp_max)
         ps.res.energy = min(ps.res.energy + DEFAULTS["energy_regen_per_turn"], ps.res.energy_max)
-    return {"damage_sources": damage_sources, "healing_done": total_healing}
+    return {"damage_sources": damage_sources, "healing_done": total_healing, "self_damage_sources": self_damage_sources}

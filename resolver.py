@@ -153,12 +153,17 @@ def apply_prep_build(match: MatchState) -> None:
             else:
                 passive_list = [passives]
             for passive in passive_list:
-                ps.effects.append({
-                    "type": "item_passive",
-                    "source_item": item["name"],
-                    "passive": passive,
-                    "duration": 999,  # Permanent passive
-                })
+                apply_effect_by_id(
+                    ps,
+                    "item_passive_template",
+                    overrides={
+                        "type": "item_passive",
+                        "name": item["name"],
+                        "source_item": item["name"],
+                        "passive": passive,
+                        "duration": 999,
+                    },
+                )
         
         match.state[sid] = ps
 
@@ -504,7 +509,7 @@ def resolve_turn(match: MatchState) -> None:
         if ability_id == "healthstone":
             heal_value = max(1, int(actor.res.hp_max * 0.25))
             if has_effect(actor, "mindgames"):
-                actor.res.hp = max(0, actor.res.hp - heal_value)
+                apply_damage(actor, actor, heal_value, actor_sid, "Mindgames", school="magical")
                 log_parts.append(f"Mindgames twists healing into {heal_value} self-damage.")
                 set_cooldown(actor, ability_id, ability)
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
@@ -594,7 +599,7 @@ def resolve_turn(match: MatchState) -> None:
             roll_power = roll("d8", r)
             heal_value = int((intellect + attack) * 1.6) + int(roll_power)
             if has_effect(actor, "mindgames"):
-                actor.res.hp = max(0, actor.res.hp - heal_value)
+                apply_damage(actor, actor, heal_value, actor_sid, "Mindgames", school="magical")
                 log_parts.append(f"Mindgames twists healing into {heal_value} self-damage.")
                 set_cooldown(actor, ability_id, ability)
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
@@ -632,7 +637,7 @@ def resolve_turn(match: MatchState) -> None:
             intellect = modify_stat(actor, "int", actor.stats.get("int", 0))
             heal_value = int(intellect * 2.0) + int(roll("d4", r))
             if has_effect(actor, "mindgames"):
-                actor.res.hp = max(0, actor.res.hp - heal_value)
+                apply_damage(actor, actor, heal_value, actor_sid, "Mindgames", school="magical")
                 log_parts.append(f"Mindgames twists healing into {heal_value} self-damage.")
                 set_cooldown(actor, ability_id, ability)
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
@@ -647,7 +652,7 @@ def resolve_turn(match: MatchState) -> None:
             intellect = modify_stat(actor, "int", actor.stats.get("int", 0))
             heal_value = int(intellect * 0.9) + int(roll("d8", r))
             if has_effect(actor, "mindgames"):
-                actor.res.hp = max(0, actor.res.hp - heal_value)
+                apply_damage(actor, actor, heal_value, actor_sid, "Mindgames", school="magical")
                 log_parts.append(f"Mindgames twists healing into {heal_value} self-damage.")
                 set_cooldown(actor, ability_id, ability)
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
@@ -717,7 +722,7 @@ def resolve_turn(match: MatchState) -> None:
         if ability_id == "lay_on_hands":
             if has_effect(actor, "mindgames"):
                 backlash = actor.res.hp
-                actor.res.hp = 0
+                apply_damage(actor, actor, backlash, actor_sid, "Mindgames", school="magical")
                 log_parts.append(f"Mindgames twists healing into {backlash} self-damage.")
                 set_cooldown(actor, ability_id, ability)
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
@@ -777,7 +782,7 @@ def resolve_turn(match: MatchState) -> None:
                 roll_power = roll("d4", r)
                 heal_value = base_damage(intellect, 0.4, roll_power)
                 if has_effect(actor, "mindgames"):
-                    actor.res.hp = max(0, actor.res.hp - heal_value)
+                    apply_damage(actor, actor, heal_value, actor_sid, "Mindgames", school="magical")
                     log_parts.append(f"Hit {hit_index}: Mindgames turns healing into {heal_value} self-damage.")
                     continue
                 before_hp = actor.res.hp
@@ -1303,7 +1308,11 @@ def resolve_turn(match: MatchState) -> None:
         if ability.get("effect"):
             effect = dict(ability["effect"])
             effect["duration"] = int(effect.get("duration", 1))
-            actor.effects.append(effect)
+            apply_effect_by_id(
+                actor,
+                "item_passive_template",
+                overrides={"type": effect.get("type", "status"), **effect},
+            )
             log_parts.append("Defensive stance raised.")
         else:
             apply_effect_entries(
@@ -1628,7 +1637,7 @@ def resolve_turn(match: MatchState) -> None:
         if target.res.hp > 0 and dealt > 0:
             backlash = int(dealt * 1.0)
             if backlash > 0:
-                actor.res.hp = max(0, actor.res.hp - backlash)
+                apply_damage(actor, actor, backlash, actor_sid, "Shadow Word: Death backlash", school="magical")
                 match.log.append(f"{actor_sid[:5]} suffers {backlash} backlash from Shadow Word: Death.")
 
     for actor_sid, dealt, result in ((sids[0], dealt1, result1), (sids[1], dealt2, result2)):
@@ -1747,6 +1756,16 @@ def resolve_turn(match: MatchState) -> None:
                     match.log.append(f"{source_sid[:5]} heals {gained} HP from {source_name}.")
                     totals["healing"] += gained
 
+        for source in end_summary.get("self_damage_sources", []):
+            source_sid = source.get("source_sid")
+            if not source_sid:
+                continue
+            damage = resolve_dot_tick(source_sid, sid, source)
+            if damage <= 0:
+                continue
+            totals = match.combat_totals.setdefault(source_sid, {"damage": 0, "healing": 0})
+            totals["damage"] += damage
+
         imp_count = int((ps.minions or {}).get("imp", 0))
         if imp_count > 0 and ps.res and ps.res.hp > 0 and opponent.res and opponent.res.hp > 0:
             for _ in range(imp_count):
@@ -1767,15 +1786,17 @@ def resolve_turn(match: MatchState) -> None:
                 reduced = int(reduced * mitigation_multiplier(opponent))
                 if is_damage_immune(opponent, "magic"):
                     reduced = 0
-                remaining, absorbed, breakdown = consume_absorbs(opponent, reduced)
-                if remaining > 0:
-                    opponent.res.hp -= remaining
-                    if current_form_id(opponent) == "bear_form":
-                        opponent.res.rage = min(opponent.res.rage + remaining, opponent.res.rage_max)
-                    was_stealthed = is_stealthed(opponent)
-                    break_stealth_on_damage(opponent, remaining)
-                    if was_stealthed and not is_stealthed(opponent):
-                        match.log.append(f"{opponent_sid[:5]} stealth broken by Imp Firebolt.")
+                dealt_data = apply_damage(
+                    ps,
+                    opponent,
+                    reduced,
+                    opponent_sid,
+                    "Imp Firebolt",
+                    school="magical",
+                )
+                remaining = int(dealt_data.get("hp_damage", 0) or 0)
+                absorbed = int(dealt_data.get("absorbed", 0) or 0)
+                breakdown = dealt_data.get("absorbed_breakdown", [])
                 if absorbed > 0 or remaining > 0:
                     total_incoming = remaining + absorbed
                     imp_log = f"{sid[:5]}'s Imp casts Firebolt for {total_incoming} damage."
@@ -1824,10 +1845,19 @@ def resolve_turn(match: MatchState) -> None:
                 if is_damage_immune(opponent, "physical"):
                     fiend_reduced = 0
                 if fiend_reduced > 0:
-                    remaining, absorbed, breakdown = consume_absorbs(opponent, fiend_reduced)
+                    dealt_data = apply_damage(
+                        ps,
+                        opponent,
+                        fiend_reduced,
+                        opponent_sid,
+                        "Shadowfiend melee",
+                        school="physical",
+                    )
+                    remaining = int(dealt_data.get("hp_damage", 0) or 0)
+                    absorbed = int(dealt_data.get("absorbed", 0) or 0)
+                    breakdown = dealt_data.get("absorbed_breakdown", [])
                     total_incoming = remaining + absorbed
                     if remaining > 0:
-                        opponent.res.hp -= remaining
                         fiend_log = f"Shadowfiend melee attacks {opponent_sid[:5]} for {total_incoming} damage."
                         if absorbed > 0:
                             fiend_log = f"{fiend_log} {absorb_suffix(absorbed, breakdown).strip()}"
