@@ -95,6 +95,16 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
             "priority": 85,
         },
     },
+    "ring_of_ice_freeze": {
+        "type": "status",
+        "name": "Ring of Ice",
+        "duration": 1,
+        "category": "cc",
+        "school": "magical",
+        "harmful": True,
+        "flags": {"stunned": True},
+        "cant_act_reason": "frozen",
+    },
     "stealth": {
         "type": "stealth",
         "name": "Stealth",
@@ -242,6 +252,9 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "type": "status",
         "name": "Mindgames",
         "duration": 1,
+        "category": "debuff",
+        "school": "magical",
+        "harmful": True,
         "flags": {"mindgames": True},
     },
     "psychic_scream": {
@@ -473,6 +486,35 @@ def build_effect(effect_id: str, overrides: Optional[Dict[str, Any]] = None) -> 
 
 def effect_template(effect_id: str) -> Dict[str, Any]:
     return EFFECT_TEMPLATES.get(effect_id, {})
+
+
+def normalize_school(school: Any) -> str:
+    normalized = str(school or "").lower()
+    if normalized == "magic":
+        return "magical"
+    return normalized
+
+
+def is_harmful_effect(effect: Dict[str, Any]) -> bool:
+    """Classify whether an effect negatively impacts its target."""
+    if "harmful" in effect:
+        return bool(effect.get("harmful"))
+
+    category = str(effect.get("category") or "").lower()
+    if category in {"dot", "debuff", "cc"}:
+        return True
+    if category in {"hot", "buff", "absorb"}:
+        return False
+
+    flags = effect.get("flags", {}) or {}
+    if flags.get("stunned"):
+        return True
+    return False
+
+
+def is_magical_harmful_effect(effect: Dict[str, Any]) -> bool:
+    school = normalize_school(effect.get("school"))
+    return school == "magical" and is_harmful_effect(effect)
 
 
 def is_dispellable_by(
@@ -1100,6 +1142,7 @@ def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[dict[str, Any
             "incoming": reduced,
             "effect_id": effect.get("id"),
             "effect_name": effect.get("name", "DoT"),
+            "school": school,
             "lifesteal_pct": float(effect.get("lifesteal_pct", 0) or 0),
         })
     return damage_sources

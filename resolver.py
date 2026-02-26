@@ -40,6 +40,8 @@ from .effects import (
     outgoing_damage_multiplier,
     is_dispellable_by,
     effect_template,
+    is_magical_harmful_effect,
+    normalize_school,
 )
 
 def cooldown_slots(ps: PlayerState, ability_id: str) -> list:
@@ -296,6 +298,10 @@ def resolve_turn(match: MatchState) -> None:
             overrides = dict(entry.get("overrides", {}) or {})
             if entry.get("duration"):
                 overrides["duration"] = int(entry.get("duration"))
+            effect = build_effect(entry["id"], overrides=overrides or None)
+            if has_effect(target, "cloak_of_shadows") and is_magical_harmful_effect(effect):
+                log_parts.append("Immune!")
+                continue
             if entry["id"] in FORM_EFFECT_IDS:
                 apply_form(target, entry["id"], overrides=overrides or None)
             else:
@@ -521,6 +527,11 @@ def resolve_turn(match: MatchState) -> None:
                 target_immune_log(log_parts)
                 set_cooldown(actor, ability_id, ability)
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
+            dot_template = build_effect((ability.get("dot") or {}).get("id", ""))
+            if has_effect(target, "cloak_of_shadows") and is_magical_harmful_effect(dot_template):
+                log_parts.append("Immune!")
+                set_cooldown(actor, ability_id, ability)
+                return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
             intellect = modify_stat(actor, "int", actor.stats.get("int", 0))
             roll_power = roll("d4", r)
             scale = float((ability.get("scaling") or {}).get("int", 0.0) or 0.0)
@@ -546,6 +557,11 @@ def resolve_turn(match: MatchState) -> None:
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
             if is_immune_all(target):
                 target_immune_log(log_parts)
+                set_cooldown(actor, ability_id, ability)
+                return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
+            agony_template = build_effect("agony")
+            if has_effect(target, "cloak_of_shadows") and is_magical_harmful_effect(agony_template):
+                log_parts.append("Immune!")
                 set_cooldown(actor, ability_id, ability)
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
             apply_effect_by_id(
@@ -715,6 +731,11 @@ def resolve_turn(match: MatchState) -> None:
         if ability_id in ("vampiric_touch", "devouring_plague"):
             if is_immune_all(target):
                 target_immune_log(log_parts)
+                set_cooldown(actor, ability_id, ability)
+                return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
+            dot_template = build_effect((ability.get("dot") or {}).get("id", ""))
+            if has_effect(target, "cloak_of_shadows") and is_magical_harmful_effect(dot_template):
+                log_parts.append("Immune!")
                 set_cooldown(actor, ability_id, ability)
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
             intellect = modify_stat(actor, "int", actor.stats.get("int", 0))
@@ -1050,6 +1071,7 @@ def resolve_turn(match: MatchState) -> None:
         return {
             "damage": total_damage,
             "damage_instances": damage_instances,
+            "damage_type": damage_type,
             "healing": total_healing,
             "log": " ".join(log_parts),
             "extra_logs": extra_logs,
@@ -1413,6 +1435,7 @@ def resolve_turn(match: MatchState) -> None:
         source_ability_name: str,
         mindgames_flip_damage: bool = False,
         damage_instances: list[int] | None = None,
+        school: str = "physical",
     ) -> Dict[str, Any]:
         if incoming <= 0 or not target.res:
             return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0}
@@ -1421,6 +1444,9 @@ def resolve_turn(match: MatchState) -> None:
             return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0}
         if has_flag(target, "cycloned"):
             match.log.append(f"{target_sid[:5]} is cycloned and takes no damage.")
+            return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0}
+        if normalize_school(school) == "magical" and has_effect(target, "cloak_of_shadows"):
+            match.log.append(f"{target_sid[:5]} is immune to magical harm under Cloak of Shadows.")
             return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0}
         instance_values = [max(0, int(value or 0)) for value in (damage_instances or []) if int(value or 0) > 0]
         accounted = sum(instance_values)
@@ -1485,17 +1511,30 @@ def resolve_turn(match: MatchState) -> None:
         remove_effect(owner, "shield_of_vengeance")
         if absorbed_total <= 0:
             return
-        if is_immune_all(enemy):
+        dealt_data = apply_damage(
+            owner,
+            enemy,
+            absorbed_total,
+            enemy_sid,
+            "Shield of Vengeance",
+            school="magical",
+        )
+        hp_damage = int(dealt_data.get("hp_damage", 0) or 0)
+        if hp_damage <= 0:
             match.log.append(f"{enemy_sid[:5]} is immune to Shield of Vengeance explosion.")
             return
-        enemy.res.hp -= absorbed_total
-        match.log.append(f"Shield of Vengeance explodes for {absorbed_total} magic damage.")
+        match.log.append(
+            format_damage_log(
+                "Shield of Vengeance explodes for __DMG_0__ magic damage.",
+                dealt_data,
+            )
+        )
         imp_count = int((enemy.minions or {}).get("imp", 0))
         if imp_count > 0:
             enemy.minions["imp"] = 0
             match.log.append(f"{enemy_sid[:5]}'s Imps are destroyed by Shield of Vengeance.")
         totals = match.combat_totals.setdefault(owner_sid, {"damage": 0, "healing": 0})
-        totals["damage"] += absorbed_total
+        totals["damage"] += hp_damage
 
     def resolve_dot_tick(source_sid: str, target_sid: str, source: Dict[str, Any]) -> int:
         source_ps = match.state.get(source_sid)
@@ -1514,6 +1553,7 @@ def resolve_turn(match: MatchState) -> None:
             dot_name,
             bool(has_effect(source_ps, "mindgames")),
             [incoming],
+            school=source.get("school") or "magical",
         )
         formatted = format_damage_log(
             f"{target_sid[:5]} suffers __DMG_0__ damage from {dot_name}.",
@@ -1535,6 +1575,7 @@ def resolve_turn(match: MatchState) -> None:
         source_name_1,
         bool(result1.get("mindgames_flip_damage")),
         result1.get("damage_instances"),
+        school=result1.get("damage_type") or "physical",
     )
     dealt2_data = apply_damage(
         match.state[sids[1]],
@@ -1544,6 +1585,7 @@ def resolve_turn(match: MatchState) -> None:
         source_name_2,
         bool(result2.get("mindgames_flip_damage")),
         result2.get("damage_instances"),
+        school=result2.get("damage_type") or "physical",
     )
     dealt1 = int(dealt1_data.get("hp_damage", 0) or 0)
     dealt2 = int(dealt2_data.get("hp_damage", 0) or 0)

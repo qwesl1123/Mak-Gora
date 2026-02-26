@@ -193,7 +193,7 @@ ABILITIES = {
         "cooldown": 3,
         "classes": ["mage"],
         "target_effects": [
-            {"id": "stunned", "duration": 1, "overrides": {"cant_act_reason": "frozen"}, "log": "freezes the enemy solid."}
+            {"id": "ring_of_ice_freeze", "duration": 1, "log": "freezes the enemy solid."}
         ],
     },
     "ice_barrier": {
