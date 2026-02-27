@@ -147,6 +147,62 @@ def snapshot_for(match, viewer_sid):
             })
         return packed_effects
 
+    def pet_effects_for(effect_id, effect_instance=None):
+        template = effect_template(effect_id)
+        display = template.get("display") if isinstance(template, dict) else None
+        pet_effects = []
+        if isinstance(display, dict) and display.get("war_council") and display.get("label"):
+            pet_effects.append({
+                "label": display.get("label"),
+                "color": display.get("color"),
+                "priority": int(display.get("priority", 0) or 0),
+            })
+
+        if effect_id == "shadowfiend" and isinstance(effect_instance, dict):
+            duration = int(effect_instance.get("duration", 0) or 0)
+            if duration > 0:
+                pet_effects.append({
+                    "label": f"{duration}T",
+                    "color": "#FFFFFF",
+                    "priority": 100,
+                })
+
+        return pet_effects
+
+    def pets_for(sid):
+        ps = match.state.get(sid)
+        if not ps:
+            return []
+
+        minions = ps.minions if isinstance(ps.minions, dict) else {}
+        packed_pets = []
+
+        imp_count = int(minions.get("imp", 0) or 0)
+        if imp_count > 0:
+            packed_pets.append({
+                "id": "imp",
+                "name": "Imp",
+                "count": imp_count,
+                "effects": [],
+            })
+
+        shadowfiend_count = int(minions.get("shadowfiend", 0) or 0)
+        if shadowfiend_count > 0:
+            shadowfiend_effect = None
+            for effect in ps.effects:
+                if effect.get("id") == "shadowfiend":
+                    shadowfiend_effect = effect
+                    break
+
+            packed_pets.append({
+                "id": "shadowfiend",
+                "name": "Shadowfiend",
+                "count": shadowfiend_count,
+                "effects": pet_effects_for("shadowfiend", shadowfiend_effect),
+            })
+
+        return packed_pets
+
     def display_name_for(sid):
         class_name = class_name_for(sid)
         if sid == viewer_sid:
@@ -214,6 +270,8 @@ def snapshot_for(match, viewer_sid):
         "enemy_form": form_for(enemy),
         "you_effects": effects_for(you),
         "enemy_effects": effects_for(enemy),
+        "you_pets": pets_for(you),
+        "enemy_pets": pets_for(enemy),
         "log": [format_log_line(line) for line in match.log[-30:]],
         "winner": match.winner,
         "friendly_total_damage": friendly_totals.get("damage", 0),
