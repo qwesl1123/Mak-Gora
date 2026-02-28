@@ -118,6 +118,7 @@ ABILITIES = {
         "dice": {"type": "d6", "power_on": "roll"},
         "scaling": {"atk": 0.8},
         "damage_type": "physical",
+        "target_mode": "aoe_enemy",
         "tags": ["attack", "physical", "aoe"],
         "requires_target": False,
         "cooldown": 25,

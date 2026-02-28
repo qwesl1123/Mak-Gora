@@ -1622,9 +1622,73 @@ def resolve_turn(match: MatchState) -> None:
             "mindgames_healing": 0,
         }
 
+    def resolve_aoe_enemy_attack(
+        actor_sid: str,
+        target_sid: str,
+        incoming: int,
+        source_name: str,
+        school: str,
+        *,
+        mindgames_flip_damage: bool = False,
+        champion_log_template: str | None = None,
+        champion_immune_log: str | None = None,
+        skip_champion: bool = False,
+    ) -> Dict[str, Any]:
+        actor = match.state[actor_sid]
+        target = match.state[target_sid]
+        if incoming <= 0:
+            return {"champion": {"hp_damage": 0}, "pet_total_damage": 0}
+
+        champion_dealt_data = {"hp_damage": 0, "mindgames_healing": 0}
+        if not skip_champion:
+            champion_dealt_data = apply_damage(
+                actor,
+                target,
+                incoming,
+                target_sid,
+                source_name,
+                bool(mindgames_flip_damage),
+                [incoming],
+                school=school,
+            )
+            champion_hp_damage = int(champion_dealt_data.get("hp_damage", 0) or 0)
+            if champion_log_template:
+                if champion_hp_damage <= 0 and champion_immune_log:
+                    match.log.append(champion_immune_log)
+                else:
+                    champion_log = format_damage_log(champion_log_template, champion_dealt_data)
+                    flipped_heal = int(champion_dealt_data.get("mindgames_healing", 0) or 0)
+                    if flipped_heal > 0:
+                        champion_log = (
+                            f"{champion_log} Mindgames flips damage into {flipped_heal} healing for the target."
+                        )
+                    match.log.append(champion_log)
+
+        pet_total_damage = 0
+        pet_targets = [target.pets[pid] for pid in sorted(target.pets.keys())]
+        for pet in pet_targets:
+            if not pet or pet.hp <= 0:
+                continue
+            pet_result = apply_damage(actor, pet, incoming, pet.name, source_name, school=school)
+            remaining = int(pet_result.get("hp_damage", 0) or 0)
+            absorbed = int(pet_result.get("absorbed", 0) or 0)
+            breakdown = pet_result.get("absorbed_breakdown", [])
+            total_incoming = remaining + absorbed
+            if total_incoming > 0:
+                pet_log = f"{source_name} hits {pet.name} ({pet.id}) for {total_incoming} damage."
+                if absorbed > 0:
+                    pet_log = f"{pet_log} {absorb_suffix(absorbed, breakdown).strip()}"
+                match.log.append(pet_log)
+            if remaining > 0:
+                pet_total_damage += remaining
+            if pet.hp <= 0:
+                del target.pets[pet.id]
+                match.log.append(f"{pet.name} dies.")
+
+        return {"champion": champion_dealt_data, "pet_total_damage": pet_total_damage}
+
     def trigger_shield_of_vengeance_explosion(owner_sid: str, enemy_sid: str) -> None:
         owner = match.state[owner_sid]
-        enemy = match.state[enemy_sid]
         shield_fx = get_effect(owner, "shield_of_vengeance")
         if not shield_fx:
             return
@@ -1637,26 +1701,18 @@ def resolve_turn(match: MatchState) -> None:
         remove_effect(owner, "shield_of_vengeance")
         if absorbed_total <= 0:
             return
-        dealt_data = apply_damage(
-            owner,
-            enemy,
-            absorbed_total,
+        aoe_result = resolve_aoe_enemy_attack(
+            owner_sid,
             enemy_sid,
+            absorbed_total,
             "Shield of Vengeance",
-            school="magical",
+            "magical",
+            champion_log_template="Shield of Vengeance explodes for __DMG_0__ magic damage.",
+            champion_immune_log=f"{enemy_sid[:5]} is immune to Shield of Vengeance explosion.",
         )
-        hp_damage = int(dealt_data.get("hp_damage", 0) or 0)
-        if hp_damage <= 0:
-            match.log.append(f"{enemy_sid[:5]} is immune to Shield of Vengeance explosion.")
-            return
-        match.log.append(
-            format_damage_log(
-                "Shield of Vengeance explodes for __DMG_0__ magic damage.",
-                dealt_data,
-            )
-        )
+        champion_hp_damage = int(aoe_result.get("champion", {}).get("hp_damage", 0) or 0)
         totals = match.combat_totals.setdefault(owner_sid, {"damage": 0, "healing": 0})
-        totals["damage"] += hp_damage
+        totals["damage"] += champion_hp_damage + int(aoe_result.get("pet_total_damage", 0) or 0)
 
     def resolve_dot_tick(source_sid: str, target_sid: str, source: Dict[str, Any]) -> int:
         source_ps = match.state.get(source_sid)
@@ -1733,35 +1789,21 @@ def resolve_turn(match: MatchState) -> None:
         ability = ABILITIES.get(result.get("ability_id", ""), {})
         if ability_target_mode(ability) != "aoe_enemy":
             continue
-        # AoE policy: roll/compute damage once per cast (already in result["damage"])
-        # and apply that same incoming value to enemy champion first, then enemy pets.
         incoming = int(result.get("aoe_incoming_damage", result.get("damage", 0)) or 0)
         if incoming <= 0:
             continue
-        actor = match.state[actor_sid]
-        target = match.state[target_sid]
-        school = result.get("damage_type") or "physical"
-        source_name = ability.get("name", "AoE")
-        pet_targets = [target.pets[pid] for pid in sorted(target.pets.keys())]
-        for pet in pet_targets:
-            if not pet or pet.hp <= 0:
-                continue
-            pet_result = apply_damage(actor, pet, incoming, pet.name, source_name, school=school)
-            remaining = int(pet_result.get("hp_damage", 0) or 0)
-            absorbed = int(pet_result.get("absorbed", 0) or 0)
-            breakdown = pet_result.get("absorbed_breakdown", [])
-            total_incoming = remaining + absorbed
-            if total_incoming > 0:
-                pet_log = f"{source_name} hits {pet.name} ({pet.id}) for {total_incoming} damage."
-                if absorbed > 0:
-                    pet_log = f"{pet_log} {absorb_suffix(absorbed, breakdown).strip()}"
-                match.log.append(pet_log)
-            if remaining > 0:
-                totals = match.combat_totals.setdefault(actor_sid, {"damage": 0, "healing": 0})
-                totals["damage"] += remaining
-            if pet.hp <= 0:
-                del target.pets[pet.id]
-                match.log.append(f"{pet.name} dies.")
+        aoe_result = resolve_aoe_enemy_attack(
+            actor_sid,
+            target_sid,
+            incoming,
+            ability.get("name", "AoE"),
+            result.get("damage_type") or "physical",
+            skip_champion=True,
+        )
+        pet_damage = int(aoe_result.get("pet_total_damage", 0) or 0)
+        if pet_damage > 0:
+            totals = match.combat_totals.setdefault(actor_sid, {"damage": 0, "healing": 0})
+            totals["damage"] += pet_damage
 
     for actor_sid, dealt, result in ((sids[0], dealt1, result1), (sids[1], dealt2, result2)):
         ability = ABILITIES.get(result.get("ability_id", ""), {})
@@ -2112,4 +2154,131 @@ def debug_simulate_swipe_vs_immune_champion_pets() -> Dict[str, Any]:
         "champion_hp_after": warlock_after.res.hp,
         "pet_damage": {pid: imp_deltas[idx] for idx, pid in enumerate(imp_ids)},
         "recent_logs": match.log[-20:],
+    }
+
+
+def debug_simulate_aoe_normalization_suite() -> Dict[str, Any]:
+    """
+    End-to-end deterministic checks for normalized aoe_enemy routing.
+
+    Verifies:
+    - Swipe and Dragon Roar both use champion-first then sorted pet fanout.
+    - Champion immune_all does not prevent pet AoE damage.
+    - Shield of Vengeance explosion damages enemy pets.
+    - Dragon Roar bleed remains champion-only.
+    """
+
+    # Scenario 1: Swipe + Dragon Roar both AoE, champion immunity doesn't block pet damage.
+    p1 = "p1_warlock"
+    p2 = "p2_warrior"
+    match = MatchState(room_id="debug_aoe_norm", players=[p1, p2], phase="combat", seed=9001)
+    match.picks[p1] = PlayerBuild(class_id="warlock")
+    match.picks[p2] = PlayerBuild(class_id="warrior")
+    apply_prep_build(match)
+
+    for _ in range(3):
+        submit_action(match, p1, {"ability_id": "summon_imp"})
+        submit_action(match, p2, {"ability_id": "pass_turn"})
+        resolve_turn(match)
+
+    # Swap warrior to druid-like swipe cast via direct ability use is class-gated, so run Swipe with a druid actor in a separate match.
+    p1s = "p1_warlock"
+    p2s = "p2_druid"
+    swipe_match = MatchState(room_id="debug_swipe", players=[p1s, p2s], phase="combat", seed=9002)
+    swipe_match.picks[p1s] = PlayerBuild(class_id="warlock")
+    swipe_match.picks[p2s] = PlayerBuild(class_id="druid")
+    apply_prep_build(swipe_match)
+    for _ in range(3):
+        submit_action(swipe_match, p1s, {"ability_id": "summon_imp"})
+        submit_action(swipe_match, p2s, {"ability_id": "bear"})
+        resolve_turn(swipe_match)
+
+    warlock_swipe = swipe_match.state[p1s]
+    apply_effect_by_id(warlock_swipe, "iceblock", overrides={"duration": 1})
+    swipe_imp_ids = sorted(warlock_swipe.pets.keys())
+    swipe_imp_before = {pid: warlock_swipe.pets[pid].hp for pid in swipe_imp_ids}
+    hp_before = warlock_swipe.res.hp
+    submit_action(swipe_match, p1s, {"ability_id": "healthstone"})
+    submit_action(swipe_match, p2s, {"ability_id": "swipe"})
+    resolve_turn(swipe_match)
+    warlock_swipe_after = swipe_match.state[p1s]
+    assert warlock_swipe_after.res.hp == hp_before, "Swipe should not damage immune champion."
+    swipe_deltas = [swipe_imp_before[pid] - warlock_swipe_after.pets[pid].hp for pid in swipe_imp_ids]
+    assert all(delta > 0 for delta in swipe_deltas), "Swipe should still damage all pets while champion is immune."
+    assert len(set(swipe_deltas)) == 1, "Swipe should deal same AoE incoming damage to all pets."
+
+    # Dragon Roar AoE + bleed champion-only.
+    warlock = match.state[p1]
+    warrior = match.state[p2]
+    warrior.stats["acc"] = 999
+    warrior.res.rage = warrior.res.rage_max
+    apply_effect_by_id(warlock, "iceblock", overrides={"duration": 1})
+    imp_ids = sorted(warlock.pets.keys())
+    imp_before = {pid: warlock.pets[pid].hp for pid in imp_ids}
+
+    deltas = [0 for _ in imp_ids]
+    warlock_after = warlock
+    for _ in range(4):
+        warrior = match.state[p2]
+        warrior.res.rage = warrior.res.rage_max
+        warrior.cooldowns["dragon_roar"] = []
+        submit_action(match, p1, {"ability_id": "healthstone"})
+        submit_action(match, p2, {"ability_id": "dragon_roar"})
+        resolve_turn(match)
+        warlock_after = match.state[p1]
+        deltas = [imp_before[pid] - warlock_after.pets[pid].hp for pid in imp_ids if pid in warlock_after.pets]
+        if deltas and all(delta > 0 for delta in deltas):
+            break
+
+    assert deltas and all(delta > 0 for delta in deltas), "Dragon Roar should AoE damage all pets."
+    assert len(set(deltas)) == 1, "Dragon Roar should apply same AoE incoming damage to each pet."
+    assert has_effect(warlock_after, "dragon_roar_bleed"), "Dragon Roar bleed should be on enemy champion."
+
+    # Ensure no bleed was applied to pets.
+    for pid in sorted(warlock_after.pets.keys()):
+        pet = warlock_after.pets[pid]
+        assert not any((fx.get("id") == "dragon_roar_bleed") for fx in (pet.effects or [])), "Dragon Roar bleed must not apply to pets."
+
+    # Scenario 2: Shield of Vengeance explosion now uses AoE fanout and hits pets.
+    p1p = "p1_warlock"
+    p2p = "p2_paladin"
+    sov_match = MatchState(room_id="debug_sov", players=[p1p, p2p], phase="combat", seed=9010)
+    sov_match.picks[p1p] = PlayerBuild(class_id="warlock")
+    sov_match.picks[p2p] = PlayerBuild(class_id="paladin")
+    apply_prep_build(sov_match)
+
+    for _ in range(3):
+        submit_action(sov_match, p1p, {"ability_id": "summon_imp"})
+        submit_action(sov_match, p2p, {"ability_id": "pass_turn"})
+        resolve_turn(sov_match)
+
+    wlk = sov_match.state[p1p]
+    imp_ids_sov = sorted(wlk.pets.keys())
+    imp_before_sov = {pid: wlk.pets[pid].hp for pid in imp_ids_sov}
+
+    # Force deterministic explosion payload and tick into expiration turn.
+    pal = sov_match.state[p2p]
+    apply_effect_by_id(pal, "shield_of_vengeance", overrides={"duration": 1, "absorbed": 30})
+    sov_fx = get_effect(pal, "shield_of_vengeance")
+    assert sov_fx is not None, "Expected Shield of Vengeance effect to be active."
+
+    submit_action(sov_match, p1p, {"ability_id": "pass_turn"})
+    submit_action(sov_match, p2p, {"ability_id": "pass_turn"})
+    resolve_turn(sov_match)
+
+    wlk_after = sov_match.state[p1p]
+    imp_after_sov = {pid: wlk_after.pets[pid].hp for pid in imp_ids_sov if pid in wlk_after.pets}
+    sov_damaged_pets = [pid for pid in imp_ids_sov if pid in imp_after_sov and imp_after_sov[pid] < imp_before_sov[pid]]
+    assert sov_damaged_pets, "Shield of Vengeance explosion should damage enemy pets."
+
+    return {
+        "swipe_pet_damage": {pid: swipe_deltas[idx] for idx, pid in enumerate(swipe_imp_ids)},
+        "dragon_roar_pet_damage": {pid: deltas[idx] for idx, pid in enumerate(imp_ids)},
+        "shield_of_vengeance_pets_hit": sov_damaged_pets,
+        "dragon_roar_bleed_on_champion": has_effect(warlock_after, "dragon_roar_bleed"),
+        "recent_logs": {
+            "swipe": swipe_match.log[-12:],
+            "dragon_roar": match.log[-12:],
+            "shield_of_vengeance": sov_match.log[-18:],
+        },
     }
