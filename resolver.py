@@ -314,6 +314,58 @@ def resolve_turn(match: MatchState) -> None:
             if entry.get("log"):
                 log_parts.append(entry["log"])
 
+    def apply_hp_sacrifice_absorb(
+        actor: PlayerState,
+        ability: Dict[str, Any],
+        log_parts: list[str],
+    ) -> None:
+        hp_sacrifice = ability.get("hp_sacrifice") or {}
+        absorb_from_sacrifice = ability.get("grant_absorb_from_sacrifice") or {}
+        if not hp_sacrifice or not absorb_from_sacrifice:
+            return
+
+        pct = float(hp_sacrifice.get("pct", 0) or 0)
+        if pct <= 0:
+            return
+
+        min_hp_leave = max(0, int(hp_sacrifice.get("min_hp_leave", 0) or 0))
+        # Uses current HP so sacrifice scales with the actor's present health pool.
+        base_hp_for_sacrifice = max(0, int(actor.res.hp))
+        desired_sacrifice = max(0, int(base_hp_for_sacrifice * pct))
+        max_sacrifice = max(0, int(actor.res.hp) - min_hp_leave)
+        sacrificed_hp = min(desired_sacrifice, max_sacrifice)
+
+        if sacrificed_hp > 0:
+            actor.res.hp = max(min_hp_leave, int(actor.res.hp) - sacrificed_hp)
+
+        mult = float(absorb_from_sacrifice.get("mult", 0) or 0)
+        absorb_value = max(0, int(sacrificed_hp * mult))
+        effect_id = absorb_from_sacrifice.get("effect_id")
+        duration = absorb_from_sacrifice.get("duration")
+
+        if effect_id:
+            overrides = {}
+            if duration is not None:
+                overrides["duration"] = int(duration)
+            apply_effect_by_id(actor, effect_id, overrides=overrides or None)
+            if absorb_value > 0:
+                add_absorb(
+                    actor,
+                    absorb_value,
+                    source_name=ability.get("name") or "Shield",
+                    effect_id=effect_id,
+                )
+        elif absorb_value > 0:
+            add_absorb(
+                actor,
+                absorb_value,
+                source_name=ability.get("name") or "Shield",
+            )
+
+        class_name = (actor.build.class_id or "Actor").title()
+        source_name = ability.get("name") or "ability"
+        log_parts.append(f"{class_name} sacrifices {sacrificed_hp} HP and gains {absorb_value} absorb from {source_name}.")
+
     def is_offensive_action(ability: Dict[str, Any]) -> bool:
         if "pass" in (ability.get("tags") or []):
             return False
@@ -838,6 +890,8 @@ def resolve_turn(match: MatchState) -> None:
             set_cooldown(actor, ability_id, ability)
             return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
 
+        apply_hp_sacrifice_absorb(actor, ability, log_parts)
+
         absorb_data = ability.get("absorb") or {}
         if absorb_data:
             absorb_scaling = absorb_data.get("scaling", {}) or {}
@@ -1360,6 +1414,8 @@ def resolve_turn(match: MatchState) -> None:
                 log_parts,
                 skip_self_effect_ids=skip_self_effect_ids,
             )
+
+        apply_hp_sacrifice_absorb(actor, ability, log_parts)
 
         absorb_data = ability.get("absorb") or {}
         if absorb_data:

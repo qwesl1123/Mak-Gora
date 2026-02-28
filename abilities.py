@@ -702,6 +702,28 @@ ABILITIES = {
         "dot": {"id": "agony", "duration": 10},
         "reject_if_active": True,
     },
+    "dark_pact": {
+        "name": "Dark Pact",
+        "cost": {"mp": 15},
+        "dice": None,
+        "tags": ["spell", "defense"],
+        "cooldown": 30,
+        "classes": ["warlock"],
+        "hp_sacrifice": {"pct": 0.20, "min_hp_leave": 1},
+        "grant_absorb_from_sacrifice": {"mult": 2.0, "effect_id": "dark_pact", "duration": 3},
+    },
+    "unending_resolve": {
+        "name": "Unending Resolve",
+        "cost": {"mp": 5},
+        "dice": None,
+        "tags": ["spell", "defense"],
+        "priority_defensive": True,
+        "cooldown": 40,
+        "classes": ["warlock"],
+        "self_effects": [
+            {"id": "unending_resolve", "duration": 1, "log": "becomes immune to all damage for a turn."}
+        ],
+    },
     "rampage": {
         "name": "Rampage",
         "cost": {"rage": 15},
