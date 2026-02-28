@@ -3264,7 +3264,7 @@
             row.appendChild(hpWrap);
           }
 
-          const badges = normalizePetBadges(pet?.effects);
+          const badges = normalizePetBadges(pet?.statuses || pet?.effects);
           if (!hasHp && badges.length === 0) {
             badges.push({ label: "Active", color: "#666666", priority: -1 });
           }

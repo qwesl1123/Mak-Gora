@@ -24,6 +24,17 @@ class PlayerBuild:
     })
 
 @dataclass
+class PetState:
+    id: str
+    template_id: str
+    name: str
+    owner_sid: str
+    hp: int
+    hp_max: int
+    effects: List[Dict[str, Any]] = field(default_factory=list)
+    duration: Optional[int] = None
+
+@dataclass
 class PlayerState:
     sid: str
     build: PlayerBuild = field(default_factory=PlayerBuild)
@@ -31,7 +42,7 @@ class PlayerState:
     stats: Dict[str, int] = field(default_factory=dict)     # atk/def/spd/crit/acc/eva...
     effects: List[Dict[str, Any]] = field(default_factory=list)  # buffs/debuffs
     cooldowns: Dict[str, list[int]] = field(default_factory=dict)
-    minions: Dict[str, int] = field(default_factory=dict)
+    pets: Dict[str, PetState] = field(default_factory=dict)
 
 @dataclass
 class MatchState:

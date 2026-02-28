@@ -6,6 +6,7 @@ import time
 from . import state
 from .engine import resolver
 from .engine.effects import current_form_id, effect_template, is_stealthed
+from .content.pets import PETS
 from .content.classes import CLASSES
 from .content.items import ITEMS
 from .content.abilities import ABILITIES
@@ -147,61 +148,46 @@ def snapshot_for(match, viewer_sid):
             })
         return packed_effects
 
-    def pet_effects_for(effect_id, effect_instance=None):
-        template = effect_template(effect_id)
-        display = template.get("display") if isinstance(template, dict) else None
-        pet_effects = []
-        if isinstance(display, dict) and display.get("war_council") and display.get("label"):
-            pet_effects.append({
+    def pet_statuses_for(pet):
+        statuses = []
+        template = PETS.get(pet.template_id, {})
+        display = template.get("display", {}) if isinstance(template, dict) else {}
+        if display.get("war_council") and display.get("label"):
+            statuses.append({
                 "label": display.get("label"),
                 "color": display.get("color"),
                 "priority": int(display.get("priority", 0) or 0),
             })
-
-        if effect_id == "shadowfiend" and isinstance(effect_instance, dict):
-            duration = int(effect_instance.get("duration", 0) or 0)
-            if duration > 0:
-                pet_effects.append({
-                    "label": f"{duration}T",
-                    "color": "#FFFFFF",
-                    "priority": 100,
+        for effect in pet.effects or []:
+            effect_id = effect.get("id")
+            if not effect_id:
+                continue
+            effect_display = (effect_template(effect_id) or {}).get("display", {})
+            if effect_display.get("war_council") and effect_display.get("label"):
+                statuses.append({
+                    "label": effect_display.get("label"),
+                    "color": effect_display.get("color"),
+                    "priority": int(effect_display.get("priority", 0) or 0),
                 })
-
-        return pet_effects
+        if pet.duration is not None and pet.duration > 0:
+            statuses.append({"label": f"{int(pet.duration)}T", "color": "#FFFFFF", "priority": 100})
+        return statuses
 
     def pets_for(sid):
         ps = match.state.get(sid)
         if not ps:
             return []
-
-        minions = ps.minions if isinstance(ps.minions, dict) else {}
-        packed_pets = []
-
-        imp_count = int(minions.get("imp", 0) or 0)
-        if imp_count > 0:
-            packed_pets.append({
-                "id": "imp",
-                "name": "Imp",
-                "count": imp_count,
-                "effects": [],
+        packed = []
+        for pet_id in sorted((ps.pets or {}).keys()):
+            pet = ps.pets[pet_id]
+            packed.append({
+                "id": pet.id,
+                "name": pet.name,
+                "hp": int(pet.hp),
+                "hp_max": int(pet.hp_max),
+                "statuses": pet_statuses_for(pet),
             })
-
-        shadowfiend_count = int(minions.get("shadowfiend", 0) or 0)
-        if shadowfiend_count > 0:
-            shadowfiend_effect = None
-            for effect in ps.effects:
-                if effect.get("id") == "shadowfiend":
-                    shadowfiend_effect = effect
-                    break
-
-            packed_pets.append({
-                "id": "shadowfiend",
-                "name": "Shadowfiend",
-                "count": shadowfiend_count,
-                "effects": pet_effects_for("shadowfiend", shadowfiend_effect),
-            })
-
-        return packed_pets
+        return packed
 
     def display_name_for(sid):
         class_name = class_name_for(sid)

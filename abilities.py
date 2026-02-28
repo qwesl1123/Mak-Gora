@@ -372,6 +372,7 @@ ABILITIES = {
         "dice": {"type": "d8", "power_on": "roll"},
         "scaling": {"atk": 0.5},
         "damage_type": "physical",
+        "target_mode": "aoe_enemy",
         "tags": ["attack", "physical", "aoe"],
         "cooldown": 10,
         "classes": ["druid"],

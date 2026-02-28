@@ -1,12 +1,14 @@
 # games/duel/engine/resolver.py
 from typing import Dict, Any, Tuple
-from .models import MatchState, PlayerState, PlayerBuild, Resources
+from .models import MatchState, PlayerState, PlayerBuild, Resources, PetState
 from .dice import rng_for, roll
 from .rules import base_damage, mitigate, hit_chance, clamp
 from ..content.abilities import ABILITIES
 from ..content.classes import CLASSES
 from ..content.items import ITEMS
 from ..content.balance import DEFAULTS, CAPS
+from ..content.pets import PETS
+from .pet_ai import run_pet_phase, cleanup_pets
 
 # Centralized mechanics (passives/DoTs/mitigation/regen) live here.
 from .effects import (
@@ -138,7 +140,7 @@ def apply_prep_build(match: MatchState) -> None:
             absorbs={},
         )
         
-        ps = PlayerState(sid=sid, build=build, res=res, stats=stats, minions={"imp": 0, "shadowfiend": 0})
+        ps = PlayerState(sid=sid, build=build, res=res, stats=stats, pets={})
 
         if build.class_id == "rogue":
             apply_effect_by_id(ps, "stealth")
@@ -257,7 +259,7 @@ def resolve_turn(match: MatchState) -> None:
 
     def apply_effect_entries(
         actor: PlayerState,
-        target: PlayerState,
+        target: PlayerState | PetState,
         ability: Dict[str, Any],
         log_parts: list,
         skip_self_effect_ids: set[str] | None = None,
@@ -289,8 +291,6 @@ def resolve_turn(match: MatchState) -> None:
                 apply_form(actor, effect_id, overrides=overrides or None)
             else:
                 apply_effect_by_id(actor, effect_id, overrides=overrides or None)
-            if effect_id == "shadowfiend":
-                actor.minions["shadowfiend"] = 1
             if entry.get("log"):
                 log_parts.append(entry["log"])
         for entry in ability.get("target_effects", []) or []:
@@ -323,18 +323,23 @@ def resolve_turn(match: MatchState) -> None:
 
     def should_miss_due_to_stealth(
         attacker: PlayerState,
-        target: PlayerState,
+        target: PlayerState | PetState,
         ability: Dict[str, Any] | None,
         stealth_snapshot: Dict[str, bool],
     ) -> bool:
         if not ability:
             return False
-        is_aoe = "aoe" in (ability.get("tags") or []) or not ability.get("requires_target", True)
+        is_aoe = is_aoe_ability(ability) or not ability.get("requires_target", True)
         if is_aoe:
             return False
         return bool(stealth_snapshot.get(target.sid, False) or is_stealthed(target))
 
+    def ability_target_mode(ability: Dict[str, Any]) -> str:
+        return str(ability.get("target_mode") or "enemy")
+
     def is_aoe_ability(ability: Dict[str, Any]) -> bool:
+        if ability_target_mode(ability) == "aoe_enemy":
+            return True
         if "is_aoe" in ability:
             return bool(ability.get("is_aoe"))
         return "aoe" in (ability.get("tags") or []) or not ability.get("requires_target", True)
@@ -421,7 +426,7 @@ def resolve_turn(match: MatchState) -> None:
         if ability_id == "agony" and has_effect(target, "agony"):
             return {"damage": 0, "healing": 0, "log": "Agony is not stackable."}
 
-        if ability_id == "summon_imp" and int((actor.minions or {}).get("imp", 0)) >= 3:
+        if ability_id == "summon_imp" and len([p for p in (actor.pets or {}).values() if p.template_id == "imp"]) >= int(PETS["imp"].get("max_count", 3)):
             return {"damage": 0, "healing": 0, "log": "3 Imps Maximum"}
 
         ok, fail_reason = can_pay_costs(actor, ability.get("cost", {}))
@@ -521,8 +526,23 @@ def resolve_turn(match: MatchState) -> None:
             return {"damage": 0, "healing": healed, "log": " ".join(log_parts), "ability_id": ability_id}
 
         if ability_id == "summon_imp":
-            actor.minions["imp"] = int((actor.minions or {}).get("imp", 0)) + 1
-            imp_count = actor.minions["imp"]
+            imp_template = PETS["imp"]
+            owner_idx = match.players.index(actor.sid) + 1
+            next_idx = 1
+            while f"p{owner_idx}_imp_{next_idx}" in actor.pets:
+                next_idx += 1
+            pet_id = f"p{owner_idx}_imp_{next_idx}"
+            actor.pets[pet_id] = PetState(
+                id=pet_id,
+                template_id="imp",
+                name=imp_template["name"],
+                owner_sid=actor.sid,
+                hp=int(imp_template["hp"]),
+                hp_max=int(imp_template["hp"]),
+                effects=[],
+                duration=None,
+            )
+            imp_count = len([p for p in actor.pets.values() if p.template_id == "imp"])
             log_parts.append(f"summons an Imp ({imp_count}/3).")
             set_cooldown(actor, ability_id, ability)
             return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
@@ -794,9 +814,27 @@ def resolve_turn(match: MatchState) -> None:
             return {"damage": 0, "healing": healing, "log": " ".join(log_parts), "ability_id": ability_id}
 
         if ability_id == "shadowfiend":
+            existing_id = next((pid for pid, pet in actor.pets.items() if pet.template_id == "shadowfiend"), None)
+            template = PETS["shadowfiend"]
+            duration = int(template.get("duration", 5))
+            if existing_id:
+                actor.pets[existing_id].duration = duration
+                actor.pets[existing_id].hp = actor.pets[existing_id].hp_max
+                log_parts.append("refreshes Shadowfiend.")
+            else:
+                owner_idx = match.players.index(actor.sid) + 1
+                pet_id = f"p{owner_idx}_shadowfiend"
+                actor.pets[pet_id] = PetState(
+                    id=pet_id,
+                    template_id="shadowfiend",
+                    name=template["name"],
+                    owner_sid=actor.sid,
+                    hp=int(template["hp"]),
+                    hp_max=int(template["hp"]),
+                    effects=[],
+                    duration=duration,
+                )
             remove_effect(actor, "shadowfiend")
-            apply_effect_by_id(actor, "shadowfiend", overrides={"duration": 5})
-            actor.minions["shadowfiend"] = 1
             set_cooldown(actor, ability_id, ability)
             return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
 
@@ -1154,7 +1192,7 @@ def resolve_turn(match: MatchState) -> None:
         if ability_id == "agony" and has_effect(target, "agony"):
             return {"damage": 0, "log": "Agony is not stackable.", "resolved": True}
 
-        if ability_id == "summon_imp" and int((actor.minions or {}).get("imp", 0)) >= 3:
+        if ability_id == "summon_imp" and len([p for p in (actor.pets or {}).values() if p.template_id == "imp"]) >= int(PETS["imp"].get("max_count", 3)):
             return {"damage": 0, "log": "3 Imps Maximum", "resolved": True}
 
         ok, fail_reason = can_pay_costs(actor, ability.get("cost", {}))
@@ -1230,7 +1268,7 @@ def resolve_turn(match: MatchState) -> None:
         target_effects = ability.get("target_effects") or []
         if not target_effects:
             return False
-        is_aoe = "aoe" in (ability.get("tags") or [])
+        is_aoe = is_aoe_ability(ability)
         target = match.state[target_sid]
         if should_miss_due_to_stealth(match.state[actor_sid], target, ability, stealth_targeting):
             return False
@@ -1256,7 +1294,7 @@ def resolve_turn(match: MatchState) -> None:
         ability = ctx["ability"]
         ability_id = ctx["ability_id"]
         skip_self_effect_ids = ctx.get("pre_resolved_self_effects", set())
-        is_aoe = "aoe" in (ability.get("tags") or [])
+        is_aoe = is_aoe_ability(ability)
 
         weapon_id = None
         if actor.build and actor.build.items:
@@ -1438,7 +1476,7 @@ def resolve_turn(match: MatchState) -> None:
     # Apply damage
     def apply_damage(
         source: PlayerState,
-        target: PlayerState,
+        target: PlayerState | PetState,
         incoming: int,
         target_sid: str,
         source_ability_name: str,
@@ -1446,17 +1484,19 @@ def resolve_turn(match: MatchState) -> None:
         damage_instances: list[int] | None = None,
         school: str = "physical",
     ) -> Dict[str, Any]:
-        if incoming <= 0 or not target.res:
+        is_player_target = hasattr(target, "res") and target.res is not None
+        if incoming <= 0:
             return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0}
-        if is_immune_all(target):
-            match.log.append(f"{target_sid[:5]} is immune and takes no damage.")
-            return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0}
-        if has_flag(target, "cycloned"):
-            match.log.append(f"{target_sid[:5]} is cycloned and takes no damage.")
-            return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0}
-        if normalize_school(school) == "magical" and has_effect(target, "cloak_of_shadows"):
-            match.log.append(f"{target_sid[:5]} is immune to magical harm under Cloak of Shadows.")
-            return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0}
+        if is_player_target:
+            if is_immune_all(target):
+                match.log.append(f"{target_sid[:5]} is immune and takes no damage.")
+                return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0}
+            if has_flag(target, "cycloned"):
+                match.log.append(f"{target_sid[:5]} is cycloned and takes no damage.")
+                return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0}
+            if normalize_school(school) == "magical" and has_effect(target, "cloak_of_shadows"):
+                match.log.append(f"{target_sid[:5]} is immune to magical harm under Cloak of Shadows.")
+                return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0}
         instance_values = [max(0, int(value or 0)) for value in (damage_instances or []) if int(value or 0) > 0]
         accounted = sum(instance_values)
         if incoming > accounted:
@@ -1464,7 +1504,7 @@ def resolve_turn(match: MatchState) -> None:
         if not instance_values:
             instance_values = [incoming]
 
-        if mindgames_flip_damage and source.sid != target.sid:
+        if is_player_target and mindgames_flip_damage and source.sid != target.sid:
             before_hp = target.res.hp
             target.res.hp = min(target.res.hp + incoming, target.res.hp_max)
             instance_results = [{"absorbed": 0, "hp_damage": value, "absorbed_breakdown": []} for value in instance_values]
@@ -1481,22 +1521,28 @@ def resolve_turn(match: MatchState) -> None:
         total_remaining = 0
         total_breakdown: list[Dict[str, Any]] = []
         for value in instance_values:
-            remaining, absorbed, breakdown = consume_absorbs(target, value)
+            if is_player_target:
+                remaining, absorbed, breakdown = consume_absorbs(target, value)
+            else:
+                remaining, absorbed, breakdown = value, 0, []
             total_absorbed += absorbed
             total_remaining += remaining
             instance_results.append({"absorbed": absorbed, "hp_damage": remaining, "absorbed_breakdown": breakdown})
             total_breakdown.extend(breakdown)
 
         if total_remaining > 0:
-            target.res.hp -= total_remaining
-            was_stealthed = is_stealthed(target)
-            break_stealth_on_damage(target, total_remaining)
-            if was_stealthed and not is_stealthed(target):
-                match.log.append(f"{target_sid[:5]} stealth broken by {source_ability_name}.")
-            if current_form_id(target) == "bear_form":
-                current = target.res.rage
-                cap = target.res.rage_max
-                target.res.rage = min(current + total_remaining, cap)
+            if is_player_target:
+                target.res.hp -= total_remaining
+                was_stealthed = is_stealthed(target)
+                break_stealth_on_damage(target, total_remaining)
+                if was_stealthed and not is_stealthed(target):
+                    match.log.append(f"{target_sid[:5]} stealth broken by {source_ability_name}.")
+                if current_form_id(target) == "bear_form":
+                    current = target.res.rage
+                    cap = target.res.rage_max
+                    target.res.rage = min(current + total_remaining, cap)
+            else:
+                target.hp -= total_remaining
         return {
             "hp_damage": max(0, total_remaining),
             "absorbed": total_absorbed,
@@ -1538,10 +1584,6 @@ def resolve_turn(match: MatchState) -> None:
                 dealt_data,
             )
         )
-        imp_count = int((enemy.minions or {}).get("imp", 0))
-        if imp_count > 0:
-            enemy.minions["imp"] = 0
-            match.log.append(f"{enemy_sid[:5]}'s Imps are destroyed by Shield of Vengeance.")
         totals = match.combat_totals.setdefault(owner_sid, {"damage": 0, "healing": 0})
         totals["damage"] += hp_damage
 
@@ -1615,6 +1657,40 @@ def resolve_turn(match: MatchState) -> None:
         )
     match.log.append(result2_log)
     match.log.extend(result2.get("extra_logs", []))
+
+    for actor_sid, target_sid, result in ((sids[0], sids[1], result1), (sids[1], sids[0], result2)):
+        ability = ABILITIES.get(result.get("ability_id", ""), {})
+        if ability_target_mode(ability) != "aoe_enemy":
+            continue
+        # AoE policy: roll/compute damage once per cast (already in result["damage"])
+        # and apply that same incoming value to enemy champion first, then enemy pets.
+        incoming = int(result.get("damage", 0) or 0)
+        if incoming <= 0:
+            continue
+        actor = match.state[actor_sid]
+        target = match.state[target_sid]
+        school = result.get("damage_type") or "physical"
+        source_name = ability.get("name", "AoE")
+        pet_targets = [target.pets[pid] for pid in sorted(target.pets.keys())]
+        for pet in pet_targets:
+            if not pet or pet.hp <= 0:
+                continue
+            pet_result = apply_damage(actor, pet, incoming, pet.name, source_name, school=school)
+            remaining = int(pet_result.get("hp_damage", 0) or 0)
+            absorbed = int(pet_result.get("absorbed", 0) or 0)
+            breakdown = pet_result.get("absorbed_breakdown", [])
+            total_incoming = remaining + absorbed
+            if total_incoming > 0:
+                pet_log = f"{source_name} hits {pet.name} ({pet.id}) for {total_incoming} damage."
+                if absorbed > 0:
+                    pet_log = f"{pet_log} {absorb_suffix(absorbed, breakdown).strip()}"
+                match.log.append(pet_log)
+            if remaining > 0:
+                totals = match.combat_totals.setdefault(actor_sid, {"damage": 0, "healing": 0})
+                totals["damage"] += remaining
+            if pet.hp <= 0:
+                del target.pets[pet.id]
+                match.log.append(f"{pet.name} dies.")
 
     for actor_sid, dealt, result in ((sids[0], dealt1, result1), (sids[1], dealt2, result2)):
         ability = ABILITIES.get(result.get("ability_id", ""), {})
@@ -1705,28 +1781,16 @@ def resolve_turn(match: MatchState) -> None:
                 else:
                     match.log.append(f"{actor_sid[:5]} applies {effect_name(dot_id)} for {tick_damage} per turn.")
 
-    for source_sid, target_sid, dealt, result in ((sids[0], sids[1], dealt1, result1), (sids[1], sids[0], dealt2, result2)):
-        ability = ABILITIES.get(result.get("ability_id", ""), {})
-        if "aoe" not in (ability.get("tags") or []) or dealt <= 0:
-            continue
-        target = match.state[target_sid]
-        imp_count = int((target.minions or {}).get("imp", 0))
-        if imp_count > 0:
-            target.minions["imp"] = 0
-            source_name = ability.get("name", "AoE damage")
-            match.log.append(f"{target_sid[:5]}'s Imps are destroyed by {source_name}.")
-        if int((target.minions or {}).get("shadowfiend", 0)) > 0:
-            target.minions["shadowfiend"] = 0
-            remove_effect(target, "shadowfiend")
-            source_name = ability.get("name", "AoE damage")
-            match.log.append(f"{target_sid[:5]}'s Shadowfiend is slain by {source_name}.")
-            owner = match.state[target_sid]
-            before_hp = owner.res.hp
-            heal_amount = int(owner.res.hp_max * 0.15)
-            owner.res.hp = min(owner.res.hp + heal_amount, owner.res.hp_max)
-            gained = owner.res.hp - before_hp
-            owner.res.mp = min(owner.res.mp + 40, owner.res.mp_max)
-            match.log.append(f"{target_sid[:5]} gains 40 mana and heals {gained} HP as Shadowfiend dies.")
+    run_pet_phase(
+        match,
+        r,
+        apply_damage,
+        absorb_suffix,
+        stealth_targeting,
+        should_miss_due_to_stealth,
+        untargetable_miss_log,
+        can_evasion_force_miss,
+    )
 
     # End of turn processing for both players (DoTs, passives, duration ticks, regen)
     for sid in sids:
@@ -1766,113 +1830,6 @@ def resolve_turn(match: MatchState) -> None:
             totals = match.combat_totals.setdefault(source_sid, {"damage": 0, "healing": 0})
             totals["damage"] += damage
 
-        imp_count = int((ps.minions or {}).get("imp", 0))
-        if imp_count > 0 and ps.res and ps.res.hp > 0 and opponent.res and opponent.res.hp > 0:
-            for _ in range(imp_count):
-                if is_immune_all(opponent):
-                    match.log.append(f"{sid[:5]}'s Imp casts Firebolt. Target is immune!")
-                    continue
-                if should_miss_due_to_stealth(ps, opponent, {"requires_target": True}, stealth_targeting) or is_stealthed(opponent):
-                    match.log.append(f"{sid[:5]}'s Imp casts Firebolt. Target is stealthed — Miss!")
-                    continue
-                if has_flag(opponent, "untargetable"):
-                    match.log.append(f"{sid[:5]}'s Imp casts Firebolt. {untargetable_miss_log(opponent)}")
-                    continue
-                fire_roll = roll("d4", r)
-                raw_fire = base_damage(modify_stat(ps, "int", ps.stats.get("int", 0)), 0.2, fire_roll)
-                reduced = mitigate(raw_fire, modify_stat(opponent, "def", opponent.stats.get("def", 0)))
-                resist = modify_stat(opponent, "magic_resist", opponent.stats.get("magic_resist", 0))
-                reduced = max(0, reduced - resist)
-                reduced = int(reduced * mitigation_multiplier(opponent))
-                if is_damage_immune(opponent, "magic"):
-                    reduced = 0
-                dealt_data = apply_damage(
-                    ps,
-                    opponent,
-                    reduced,
-                    opponent_sid,
-                    "Imp Firebolt",
-                    school="magical",
-                )
-                remaining = int(dealt_data.get("hp_damage", 0) or 0)
-                absorbed = int(dealt_data.get("absorbed", 0) or 0)
-                breakdown = dealt_data.get("absorbed_breakdown", [])
-                if absorbed > 0 or remaining > 0:
-                    total_incoming = remaining + absorbed
-                    imp_log = f"{sid[:5]}'s Imp casts Firebolt for {total_incoming} damage."
-                    if absorbed > 0:
-                        imp_log = f"{imp_log} {absorb_suffix(absorbed, breakdown).strip()}"
-                    match.log.append(imp_log)
-                if remaining > 0:
-                    totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
-                    totals["damage"] += remaining
-
-        shadowfiend_alive = (
-            int((ps.minions or {}).get("shadowfiend", 0)) > 0
-            and has_effect(ps, "shadowfiend")
-        )
-        if shadowfiend_alive and ps.res and ps.res.hp > 0 and opponent.res and opponent.res.hp > 0:
-            shadowfiend_ability = {
-                "requires_target": True,
-                "damage_type": "physical",
-                "tags": ["attack", "physical"],
-            }
-            shadowfiend_misses = False
-            if should_miss_due_to_stealth(ps, opponent, shadowfiend_ability, stealth_targeting) or is_stealthed(opponent):
-                match.log.append("Shadowfiend melee attacks. Target is stealthed — Miss!")
-                shadowfiend_misses = True
-            elif has_flag(opponent, "untargetable"):
-                match.log.append(f"Shadowfiend melee attacks. {untargetable_miss_log(opponent)}")
-                shadowfiend_misses = True
-            elif has_flag(opponent, "evade_all") and can_evasion_force_miss(shadowfiend_ability, True):
-                match.log.append("Shadowfiend melee attacks. Target evades the attack — Miss!")
-                shadowfiend_misses = True
-            else:
-                accuracy = hit_chance(
-                    modify_stat(ps, "acc", ps.stats.get("acc", 0)),
-                    modify_stat(opponent, "eva", opponent.stats.get("eva", 0)),
-                )
-                if r.randint(1, 100) > accuracy:
-                    match.log.append("Shadowfiend melee attacks. Miss!")
-                    shadowfiend_misses = True
-
-            if not shadowfiend_misses:
-                fiend_roll = roll("d4", r)
-                fiend_raw = base_damage(modify_stat(ps, "int", ps.stats.get("int", 0)), 0.6, fiend_roll)
-                fiend_reduced = mitigate(fiend_raw, modify_stat(opponent, "def", opponent.stats.get("def", 0)))
-                fiend_reduced = max(0, fiend_reduced - modify_stat(opponent, "physical_reduction", opponent.stats.get("physical_reduction", 0)))
-                fiend_reduced = int(fiend_reduced * mitigation_multiplier(opponent))
-                if is_damage_immune(opponent, "physical"):
-                    fiend_reduced = 0
-                if fiend_reduced > 0:
-                    dealt_data = apply_damage(
-                        ps,
-                        opponent,
-                        fiend_reduced,
-                        opponent_sid,
-                        "Shadowfiend melee",
-                        school="physical",
-                    )
-                    remaining = int(dealt_data.get("hp_damage", 0) or 0)
-                    absorbed = int(dealt_data.get("absorbed", 0) or 0)
-                    breakdown = dealt_data.get("absorbed_breakdown", [])
-                    total_incoming = remaining + absorbed
-                    if remaining > 0:
-                        fiend_log = f"Shadowfiend melee attacks {opponent_sid[:5]} for {total_incoming} damage."
-                        if absorbed > 0:
-                            fiend_log = f"{fiend_log} {absorb_suffix(absorbed, breakdown).strip()}"
-                        match.log.append(fiend_log)
-                        fiend_totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
-                        fiend_totals["damage"] += remaining
-                    elif absorbed > 0:
-                        fiend_log = f"Shadowfiend melee attacks {opponent_sid[:5]} for {total_incoming} damage."
-                        if absorbed > 0:
-                            fiend_log = f"{fiend_log} {absorb_suffix(absorbed, breakdown).strip()}"
-                        match.log.append(fiend_log)
-                    if absorbed > 0 or remaining > 0:
-                        ps.res.mp = min(ps.res.mp + 13, ps.res.mp_max)
-                        match.log.append(f"Shadowfiend restores 13 mana for {sid[:5]}.")
-
         totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
         totals["healing"] += int(end_summary.get("healing_done", 0) or 0)
 
@@ -1882,9 +1839,9 @@ def resolve_turn(match: MatchState) -> None:
     for sid in sids:
         ps = match.state[sid]
         tick_player_effects(ps)
-        if not has_effect(ps, "shadowfiend"):
-            ps.minions["shadowfiend"] = 0
         tick_cooldowns(ps)
+
+    cleanup_pets(match)
 
     # Check for winners
     p1_alive = match.state[sids[0]].res.hp > 0
@@ -1945,3 +1902,76 @@ def resolve_turn(match: MatchState) -> None:
 
     match.submitted.clear()
     match.turn += 1
+
+
+def debug_simulate_swipe_aoe_on_imps() -> Dict[str, Any]:
+    """
+    Debug/integration helper for the pets+AoE pipeline.
+
+    Scenario:
+    - p1 warlock summons 3 imps
+    - p2 druid enters bear form and uses Swipe
+
+    Verifies:
+    - Swipe applies to champion + all imps
+    - imps lose HP (not instantly removed)
+    - logs are in deterministic order (champion line first, then imp_1..imp_3)
+    - pets are removed only when hp <= 0 (checked by repeatedly swiping until at least one imp dies)
+    """
+    p1 = "p1_warlock"
+    p2 = "p2_druid"
+    match = MatchState(room_id="debug", players=[p1, p2], phase="combat", seed=1337)
+    match.picks[p1] = PlayerBuild(class_id="warlock")
+    match.picks[p2] = PlayerBuild(class_id="druid")
+    apply_prep_build(match)
+
+    scripted_turns = [
+        ({"ability_id": "summon_imp"}, {"ability_id": "bear"}),
+        ({"ability_id": "summon_imp"}, {"ability_id": "bear"}),
+        ({"ability_id": "summon_imp"}, {"ability_id": "bear"}),
+        ({"ability_id": "healthstone"}, {"ability_id": "swipe"}),
+    ]
+
+    for a1, a2 in scripted_turns:
+        submit_action(match, p1, a1)
+        submit_action(match, p2, a2)
+        resolve_turn(match)
+
+    warlock = match.state[p1]
+    assert len(warlock.pets) == 3, "Expected 3 imps after first swipe (no instant AoE removal)."
+
+    imp_ids = sorted(warlock.pets.keys())
+    imp_hps = [warlock.pets[pid].hp for pid in imp_ids]
+    imp_max = [warlock.pets[pid].hp_max for pid in imp_ids]
+    assert all(hp < mx for hp, mx in zip(imp_hps, imp_max)), "Expected each imp to lose HP from Swipe."
+
+    swipe_hits = [line for line in match.log if "Swipe hits" in line]
+    assert swipe_hits, "Expected Swipe per-target pet hit logs."
+    expected_order = [f"p1_imp_{idx}" for idx in (1, 2, 3)]
+    observed = []
+    for line in swipe_hits:
+        for pet_id in expected_order:
+            if f"({pet_id})" in line:
+                observed.append(pet_id)
+    assert observed[:3] == expected_order, "Expected deterministic pet hit order: imp_1, imp_2, imp_3."
+
+    # Keep swiping with cooldown reset until at least one imp dies.
+    # This validates removal only at hp <= 0 through damage application.
+    imp_died = False
+    for _ in range(20):
+        druid = match.state[p2]
+        druid.cooldowns["swipe"] = []
+        submit_action(match, p1, {"ability_id": "healthstone"})
+        submit_action(match, p2, {"ability_id": "swipe"})
+        resolve_turn(match)
+        if any("Imp dies." in line for line in match.log[-20:]):
+            imp_died = True
+            break
+
+    assert imp_died, "Expected at least one imp death after repeated Swipe damage."
+
+    return {
+        "turn": match.turn,
+        "remaining_imps": sorted(match.state[p1].pets.keys()),
+        "recent_logs": match.log[-20:],
+    }
