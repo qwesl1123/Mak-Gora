@@ -937,6 +937,7 @@ def resolve_turn(match: MatchState) -> None:
         damage_type = ability.get("damage_type", "physical")
         hits = int(ability.get("hits", 1) or 1)
         total_damage = 0
+        aoe_incoming_damage = 0
         total_healing = 0
         empower_multiplier = 1.0
         consume_empower = False
@@ -958,6 +959,7 @@ def resolve_turn(match: MatchState) -> None:
         ability_hit_landed = False
         on_hit_base_damage = 0
         per_hit_damage_values: list[int] = []
+        aoe_damage_instances: list[int] = []
         death_doubled = (
             ability_id == "death"
             and target.res.hp / max(1, target.res.hp_max) < 0.2
@@ -1026,22 +1028,31 @@ def resolve_turn(match: MatchState) -> None:
             # Apply defensive buff mitigation
             reduced = int(reduced * mitigation_multiplier(target))
 
+            incoming_for_hit = reduced
+            multiplier = damage_multiplier_from_passives(actor)
+            if multiplier != 1.0:
+                incoming_for_hit = int(incoming_for_hit * multiplier)
+            if empower_multiplier != 1.0:
+                incoming_for_hit = int(incoming_for_hit * empower_multiplier)
+            if outgoing_mult != 1.0:
+                incoming_for_hit = int(incoming_for_hit * outgoing_mult)
+            if death_doubled and incoming_for_hit > 0:
+                incoming_for_hit *= 2
+
+            if ability_target_mode(ability) == "aoe_enemy" and incoming_for_hit > 0:
+                aoe_incoming_damage += incoming_for_hit
+                aoe_damage_instances.append(incoming_for_hit)
+
             if is_damage_immune(target, damage_type):
                 reduced = 0
                 log_parts.append(f"{prefix}Immune!")
             else:
-                multiplier = damage_multiplier_from_passives(actor)
-                if multiplier != 1.0:
-                    reduced = int(reduced * multiplier)
+                reduced = incoming_for_hit
                 if empower_multiplier != 1.0:
-                    reduced = int(reduced * empower_multiplier)
                     if not empower_logged:
                         log_parts.append(f"{prefix}Empowered strike!")
                         empower_logged = True
-                if outgoing_mult != 1.0:
-                    reduced = int(reduced * outgoing_mult)
                 if death_doubled and reduced > 0:
-                    reduced *= 2
                     log_parts.append(f"{prefix}Damage Doubled!")
                 if reduced > 0:
                     log_parts.append(f"{prefix}Deals __DMG_{len(per_hit_damage_values)}__ damage.")
@@ -1165,9 +1176,13 @@ def resolve_turn(match: MatchState) -> None:
         if total_damage > sum(damage_instances):
             damage_instances.append(total_damage - sum(damage_instances))
 
+        outgoing_damage = aoe_incoming_damage if ability_target_mode(ability) == "aoe_enemy" else total_damage
+        outgoing_instances = aoe_damage_instances if ability_target_mode(ability) == "aoe_enemy" else damage_instances
+
         return {
-            "damage": total_damage,
-            "damage_instances": damage_instances,
+            "damage": outgoing_damage,
+            "damage_instances": outgoing_instances,
+            "aoe_incoming_damage": aoe_incoming_damage,
             "damage_type": damage_type,
             "healing": total_healing,
             "log": " ".join(log_parts),
@@ -1720,7 +1735,7 @@ def resolve_turn(match: MatchState) -> None:
             continue
         # AoE policy: roll/compute damage once per cast (already in result["damage"])
         # and apply that same incoming value to enemy champion first, then enemy pets.
-        incoming = int(result.get("damage", 0) or 0)
+        incoming = int(result.get("aoe_incoming_damage", result.get("damage", 0)) or 0)
         if incoming <= 0:
             continue
         actor = match.state[actor_sid]
@@ -2029,5 +2044,72 @@ def debug_simulate_swipe_aoe_on_imps() -> Dict[str, Any]:
     return {
         "turn": match.turn,
         "remaining_imps": sorted(match.state[p1].pets.keys()),
+        "recent_logs": match.log[-20:],
+    }
+
+
+def debug_simulate_swipe_vs_immune_champion_pets() -> Dict[str, Any]:
+    """
+    Debug helper validating AoE routing when the champion is immune_all.
+
+    Scenario:
+    - p1 warlock summons 3 imps
+    - p2 druid enters bear form
+    - p1 champion receives Ice Block (immune_all)
+    - p2 uses Swipe
+
+    Verifies:
+    - champion takes 0 HP damage from Swipe due to immune_all
+    - each imp takes the same AoE incoming damage for that cast
+    - deterministic pet ordering and no premature pet removal
+    """
+    p1 = "p1_warlock"
+    p2 = "p2_druid"
+    match = MatchState(room_id="debug", players=[p1, p2], phase="combat", seed=4242)
+    match.picks[p1] = PlayerBuild(class_id="warlock")
+    match.picks[p2] = PlayerBuild(class_id="druid")
+    apply_prep_build(match)
+
+    for _ in range(3):
+        submit_action(match, p1, {"ability_id": "summon_imp"})
+        submit_action(match, p2, {"ability_id": "bear"})
+        resolve_turn(match)
+
+    warlock = match.state[p1]
+    assert len(warlock.pets) == 3, "Expected 3 imps before immune AoE test."
+
+    apply_effect_by_id(warlock, "iceblock", overrides={"duration": 1})
+    hp_before = warlock.res.hp
+    imp_ids = sorted(warlock.pets.keys())
+    imp_hp_before = {pid: warlock.pets[pid].hp for pid in imp_ids}
+
+    submit_action(match, p1, {"ability_id": "healthstone"})
+    submit_action(match, p2, {"ability_id": "swipe"})
+    resolve_turn(match)
+
+    warlock_after = match.state[p1]
+    assert warlock_after.res.hp == hp_before, "Expected champion HP damage to be 0 under immune_all."
+
+    imp_deltas = []
+    for pid in imp_ids:
+        assert pid in warlock_after.pets, "Expected imps to remain unless hp <= 0."
+        delta = imp_hp_before[pid] - warlock_after.pets[pid].hp
+        imp_deltas.append(delta)
+
+    assert all(delta > 0 for delta in imp_deltas), "Expected each imp to take AoE damage."
+    assert len(set(imp_deltas)) == 1, "Expected each imp to take the same AoE incoming damage."
+
+    swipe_hits = [line for line in match.log if "Swipe hits" in line]
+    observed = []
+    for line in swipe_hits:
+        for pet_id in imp_ids:
+            if f"({pet_id})" in line:
+                observed.append(pet_id)
+    assert observed[:3] == imp_ids, "Expected deterministic pet hit order."
+
+    return {
+        "champion_hp_before": hp_before,
+        "champion_hp_after": warlock_after.res.hp,
+        "pet_damage": {pid: imp_deltas[idx] for idx, pid in enumerate(imp_ids)},
         "recent_logs": match.log[-20:],
     }
