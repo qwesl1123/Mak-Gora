@@ -665,6 +665,7 @@ ABILITIES = {
     },
     "summon_imp": {
         "name": "Summon Imp",
+        "summon_pet_id": "imp",
         "cost": {"mp": 10},
         "dice": None,
         "tags": ["spell", "defense"],
@@ -990,6 +991,7 @@ ABILITIES = {
     },
     "shadowfiend": {
         "name": "Shadowfiend",
+        "summon_pet_id": "shadowfiend",
         "display_color": "#FFFFFF",
         "cost": {"mp": 20},
         "dice": None,
@@ -997,7 +999,7 @@ ABILITIES = {
         "cooldown": 50,
         "classes": ["priest"],
         "self_effects": [
-            {"id": "shadowfiend", "duration": 5, "log": "summons a Shadowfiend."}
+            {"id": "shadowfiend", "log": "summons a Shadowfiend."}
         ],
     },
 

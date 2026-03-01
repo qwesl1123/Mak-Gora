@@ -3286,19 +3286,21 @@
           }
 
           const badges = normalizePetBadges(pet?.statuses || pet?.effects, pet?.name || pet?.id);
+          const statusLine = document.createElement("div");
+          statusLine.className = "stat-row";
 
-          if (badges.length > 0) {
-            const badgeWrap = document.createElement("div");
-            badgeWrap.className = "pet-badges";
-            badges.forEach((badge) => {
-              const badgeEl = document.createElement("span");
-              badgeEl.className = "pet-badge";
-              badgeEl.textContent = badge.label;
-              badgeEl.style.backgroundColor = badge.color;
-              badgeWrap.appendChild(badgeEl);
-            });
-            row.appendChild(badgeWrap);
-          }
+          const statusLabel = document.createElement("span");
+          statusLabel.textContent = "Status:";
+          statusLine.appendChild(statusLabel);
+
+          const statusValue = document.createElement("strong");
+          statusValue.className = "status-text";
+          statusValue.textContent = badges.length > 0
+            ? badges.map((badge) => badge.label).join(", ")
+            : "—";
+          statusLine.appendChild(statusValue);
+
+          row.appendChild(statusLine);
 
           container.appendChild(row);
         });

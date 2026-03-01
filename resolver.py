@@ -424,6 +424,55 @@ def resolve_turn(match: MatchState) -> None:
     def can_cast_while_cc(ability: Dict[str, Any]) -> bool:
         return bool(ability.get("allow_while_stunned") or ability.get("priority_defensive"))
 
+    def summon_pet_from_template(actor: PlayerState, template_id: str) -> tuple[PetState, bool]:
+        template = PETS.get(template_id, {})
+        max_count = int(template.get("max_count", 1) or 1)
+        existing_ids = [pid for pid, pet in (actor.pets or {}).items() if pet.template_id == template_id]
+        if existing_ids and max_count <= 1:
+            existing = actor.pets[existing_ids[0]]
+            existing.hp_max = int(template.get("hp", existing.hp_max))
+            existing.hp = existing.hp_max
+            duration = template.get("duration")
+            existing.duration = int(duration) if duration is not None else None
+            existing.name = template.get("name", existing.name)
+            return existing, True
+
+        owner_idx = match.players.index(actor.sid) + 1
+        if template_id == "imp":
+            next_idx = 1
+            while f"p{owner_idx}_imp_{next_idx}" in actor.pets:
+                next_idx += 1
+            pet_id = f"p{owner_idx}_imp_{next_idx}"
+        else:
+            suffix = template_id.replace("-", "_")
+            pet_id = f"p{owner_idx}_{suffix}"
+            if pet_id in actor.pets:
+                next_idx = 2
+                while f"{pet_id}_{next_idx}" in actor.pets:
+                    next_idx += 1
+                pet_id = f"{pet_id}_{next_idx}"
+
+        duration = template.get("duration")
+        summoned = PetState(
+            id=pet_id,
+            template_id=template_id,
+            name=template.get("name", template_id.title()),
+            owner_sid=actor.sid,
+            hp=int(template.get("hp", 1)),
+            hp_max=int(template.get("hp", 1)),
+            effects=[],
+            duration=int(duration) if duration is not None else None,
+        )
+        actor.pets[summoned.id] = summoned
+        return summoned, False
+
+    def summon_cap_reached(actor: PlayerState, template_id: str) -> bool:
+        template = PETS.get(template_id, {})
+        max_count = int(template.get("max_count", 1) or 1)
+        current = len([p for p in (actor.pets or {}).values() if p.template_id == template_id])
+        return current >= max_count
+
+
     def resolve_action(actor_sid: str, target_sid: str, action: Dict[str, Any]) -> Dict[str, Any]:
         actor = match.state[actor_sid]
         target = match.state[target_sid]
@@ -478,8 +527,11 @@ def resolve_turn(match: MatchState) -> None:
         if ability_id == "agony" and has_effect(target, "agony"):
             return {"damage": 0, "healing": 0, "log": "Agony is not stackable."}
 
-        if ability_id == "summon_imp" and len([p for p in (actor.pets or {}).values() if p.template_id == "imp"]) >= int(PETS["imp"].get("max_count", 3)):
-            return {"damage": 0, "healing": 0, "log": "3 Imps Maximum"}
+        summon_pet_id = ability.get("summon_pet_id")
+        if summon_pet_id and summon_cap_reached(actor, summon_pet_id):
+            template = PETS.get(summon_pet_id, {})
+            max_count = int(template.get("max_count", 1) or 1)
+            return {"damage": 0, "healing": 0, "log": f"{max_count} {template.get('name', summon_pet_id)} Maximum"}
 
         ok, fail_reason = can_pay_costs(actor, ability.get("cost", {}))
         if not ok:
@@ -577,26 +629,18 @@ def resolve_turn(match: MatchState) -> None:
             set_cooldown(actor, ability_id, ability)
             return {"damage": 0, "healing": healed, "log": " ".join(log_parts), "ability_id": ability_id}
 
-        if ability_id == "summon_imp":
-            imp_template = PETS["imp"]
-            owner_idx = match.players.index(actor.sid) + 1
-            next_idx = 1
-            while f"p{owner_idx}_imp_{next_idx}" in actor.pets:
-                next_idx += 1
-            pet_id = f"p{owner_idx}_imp_{next_idx}"
-            actor.pets[pet_id] = PetState(
-                id=pet_id,
-                template_id="imp",
-                name=imp_template["name"],
-                owner_sid=actor.sid,
-                hp=int(imp_template["hp"]),
-                hp_max=int(imp_template["hp"]),
-                effects=[],
-                duration=None,
-            )
-            imp_count = len([p for p in actor.pets.values() if p.template_id == "imp"])
-            log_parts.append(f"summons an Imp ({imp_count}/3).")
+        summon_pet_id = ability.get("summon_pet_id")
+        if summon_pet_id and not has_damage and not has_target_effects:
+            _, refreshed = summon_pet_from_template(actor, summon_pet_id)
+            template = PETS.get(summon_pet_id, {})
+            max_count = int(template.get("max_count", 1) or 1)
+            current = len([p for p in actor.pets.values() if p.template_id == summon_pet_id])
+            if refreshed:
+                log_parts.append(f"refreshes {template.get('name', summon_pet_id.title())}.")
+            elif max_count > 1:
+                log_parts.append(f"summons a {template.get('name', summon_pet_id.title())} ({current}/{max_count}).")
             set_cooldown(actor, ability_id, ability)
+            remove_effect(actor, summon_pet_id)
             return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
 
         if ability_id in ("corruption", "unstable_affliction"):
@@ -864,31 +908,6 @@ def resolve_turn(match: MatchState) -> None:
                 log_parts.append(f"Hit {hit_index}: Restores {gained} HP.")
             set_cooldown(actor, ability_id, ability)
             return {"damage": 0, "healing": healing, "log": " ".join(log_parts), "ability_id": ability_id}
-
-        if ability_id == "shadowfiend":
-            existing_id = next((pid for pid, pet in actor.pets.items() if pet.template_id == "shadowfiend"), None)
-            template = PETS["shadowfiend"]
-            duration = int(template.get("duration", 5))
-            if existing_id:
-                actor.pets[existing_id].duration = duration
-                actor.pets[existing_id].hp = actor.pets[existing_id].hp_max
-                log_parts.append("refreshes Shadowfiend.")
-            else:
-                owner_idx = match.players.index(actor.sid) + 1
-                pet_id = f"p{owner_idx}_shadowfiend"
-                actor.pets[pet_id] = PetState(
-                    id=pet_id,
-                    template_id="shadowfiend",
-                    name=template["name"],
-                    owner_sid=actor.sid,
-                    hp=int(template["hp"]),
-                    hp_max=int(template["hp"]),
-                    effects=[],
-                    duration=duration,
-                )
-            remove_effect(actor, "shadowfiend")
-            set_cooldown(actor, ability_id, ability)
-            return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
 
         apply_hp_sacrifice_absorb(actor, ability, log_parts)
 
@@ -1261,8 +1280,11 @@ def resolve_turn(match: MatchState) -> None:
         if ability_id == "agony" and has_effect(target, "agony"):
             return {"damage": 0, "log": "Agony is not stackable.", "resolved": True}
 
-        if ability_id == "summon_imp" and len([p for p in (actor.pets or {}).values() if p.template_id == "imp"]) >= int(PETS["imp"].get("max_count", 3)):
-            return {"damage": 0, "log": "3 Imps Maximum", "resolved": True}
+        summon_pet_id = ability.get("summon_pet_id")
+        if summon_pet_id and summon_cap_reached(actor, summon_pet_id):
+            template = PETS.get(summon_pet_id, {})
+            max_count = int(template.get("max_count", 1) or 1)
+            return {"damage": 0, "log": f"{max_count} {template.get('name', summon_pet_id)} Maximum", "resolved": True}
 
         ok, fail_reason = can_pay_costs(actor, ability.get("cost", {}))
         if not ok:
@@ -1429,6 +1451,14 @@ def resolve_turn(match: MatchState) -> None:
                 log_parts,
                 skip_self_effect_ids=skip_self_effect_ids,
             )
+
+        summon_pet_id = ability.get("summon_pet_id")
+        if summon_pet_id:
+            _, refreshed = summon_pet_from_template(actor, summon_pet_id)
+            template = PETS.get(summon_pet_id, {})
+            if refreshed:
+                log_parts.append(f"refreshes {template.get('name', summon_pet_id.title())}.")
+            remove_effect(actor, summon_pet_id)
 
         apply_hp_sacrifice_absorb(actor, ability, log_parts)
 

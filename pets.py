@@ -5,6 +5,7 @@ PETS = {
         "hp": 45,
         "school": "magical",
         "max_count": 3,
+        "behavior_id": "imp_firebolt",
         "behavior": "imp_firebolt",
         "display": {
             "war_council": True,
@@ -20,6 +21,7 @@ PETS = {
         "school": "physical",
         "duration": 5,
         "max_count": 1,
+        "behavior_id": "shadowfiend_melee_mana",
         "behavior": "shadowfiend_melee_mana",
         "display": {
             "war_council": True,
