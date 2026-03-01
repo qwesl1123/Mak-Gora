@@ -1560,7 +1560,6 @@ def resolve_turn(match: MatchState) -> None:
             return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0}
         if is_player_target:
             if is_immune_all(target):
-                match.log.append(f"{target_sid[:5]} is immune and takes no damage.")
                 return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0}
             if has_flag(target, "cycloned"):
                 match.log.append(f"{target_sid[:5]} is cycloned and takes no damage.")
@@ -1666,6 +1665,9 @@ def resolve_turn(match: MatchState) -> None:
 
         pet_total_damage = 0
         pet_targets = [target.pets[pid] for pid in sorted(target.pets.keys())]
+        alive_imp_ids = [pet.id for pet in pet_targets if pet and pet.hp > 0 and pet.template_id == "imp"]
+        imp_ordinal_by_id = {pid: idx + 1 for idx, pid in enumerate(alive_imp_ids)}
+        target_owner_name = target_sid[:5]
         for pet in pet_targets:
             if not pet or pet.hp <= 0:
                 continue
@@ -1675,7 +1677,15 @@ def resolve_turn(match: MatchState) -> None:
             breakdown = pet_result.get("absorbed_breakdown", [])
             total_incoming = remaining + absorbed
             if total_incoming > 0:
-                pet_log = f"{source_name} hits {pet.name} ({pet.id}) for {total_incoming} damage."
+                if pet.template_id == "imp":
+                    imp_ordinal = imp_ordinal_by_id.get(pet.id)
+                    if imp_ordinal:
+                        pet_label = f"{target_owner_name}'s {pet.name} (imp{imp_ordinal})"
+                    else:
+                        pet_label = f"{target_owner_name}'s {pet.name}"
+                else:
+                    pet_label = f"{target_owner_name}'s {pet.name}"
+                pet_log = f"{source_name} hits {pet_label} for {total_incoming} damage."
                 if absorbed > 0:
                     pet_log = f"{pet_log} {absorb_suffix(absorbed, breakdown).strip()}"
                 match.log.append(pet_log)
@@ -1701,13 +1711,14 @@ def resolve_turn(match: MatchState) -> None:
         remove_effect(owner, "shield_of_vengeance")
         if absorbed_total <= 0:
             return
+        match.log.append("Shield of Vengeance explodes!")
         aoe_result = resolve_aoe_enemy_attack(
             owner_sid,
             enemy_sid,
             absorbed_total,
             "Shield of Vengeance",
             "magical",
-            champion_log_template="Shield of Vengeance explodes for __DMG_0__ magic damage.",
+            champion_log_template=f"Shield of Vengeance hits {enemy_sid[:5]} for __DMG_0__ damage.",
             champion_immune_log=f"{enemy_sid[:5]} is immune to Shield of Vengeance explosion.",
         )
         champion_hp_damage = int(aoe_result.get("champion", {}).get("hp_damage", 0) or 0)
@@ -1878,8 +1889,7 @@ def resolve_turn(match: MatchState) -> None:
                         effect["school"] = school
                         break
                 if dot_id == "dragon_roar_bleed":
-                    target_class = CLASSES.get(target.build.class_id, {}).get("name", "target")
-                    match.log.append(f"Dragon Roar applies bleed on {target_class}.")
+                    match.log.append(f"Dragon Roar applies bleed on {target_sid[:5]}.")
                 else:
                     match.log.append(f"{actor_sid[:5]} refreshes {effect_name(dot_id)} for {tick_damage} per turn.")
             elif dot_id:
@@ -1889,8 +1899,7 @@ def resolve_turn(match: MatchState) -> None:
                     overrides={"duration": duration, "tick_damage": tick_damage, "source_sid": actor_sid, "school": school},
                 )
                 if dot_id == "dragon_roar_bleed":
-                    target_class = CLASSES.get(target.build.class_id, {}).get("name", "target")
-                    match.log.append(f"Dragon Roar applies bleed on {target_class}.")
+                    match.log.append(f"Dragon Roar applies bleed on {target_sid[:5]}.")
                 else:
                     match.log.append(f"{actor_sid[:5]} applies {effect_name(dot_id)} for {tick_damage} per turn.")
 
@@ -2270,6 +2279,21 @@ def debug_simulate_aoe_normalization_suite() -> Dict[str, Any]:
     imp_after_sov = {pid: wlk_after.pets[pid].hp for pid in imp_ids_sov if pid in wlk_after.pets}
     sov_damaged_pets = [pid for pid in imp_ids_sov if pid in imp_after_sov and imp_after_sov[pid] < imp_before_sov[pid]]
     assert sov_damaged_pets, "Shield of Vengeance explosion should damage enemy pets."
+
+    # Log-label regression checks: AoE fanout/champion lines should use sid[:5] tokens
+    # so snapshot formatting can render viewer-aware "(you)" names.
+    dragon_roar_lines = [line for line in match.log if "Dragon Roar" in line]
+    assert any((f"Dragon Roar hits {p1[:5]}'s Imp (imp1)" in line) for line in dragon_roar_lines), (
+        "Dragon Roar pet fanout should reference sid token owner labels."
+    )
+
+    sov_lines = [line for line in sov_match.log if "Shield of Vengeance" in line]
+    assert any((f"Shield of Vengeance hits {p1p[:5]} for" in line) for line in sov_lines), (
+        "Shield of Vengeance champion hit should reference sid token labels."
+    )
+    assert any((f"Shield of Vengeance hits {p1p[:5]}'s Imp (imp1)" in line) for line in sov_lines), (
+        "Shield of Vengeance pet fanout should reference sid token owner labels."
+    )
 
     return {
         "swipe_pet_damage": {pid: swipe_deltas[idx] for idx, pid in enumerate(swipe_imp_ids)},
