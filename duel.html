@@ -3204,7 +3204,8 @@
         element.classList.toggle("stealthed", Boolean(stealthed));
       }
 
-      function normalizePetBadges(effects) {
+      function normalizePetBadges(effects, petName) {
+        const normalizedPetName = (petName || "").toString().trim().toLowerCase();
         const sorted = (Array.isArray(effects) ? effects : [])
           .filter((effect) => effect && effect.label)
           .map((effect) => ({
@@ -3212,6 +3213,12 @@
             color: effect.color || "#666666",
             priority: Number(effect.priority) || 0,
           }))
+          .filter((effect) => {
+            if (!normalizedPetName) {
+              return true;
+            }
+            return effect.label.toString().trim().toLowerCase() !== normalizedPetName;
+          })
           .sort((a, b) => b.priority - a.priority);
 
         const seenLabels = new Set();
@@ -3278,10 +3285,7 @@
             row.appendChild(hpWrap);
           }
 
-          const badges = normalizePetBadges(pet?.statuses || pet?.effects);
-          if (!hasHp && badges.length === 0) {
-            badges.push({ label: "Active", color: "#666666", priority: -1 });
-          }
+          const badges = normalizePetBadges(pet?.statuses || pet?.effects, pet?.name || pet?.id);
 
           if (badges.length > 0) {
             const badgeWrap = document.createElement("div");
