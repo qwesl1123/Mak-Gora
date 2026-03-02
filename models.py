@@ -1,5 +1,6 @@
 # games/duel/engine/models.py
 from dataclasses import dataclass, field
+from threading import RLock
 from typing import Dict, List, Optional, Any
 
 @dataclass
@@ -58,3 +59,6 @@ class MatchState:
     log: List[str] = field(default_factory=list)
     winner: Optional[str] = None
     combat_totals: Dict[str, Dict[str, int]] = field(default_factory=dict)
+    turn_in_progress: bool = False
+    last_resolved_key: Optional[str] = None
+    turn_lock: RLock = field(default_factory=RLock)

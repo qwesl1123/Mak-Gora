@@ -410,19 +410,32 @@ def register_duel_socket_handlers(socketio):
         if ability_id not in ABILITIES:
             emit("duel_system", f"Unknown ability '{ability_id}'. Try again.")
             return
-        resolver.submit_action(match, sid, action)
-        ability_name = ABILITIES.get(ability_id, {}).get("name", ability_id)
-        cooldown_remaining = 0
-        ps = match.state.get(sid)
-        if ps:
-            cooldown_remaining = resolver.cooldown_remaining(ps, ability_id, ABILITIES.get(ability_id, {}))
-        if cooldown_remaining > 0:
-            emit("duel_system", f"🛡️ Action received. Warning {ability_name} is on cooldown.")
-        else:
-            emit("duel_system", f"🛡️ Action received. {ability_name}")
+        should_resolve = False
+        with match.turn_lock:
+            resolver.submit_action(match, sid, action)
+            ability_name = ABILITIES.get(ability_id, {}).get("name", ability_id)
+            cooldown_remaining = 0
+            ps = match.state.get(sid)
+            if ps:
+                cooldown_remaining = resolver.cooldown_remaining(ps, ability_id, ABILITIES.get(ability_id, {}))
+            if cooldown_remaining > 0:
+                emit("duel_system", f"🛡️ Action received. Warning {ability_name} is on cooldown.")
+            else:
+                emit("duel_system", f"🛡️ Action received. {ability_name}")
 
-        if resolver.ready_to_resolve(match):
-            resolver.resolve_turn(match)
+            if resolver.ready_to_resolve(match) and not match.turn_in_progress:
+                payload_key = resolver.resolution_key(match)
+                if payload_key != match.last_resolved_key:
+                    match.turn_in_progress = True
+                    should_resolve = True
+
+        if should_resolve:
+            try:
+                resolver.resolve_turn(match)
+            except Exception:
+                match.turn_in_progress = False
+                emit("duel_system", "Turn resolution failed. Please submit your action again.")
+                raise
             socketio.emit("duel_snapshot", snapshot_for(match, match.players[0]), to=match.players[0])
             socketio.emit("duel_snapshot", snapshot_for(match, match.players[1]), to=match.players[1])
             if match.phase == "ended":

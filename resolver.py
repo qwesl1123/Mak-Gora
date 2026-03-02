@@ -1,4 +1,5 @@
 # games/duel/engine/resolver.py
+import json
 from typing import Dict, Any, Tuple
 from .models import MatchState, PlayerState, PlayerBuild, Resources, PetState
 from .dice import rng_for, roll
@@ -175,14 +176,35 @@ def submit_action(match: MatchState, sid: str, action: Dict[str, Any]) -> None:
 def ready_to_resolve(match: MatchState) -> bool:
     return len(match.submitted) == 2
 
+def resolution_key(match: MatchState) -> str:
+    sids = match.players
+    return json.dumps(
+        {
+            "turn": match.turn,
+            "actions": {
+                sid: match.submitted.get(sid, {})
+                for sid in sids
+            },
+        },
+        sort_keys=True,
+    )
+
 def resolve_turn(match: MatchState) -> None:
     """
     Resolves both submitted actions simultaneously.
     Appends to match.log and updates match.state.
     Clears submissions and increments match.turn.
     """
-    r = rng_for(match.seed, match.turn)
     sids = match.players
+    payload_key = resolution_key(match)
+    if match.last_resolved_key == payload_key:
+        return
+    if len(match.submitted) < len(sids):
+        return
+
+    match.turn_in_progress = True
+
+    r = rng_for(match.seed, match.turn)
     a1 = match.submitted.get(sids[0], {})
     a2 = match.submitted.get(sids[1], {})
     stunned_at_start = {sid: is_stunned(match.state[sid]) for sid in sids}
@@ -256,6 +278,30 @@ def resolve_turn(match: MatchState) -> None:
 
     def target_immune_log(log_parts: list) -> None:
         log_parts.append("Target is immune!")
+
+    def apply_self_inflicted_magical_damage(ps: PlayerState, incoming: int) -> int:
+        value = max(0, int(incoming or 0))
+        if value <= 0:
+            return 0
+        if is_immune_all(ps):
+            return 0
+        if has_flag(ps, "cycloned"):
+            return 0
+        if has_effect(ps, "cloak_of_shadows"):
+            return 0
+        remaining, _, _ = consume_absorbs(ps, value)
+        if remaining <= 0:
+            return 0
+        ps.res.hp -= remaining
+        was_stealthed = is_stealthed(ps)
+        break_stealth_on_damage(ps, remaining)
+        if was_stealthed and not is_stealthed(ps):
+            match.log.append(f"{ps.sid[:5]} stealth broken by Mindgames.")
+        if current_form_id(ps) == "bear_form":
+            current = ps.res.rage
+            cap = ps.res.rage_max
+            ps.res.rage = min(current + remaining, cap)
+        return remaining
 
     def apply_effect_entries(
         actor: PlayerState,
@@ -618,7 +664,7 @@ def resolve_turn(match: MatchState) -> None:
         if ability_id == "healthstone":
             heal_value = max(1, int(actor.res.hp_max * 0.25))
             if has_effect(actor, "mindgames"):
-                apply_damage(actor, actor, heal_value, actor_sid, "Mindgames", school="magical")
+                apply_self_inflicted_magical_damage(actor, heal_value)
                 log_parts.append(f"Mindgames twists healing into {heal_value} self-damage.")
                 set_cooldown(actor, ability_id, ability)
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
@@ -715,7 +761,7 @@ def resolve_turn(match: MatchState) -> None:
             roll_power = roll("d8", r)
             heal_value = int((intellect + attack) * 1.6) + int(roll_power)
             if has_effect(actor, "mindgames"):
-                apply_damage(actor, actor, heal_value, actor_sid, "Mindgames", school="magical")
+                apply_self_inflicted_magical_damage(actor, heal_value)
                 log_parts.append(f"Mindgames twists healing into {heal_value} self-damage.")
                 set_cooldown(actor, ability_id, ability)
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
@@ -753,7 +799,7 @@ def resolve_turn(match: MatchState) -> None:
             intellect = modify_stat(actor, "int", actor.stats.get("int", 0))
             heal_value = int(intellect * 2.0) + int(roll("d4", r))
             if has_effect(actor, "mindgames"):
-                apply_damage(actor, actor, heal_value, actor_sid, "Mindgames", school="magical")
+                apply_self_inflicted_magical_damage(actor, heal_value)
                 log_parts.append(f"Mindgames twists healing into {heal_value} self-damage.")
                 set_cooldown(actor, ability_id, ability)
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
@@ -768,7 +814,7 @@ def resolve_turn(match: MatchState) -> None:
             intellect = modify_stat(actor, "int", actor.stats.get("int", 0))
             heal_value = int(intellect * 0.9) + int(roll("d8", r))
             if has_effect(actor, "mindgames"):
-                apply_damage(actor, actor, heal_value, actor_sid, "Mindgames", school="magical")
+                apply_self_inflicted_magical_damage(actor, heal_value)
                 log_parts.append(f"Mindgames twists healing into {heal_value} self-damage.")
                 set_cooldown(actor, ability_id, ability)
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
@@ -836,18 +882,16 @@ def resolve_turn(match: MatchState) -> None:
             return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
 
         if ability_id == "lay_on_hands":
+            missing_hp = max(0, actor.res.hp_max - actor.res.hp)
             if has_effect(actor, "mindgames"):
-                backlash = actor.res.hp
-                apply_damage(actor, actor, backlash, actor_sid, "Mindgames", school="magical")
-                log_parts.append(f"Mindgames twists healing into {backlash} self-damage.")
+                apply_self_inflicted_magical_damage(actor, missing_hp)
+                log_parts.append(f"Mindgames twists healing into {missing_hp} self-damage.")
                 set_cooldown(actor, ability_id, ability)
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
-            before_hp = actor.res.hp
             actor.res.hp = actor.res.hp_max
-            healed = actor.res.hp - before_hp
             log_parts.append("Lay on Hands restores health to full.")
             set_cooldown(actor, ability_id, ability)
-            return {"damage": 0, "healing": healed, "log": " ".join(log_parts), "ability_id": ability_id}
+            return {"damage": 0, "healing": missing_hp, "log": " ".join(log_parts), "ability_id": ability_id}
 
         if ability_id in ("vampiric_touch", "devouring_plague"):
             if is_immune_all(target):
@@ -898,7 +942,7 @@ def resolve_turn(match: MatchState) -> None:
                 roll_power = roll("d4", r)
                 heal_value = base_damage(intellect, 0.4, roll_power)
                 if has_effect(actor, "mindgames"):
-                    apply_damage(actor, actor, heal_value, actor_sid, "Mindgames", school="magical")
+                    apply_self_inflicted_magical_damage(actor, heal_value)
                     log_parts.append(f"Hit {hit_index}: Mindgames turns healing into {heal_value} self-damage.")
                     continue
                 before_hp = actor.res.hp
@@ -2054,6 +2098,8 @@ def resolve_turn(match: MatchState) -> None:
 
     match.submitted.clear()
     match.turn += 1
+    match.last_resolved_key = payload_key
+    match.turn_in_progress = False
 
 
 def debug_simulate_swipe_aoe_on_imps() -> Dict[str, Any]:
