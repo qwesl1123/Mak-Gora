@@ -81,6 +81,7 @@ def _bootstrap_engine_modules() -> Dict[str, Any]:
 _MODS = _bootstrap_engine_modules()
 MatchState = _MODS["models"].MatchState
 PlayerBuild = _MODS["models"].PlayerBuild
+PetState = _MODS["models"].PetState
 resolver = _MODS["resolver"]
 effects = _MODS["effects"]
 
@@ -216,6 +217,17 @@ def _has_effect(ps, effect_id: str) -> bool:
     return any(fx.get("id") == effect_id for fx in ps.effects)
 
 
+def _player_states(match):
+    p1_sid, p2_sid = match.players
+    return match.state[p1_sid], match.state[p2_sid]
+
+
+def _assert_no_stun_effect(ps) -> None:
+    stun_ids = {"stunned", "ring_of_ice_freeze"}
+    active = {fx.get("id") for fx in ps.effects}
+    assert not (active & stun_ids), f"Expected no stun/freeze effects, found: {sorted(active & stun_ids)}"
+
+
 def scenario_mindgames_lay_on_hands() -> bool:
     match = make_match("priest", "paladin", seed=123)
     pal = match.state[match.players[1]]
@@ -292,6 +304,118 @@ def scenario_stealth_priority_over_stun() -> bool:
     assert not _has_effect(rogue, "stunned"), "Stun should miss stealthed target by current rule"
     return True
 
+
+def scenario_immunity_priority_over_stuns() -> bool:
+    pal_match = make_match("paladin", "paladin", seed=123)
+    submit_turn(pal_match, "hammer_of_justice", "divine_shield")
+    _, pal_target = _player_states(pal_match)
+    assert _has_effect(pal_target, "divine_shield"), "Divine Shield should apply first"
+    _assert_no_stun_effect(pal_target)
+
+    rogue_mage = make_match("rogue", "mage", seed=123)
+    submit_turn(rogue_mage, "kidney_shot", "iceblock")
+    _, mage = _player_states(rogue_mage)
+    assert _has_effect(mage, "iceblock"), "Ice Block should apply first"
+    _assert_no_stun_effect(mage)
+    return True
+
+
+def scenario_stealth_priority_over_stuns_expanded() -> bool:
+    druid_rogue = make_match("druid", "rogue", seed=123)
+    submit_turn(druid_rogue, "maim", "vanish")
+    _, rogue = _player_states(druid_rogue)
+    assert _has_effect(rogue, "stealth"), "Vanish stealth should apply"
+    _assert_no_stun_effect(rogue)
+
+    rogue_druid = make_match("rogue", "druid", seed=123)
+    _, druid = _player_states(rogue_druid)
+    effects.apply_effect_by_id(druid, "cat_form", overrides={"duration": 999})
+    submit_turn(rogue_druid, "kidney_shot", "prowl")
+    assert _has_effect(druid, "stealth"), "Prowl stealth should apply"
+    _assert_no_stun_effect(druid)
+    return True
+
+
+def scenario_stun_priority_over_blink_like() -> bool:
+    rogue_mage = make_match("rogue", "mage", seed=123)
+    submit_turn(rogue_mage, "kidney_shot", "blink")
+    _, mage = _player_states(rogue_mage)
+    assert _has_effect(mage, "stunned"), "Kidney Shot should land before Blink"
+    assert not _has_effect(mage, "blink"), "Blink should not become active when same-turn stunned"
+
+    pal_warlock = make_match("paladin", "warlock", seed=123)
+    submit_turn(pal_warlock, "hammer_of_justice", "demonic_gateway")
+    _, warlock = _player_states(pal_warlock)
+    assert _has_effect(warlock, "stunned"), "Hammer of Justice should land before Demonic Gateway"
+    assert not _has_effect(warlock, "blink"), "Gateway blink effect should not be active when same-turn stunned"
+
+    rogue_warlock = make_match("rogue", "warlock", seed=123)
+    submit_turn(rogue_warlock, "kidney_shot", "demonic_circle_teleport")
+    _, warlock_tp = _player_states(rogue_warlock)
+    assert _has_effect(warlock_tp, "stunned"), "Kidney Shot should land before Demonic Circle: Teleport"
+    assert not _has_effect(warlock_tp, "blink"), "Teleport blink effect should not be active when same-turn stunned"
+    return True
+
+
+def scenario_blink_like_blocks_attacks_for_two_turns() -> bool:
+    match = make_match("mage", "rogue", seed=123)
+    mage, rogue = _player_states(match)
+    mage_hp_before = mage.res.hp
+    submit_turn(match, "blink", "eviscerate")
+    assert mage.res.hp == mage_hp_before, "Blink should force miss against same-turn attack"
+    assert _has_effect(mage, "blink"), "Blink effect should be active after cast"
+
+    submit_turn(match, _DEF_PASS, "eviscerate")
+    assert mage.res.hp == mage_hp_before, "Blink should also force miss on the next turn"
+    return True
+
+
+def scenario_iceblock_priority_vs_aoe_with_pets() -> bool:
+    match = make_match("warrior", "mage", seed=123)
+    warrior, mage = _player_states(match)
+    _add_pet(mage, "mage_imp_1")
+    _add_pet(mage, "mage_imp_2")
+    _add_pet(mage, "mage_imp_3")
+    imp_ids = sorted(mage.pets.keys())
+
+    mage_hp_before = mage.res.hp
+    imp_hp_before = {pid: mage.pets[pid].hp for pid in imp_ids}
+    warrior.res.rage = warrior.res.rage_max
+    submit_turn(match, "dragon_roar", "iceblock")
+
+    assert _has_effect(mage, "iceblock"), "Ice Block should apply this turn"
+    assert mage.res.hp == mage_hp_before, "Ice Block should prevent champion AoE damage"
+    for pid in imp_ids:
+        assert mage.pets[pid].hp < imp_hp_before[pid], "Dragon Roar should still damage enemy pets through champion immunity"
+    return True
+
+
+def scenario_iceblock_blocks_same_turn_stun_and_next_turn_attack() -> bool:
+    match = make_match("rogue", "mage", seed=123)
+    submit_turn(match, "kidney_shot", "iceblock")
+    _, mage = _player_states(match)
+    assert _has_effect(mage, "iceblock"), "Ice Block should apply"
+    _assert_no_stun_effect(mage)
+
+    hp_before = mage.res.hp
+    submit_turn(match, "eviscerate", _DEF_PASS)
+    assert mage.res.hp == hp_before, "Follow-up attack should be blocked while Ice Block remains active"
+    return True
+
+
+
+
+def _add_pet(owner, pet_id: str, template_id: str = "imp") -> None:
+    owner.pets[pet_id] = PetState(
+        id=pet_id,
+        template_id=template_id,
+        name="Imp",
+        owner_sid=owner.sid,
+        hp=45,
+        hp_max=45,
+        effects=[],
+        duration=None,
+    )
 
 def _setup_imps(match, owner_idx: int = 0):
     owner_sid = match.players[owner_idx]
@@ -400,6 +524,12 @@ SCENARIOS = [
     scenario_mass_dispel_selective_removal,
     scenario_cloak_of_shadows_interactions,
     scenario_stealth_priority_over_stun,
+    scenario_immunity_priority_over_stuns,
+    scenario_stealth_priority_over_stuns_expanded,
+    scenario_stun_priority_over_blink_like,
+    scenario_blink_like_blocks_attacks_for_two_turns,
+    scenario_iceblock_priority_vs_aoe_with_pets,
+    scenario_iceblock_blocks_same_turn_stun_and_next_turn_attack,
     scenario_aoe_hits_pets_with_immune_champion,
     scenario_absorb_layering,
     scenario_pet_summon_data_driven,
