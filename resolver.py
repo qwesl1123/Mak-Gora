@@ -1825,7 +1825,8 @@ def resolve_turn(match: MatchState) -> None:
         flipped_heal = int(dealt_data.get("mindgames_healing", 0) or 0)
         if flipped_heal > 0:
             formatted = f"{formatted} Mindgames flips damage into {flipped_heal} healing for the target."
-        match.log.append(formatted)
+        if not source.get("suppress_log"):
+            match.log.append(formatted)
         return int(dealt_data.get("hp_damage", 0) or 0)
 
     source_name_1 = ABILITIES.get(result1.get("ability_id", ""), {}).get("name", "attack")

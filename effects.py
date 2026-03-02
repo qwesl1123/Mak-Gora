@@ -1227,11 +1227,24 @@ def trigger_end_of_turn_effects(ps: PlayerState, log: List[str], label: str) -> 
         hp_gain = int(regen.get("hp", 0) or 0)
         mp_gain = int(regen.get("mp", 0) or 0)
         energy_gain = int(regen.get("energy", 0) or 0)
+        effect_name = effect.get("name", "an effect")
+        twisted_by_mindgames = hp_gain > 0 and has_effect(ps, "mindgames")
         if hp_gain > 0:
-            if has_effect(ps, "mindgames"):
-                pending_mindgames_damage.append({"source_sid": ps.sid, "incoming": hp_gain, "effect_id": "mindgames", "effect_name": "Mindgames", "school": "magical"})
+            if twisted_by_mindgames:
+                pending_mindgames_damage.append(
+                    {
+                        "source_sid": ps.sid,
+                        "incoming": hp_gain,
+                        "effect_id": "mindgames",
+                        "effect_name": "Mindgames",
+                        "school": "magical",
+                        "suppress_log": True,
+                    }
+                )
                 if log is not None:
-                    log.append(f"{label} is twisted by Mindgames and takes {hp_gain} self-damage instead of healing.")
+                    log.append(
+                        f"{label} is twisted by Mindgames and takes {hp_gain} self-damage instead of healing from {effect_name}."
+                    )
             else:
                 before_hp = ps.res.hp
                 ps.res.hp = min(ps.res.hp + hp_gain, ps.res.hp_max)
@@ -1240,8 +1253,8 @@ def trigger_end_of_turn_effects(ps: PlayerState, log: List[str], label: str) -> 
             ps.res.mp = min(ps.res.mp + mp_gain, ps.res.mp_max)
         if energy_gain > 0:
             ps.res.energy = min(ps.res.energy + energy_gain, ps.res.energy_max)
-        if (hp_gain > 0 or mp_gain > 0 or energy_gain > 0) and log is not None:
-            effect_name = effect.get("name", "an effect")
+        should_log_recovery = ((hp_gain > 0 and not twisted_by_mindgames) or mp_gain > 0 or energy_gain > 0)
+        if should_log_recovery and log is not None:
             log.append(
                 f"{label} recovers {hp_gain} HP, {mp_gain} MP, and {energy_gain} Energy from {effect_name}."
             )
