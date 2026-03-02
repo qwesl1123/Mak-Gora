@@ -113,11 +113,12 @@ def _run_shadowfiend_melee_mana(
         if absorbed > 0:
             line = f"{line} {absorb_suffix(absorbed, breakdown).strip()}"
         match.log.append(line)
+    if total_incoming > 0:
+        owner.res.mp = min(owner.res.mp + 13, owner.res.mp_max)
+        match.log.append(f"Shadowfiend restores 13 mana for {owner_sid[:5]}.")
     if remaining > 0:
         totals = match.combat_totals.setdefault(owner_sid, {"damage": 0, "healing": 0})
         totals["damage"] += remaining
-        owner.res.mp = min(owner.res.mp + 13, owner.res.mp_max)
-        match.log.append(f"Shadowfiend restores 13 mana for {owner_sid[:5]}.")
 
 
 BEHAVIOR_RUNNERS: dict[str, Callable] = {
