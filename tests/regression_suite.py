@@ -526,7 +526,7 @@ def scenario_pet_summon_data_driven() -> bool:
     assert priest.pets[fiend_id].hp >= fiend_hp_before, "Refreshed Shadowfiend should reset/refresh hp"
 
     recent = "\n".join((warlock_match.log[-30:] + priest_match.log[-30:]))
-    assert "casts Firebolt" in recent or "Shadowfiend melee attacks" in recent, "Summoned pets should act in pet phase"
+    assert "casts Firebolt" in recent or "melees the target" in recent, "Summoned pets should act in pet phase"
     return True
 
 
@@ -688,8 +688,8 @@ def scenario_hunter_aimed_shot_raptor_pet_special() -> bool:
     assert f"{match.players[0][:5]} can use Raptor Strike!" in match.log, "Aimed Shot proc log should use the actor sid token so snapshots can render Hunter(you)"
     assert hunter.pending_pet_command is None, "Pet command should be consumed after the pet phase"
     latest_turn = match.log[match.log.index("Turn 3") + 1:]
-    assert any("Frostsaber bites" in line for line in latest_turn), "Raptor Strike should force the pet special attack, not the basic melee"
-    assert not any("Frostsaber melees" in line for line in latest_turn), "Forced pet special should replace the normal melee attack that turn"
+    assert any("Frostsaber bites the target" in line for line in latest_turn), "Raptor Strike should force the pet special attack, not the basic melee"
+    assert not any("Frostsaber melees the target" in line for line in latest_turn), "Forced pet special should replace the normal melee attack that turn"
     return True
 
 
@@ -836,9 +836,43 @@ def scenario_hunter_serpent_special_respects_stealth() -> bool:
 
     assert _has_effect(rogue, "stealth"), "Rogue should still be stealthed after Vanish"
     latest_turn = match.log[match.log.index("Turn 2") + 1:]
-    assert any("Emerald Serpent exhales lightning. Target is stealthed — Miss!" in line for line in latest_turn), "Lightning Breath should miss stealthed targets"
-    assert not any("Emerald Serpent breathes lightning" in line for line in latest_turn), "Lightning Breath should not deal damage into stealth"
+    assert any("Emerald Serpent breathes lightning. Target is stealthed — Miss!" in line for line in latest_turn), "Lightning Breath should miss stealthed targets"
+    assert not any("Emerald Serpent breathes lightning for" in line for line in latest_turn), "Lightning Breath should not deal damage into stealth"
     assert not any("stealth broken by Lightning Breath" in line for line in latest_turn), "Hunter pet specials must not break stealth when they miss"
+    return True
+
+
+def scenario_pet_action_text_persists_on_miss() -> bool:
+    hunter_match = make_match("hunter", "rogue", seed=123)
+    hunter = hunter_match.state[hunter_match.players[0]]
+    submit_turn(hunter_match, "summon_serpent", _DEF_PASS)
+    hunter.pending_pet_command = "special"
+    submit_turn(hunter_match, _DEF_PASS, "vanish")
+    latest_hunter_turn = hunter_match.log[hunter_match.log.index("Turn 2") + 1:]
+    assert any("Emerald Serpent breathes lightning. Target is stealthed — Miss!" in line for line in latest_hunter_turn), "Serpent special should keep its action text on miss"
+
+    warlock_hit_match = make_match("warlock", "warrior", seed=123)
+    submit_turn(warlock_hit_match, "summon_imp", _DEF_PASS)
+    assert any("Imp casts Firebolt for" in line for line in warlock_hit_match.log), "Imp hit logs should use Firebolt action text"
+
+    warlock_miss_match = make_match("warlock", "rogue", seed=123)
+    submit_turn(warlock_miss_match, "summon_imp", _DEF_PASS)
+    submit_turn(warlock_miss_match, _DEF_PASS, "vanish")
+    latest_warlock_turn = warlock_miss_match.log[warlock_miss_match.log.index("Turn 2") + 1:]
+    assert any("Imp casts Firebolt. Target is stealthed — Miss!" in line for line in latest_warlock_turn), "Imp miss logs should keep Firebolt action text"
+
+    priest_hit_match = make_match("priest", "warrior", seed=123)
+    submit_turn(priest_hit_match, "shadowfiend", _DEF_PASS)
+    assert any("Shadowfiend melees the target for" in line for line in priest_hit_match.log), "Shadowfiend hit logs should use its melee action text"
+
+    priest_miss_match = make_match("priest", "rogue", seed=123)
+    priest_miss_rogue = priest_miss_match.state[priest_miss_match.players[1]]
+    submit_turn(priest_miss_match, "shadowfiend", _DEF_PASS)
+    effects.remove_effect(priest_miss_rogue, "stealth")
+    effects.apply_effect_by_id(priest_miss_rogue, "evasion")
+    submit_turn(priest_miss_match, _DEF_PASS, _DEF_PASS)
+    latest_priest_turn = priest_miss_match.log[priest_miss_match.log.index("Turn 2") + 1:]
+    assert any("Shadowfiend melees the target. Target evades the attack — Miss!" in line for line in latest_priest_turn), "Shadowfiend evade logs should keep its melee action text"
     return True
 
 
@@ -889,6 +923,7 @@ SCENARIOS = [
     scenario_hunter_pet_permanent_death,
     scenario_hunter_dismissed_pet_drops_dots,
     scenario_hunter_serpent_special_respects_stealth,
+    scenario_pet_action_text_persists_on_miss,
     scenario_mindgames_still_allows_direct_damage_dots,
 ]
 

@@ -7,6 +7,7 @@ PETS = {
         "max_count": 3,
         "behavior_id": "imp_firebolt",
         "behavior": "imp_firebolt",
+        "action_text": "casts Firebolt",
         "display": {
             "war_council": True,
             "label": "Imp",
@@ -23,6 +24,7 @@ PETS = {
         "max_count": 1,
         "behavior_id": "shadowfiend_melee_mana",
         "behavior": "shadowfiend_melee_mana",
+        "action_text": "melees the target",
         "display": {
             "war_council": True,
             "label": "Shadowfiend",
@@ -43,7 +45,8 @@ PETS = {
         "summon_group": "hunter_companion",
         "persistent_owner_memory": True,
         "permanent_death": True,
-        "basic_attack": {"school": "physical", "stat": "atk", "scaling": 1.0, "dice": "d4"},
+        "basic_attack": {"school": "physical", "stat": "atk", "scaling": 1.0, "dice": "d4", "action_text": "melees the target"},
+        "specials": {"bite": {"action_text": "bites the target"}},
         "special_id": "bite",
         "special_chance": 0.30,
         "display": {
@@ -66,7 +69,8 @@ PETS = {
         "summon_group": "hunter_companion",
         "persistent_owner_memory": True,
         "permanent_death": True,
-        "basic_attack": {"school": "physical", "stat": "atk", "scaling": 1.0, "dice": "d4"},
+        "basic_attack": {"school": "physical", "stat": "atk", "scaling": 1.0, "dice": "d4", "action_text": "melees the target"},
+        "specials": {"lightning_breath": {"action_text": "breathes lightning"}},
         "special_id": "lightning_breath",
         "special_chance": 0.30,
         "display": {
@@ -89,7 +93,8 @@ PETS = {
         "summon_group": "hunter_companion",
         "persistent_owner_memory": True,
         "permanent_death": True,
-        "basic_attack": {"school": "physical", "stat": "atk", "scaling": 1.0, "dice": "d6"},
+        "basic_attack": {"school": "physical", "stat": "atk", "scaling": 1.0, "dice": "d6", "action_text": "melees the target"},
+        "specials": {"blocking_defence": {"action_text": "braces to intercept attacks"}},
         "special_id": "blocking_defence",
         "special_chance": 0.30,
         "display": {
