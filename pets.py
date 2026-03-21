@@ -2,7 +2,7 @@ PETS = {
     "imp": {
         "id": "imp",
         "name": "Imp",
-        "hp": 45,
+        "hp": 5,
         "school": "magical",
         "max_count": 3,
         "behavior_id": "imp_firebolt",
@@ -17,7 +17,7 @@ PETS = {
     "shadowfiend": {
         "id": "shadowfiend",
         "name": "Shadowfiend",
-        "hp": 75,
+        "hp": 20,
         "school": "physical",
         "duration": 5,
         "max_count": 1,

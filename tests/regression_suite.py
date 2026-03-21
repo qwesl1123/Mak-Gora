@@ -84,6 +84,7 @@ PlayerBuild = _MODS["models"].PlayerBuild
 PetState = _MODS["models"].PetState
 resolver = _MODS["resolver"]
 effects = _MODS["effects"]
+PETS = sys.modules["games.duel.content.pets"].PETS
 
 
 apply_prep_build = resolver.apply_prep_build
@@ -389,7 +390,7 @@ def scenario_iceblock_priority_vs_aoe_with_pets() -> bool:
     assert _has_effect(mage, "iceblock"), "Ice Block should apply this turn"
     assert mage.res.hp == mage_hp_before, "Ice Block should prevent champion AoE damage"
     for pid in imp_ids:
-        assert mage.pets[pid].hp < imp_hp_before[pid], "Dragon Roar should still damage enemy pets through champion immunity"
+        assert _pet_took_damage_or_died(mage, pid, imp_hp_before[pid]), "Dragon Roar should still damage enemy pets through champion immunity"
     return True
 
 
@@ -409,16 +410,23 @@ def scenario_iceblock_blocks_same_turn_stun_and_next_turn_attack() -> bool:
 
 
 def _add_pet(owner, pet_id: str, template_id: str = "imp") -> None:
+    template = PETS[template_id]
+    hp = int(template.get("hp", 1) or 1)
     owner.pets[pet_id] = PetState(
         id=pet_id,
         template_id=template_id,
-        name="Imp",
+        name=str(template.get("name", template_id.title())),
         owner_sid=owner.sid,
-        hp=45,
-        hp_max=45,
+        hp=hp,
+        hp_max=hp,
         effects=[],
         duration=None,
     )
+
+
+def _pet_took_damage_or_died(owner, pet_id: str, hp_before: int) -> bool:
+    pet = owner.pets.get(pet_id)
+    return pet is None or pet.hp < hp_before
 
 def _setup_imps(match, owner_idx: int = 0):
     owner_sid = match.players[owner_idx]
@@ -437,7 +445,7 @@ def scenario_aoe_hits_pets_with_immune_champion() -> bool:
     imp_hp_before = {pid: swipe.state[warlock_sid].pets[pid].hp for pid in imp_ids}
     submit_turn(swipe, _DEF_PASS, "swipe")
     for pid in imp_ids:
-        assert swipe.state[warlock_sid].pets[pid].hp < imp_hp_before[pid], "Swipe should damage enemy pets"
+        assert _pet_took_damage_or_died(swipe.state[warlock_sid], pid, imp_hp_before[pid]), "Swipe should damage enemy pets"
     swipe_hits = [line for line in swipe.log if "Swipe hits" in line and "Imp" in line]
     observed_labels = []
     for line in swipe_hits:
@@ -458,7 +466,7 @@ def scenario_aoe_hits_pets_with_immune_champion() -> bool:
     roar.state[warrior_sid].res.rage = roar.state[warrior_sid].res.rage_max
     submit_turn(roar, _DEF_PASS, "dragon_roar")
     for pid in imp_ids:
-        assert roar.state[warlock_sid].pets[pid].hp < imp_hp_before[pid], "Dragon Roar should damage enemy pets"
+        assert _pet_took_damage_or_died(roar.state[warlock_sid], pid, imp_hp_before[pid]), "Dragon Roar should damage enemy pets"
 
     # Shield of Vengeance explosion case.
     sov = make_match("warlock", "paladin", seed=123)
@@ -468,7 +476,7 @@ def scenario_aoe_hits_pets_with_immune_champion() -> bool:
     imp_hp_before = {pid: sov.state[warlock_sid].pets[pid].hp for pid in imp_ids}
     effects.apply_effect_by_id(sov.state[pal_sid], "shield_of_vengeance", overrides={"duration": 1, "absorbed": 25})
     submit_turn(sov, _DEF_PASS, _DEF_PASS)
-    assert any(sov.state[warlock_sid].pets[pid].hp < imp_hp_before[pid] for pid in imp_ids), "SoV explosion should damage enemy pets"
+    assert any(_pet_took_damage_or_died(sov.state[warlock_sid], pid, imp_hp_before[pid]) for pid in imp_ids), "SoV explosion should damage enemy pets"
     return True
 
 
@@ -575,7 +583,7 @@ def scenario_hunter_multi_shot_aoe() -> bool:
 
     assert warlock.res.hp < champion_hp_before, "Multi-Shot should damage the enemy champion"
     for pid in imp_ids:
-        assert warlock.pets[pid].hp < imp_hp_before[pid], "Multi-Shot should damage every enemy pet"
+        assert _pet_took_damage_or_died(warlock, pid, imp_hp_before[pid]), "Multi-Shot should damage every enemy pet"
     shot_logs = [line for line in match.log if "Multi-Shot hits" in line and "Imp" in line]
     observed = []
     for line in shot_logs:
@@ -725,6 +733,59 @@ def scenario_hunter_freezing_trap_breaks_on_damage() -> bool:
     return True
 
 
+def scenario_hunter_freezing_trap_respects_cloak_same_turn() -> bool:
+    match = make_match("rogue", "hunter", seed=123)
+    rogue = match.state[match.players[0]]
+    effects.remove_stealth(rogue)
+    submit_turn(match, "cloak", "freezing_trap")
+    assert _has_effect(rogue, "cloak_of_shadows"), "Cloak should be active on the same turn"
+    assert not _has_effect(rogue, "freezing_trap_freeze"), "Freezing Trap should not apply through same-turn Cloak"
+    latest_turn = match.log[match.log.index("Turn 1") + 1:]
+    assert any("uses their bare hands to cast Cloak of Shadows" in line for line in latest_turn), "Cloak action should resolve"
+    assert any("uses their bare hands to cast Freezing Trap. Immune!" in line for line in latest_turn), "Freezing Trap should log immunity on same-turn Cloak"
+    return True
+
+
+def scenario_hunter_freezing_trap_respects_active_cloak() -> bool:
+    match = make_match("rogue", "hunter", seed=123)
+    rogue = match.state[match.players[0]]
+    effects.remove_stealth(rogue)
+    submit_turn(match, "cloak", _DEF_PASS)
+    assert _has_effect(rogue, "cloak_of_shadows"), "Cloak should be active after the cast turn"
+    submit_turn(match, _DEF_PASS, "freezing_trap")
+    assert not _has_effect(rogue, "freezing_trap_freeze"), "Freezing Trap should not apply while Cloak is already active"
+    latest_turn = match.log[match.log.index("Turn 2") + 1:]
+    assert any("uses their bare hands to cast Freezing Trap. Immune!" in line for line in latest_turn), "Active Cloak should still produce the immunity log"
+    return True
+
+
+def scenario_hunter_disengage_uses_custom_miss_text() -> bool:
+    match = make_match("warrior", "hunter", seed=123)
+    submit_turn(match, "basic_attack", "disengage")
+    latest_turn = match.log[match.log.index("Turn 1") + 1:]
+    assert any("Target leaps away — Miss." in line for line in latest_turn), "Disengage should use the custom leap-away miss text"
+    assert not any("Target blinks away — Miss." in line and "Disengage" in line for line in latest_turn), "Disengage should not reuse the blink-away miss text"
+    return True
+
+
+def scenario_hunter_flare_logs_stealth_breaks() -> bool:
+    match = make_match("hunter", "hunter", seed=123)
+    enemy = match.state[match.players[1]]
+    submit_turn(match, _DEF_PASS, "summon_saber")
+    enemy_pet = _active_pet(enemy, "frostsaber")
+    assert enemy_pet is not None, "Enemy pet should be present for Flare reveal coverage"
+    effects.apply_effect_by_id(enemy, "stealth", overrides={"duration": 2})
+    effects.apply_effect_by_id(enemy_pet, "stealth", overrides={"duration": 2})
+    submit_turn(match, "flare", _DEF_PASS)
+    latest_turn = match.log[match.log.index("Turn 2") + 1:]
+    assert any("Flare reveals the target." in line for line in latest_turn), "Flare should keep its reveal summary log"
+    assert any(f"{match.players[1][:5]}'s stealth broken by Flare" in line for line in latest_turn), "Flare should log the player stealth break"
+    assert any("Frostsaber's stealth broken by Flare" in line for line in latest_turn), "Flare should log pet stealth breaks when present"
+    assert not _has_effect(enemy, "stealth"), "Flare should remove player stealth"
+    assert not _has_effect(enemy_pet, "stealth"), "Flare should remove pet stealth"
+    return True
+
+
 def scenario_hunter_pet_permanent_death() -> bool:
     match = make_match("hunter", "warrior", seed=123)
     hunter = match.state[match.players[0]]
@@ -821,6 +882,10 @@ SCENARIOS = [
     scenario_hunter_aimed_shot_raptor_pet_special,
     scenario_hunter_boar_redirect,
     scenario_hunter_freezing_trap_breaks_on_damage,
+    scenario_hunter_freezing_trap_respects_cloak_same_turn,
+    scenario_hunter_freezing_trap_respects_active_cloak,
+    scenario_hunter_disengage_uses_custom_miss_text,
+    scenario_hunter_flare_logs_stealth_breaks,
     scenario_hunter_pet_permanent_death,
     scenario_hunter_dismissed_pet_drops_dots,
     scenario_hunter_serpent_special_respects_stealth,

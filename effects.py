@@ -145,6 +145,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "name": "Disengage",
         "duration": 1,
         "flags": {"blinked": True, "untargetable": True, "incoming_single_target_miss": True},
+        "miss_log": "Target leaps away — Miss.",
         "display": {
             "war_council": True,
             "label": "Disengaged",

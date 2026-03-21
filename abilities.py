@@ -257,6 +257,7 @@ ABILITIES = {
         "cost": {"energy": 0},
         "dice": None,
         "tags": ["defense"],
+        "priority_defensive": True,
         "cooldown": 20,
         "classes": ["rogue"],
         "self_effects": [
@@ -1011,7 +1012,7 @@ ABILITIES = {
         "scaling": {"atk": 1.5},
         "damage_type": "magic",
         "tags": ["spell", "attack", "magic"],
-        "cooldown": 7,
+        "cooldown": 13,
         "classes": ["hunter"],
         "self_effects": [
             {"id": "arcane_shot_proc", "duration": 2, "log": "{actor} can use Arcane Shot!", "separate_log": True}
@@ -1054,7 +1055,7 @@ ABILITIES = {
         "cooldown": 15,
         "classes": ["hunter"],
         "target_effects": [
-            {"type": "remove_effect", "effect_id": "stealth", "log": "Flare reveals the target."}
+            {"type": "remove_effect", "effect_id": "stealth", "log": "Flare reveals the target.", "removed_log_template": "{target}'s stealth broken by Flare"}
         ],
     },
     "freezing_trap": {

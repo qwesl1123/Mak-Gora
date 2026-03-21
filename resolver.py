@@ -278,6 +278,11 @@ def resolve_turn(match: MatchState) -> None:
                 return str(custom)
         return "Target blinks away — Miss."
 
+    def entity_log_label(target: PlayerState | PetState) -> str:
+        if isinstance(target, PlayerState):
+            return f"{target.sid[:5]}"
+        return getattr(target, "name", "Target")
+
     def flag_source_name(target: PlayerState | PetState, flag: str, fallback: str = "that effect") -> str:
         for effect in reversed(target.effects):
             flags = effect.get("flags", {}) or {}
@@ -376,13 +381,26 @@ def resolve_turn(match: MatchState) -> None:
         for entry in ability.get("target_effects", []) or []:
             if entry.get("type") == "remove_effect":
                 effect_id = entry.get("effect_id")
-                removed_any = False
+                removed_targets: list[PlayerState | PetState] = []
                 for entry_target in target_entries:
                     if effect_id and has_effect(entry_target, effect_id):
-                        remove_effect(entry_target, effect_id)
-                        removed_any = True
-                if removed_any and entry.get("log"):
+                        if effect_id == "stealth":
+                            remove_stealth(entry_target)
+                        else:
+                            remove_effect(entry_target, effect_id)
+                        removed_targets.append(entry_target)
+                if removed_targets and entry.get("log"):
                     log_parts.append(entry["log"])
+                removed_log_template = entry.get("removed_log_template")
+                if removed_log_template:
+                    for removed_target in removed_targets:
+                        log_parts.append(
+                            str(removed_log_template).format(
+                                target=entity_log_label(removed_target),
+                                effect=effect_name(effect_id) if effect_id else "Effect",
+                                source_ability=ability.get("name") or "Effect",
+                            )
+                        )
                 continue
             overrides = dict(entry.get("overrides", {}) or {})
             if entry.get("duration"):
@@ -1566,13 +1584,17 @@ def resolve_turn(match: MatchState) -> None:
             return False
         if single_target_miss_active(target, ability):
             return False
+        if is_immune_all(target):
+            return False
         for entry in target_effects:
             effect_id = entry.get("id")
             if not effect_id:
                 continue
             effect = build_effect(effect_id, overrides=entry.get("overrides"))
             flags = effect.get("flags", {}) or {}
-            if flags.get("stunned"):
+            if has_effect(target, "cloak_of_shadows") and is_magical_harmful_effect(effect):
+                continue
+            if flags.get("stunned") or effect.get("cant_act_reason"):
                 return True
         return False
 

@@ -666,6 +666,12 @@
         text-shadow: 0 0 12px rgba(244, 140, 186, 0.95);
       }
 
+      .logLineHunterProc {
+        color: var(--hunter-color);
+        font-weight: 700;
+        text-shadow: 0 0 12px rgba(170, 211, 114, 0.95);
+      }
+
       .logLineExecute {
         color: #ff4444;
         font-weight: 700;
@@ -3007,7 +3013,7 @@
           textWithoutFx.includes("can use Arcane Shot!")
           || textWithoutFx.includes("can use Raptor Strike!")
         ) {
-          return applyFxTokensToHtml(`<span class="log-class-hunter">${renderTextWithFxTags(textWithoutFx)}</span>`, fxTokens);
+          return applyFxTokensToHtml(`<span class="log-class-hunter logLineHunterProc">${renderTextWithFxTags(textWithoutFx)}</span>`, fxTokens);
         }
         if (
           textWithoutFx.includes("Has Shadowy Insight!")
@@ -3113,6 +3119,12 @@
         }
         if (msg.includes("Has Final Verdict Empowered!")) {
           classes.push("logLinePaladinProc");
+        }
+        if (
+          msg.includes("can use Arcane Shot!")
+          || msg.includes("can use Raptor Strike!")
+        ) {
+          classes.push("logLineHunterProc");
         }
         if (msg.includes("Can Use Execute")) {
           classes.push("logLineExecute");
