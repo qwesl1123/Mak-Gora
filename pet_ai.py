@@ -3,7 +3,28 @@ from typing import Callable
 from ..content.pets import PETS
 from .dice import roll
 from .rules import base_damage, mitigate, hit_chance
-from .effects import mitigation_multiplier, modify_stat, has_flag, is_immune_all, is_damage_immune
+from .effects import (
+    mitigation_multiplier,
+    modify_stat,
+    has_flag,
+    is_immune_all,
+    is_damage_immune,
+    apply_effect_by_id,
+)
+
+
+def _damage_after_reduction(raw: int, enemy, school: str) -> int:
+    reduced = mitigate(raw, modify_stat(enemy, "def", enemy.stats.get("def", 0)))
+    normalized = "magical" if school == "magic" else school
+    if normalized == "physical":
+        reduced = max(0, reduced - modify_stat(enemy, "physical_reduction", enemy.stats.get("physical_reduction", 0)))
+        if is_damage_immune(enemy, "physical"):
+            return 0
+    else:
+        reduced = max(0, reduced - modify_stat(enemy, "magic_resist", enemy.stats.get("magic_resist", 0)))
+        if is_damage_immune(enemy, "magic"):
+            return 0
+    return int(reduced * mitigation_multiplier(enemy))
 
 
 def _run_imp_firebolt(
@@ -33,12 +54,7 @@ def _run_imp_firebolt(
 
     fire_roll = roll("d4", rng)
     raw_fire = base_damage(modify_stat(owner, "int", owner.stats.get("int", 0)), 0.2, fire_roll)
-    reduced = mitigate(raw_fire, modify_stat(enemy, "def", enemy.stats.get("def", 0)))
-    resist = modify_stat(enemy, "magic_resist", enemy.stats.get("magic_resist", 0))
-    reduced = max(0, reduced - resist)
-    reduced = int(reduced * mitigation_multiplier(enemy))
-    if is_damage_immune(enemy, "magic"):
-        reduced = 0
+    reduced = _damage_after_reduction(raw_fire, enemy, "magical")
     dealt_data = apply_damage(owner, enemy, reduced, enemy_sid, "Imp Firebolt", school="magical")
     remaining = int(dealt_data.get("hp_damage", 0) or 0)
     absorbed = int(dealt_data.get("absorbed", 0) or 0)
@@ -98,11 +114,7 @@ def _run_shadowfiend_melee_mana(
 
     fiend_roll = roll("d4", rng)
     raw = base_damage(modify_stat(owner, "int", owner.stats.get("int", 0)), 0.6, fiend_roll)
-    reduced = mitigate(raw, modify_stat(enemy, "def", enemy.stats.get("def", 0)))
-    reduced = max(0, reduced - modify_stat(enemy, "physical_reduction", enemy.stats.get("physical_reduction", 0)))
-    reduced = int(reduced * mitigation_multiplier(enemy))
-    if is_damage_immune(enemy, "physical"):
-        reduced = 0
+    reduced = _damage_after_reduction(raw, enemy, "physical")
     dealt = apply_damage(owner, enemy, reduced, enemy_sid, "Shadowfiend melee", school="physical")
     remaining = int(dealt.get("hp_damage", 0) or 0)
     absorbed = int(dealt.get("absorbed", 0) or 0)
@@ -121,9 +133,225 @@ def _run_shadowfiend_melee_mana(
         totals["damage"] += remaining
 
 
+def _run_hunter_basic_plus_special(
+    owner,
+    enemy,
+    pet,
+    owner_sid,
+    enemy_sid,
+    match,
+    rng,
+    apply_damage,
+    absorb_suffix,
+    stealth_targeting,
+    should_miss_due_to_stealth,
+    untargetable_miss_log,
+    can_evasion_force_miss,
+):
+    template = PETS.get(pet.template_id, {})
+    forced_command = owner.pending_pet_command
+    use_special = forced_command == "special"
+    special_id = template.get("special_id")
+    if not use_special and special_id:
+        use_special = rng.random() <= float(template.get("special_chance", 0) or 0)
+
+    if use_special and special_id:
+        _run_pet_special(
+            special_id,
+            owner,
+            enemy,
+            pet,
+            owner_sid,
+            enemy_sid,
+            match,
+            rng,
+            apply_damage,
+            absorb_suffix,
+            stealth_targeting,
+            should_miss_due_to_stealth,
+            untargetable_miss_log,
+            can_evasion_force_miss,
+        )
+        return
+
+    profile = template.get("basic_attack", {}) or {}
+    _run_pet_attack(
+        owner,
+        enemy,
+        pet,
+        owner_sid,
+        enemy_sid,
+        match,
+        rng,
+        apply_damage,
+        absorb_suffix,
+        stealth_targeting,
+        should_miss_due_to_stealth,
+        untargetable_miss_log,
+        can_evasion_force_miss,
+        stat_key=profile.get("stat", "atk"),
+        scaling=float(profile.get("scaling", 1.0) or 1.0),
+        dice=profile.get("dice", "d4"),
+        school=profile.get("school", "physical"),
+        label=f"{pet.name} attacks",
+        hit_verb="melees",
+    )
+
+
+def _run_pet_attack(
+    owner,
+    enemy,
+    pet,
+    owner_sid,
+    enemy_sid,
+    match,
+    rng,
+    apply_damage,
+    absorb_suffix,
+    stealth_targeting,
+    should_miss_due_to_stealth,
+    untargetable_miss_log,
+    can_evasion_force_miss,
+    *,
+    stat_key: str,
+    scaling: float,
+    dice: str,
+    school: str,
+    label: str,
+    hit_verb: str = "hits",
+):
+    ability = {
+        "requires_target": True,
+        "damage_type": school,
+        "tags": ["attack", school],
+    }
+    if should_miss_due_to_stealth(owner, enemy, ability, stealth_targeting):
+        match.log.append(f"{owner_sid[:5]}'s {pet.name} attacks. Target is stealthed — Miss!")
+        return
+    if has_flag(enemy, "untargetable"):
+        match.log.append(f"{owner_sid[:5]}'s {pet.name} attacks. {untargetable_miss_log(enemy)}")
+        return
+    if has_flag(enemy, "evade_all") and can_evasion_force_miss(ability, True):
+        match.log.append(f"{owner_sid[:5]}'s {pet.name} attacks. Target evades the attack — Miss!")
+        return
+
+    accuracy = hit_chance(
+        modify_stat(owner, "acc", owner.stats.get("acc", 0)),
+        modify_stat(enemy, "eva", enemy.stats.get("eva", 0)),
+    )
+    if rng.randint(1, 100) > accuracy:
+        match.log.append(f"{owner_sid[:5]}'s {pet.name} attacks. Miss!")
+        return
+
+    stat_value = int((template := PETS.get(pet.template_id, {})).get(stat_key, 0) or 0)
+    rolled = roll(dice, rng) if dice else 0
+    raw = base_damage(stat_value, scaling, rolled)
+    reduced = _damage_after_reduction(raw, enemy, school)
+    dealt = apply_damage(owner, enemy, reduced, enemy_sid, label, school=school)
+    remaining = int(dealt.get("hp_damage", 0) or 0)
+    absorbed = int(dealt.get("absorbed", 0) or 0)
+    breakdown = dealt.get("absorbed_breakdown", [])
+    total_incoming = remaining + absorbed
+    if total_incoming > 0:
+        line = f"{owner_sid[:5]}'s {pet.name} {hit_verb} for {total_incoming} damage."
+        if absorbed > 0:
+            line = f"{line} {absorb_suffix(absorbed, breakdown).strip()}"
+        match.log.append(line)
+    if remaining > 0:
+        totals = match.combat_totals.setdefault(owner_sid, {"damage": 0, "healing": 0})
+        totals["damage"] += remaining
+
+
+def _run_pet_special(
+    special_id,
+    owner,
+    enemy,
+    pet,
+    owner_sid,
+    enemy_sid,
+    match,
+    rng,
+    apply_damage,
+    absorb_suffix,
+    stealth_targeting,
+    should_miss_due_to_stealth,
+    untargetable_miss_log,
+    can_evasion_force_miss,
+):
+    if special_id == "bite":
+        return _run_pet_attack(
+            owner,
+            enemy,
+            pet,
+            owner_sid,
+            enemy_sid,
+            match,
+            rng,
+            apply_damage,
+            absorb_suffix,
+            stealth_targeting,
+            should_miss_due_to_stealth,
+            untargetable_miss_log,
+            can_evasion_force_miss,
+            stat_key="atk",
+            scaling=2.0,
+            dice="d6",
+            school="physical",
+            label="Bite",
+            hit_verb="bites",
+        )
+
+    if special_id == "lightning_breath":
+        ability = {
+            "requires_target": True,
+            "damage_type": "magic",
+            "tags": ["attack", "magic"],
+        }
+        if should_miss_due_to_stealth(owner, enemy, ability, stealth_targeting):
+            match.log.append(f"{owner_sid[:5]}'s {pet.name} exhales lightning. Target is stealthed — Miss!")
+            return
+        if has_flag(enemy, "untargetable"):
+            match.log.append(f"{owner_sid[:5]}'s {pet.name} exhales lightning. {untargetable_miss_log(enemy)}")
+            return
+        if is_immune_all(enemy):
+            match.log.append(f"{owner_sid[:5]}'s {pet.name} exhales lightning. Target is immune!")
+            return
+        raw = base_damage(int(PETS.get(pet.template_id, {}).get("int", 0) or 0), 1.5, roll("d6", rng))
+        reduced = _damage_after_reduction(raw, enemy, "magical")
+        dealt = apply_damage(owner, enemy, reduced, enemy_sid, "Lightning Breath", school="magical")
+        remaining = int(dealt.get("hp_damage", 0) or 0)
+        absorbed = int(dealt.get("absorbed", 0) or 0)
+        breakdown = dealt.get("absorbed_breakdown", [])
+        total_incoming = remaining + absorbed
+        if total_incoming > 0:
+            line = f"{owner_sid[:5]}'s {pet.name} breathes lightning for {total_incoming} damage."
+            if absorbed > 0:
+                line = f"{line} {absorb_suffix(absorbed, breakdown).strip()}"
+            match.log.append(line)
+        if remaining > 0:
+            heal_value = max(1, remaining // 2)
+            before_pet = pet.hp
+            pet.hp = min(pet.hp + heal_value, pet.hp_max)
+            before_owner = owner.res.hp
+            owner.res.hp = min(owner.res.hp + heal_value, owner.res.hp_max)
+            match.log.append(
+                f"{pet.name} restores {pet.hp - before_pet} HP to itself and {owner.res.hp - before_owner} HP to {owner_sid[:5]}."
+            )
+            totals = match.combat_totals.setdefault(owner_sid, {"damage": 0, "healing": 0})
+            totals["damage"] += remaining
+            totals["healing"] += (pet.hp - before_pet) + (owner.res.hp - before_owner)
+        return
+
+    if special_id == "blocking_defence":
+        apply_effect_by_id(owner, "blocking_defence", overrides={"duration": 1, "redirect_to_pet_id": pet.id})
+        match.log.append(f"{owner_sid[:5]}'s {pet.name} braces to intercept attacks.")
+        return
+
+
 BEHAVIOR_RUNNERS: dict[str, Callable] = {
     "imp_firebolt": _run_imp_firebolt,
     "shadowfiend_melee_mana": _run_shadowfiend_melee_mana,
+    "hunter_basic_plus_special": _run_hunter_basic_plus_special,
 }
 
 
@@ -143,6 +371,7 @@ def run_pet_phase(
         enemy_sid = sids[1] if owner_sid == sids[0] else sids[0]
         enemy = match.state[enemy_sid]
         if not owner.res or owner.res.hp <= 0 or not enemy.res or enemy.res.hp <= 0:
+            owner.pending_pet_command = None
             continue
 
         pet_ids = sorted((owner.pets or {}).keys())
@@ -172,6 +401,7 @@ def run_pet_phase(
                 untargetable_miss_log,
                 can_evasion_force_miss,
             )
+        owner.pending_pet_command = None
 
 
 def cleanup_pets(match):
@@ -184,5 +414,11 @@ def cleanup_pets(match):
             if pet.duration is not None:
                 pet.duration -= 1
             if pet.hp <= 0 or (pet.duration is not None and pet.duration <= 0):
+                template = PETS.get(pet.template_id, {})
+                if pet.hp <= 0 and template.get("permanent_death"):
+                    ps.dead_hunter_pets[pet.template_id] = True
+                    ps.hunter_pet_memory[pet.template_id] = 0
+                if ps.active_pet_id == pet_id:
+                    ps.active_pet_id = None
                 match.log.append(f"{pet.name} dies.")
                 del ps.pets[pet_id]

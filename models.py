@@ -44,6 +44,10 @@ class PlayerState:
     effects: List[Dict[str, Any]] = field(default_factory=list)  # buffs/debuffs
     cooldowns: Dict[str, list[int]] = field(default_factory=dict)
     pets: Dict[str, PetState] = field(default_factory=dict)
+    hunter_pet_memory: Dict[str, int] = field(default_factory=dict)
+    dead_hunter_pets: Dict[str, bool] = field(default_factory=dict)
+    active_pet_id: Optional[str] = None
+    pending_pet_command: Optional[str] = None
 
 @dataclass
 class MatchState:

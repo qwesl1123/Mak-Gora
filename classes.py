@@ -49,4 +49,11 @@ CLASSES = {
         "resources": {"hp": 95, "mp": 110, "energy": 0, "rage": 0, "rage_max": 0},
         "resource_display": {"primary": {"id": "mp", "label": "Mana", "color": "var(--mana-blue)"}},
     },
+    "hunter": {
+        "name": "Hunter",
+        "color": "#AAD372",
+        "base_stats": {"atk": 12, "int": 0, "def": 5, "spd": 9, "crit": 7, "acc": 96, "eva": 10},
+        "resources": {"hp": 95, "mp": 50, "energy": 0, "rage": 0, "rage_max": 0},
+        "resource_display": {"primary": {"id": "mp", "label": "Mana", "color": "var(--mana-blue)"}},
+    },
 }

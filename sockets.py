@@ -237,6 +237,7 @@ def snapshot_for(match, viewer_sid):
         ability_meta[ability_id] = {
             "name": ability_data.get("name", ability_id),
             "icon": ability_data.get("icon"),
+            "display_color": ability_data.get("display_color"),
         }
 
     return {

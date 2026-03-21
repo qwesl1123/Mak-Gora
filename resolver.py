@@ -17,6 +17,7 @@ from .effects import (
     trigger_on_hit_passives,
     damage_multiplier_from_passives,
     end_of_turn,
+    end_of_turn_pet,
     apply_effect_by_id,
     apply_form,
     break_stealth_on_damage,
@@ -45,6 +46,7 @@ from .effects import (
     effect_template,
     is_magical_harmful_effect,
     normalize_school,
+    break_effects_on_damage,
 )
 
 def cooldown_slots(ps: PlayerState, ability_id: str) -> list:
@@ -276,6 +278,19 @@ def resolve_turn(match: MatchState) -> None:
                 return str(custom)
         return "Target blinks away — Miss."
 
+    def flag_source_name(target: PlayerState | PetState, flag: str, fallback: str = "that effect") -> str:
+        for effect in reversed(target.effects):
+            flags = effect.get("flags", {}) or {}
+            if not flags.get(flag):
+                continue
+            if effect.get("name"):
+                return str(effect["name"])
+            effect_id = effect.get("id")
+            if effect_id:
+                return effect_name(effect_id)
+            break
+        return fallback
+
     def target_immune_log(log_parts: list) -> None:
         log_parts.append("Target is immune!")
 
@@ -308,9 +323,20 @@ def resolve_turn(match: MatchState) -> None:
         target: PlayerState | PetState,
         ability: Dict[str, Any],
         log_parts: list,
+        pre_log_parts: list[str] | None = None,
         skip_self_effect_ids: set[str] | None = None,
     ) -> None:
+        def format_entry_log(message: str | None) -> str | None:
+            if not isinstance(message, str):
+                return message
+            return message.replace("{actor}", actor.sid[:5])
+
+        if pre_log_parts is None:
+            pre_log_parts = []
         skip_self_effect_ids = skip_self_effect_ids or set()
+        target_entries: list[PlayerState | PetState] = [target]
+        if ability_target_mode(ability) == "aoe_enemy" and isinstance(target, PlayerState):
+            target_entries.extend(target.pets[pet_id] for pet_id in sorted((target.pets or {}).keys()))
         for entry in ability.get("self_effects", []) or []:
             if entry.get("type") == "dispel":
                 removed = dispel_effects(
@@ -328,7 +354,11 @@ def resolve_turn(match: MatchState) -> None:
                 continue
             if effect_id in skip_self_effect_ids:
                 if entry.get("log"):
-                    log_parts.append(entry["log"])
+                    formatted_log = format_entry_log(entry.get("log"))
+                    if entry.get("separate_log"):
+                        pre_log_parts.append(formatted_log)
+                    else:
+                        log_parts.append(formatted_log)
                 continue
             overrides = dict(entry.get("overrides", {}) or {})
             if entry.get("duration"):
@@ -338,26 +368,46 @@ def resolve_turn(match: MatchState) -> None:
             else:
                 apply_effect_by_id(actor, effect_id, overrides=overrides or None)
             if entry.get("log"):
-                log_parts.append(entry["log"])
+                formatted_log = format_entry_log(entry.get("log"))
+                if entry.get("separate_log"):
+                    pre_log_parts.append(formatted_log)
+                else:
+                    log_parts.append(formatted_log)
         for entry in ability.get("target_effects", []) or []:
-            if is_immune_all(target):
-                target_immune_log(log_parts)
-                continue
-            if target_effect_requires_visible_target(ability, entry) and is_stealthed(target):
-                log_parts.append("Target is stealthed — no valid target. Miss!")
+            if entry.get("type") == "remove_effect":
+                effect_id = entry.get("effect_id")
+                removed_any = False
+                for entry_target in target_entries:
+                    if effect_id and has_effect(entry_target, effect_id):
+                        remove_effect(entry_target, effect_id)
+                        removed_any = True
+                if removed_any and entry.get("log"):
+                    log_parts.append(entry["log"])
                 continue
             overrides = dict(entry.get("overrides", {}) or {})
             if entry.get("duration"):
                 overrides["duration"] = int(entry.get("duration"))
             effect = build_effect(entry["id"], overrides=overrides or None)
-            if has_effect(target, "cloak_of_shadows") and is_magical_harmful_effect(effect):
-                log_parts.append("Immune!")
-                continue
-            if entry["id"] in FORM_EFFECT_IDS:
-                apply_form(target, entry["id"], overrides=overrides or None)
-            else:
-                apply_effect_by_id(target, entry["id"], overrides=overrides or None)
-            if entry.get("log"):
+            applied_any = False
+            for entry_target in target_entries:
+                if single_target_miss_active(entry_target, ability) and is_harmful_target_effect_entry(entry):
+                    log_parts.append(single_target_miss_log())
+                    continue
+                if is_immune_all(entry_target):
+                    target_immune_log(log_parts)
+                    continue
+                if target_effect_requires_visible_target(ability, entry) and is_stealthed(entry_target):
+                    log_parts.append("Target is stealthed — no valid target. Miss!")
+                    continue
+                if has_effect(entry_target, "cloak_of_shadows") and is_magical_harmful_effect(effect):
+                    log_parts.append("Immune!")
+                    continue
+                if entry["id"] in FORM_EFFECT_IDS:
+                    apply_form(entry_target, entry["id"], overrides=overrides or None)
+                else:
+                    apply_effect_by_id(entry_target, entry["id"], overrides=overrides or None)
+                applied_any = True
+            if applied_any and entry.get("log"):
                 log_parts.append(entry["log"])
 
     def apply_hp_sacrifice_absorb(
@@ -450,7 +500,10 @@ def resolve_turn(match: MatchState) -> None:
     def target_effect_requires_visible_target(ability: Dict[str, Any], entry: Dict[str, Any]) -> bool:
         if not is_single_target_ability(ability):
             return False
-        effect = build_effect(entry["id"], overrides=entry.get("overrides"))
+        effect_id = entry.get("id")
+        if not effect_id:
+            return False
+        effect = build_effect(effect_id, overrides=entry.get("overrides"))
         flags = effect.get("flags", {}) or {}
         if flags.get("stunned"):
             return True
@@ -470,18 +523,63 @@ def resolve_turn(match: MatchState) -> None:
     def can_cast_while_cc(ability: Dict[str, Any]) -> bool:
         return bool(ability.get("allow_while_stunned") or ability.get("priority_defensive"))
 
-    def summon_pet_from_template(actor: PlayerState, template_id: str) -> tuple[PetState, bool]:
+    def is_harmful_target_effect_entry(entry: Dict[str, Any]) -> bool:
+        effect_id = entry.get("id")
+        if not effect_id:
+            return False
+        effect = build_effect(effect_id, overrides=entry.get("overrides"))
+        if not effect:
+            return False
+        flags = effect.get("flags", {}) or {}
+        return bool(is_magical_harmful_effect(effect) or effect.get("harmful") or flags.get("stunned") or effect.get("cant_act_reason"))
+
+    def is_harmful_single_target_action(ability: Dict[str, Any]) -> bool:
+        if not is_single_target_ability(ability):
+            return False
+        if any(value for value in (ability.get("dice"), ability.get("scaling"), ability.get("flat_damage"))):
+            return True
+        return any(is_harmful_target_effect_entry(entry) for entry in (ability.get("target_effects") or []))
+
+    def single_target_miss_active(target: PlayerState, ability: Dict[str, Any]) -> bool:
+        return has_flag(target, "incoming_single_target_miss") and is_harmful_single_target_action(ability)
+
+    def single_target_miss_log() -> str:
+        return "Target evades the attack — Miss!"
+
+    def dismiss_pet(actor: PlayerState, pet_id: str, *, remember: bool = False) -> None:
+        pet = (actor.pets or {}).get(pet_id)
+        if not pet:
+            return
+        template = PETS.get(pet.template_id, {})
+        if remember and template.get("persistent_owner_memory"):
+            actor.hunter_pet_memory[pet.template_id] = max(0, int(pet.hp))
+        if actor.active_pet_id == pet_id:
+            actor.active_pet_id = None
+        del actor.pets[pet_id]
+
+    def summon_pet_from_template(actor: PlayerState, template_id: str) -> tuple[PetState | None, bool, str | None]:
         template = PETS.get(template_id, {})
         max_count = int(template.get("max_count", 1) or 1)
         existing_ids = [pid for pid, pet in (actor.pets or {}).items() if pet.template_id == template_id]
         if existing_ids and max_count <= 1:
             existing = actor.pets[existing_ids[0]]
             existing.hp_max = int(template.get("hp", existing.hp_max))
-            existing.hp = existing.hp_max
             duration = template.get("duration")
             existing.duration = int(duration) if duration is not None else None
             existing.name = template.get("name", existing.name)
-            return existing, True
+            actor.active_pet_id = existing.id
+            return existing, True, None
+
+        summon_group = template.get("summon_group")
+        if template.get("permanent_death") and actor.dead_hunter_pets.get(template_id):
+            pet_name = template.get("name", template_id.title())
+            return None, False, f"{pet_name} has fallen and cannot be summoned again this match."
+
+        if summon_group:
+            for pet_id, pet in list((actor.pets or {}).items()):
+                active_template = PETS.get(pet.template_id, {})
+                if pet_id == actor.active_pet_id and active_template.get("summon_group") == summon_group:
+                    dismiss_pet(actor, pet_id, remember=True)
 
         owner_idx = match.players.index(actor.sid) + 1
         if template_id == "imp":
@@ -499,24 +597,33 @@ def resolve_turn(match: MatchState) -> None:
                 pet_id = f"{pet_id}_{next_idx}"
 
         duration = template.get("duration")
+        hp_max = int(template.get("hp", 1))
+        remembered_hp = actor.hunter_pet_memory.get(template_id)
+        summon_hp = hp_max
+        if template.get("persistent_owner_memory") and remembered_hp is not None:
+            summon_hp = hp_max if int(remembered_hp) <= 0 else min(hp_max, int(remembered_hp))
         summoned = PetState(
             id=pet_id,
             template_id=template_id,
             name=template.get("name", template_id.title()),
             owner_sid=actor.sid,
-            hp=int(template.get("hp", 1)),
-            hp_max=int(template.get("hp", 1)),
+            hp=summon_hp,
+            hp_max=hp_max,
             effects=[],
             duration=int(duration) if duration is not None else None,
         )
         actor.pets[summoned.id] = summoned
-        return summoned, False
+        if summon_group:
+            actor.active_pet_id = summoned.id
+        return summoned, False, None
 
     def summon_cap_reached(actor: PlayerState, template_id: str) -> bool:
         template = PETS.get(template_id, {})
         max_count = int(template.get("max_count", 1) or 1)
-        current = len([p for p in (actor.pets or {}).values() if p.template_id == template_id])
-        return current >= max_count
+        current = [p for p in (actor.pets or {}).values() if p.template_id == template_id]
+        if max_count <= 1 and current:
+            return False
+        return len(current) >= max_count
 
 
     def resolve_action(actor_sid: str, target_sid: str, action: Dict[str, Any]) -> Dict[str, Any]:
@@ -603,7 +710,15 @@ def resolve_turn(match: MatchState) -> None:
                 "log": f"{actor_sid[:5]} tries to use {ability['name']} but {reason_text}.",
             }
 
+        if has_flag(actor, "disable_attacks") and "attack" in (ability.get("tags") or []):
+            return {
+                "damage": 0,
+                "healing": 0,
+                "log": f"{actor_sid[:5]} cannot attack while {flag_source_name(actor, 'disable_attacks')} is active.",
+            }
+
         log_parts = [f"{actor_sid[:5]} uses {weapon_name} to cast {ability['name']}."]
+        pre_log_parts: list[str] = []
 
         has_target_effects = bool(ability.get("target_effects"))
         has_self_effects = bool(ability.get("self_effects"))
@@ -611,7 +726,7 @@ def resolve_turn(match: MatchState) -> None:
         if "pass" in (ability.get("tags") or []):
             set_cooldown(actor, ability_id, ability)
             log_parts.append("Passes the turn.")
-            return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
+            return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "pre_logs": pre_log_parts}
 
         was_stealthed = has_effect(actor, "stealth")
         offensive_action = is_offensive_action(ability)
@@ -649,6 +764,14 @@ def resolve_turn(match: MatchState) -> None:
                 if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
                     remove_stealth(actor)
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
+            if single_target_miss_active(target, ability):
+                log_parts.append(single_target_miss_log())
+                set_cooldown(actor, ability_id, ability)
+                if ability.get("consume_effect"):
+                    remove_effect(actor, ability["consume_effect"])
+                if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
+                    remove_stealth(actor)
+                return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
             if has_flag(target, "evade_all") and can_evasion_force_miss(ability, has_damage):
                 log_parts.append("Evaded!")
                 set_cooldown(actor, ability_id, ability)
@@ -659,7 +782,7 @@ def resolve_turn(match: MatchState) -> None:
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
 
         if has_self_effects or has_target_effects:
-            apply_effect_entries(actor, target, ability, log_parts)
+            apply_effect_entries(actor, target, ability, log_parts, pre_log_parts=pre_log_parts)
 
         if ability_id == "healthstone":
             heal_value = max(1, int(actor.res.hp_max * 0.25))
@@ -677,14 +800,22 @@ def resolve_turn(match: MatchState) -> None:
 
         summon_pet_id = ability.get("summon_pet_id")
         if summon_pet_id and not has_damage and not has_target_effects:
-            _, refreshed = summon_pet_from_template(actor, summon_pet_id)
+            summoned_pet, refreshed, summon_error = summon_pet_from_template(actor, summon_pet_id)
             template = PETS.get(summon_pet_id, {})
+            if summon_error:
+                return {"damage": 0, "healing": 0, "log": summon_error, "ability_id": ability_id}
             max_count = int(template.get("max_count", 1) or 1)
             current = len([p for p in actor.pets.values() if p.template_id == summon_pet_id])
             if refreshed:
                 log_parts.append(f"refreshes {template.get('name', summon_pet_id.title())}.")
             elif max_count > 1:
                 log_parts.append(f"summons a {template.get('name', summon_pet_id.title())} ({current}/{max_count}).")
+            elif summoned_pet is not None:
+                remembered = actor.hunter_pet_memory.get(summon_pet_id)
+                if remembered is not None:
+                    log_parts.append(f"summons {template.get('name', summon_pet_id.title())} with {summoned_pet.hp}/{summoned_pet.hp_max} HP.")
+                else:
+                    log_parts.append(f"summons {template.get('name', summon_pet_id.title())}.")
             set_cooldown(actor, ability_id, ability)
             remove_effect(actor, summon_pet_id)
             return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
@@ -1135,13 +1266,34 @@ def resolve_turn(match: MatchState) -> None:
                     chance = float(effect.get("chance", 0) or 0)
                     if chance > 0 and r.random() <= chance:
                         if not has_effect(actor, effect["id"]):
-                            apply_effect_by_id(
-                                actor,
-                                effect["id"],
-                                log=match.log,
-                                label=actor_sid[:5],
-                                log_message=effect.get("log"),
-                            )
+                            if effect.get("separate_log"):
+                                apply_effect_by_id(actor, effect["id"])
+                                if effect.get("log"):
+                                    pre_log_parts.append(str(effect["log"]).replace("{actor}", actor_sid[:5]))
+                            else:
+                                apply_effect_by_id(
+                                    actor,
+                                    effect["id"],
+                                    log=match.log,
+                                    label=actor_sid[:5],
+                                    log_message=str(effect.get("log")).replace("{actor}", actor_sid[:5]) if effect.get("log") else None,
+                                )
+                for gain in ability.get("on_hit_resource_gains", []) or []:
+                    chance = float(gain.get("chance", 1.0) or 1.0)
+                    if r.random() > chance:
+                        continue
+                    resource = gain.get("resource")
+                    amount = int(gain.get("amount", 0) or 0)
+                    if not resource or amount <= 0 or not hasattr(actor.res, resource):
+                        continue
+                    cap = getattr(actor.res, f"{resource}_max", None)
+                    new_value = getattr(actor.res, resource) + amount
+                    if cap is not None:
+                        new_value = min(new_value, cap)
+                    gained = new_value - getattr(actor.res, resource)
+                    setattr(actor.res, resource, new_value)
+                    if gained > 0 and gain.get("log"):
+                        log_parts.append(f"{prefix}{gain['log']}")
 
             heal_on_hit = int(ability.get("heal_on_hit", 0) or 0)
             heal_scaling = ability.get("heal_scaling", {}) or {}
@@ -1231,6 +1383,8 @@ def resolve_turn(match: MatchState) -> None:
         if consume_empower and empower_multiplier != 1.0:
             remove_effect(actor, "crusader_empower")
 
+        if ability.get("pet_command"):
+            actor.pending_pet_command = ability["pet_command"]
         set_cooldown(actor, ability_id, ability)
         if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
             remove_stealth(actor)
@@ -1249,6 +1403,7 @@ def resolve_turn(match: MatchState) -> None:
             "damage_type": damage_type,
             "healing": total_healing,
             "log": " ".join(log_parts),
+            "pre_logs": pre_log_parts,
             "extra_logs": extra_logs,
             "ability_id": ability_id,
             "mindgames_flip_damage": mindgames_flip_damage,
@@ -1409,8 +1564,13 @@ def resolve_turn(match: MatchState) -> None:
             return False
         if has_flag(target, "untargetable") and not is_aoe:
             return False
+        if single_target_miss_active(target, ability):
+            return False
         for entry in target_effects:
-            effect = build_effect(entry["id"], overrides=entry.get("overrides"))
+            effect_id = entry.get("id")
+            if not effect_id:
+                continue
+            effect = build_effect(effect_id, overrides=entry.get("overrides"))
             flags = effect.get("flags", {}) or {}
             if flags.get("stunned"):
                 return True
@@ -1498,9 +1658,11 @@ def resolve_turn(match: MatchState) -> None:
 
         summon_pet_id = ability.get("summon_pet_id")
         if summon_pet_id:
-            _, refreshed = summon_pet_from_template(actor, summon_pet_id)
+            _, refreshed, summon_error = summon_pet_from_template(actor, summon_pet_id)
             template = PETS.get(summon_pet_id, {})
-            if refreshed:
+            if summon_error:
+                log_parts.append(summon_error)
+            elif refreshed:
                 log_parts.append(f"refreshes {template.get('name', summon_pet_id.title())}.")
             remove_effect(actor, summon_pet_id)
 
@@ -1628,10 +1790,22 @@ def resolve_turn(match: MatchState) -> None:
         mindgames_flip_damage: bool = False,
         damage_instances: list[int] | None = None,
         school: str = "physical",
+        allow_redirect: bool = True,
     ) -> Dict[str, Any]:
         is_player_target = hasattr(target, "res") and target.res is not None
         if incoming <= 0:
             return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0}
+        redirected_to = None
+        if is_player_target and allow_redirect and has_flag(target, "redirect_single_target_to_pet"):
+            redirect_effect = next((fx for fx in reversed(target.effects) if (fx.get("flags", {}) or {}).get("redirect_single_target_to_pet")), None)
+            pet_id = (redirect_effect or {}).get("redirect_to_pet_id")
+            pet = target.pets.get(pet_id) if pet_id else None
+            if pet and pet.hp > 0:
+                redirected_to = pet.name
+                match.log.append(f"{pet.name} intercepts {source_ability_name} for {target_sid[:5]}.")
+                target = pet
+                target_sid = pet.name
+                is_player_target = False
         if is_player_target:
             if is_immune_all(target):
                 return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0}
@@ -1679,20 +1853,27 @@ def resolve_turn(match: MatchState) -> None:
                 target.res.hp -= total_remaining
                 was_stealthed = is_stealthed(target)
                 break_stealth_on_damage(target, total_remaining)
+                broken_effects = break_effects_on_damage(target)
                 if was_stealthed and not is_stealthed(target):
                     match.log.append(f"{target_sid[:5]} stealth broken by {source_ability_name}.")
+                for effect_id in broken_effects:
+                    match.log.append(f"{target_sid[:5]}'s {effect_name(effect_id)} breaks on damage.")
                 if current_form_id(target) == "bear_form":
                     current = target.res.rage
                     cap = target.res.rage_max
                     target.res.rage = min(current + total_remaining, cap)
             else:
                 target.hp -= total_remaining
+                broken_effects = break_effects_on_damage(target)
+                for effect_id in broken_effects:
+                    match.log.append(f"{target.name}'s {effect_name(effect_id)} breaks on damage.")
         return {
             "hp_damage": max(0, total_remaining),
             "absorbed": total_absorbed,
             "absorbed_breakdown": total_breakdown,
             "instances": instance_results,
             "mindgames_healing": 0,
+            "redirected_to": redirected_to,
         }
 
     def resolve_aoe_enemy_attack(
@@ -1723,6 +1904,7 @@ def resolve_turn(match: MatchState) -> None:
                 bool(mindgames_flip_damage),
                 [incoming],
                 school=school,
+                allow_redirect=False,
             )
             champion_hp_damage = int(champion_dealt_data.get("hp_damage", 0) or 0)
             if champion_log_template:
@@ -1817,6 +1999,7 @@ def resolve_turn(match: MatchState) -> None:
             bool(has_effect(source_ps, "mindgames")),
             [incoming],
             school=source.get("school") or "magical",
+            allow_redirect=False,
         )
         formatted = format_damage_log(
             f"{target_sid[:5]} suffers __DMG_0__ damage from {dot_name}.",
@@ -1840,6 +2023,7 @@ def resolve_turn(match: MatchState) -> None:
         bool(result1.get("mindgames_flip_damage")),
         result1.get("damage_instances"),
         school=result1.get("damage_type") or "physical",
+        allow_redirect=ability_target_mode(ABILITIES.get(result1.get("ability_id", ""), {})) != "aoe_enemy",
     )
     dealt2_data = apply_damage(
         match.state[sids[1]],
@@ -1850,10 +2034,77 @@ def resolve_turn(match: MatchState) -> None:
         bool(result2.get("mindgames_flip_damage")),
         result2.get("damage_instances"),
         school=result2.get("damage_type") or "physical",
+        allow_redirect=ability_target_mode(ABILITIES.get(result2.get("ability_id", ""), {})) != "aoe_enemy",
     )
     dealt1 = int(dealt1_data.get("hp_damage", 0) or 0)
     dealt2 = int(dealt2_data.get("hp_damage", 0) or 0)
 
+    def apply_direct_damage_dot(
+        actor_sid: str,
+        target_sid: str,
+        result: Dict[str, Any],
+        damage_data: Dict[str, Any],
+    ) -> None:
+        ability = ABILITIES.get(result.get("ability_id", ""), {})
+        dot_data = ability.get("dot") or {}
+        if not dot_data:
+            return
+        trigger_total = int(damage_data.get("hp_damage", 0) or 0) + int(damage_data.get("mindgames_healing", 0) or 0)
+        if trigger_total <= 0:
+            return
+        actor = match.state[actor_sid]
+        target = match.state[target_sid]
+        dot_id = dot_data.get("id")
+        duration = int(dot_data.get("duration", 1) or 1)
+        school = dot_data.get("school", "magical")
+        if dot_data.get("from_dealt_damage"):
+            tick_damage = max(1, int(trigger_total // max(1, duration)))
+        else:
+            dot_scaling = dot_data.get("scaling", {}) or {}
+            dot_dice = dot_data.get("dice", {}) or {}
+            dot_roll = roll(dot_dice.get("type", "d0"), r) if dot_dice.get("type") else 0
+            if "atk" in dot_scaling:
+                tick_damage = base_damage(
+                    modify_stat(actor, "atk", actor.stats.get("atk", 0)),
+                    dot_scaling["atk"],
+                    dot_roll,
+                )
+            elif "int" in dot_scaling:
+                tick_damage = base_damage(
+                    modify_stat(actor, "int", actor.stats.get("int", 0)),
+                    dot_scaling["int"],
+                    dot_roll,
+                )
+            else:
+                tick_damage = int(dot_data.get("tick_damage", 0) or 0)
+            tick_damage = max(1, int(tick_damage))
+        refreshed = False
+        if dot_id and refresh_dot_effect(target, dot_id, duration=duration, tick_damage=tick_damage, source_sid=actor_sid):
+            refreshed = True
+            for effect in target.effects:
+                if effect.get("id") == dot_id:
+                    effect["school"] = school
+                    break
+        elif dot_id:
+            apply_effect_by_id(
+                target,
+                dot_id,
+                overrides={"duration": duration, "tick_damage": tick_damage, "source_sid": actor_sid, "school": school},
+            )
+        if not dot_id:
+            return
+        target_label = target_sid[:5]
+        if dot_id == "dragon_roar_bleed":
+            match.log.append(f"Dragon Roar applies bleed on {target_label}.")
+        elif dot_id == "wildfire_burn":
+            verb = "refreshes" if refreshed else "applies"
+            match.log.append(f"Wildfire Bomb {verb} Wildfire Burn on {target_label}.")
+        else:
+            verb = "refreshes" if refreshed else "applies"
+            match.log.append(f"{actor_sid[:5]} {verb} {effect_name(dot_id)} for {tick_damage} per turn.")
+
+    match.log.extend(result1.get("pre_logs", []))
+    match.log.extend(result2.get("pre_logs", []))
     result1_log = format_damage_log(result1["log"], dealt1_data)
     if int(dealt1_data.get("mindgames_healing", 0) or 0) > 0:
         result1_log = (
@@ -1862,6 +2113,7 @@ def resolve_turn(match: MatchState) -> None:
         )
     match.log.append(result1_log)
     match.log.extend(result1.get("extra_logs", []))
+    apply_direct_damage_dot(sids[0], sids[1], result1, dealt1_data)
     result2_log = format_damage_log(result2["log"], dealt2_data)
     if int(dealt2_data.get("mindgames_healing", 0) or 0) > 0:
         result2_log = (
@@ -1870,6 +2122,7 @@ def resolve_turn(match: MatchState) -> None:
         )
     match.log.append(result2_log)
     match.log.extend(result2.get("extra_logs", []))
+    apply_direct_damage_dot(sids[1], sids[0], result2, dealt2_data)
 
     for actor_sid, target_sid, result in ((sids[0], sids[1], result1), (sids[1], sids[0], result2)):
         ability = ABILITIES.get(result.get("ability_id", ""), {})
@@ -1912,7 +2165,7 @@ def resolve_turn(match: MatchState) -> None:
         if target.res.hp > 0 and dealt > 0:
             backlash = int(dealt * 1.0)
             if backlash > 0:
-                apply_damage(actor, actor, backlash, actor_sid, "Shadow Word: Death backlash", school="magical")
+                apply_damage(actor, actor, backlash, actor_sid, "Shadow Word: Death backlash", school="magical", allow_redirect=False)
                 match.log.append(f"{actor_sid[:5]} suffers {backlash} backlash from Shadow Word: Death.")
 
     for actor_sid, dealt, result in ((sids[0], dealt1, result1), (sids[1], dealt2, result2)):
@@ -1929,54 +2182,6 @@ def resolve_turn(match: MatchState) -> None:
                     match.log.append(f"{actor_sid[:5]} drains {gained} life.")
                     totals = match.combat_totals.setdefault(actor_sid, {"damage": 0, "healing": 0})
                     totals["healing"] += gained
-
-        dot_data = ability.get("dot") or {}
-        if dealt > 0 and dot_data:
-            target_sid = sids[1] if actor_sid == sids[0] else sids[0]
-            target = match.state[target_sid]
-            dot_id = dot_data.get("id")
-            duration = int(dot_data.get("duration", 1) or 1)
-            school = dot_data.get("school", "magical")
-            if dot_data.get("from_dealt_damage"):
-                tick_damage = max(1, int(dealt // max(1, duration)))
-            else:
-                dot_scaling = dot_data.get("scaling", {}) or {}
-                dot_dice = dot_data.get("dice", {}) or {}
-                dot_roll = roll(dot_dice.get("type", "d0"), r) if dot_dice.get("type") else 0
-                if "atk" in dot_scaling:
-                    tick_damage = base_damage(
-                        modify_stat(match.state[actor_sid], "atk", match.state[actor_sid].stats.get("atk", 0)),
-                        dot_scaling["atk"],
-                        dot_roll,
-                    )
-                elif "int" in dot_scaling:
-                    tick_damage = base_damage(
-                        modify_stat(match.state[actor_sid], "int", match.state[actor_sid].stats.get("int", 0)),
-                        dot_scaling["int"],
-                        dot_roll,
-                    )
-                else:
-                    tick_damage = int(dot_data.get("tick_damage", 0) or 0)
-                tick_damage = max(1, int(tick_damage))
-            if dot_id and refresh_dot_effect(target, dot_id, duration=duration, tick_damage=tick_damage, source_sid=actor_sid):
-                for effect in target.effects:
-                    if effect.get("id") == dot_id:
-                        effect["school"] = school
-                        break
-                if dot_id == "dragon_roar_bleed":
-                    match.log.append(f"Dragon Roar applies bleed on {target_sid[:5]}.")
-                else:
-                    match.log.append(f"{actor_sid[:5]} refreshes {effect_name(dot_id)} for {tick_damage} per turn.")
-            elif dot_id:
-                apply_effect_by_id(
-                    target,
-                    dot_id,
-                    overrides={"duration": duration, "tick_damage": tick_damage, "source_sid": actor_sid, "school": school},
-                )
-                if dot_id == "dragon_roar_bleed":
-                    match.log.append(f"Dragon Roar applies bleed on {target_sid[:5]}.")
-                else:
-                    match.log.append(f"{actor_sid[:5]} applies {effect_name(dot_id)} for {tick_damage} per turn.")
 
     run_pet_phase(
         match,
@@ -2029,6 +2234,48 @@ def resolve_turn(match: MatchState) -> None:
 
         totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
         totals["healing"] += int(end_summary.get("healing_done", 0) or 0)
+
+    for sid in sids:
+        owner = match.state[sid]
+        for pet_id in sorted(list((owner.pets or {}).keys())):
+            pet = owner.pets.get(pet_id)
+            if not pet or pet.hp <= 0:
+                continue
+            pet_summary = end_of_turn_pet(pet, match.log, pet.name)
+            for source in pet_summary.get("damage_sources", []):
+                source_sid = source.get("source_sid")
+                source_ps = match.state.get(source_sid)
+                if not source_sid or not source_ps:
+                    continue
+                dealt = apply_damage(
+                    source_ps,
+                    pet,
+                    int(source.get("incoming", 0) or 0),
+                    pet.name,
+                    source.get("effect_name") or "DoT",
+                    False,
+                    [int(source.get("incoming", 0) or 0)],
+                    school=source.get("school") or "magical",
+                    allow_redirect=False,
+                )
+                damage = int(dealt.get("hp_damage", 0) or 0)
+                if damage > 0:
+                    match.log.append(f"{pet.name} suffers {damage} damage from {source.get('effect_name') or 'DoT'}.")
+                    totals = match.combat_totals.setdefault(source_sid, {"damage": 0, "healing": 0})
+                    totals["damage"] += damage
+            if pet.hp > 0:
+                next_effects = []
+                for effect in pet.effects:
+                    duration = effect.get("duration")
+                    if duration is None:
+                        next_effects.append(effect)
+                        continue
+                    next_duration = int(duration) - 1
+                    if next_duration > 0:
+                        updated = dict(effect)
+                        updated["duration"] = next_duration
+                        next_effects.append(updated)
+                pet.effects = next_effects
 
     trigger_shield_of_vengeance_explosion(sids[0], sids[1])
     trigger_shield_of_vengeance_explosion(sids[1], sids[0])

@@ -140,6 +140,18 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 2,
         "flags": {"blinked": True, "untargetable": True},
     },
+    "disengage": {
+        "type": "status",
+        "name": "Disengage",
+        "duration": 1,
+        "flags": {"blinked": True, "untargetable": True, "incoming_single_target_miss": True},
+        "display": {
+            "war_council": True,
+            "label": "Disengaged",
+            "color": "#AAD372",
+            "priority": 78,
+        },
+    },
     "evasion": {
         "type": "status",
         "name": "Evasion",
@@ -455,6 +467,63 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "school": "magical",
         "regen": {"hp": 0},
     },
+    "wildfire_burn": {
+        "type": "dot",
+        "name": "Wildfire Burn",
+        "duration": 2,
+        "category": "dot",
+        "school": "magical",
+        "dispellable": True,
+        "tick_damage": 1,
+    },
+    "arcane_shot_proc": {
+        "type": "status",
+        "name": "Arcane Shot",
+        "duration": 2,
+        "flags": {"arcane_shot_ready": True},
+    },
+    "raptor_strike_proc": {
+        "type": "status",
+        "name": "Raptor Strike",
+        "duration": 2,
+        "flags": {"raptor_strike_ready": True},
+    },
+    "freezing_trap_freeze": {
+        "type": "status",
+        "name": "Freezing Trap",
+        "duration": 2,
+        "category": "cc",
+        "school": "magical",
+        "harmful": True,
+        "flags": {"stunned": True, "break_on_damage": True},
+        "cant_act_reason": "frozen",
+        "display": {
+            "war_council": True,
+            "label": "Frozen",
+            "color": "#79C7FF",
+            "priority": 84,
+        },
+    },
+    "aspect_of_turtle": {
+        "type": "mitigation",
+        "name": "Aspect of the Turtle",
+        "duration": 2,
+        "value": 0.3,
+        "flags": {"incoming_single_target_miss": True, "disable_attacks": True},
+        "regen": {"mp": 10},
+    },
+    "blocking_defence": {
+        "type": "status",
+        "name": "Blocking Defence",
+        "duration": 1,
+        "flags": {"redirect_single_target_to_pet": True},
+        "display": {
+            "war_council": True,
+            "label": "Guarded",
+            "color": "#B57A42",
+            "priority": 72,
+        },
+    },
 }
 
 FORM_EFFECT_IDS = ("bear_form", "cat_form", "moonkin_form", "tree_form")
@@ -590,7 +659,7 @@ def is_dispellable_by(
 
 
 def apply_effect_by_id(
-    target: PlayerState,
+    target,
     effect_id: str,
     log: Optional[List[str]] = None,
     label: str = "",
@@ -608,22 +677,22 @@ def apply_effect_by_id(
         log.append(f"{prefix}{log_message}")
 
 
-def has_effect(target: PlayerState, effect_id: str) -> bool:
+def has_effect(target, effect_id: str) -> bool:
     return any(effect.get("id") == effect_id for effect in target.effects)
 
 
-def is_in_form(target: PlayerState, form_id: str) -> bool:
+def is_in_form(target, form_id: str) -> bool:
     return has_effect(target, form_id)
 
 
-def current_form_id(target: PlayerState) -> Optional[str]:
+def current_form_id(target) -> Optional[str]:
     for form_id in FORM_EFFECT_IDS:
         if has_effect(target, form_id):
             return form_id
     return None
 
 
-def clear_forms(target: PlayerState) -> None:
+def clear_forms(target) -> None:
     remove_ids: List[str] = []
     for effect in target.effects:
         effect_id = effect.get("id")
@@ -634,7 +703,7 @@ def clear_forms(target: PlayerState) -> None:
 
 
 def apply_form(
-    target: PlayerState,
+    target,
     form_id: str,
     overrides: Optional[Dict[str, Any]] = None,
 ) -> None:
@@ -645,17 +714,18 @@ def apply_form(
         apply_effect_by_id(target, stat_effect_id)
 
 
-def remove_effect(target: PlayerState, effect_id: str) -> None:
+def remove_effect(target, effect_id: str) -> None:
     target.effects = [effect for effect in target.effects if effect.get("id") != effect_id]
-    if target.res and effect_id in target.res.absorbs:
+    target_res = getattr(target, "res", None)
+    if target_res and effect_id in target_res.absorbs:
         del target.res.absorbs[effect_id]
 
 
-def remove_stealth(target: PlayerState) -> None:
+def remove_stealth(target) -> None:
     remove_effect(target, "stealth")
 
 
-def break_stealth_on_damage(target: PlayerState, damage: int) -> None:
+def break_stealth_on_damage(target, damage: int) -> None:
     if damage <= 0:
         return
     for effect in target.effects:
@@ -667,15 +737,28 @@ def break_stealth_on_damage(target: PlayerState, damage: int) -> None:
         return
 
 
-def has_flag(target: PlayerState, flag: str) -> bool:
+def break_effects_on_damage(target) -> list[str]:
+    removed: list[str] = []
+    for effect in list(getattr(target, "effects", []) or []):
+        if not (effect.get("flags", {}) or {}).get("break_on_damage"):
+            continue
+        effect_id = effect.get("id")
+        if not effect_id:
+            continue
+        remove_effect(target, effect_id)
+        removed.append(effect_id)
+    return removed
+
+
+def has_flag(target, flag: str) -> bool:
     return any(effect.get("flags", {}).get(flag) for effect in target.effects)
 
 
-def is_stunned(target: PlayerState) -> bool:
+def is_stunned(target) -> bool:
     return has_flag(target, "stunned")
 
 
-def get_cant_act_reason(target: PlayerState) -> Optional[str]:
+def get_cant_act_reason(target) -> Optional[str]:
     priority = {"stunned": 0, "frozen": 1, "feared": 2, "terrified": 3}
     best_reason: Optional[str] = None
     best_rank = len(priority)
@@ -694,11 +777,11 @@ def get_cant_act_reason(target: PlayerState) -> Optional[str]:
     return best_reason
 
 
-def is_stealthed(target: PlayerState) -> bool:
+def is_stealthed(target) -> bool:
     return has_flag(target, "stealthed")
 
 
-def is_immune_all(target: PlayerState) -> bool:
+def is_immune_all(target) -> bool:
     return has_flag(target, "immune_all")
 
 
@@ -1279,3 +1362,31 @@ def end_of_turn(ps: PlayerState, log: List[str], label: str) -> dict[str, Any]:
         ps.res.mp = min(ps.res.mp + DEFAULTS["mp_regen_per_turn"], ps.res.mp_max)
         ps.res.energy = min(ps.res.energy + DEFAULTS["energy_regen_per_turn"], ps.res.energy_max)
     return {"damage_sources": damage_sources, "healing_done": total_healing, "self_damage_sources": self_damage_sources}
+
+
+def end_of_turn_pet(pet, log: List[str], label: str) -> dict[str, Any]:
+    damage_sources: list[dict[str, Any]] = []
+    healing_done = 0
+    for effect in pet.effects:
+        if effect.get("category") == "dot":
+            raw_damage = max(0, int(effect.get("tick_damage", effect.get("value", 0)) or 0))
+            if raw_damage > 0:
+                damage_sources.append(
+                    {
+                        "source_sid": effect.get("source_sid"),
+                        "incoming": raw_damage,
+                        "effect_id": effect.get("id"),
+                        "effect_name": effect.get("name", "DoT"),
+                        "school": effect.get("school", "magical"),
+                    }
+                )
+        regen = effect.get("regen", {}) or {}
+        hp_gain = max(0, int(regen.get("hp", 0) or 0))
+        if hp_gain > 0 and pet.hp > 0:
+            before_hp = pet.hp
+            pet.hp = min(pet.hp + hp_gain, pet.hp_max)
+            gained = pet.hp - before_hp
+            healing_done += gained
+            if gained > 0 and log is not None:
+                log.append(f"{label} recovers {gained} HP from {effect.get('name', 'an effect')}.")
+    return {"damage_sources": damage_sources, "healing_done": healing_done}

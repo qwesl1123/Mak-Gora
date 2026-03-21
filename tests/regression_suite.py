@@ -145,6 +145,9 @@ def state_extract(match) -> Dict[str, Any]:
             "effects": effects_list,
             "cooldowns": cooldowns,
             "pets": pets,
+            "hunter_pet_memory": dict(sorted((ps.hunter_pet_memory or {}).items())),
+            "dead_hunter_pets": dict(sorted((ps.dead_hunter_pets or {}).items())),
+            "active_pet_id": ps.active_pet_id,
         }
     return state
 
@@ -519,6 +522,281 @@ def scenario_pet_summon_data_driven() -> bool:
     return True
 
 
+def _active_pet(owner, template_id: str | None = None):
+    pets = sorted((owner.pets or {}).values(), key=lambda pet: pet.id)
+    if template_id is None:
+        return pets[0] if pets else None
+    for pet in pets:
+        if pet.template_id == template_id:
+            return pet
+    return None
+
+
+def scenario_hunter_pet_summon_swap_memory() -> bool:
+    match = make_match("hunter", "warrior", seed=123)
+    hunter = match.state[match.players[0]]
+
+    submit_turn(match, "summon_saber", _DEF_PASS)
+    saber = _active_pet(hunter, "frostsaber")
+    assert saber is not None, "Frostsaber should summon"
+    saber.hp = 12
+
+    submit_turn(match, "summon_serpent", _DEF_PASS)
+    assert _active_pet(hunter, "frostsaber") is None, "Frostsaber should be dismissed when serpent is summoned"
+    assert hunter.hunter_pet_memory.get("frostsaber") == 12, "Dismissed Frostsaber HP should be remembered"
+
+    hunter.cooldowns.pop("summon_saber", None)
+    submit_turn(match, "summon_saber", _DEF_PASS)
+    saber = _active_pet(hunter, "frostsaber")
+    assert saber is not None and saber.hp == 12, "Re-summoned Frostsaber should return with remembered HP"
+    return True
+
+
+def scenario_hunter_only_one_active_pet() -> bool:
+    match = make_match("hunter", "warrior", seed=123)
+    hunter = match.state[match.players[0]]
+    run_turns(match, [("summon_saber", _DEF_PASS), ("summon_boar", _DEF_PASS)])
+    active_templates = sorted(pet.template_id for pet in hunter.pets.values())
+    assert active_templates == ["barrens_boar"], "Hunter should have exactly one active pet at a time"
+    assert hunter.hunter_pet_memory.get("frostsaber", 0) > 0, "Dismissed saber HP should be stored"
+    return True
+
+
+def scenario_hunter_multi_shot_aoe() -> bool:
+    match = make_match("hunter", "warlock", seed=123)
+    hunter_sid, warlock_sid = match.players
+    warlock = match.state[warlock_sid]
+    run_turns(match, [(_DEF_PASS, "summon_imp"), (_DEF_PASS, "summon_imp"), (_DEF_PASS, "summon_imp")])
+    imp_ids = sorted(warlock.pets.keys())
+    champion_hp_before = warlock.res.hp
+    imp_hp_before = {pid: warlock.pets[pid].hp for pid in imp_ids}
+
+    submit_turn(match, "multi_shot", _DEF_PASS)
+
+    assert warlock.res.hp < champion_hp_before, "Multi-Shot should damage the enemy champion"
+    for pid in imp_ids:
+        assert warlock.pets[pid].hp < imp_hp_before[pid], "Multi-Shot should damage every enemy pet"
+    shot_logs = [line for line in match.log if "Multi-Shot hits" in line and "Imp" in line]
+    observed = []
+    for line in shot_logs:
+        if "(imp1)" in line:
+            observed.append("imp1")
+        elif "(imp2)" in line:
+            observed.append("imp2")
+        elif "(imp3)" in line:
+            observed.append("imp3")
+    assert observed[:3] == ["imp1", "imp2", "imp3"], "Multi-Shot pet hit order should be deterministic"
+    return True
+
+
+def scenario_hunter_turtle_priority() -> bool:
+    match = make_match("hunter", "rogue", seed=123)
+    hunter = match.state[match.players[0]]
+    hp_before = hunter.res.hp
+
+    submit_turn(match, "turtle", "kidney_shot")
+    assert _has_effect(hunter, "aspect_of_turtle"), "Aspect of the Turtle should apply immediately"
+    assert not any((fx.get("display") or {}).get("war_council") for fx in hunter.effects if fx.get("id") == "aspect_of_turtle"), "Aspect of the Turtle should not create a War Council status badge"
+    assert any("uses their bare hands to cast Kidney Shot. Target evades the attack — Miss!" in line for line in match.log), "Single-target attacks into Turtle should use the evasion-style miss wording"
+    assert any("uses their bare hands to cast Aspect of the Turtle. Causes all single-target spells and attacks to miss." in line for line in match.log), "Aspect of the Turtle should log its miss-causing effect text"
+    _assert_no_stun_effect(hunter)
+
+    submit_turn(match, "aimed_shot", "eviscerate")
+    assert hunter.res.hp == hp_before, "Single-target attack should miss into Aspect of the Turtle"
+    latest_turn = match.log[match.log.index("Turn 2") + 1:]
+    assert any("cannot attack while Aspect of the Turtle is active." in line for line in latest_turn), "Attack lockout should name Aspect of the Turtle, not the prior ability"
+
+    warrior_match = make_match("hunter", "warrior", seed=123)
+    hunter2 = warrior_match.state[warrior_match.players[0]]
+    hp_before_aoe = hunter2.res.hp
+    warrior_match.state[warrior_match.players[1]].res.rage = warrior_match.state[warrior_match.players[1]].res.rage_max
+    submit_turn(warrior_match, "turtle", "dragon_roar")
+    assert hunter2.res.hp < hp_before_aoe, "AoE should still damage the Hunter through Turtle"
+    return True
+
+
+def scenario_hunter_wildfire_arcane_proc() -> bool:
+    match = make_match("hunter", "warrior", seed=123)
+    hunter = match.state[match.players[0]]
+
+    submit_turn(match, "wildfire_bomb", _DEF_PASS)
+    assert _has_effect(hunter, "arcane_shot_proc"), "Wildfire Bomb should grant Arcane Shot proc"
+    proc_line = f"{match.players[0][:5]} can use Arcane Shot!"
+    assert proc_line in match.log, "Wildfire Bomb proc log should use the actor sid token so snapshots can render Hunter(you)"
+    assert not any("Wildfire Bomb. can use Arcane Shot!" in line or "Wildfire Bomb. Hunter can use Arcane Shot!" in line for line in match.log), "Wildfire Bomb action line should not embed the proc sentence"
+
+    submit_turn(match, "arcane_shot", _DEF_PASS)
+    assert not _has_effect(hunter, "arcane_shot_proc"), "Arcane Shot should consume its proc"
+
+    match2 = make_match("hunter", "warrior", seed=123)
+    hunter2 = match2.state[match2.players[0]]
+    submit_turn(match2, "wildfire_bomb", _DEF_PASS)
+    submit_turn(match2, _DEF_PASS, _DEF_PASS)
+    assert not _has_effect(hunter2, "arcane_shot_proc"), "Arcane Shot proc should expire if unused next turn"
+    return True
+
+
+def scenario_hunter_wildfire_dot_log_order() -> bool:
+    match = make_match("hunter", "warrior", seed=123)
+
+    submit_turn(match, "wildfire_bomb", _DEF_PASS)
+    assert any("Wildfire Bomb applies Wildfire Burn" in line for line in match.log), "Wildfire Bomb should log a named burn application line"
+    assert not any("Wildfire Bomb applies Wildfire Burn for" in line for line in match.log), "Wildfire Bomb burn application log should omit the per-turn amount"
+
+    wildfire_idx = next(i for i, line in enumerate(match.log) if "uses their bare hands to cast Wildfire Bomb" in line)
+    burn_idx = next(i for i, line in enumerate(match.log) if "Wildfire Bomb applies Wildfire Burn" in line)
+    pass_idx = next(i for i, line in enumerate(match.log) if "uses their bare hands to cast Pass Turn" in line)
+
+    assert wildfire_idx < burn_idx < pass_idx, "Wildfire Burn application should log after Wildfire Bomb and before the enemy action"
+    return True
+
+
+def scenario_hunter_proc_log_stays_at_top_of_turn() -> bool:
+    match = make_match("warrior", "hunter", seed=123)
+
+    submit_turn(match, _DEF_PASS, "wildfire_bomb")
+
+    latest_turn = match.log[match.log.index("Turn 1") + 1:]
+    assert latest_turn[0] == f"{match.players[1][:5]} can use Arcane Shot!", "Hunter proc reminder should be the first line of the turn even when the Hunter acts second"
+    warrior_action_idx = next(i for i, line in enumerate(latest_turn) if "uses their bare hands to cast Pass Turn" in line)
+    hunter_action_idx = next(i for i, line in enumerate(latest_turn) if "uses their bare hands to cast Wildfire Bomb" in line)
+    assert 0 < warrior_action_idx < hunter_action_idx, "Proc reminder should appear before both players' action lines"
+    return True
+
+
+def scenario_hunter_aimed_shot_raptor_pet_special() -> bool:
+    match = make_match("hunter", "warrior", seed=1)
+    hunter = match.state[match.players[0]]
+    enemy = match.state[match.players[1]]
+    enemy.res.hp = enemy.res.hp_max = 999
+    run_turns(match, [("summon_saber", _DEF_PASS)])
+
+    while not _has_effect(hunter, "raptor_strike_proc"):
+        submit_turn(match, "aimed_shot", _DEF_PASS)
+        assert match.turn < 10, "Aimed Shot should proc within a few deterministic turns"
+
+    submit_turn(match, "raptor_strike", _DEF_PASS)
+    assert not _has_effect(hunter, "raptor_strike_proc"), "Raptor Strike should consume its proc"
+    assert f"{match.players[0][:5]} can use Raptor Strike!" in match.log, "Aimed Shot proc log should use the actor sid token so snapshots can render Hunter(you)"
+    assert hunter.pending_pet_command is None, "Pet command should be consumed after the pet phase"
+    latest_turn = match.log[match.log.index("Turn 3") + 1:]
+    assert any("Frostsaber bites" in line for line in latest_turn), "Raptor Strike should force the pet special attack, not the basic melee"
+    assert not any("Frostsaber melees" in line for line in latest_turn), "Forced pet special should replace the normal melee attack that turn"
+    return True
+
+
+def scenario_hunter_boar_redirect() -> bool:
+    match = make_match("hunter", "warrior", seed=123)
+    hunter_sid, warrior_sid = match.players
+    hunter = match.state[hunter_sid]
+    warrior = match.state[warrior_sid]
+    run_turns(match, [("summon_boar", _DEF_PASS)])
+    boar = _active_pet(hunter, "barrens_boar")
+    assert boar is not None, "Boar should be active"
+
+    effects.apply_effect_by_id(hunter, "blocking_defence", overrides={"duration": 1, "redirect_to_pet_id": boar.id})
+    hunter_hp_before = hunter.res.hp
+    boar_hp_before = boar.hp
+    warrior.res.rage = warrior.res.rage_max
+    submit_turn(match, _DEF_PASS, "mortal_strike")
+    assert hunter.res.hp == hunter_hp_before, "Single-target attack should be redirected to the boar"
+    assert boar.hp < boar_hp_before, "Boar should take redirected damage"
+
+    warrior.res.rage = warrior.res.rage_max
+    hunter_hp_before_aoe = hunter.res.hp
+    submit_turn(match, _DEF_PASS, "dragon_roar")
+    assert hunter.res.hp < hunter_hp_before_aoe, "AoE should not redirect to the boar"
+
+    effects.apply_effect_by_id(hunter, "blocking_defence", overrides={"duration": 1, "redirect_to_pet_id": boar.id})
+    effects.apply_effect_by_id(hunter, "wildfire_burn", overrides={"duration": 2, "tick_damage": 3, "source_sid": warrior_sid})
+    hunter_hp_before_dot = hunter.res.hp
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+    assert hunter.res.hp < hunter_hp_before_dot, "DoT damage should not redirect to the boar"
+    return True
+
+
+def scenario_hunter_freezing_trap_breaks_on_damage() -> bool:
+    match = make_match("hunter", "warrior", seed=123)
+    warrior = match.state[match.players[1]]
+    submit_turn(match, "freezing_trap", _DEF_PASS)
+    assert _has_effect(warrior, "freezing_trap_freeze"), "Freezing Trap should apply freeze"
+    submit_turn(match, "aimed_shot", _DEF_PASS)
+    assert not _has_effect(warrior, "freezing_trap_freeze"), "Any damage should break Freezing Trap freeze"
+    return True
+
+
+def scenario_hunter_pet_permanent_death() -> bool:
+    match = make_match("hunter", "warrior", seed=123)
+    hunter = match.state[match.players[0]]
+    submit_turn(match, "summon_saber", _DEF_PASS)
+    saber = _active_pet(hunter, "frostsaber")
+    assert saber is not None
+    saber.hp = 0
+    resolver.cleanup_pets(match)
+    assert hunter.dead_hunter_pets.get("frostsaber"), "Dead hunter pet should be marked permanently dead"
+
+    hunter.cooldowns.clear()
+    submit_turn(match, "summon_saber", _DEF_PASS)
+    assert _active_pet(hunter, "frostsaber") is None, "Permanently dead hunter pet should not be summoned again"
+    assert any("cannot be summoned again" in line for line in match.log), "Failure message should be logged"
+    return True
+
+
+def scenario_hunter_dismissed_pet_drops_dots() -> bool:
+    match = make_match("hunter", "warrior", seed=123)
+    hunter = match.state[match.players[0]]
+    submit_turn(match, "summon_saber", _DEF_PASS)
+    saber = _active_pet(hunter, "frostsaber")
+    assert saber is not None
+    effects.apply_effect_by_id(saber, "wildfire_burn", overrides={"duration": 2, "tick_damage": 4, "source_sid": match.players[1]})
+    remembered_hp = saber.hp
+
+    submit_turn(match, "summon_serpent", _DEF_PASS)
+    assert hunter.hunter_pet_memory.get("frostsaber") == remembered_hp, "Dismiss should store current HP before removing the pet"
+    run_turns(match, [(_DEF_PASS, _DEF_PASS), (_DEF_PASS, _DEF_PASS)])
+    assert hunter.hunter_pet_memory.get("frostsaber") == remembered_hp, "Dismissed pet should not keep taking DoT ticks"
+
+    hunter.cooldowns.pop("summon_saber", None)
+    submit_turn(match, "summon_saber", _DEF_PASS)
+    saber_returned = _active_pet(hunter, "frostsaber")
+    assert saber_returned is not None and saber_returned.hp == remembered_hp, "Re-summoned pet should return at remembered HP"
+    assert not saber_returned.effects, "Dismissed pet should return without old DoT effects"
+    return True
+
+
+def scenario_hunter_serpent_special_respects_stealth() -> bool:
+    match = make_match("hunter", "rogue", seed=123)
+    hunter = match.state[match.players[0]]
+    rogue = match.state[match.players[1]]
+
+    submit_turn(match, "summon_serpent", _DEF_PASS)
+    hunter.pending_pet_command = "special"
+    submit_turn(match, _DEF_PASS, "vanish")
+
+    assert _has_effect(rogue, "stealth"), "Rogue should still be stealthed after Vanish"
+    latest_turn = match.log[match.log.index("Turn 2") + 1:]
+    assert any("Emerald Serpent exhales lightning. Target is stealthed — Miss!" in line for line in latest_turn), "Lightning Breath should miss stealthed targets"
+    assert not any("Emerald Serpent breathes lightning" in line for line in latest_turn), "Lightning Breath should not deal damage into stealth"
+    assert not any("stealth broken by Lightning Breath" in line for line in latest_turn), "Hunter pet specials must not break stealth when they miss"
+    return True
+
+
+def scenario_mindgames_still_allows_direct_damage_dots() -> bool:
+    dragon_match = make_match("warrior", "priest", seed=123)
+    dragon_warrior, dragon_priest = dragon_match.players
+    dragon_match.state[dragon_warrior].res.rage = dragon_match.state[dragon_warrior].res.rage_max
+    submit_turn(dragon_match, "dragon_roar", "mindgames")
+    assert _has_effect(dragon_match.state[dragon_priest], "dragon_roar_bleed"), "Dragon Roar bleed should apply even when Mindgames flips the same-turn direct damage"
+    assert any("Mindgames flips damage into" in line for line in dragon_match.log), "Dragon Roar scenario should still record the Mindgames flip"
+
+    wildfire_match = make_match("hunter", "priest", seed=123)
+    submit_turn(wildfire_match, "wildfire_bomb", "mindgames")
+    assert _has_effect(wildfire_match.state[wildfire_match.players[1]], "wildfire_burn"), "Wildfire Burn should apply even when Mindgames flips the same-turn direct damage"
+    assert any("Wildfire Bomb applies Wildfire Burn" in line for line in wildfire_match.log), "Wildfire Bomb should keep its burn application log under Mindgames"
+    assert not any("Wildfire Bomb applies Wildfire Burn for" in line for line in wildfire_match.log), "Wildfire Bomb burn application log should still omit the per-turn amount under Mindgames"
+    return True
+
+
 SCENARIOS = [
     scenario_mindgames_lay_on_hands,
     scenario_mass_dispel_selective_removal,
@@ -533,6 +811,20 @@ SCENARIOS = [
     scenario_aoe_hits_pets_with_immune_champion,
     scenario_absorb_layering,
     scenario_pet_summon_data_driven,
+    scenario_hunter_pet_summon_swap_memory,
+    scenario_hunter_only_one_active_pet,
+    scenario_hunter_multi_shot_aoe,
+    scenario_hunter_turtle_priority,
+    scenario_hunter_wildfire_arcane_proc,
+    scenario_hunter_wildfire_dot_log_order,
+    scenario_hunter_proc_log_stays_at_top_of_turn,
+    scenario_hunter_aimed_shot_raptor_pet_special,
+    scenario_hunter_boar_redirect,
+    scenario_hunter_freezing_trap_breaks_on_damage,
+    scenario_hunter_pet_permanent_death,
+    scenario_hunter_dismissed_pet_drops_dots,
+    scenario_hunter_serpent_special_respects_stealth,
+    scenario_mindgames_still_allows_direct_damage_dots,
 ]
 
 
