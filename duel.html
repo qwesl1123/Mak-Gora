@@ -281,6 +281,38 @@
         padding-bottom: 8px;
       }
 
+      .champion-name-class.warrior {
+        color: var(--warrior-color);
+      }
+
+      .champion-name-class.mage {
+        color: var(--mage-color);
+      }
+
+      .champion-name-class.rogue {
+        color: var(--rogue-color);
+      }
+
+      .champion-name-class.druid {
+        color: var(--druid-color);
+      }
+
+      .champion-name-class.warlock {
+        color: var(--warlock-color);
+      }
+
+      .champion-name-class.paladin {
+        color: var(--paladin-color);
+      }
+
+      .champion-name-class.priest {
+        color: var(--priest-color);
+      }
+
+      .champion-name-class.hunter {
+        color: var(--hunter-color);
+      }
+
       .stat-row {
         display: flex;
         justify-content: space-between;
@@ -901,6 +933,22 @@
         font-family: 'Cinzel', serif;
       }
 
+      .doc-item h4.log-item-green {
+        color: var(--item-green);
+      }
+
+      .doc-item h4.log-item-blue {
+        color: var(--item-blue);
+      }
+
+      .doc-item h4.log-item-purple {
+        color: var(--item-purple);
+      }
+
+      .doc-item h4.log-item-orange {
+        color: var(--item-orange);
+      }
+
       .doc-item p {
         color: var(--text-dark);
         font-size: 1rem;
@@ -1421,14 +1469,14 @@
         <h3>Weapons</h3>
         <div class="doc-grid">
           <div class="doc-item">
-            <h4>Steel Long Sword</h4>
+            <h4 class="doc-item-name">Steel Long Sword</h4>
             <p><span class="stat">Command: <span class="kbd">/item weapon steel_long_sword</span></span></p>
             <p><span class="stat">+5 Physical Attack</span></p>
             <p>A reliable blade forged in the fires of war. Ideal for Warriors.</p>
           </div>
 
           <div class="doc-item">
-            <h4>Crusader's Greatsword</h4>
+            <h4 class="doc-item-name">Crusader's Greatsword</h4>
             <p><span class="stat">Command: <span class="kbd">/item weapon crusaders_greatsword</span></span></p>
             <p><span class="stat">+4 Physical Attack</span> | <span class="stat">+2 Intellect</span></p>
             <p><span class="stat">Passive: 25% chance on hit to empower your next offensive ability (+20% damage)</span></p>
@@ -1436,7 +1484,7 @@
           </div>
           
           <div class="doc-item">
-            <h4>Spirit Light Sword</h4>
+            <h4 class="doc-item-name">Spirit Light Sword</h4>
             <p><span class="stat">Command: <span class="kbd">/item weapon spirit_light_sword</span></span></p>
             <p><span class="stat">+3 Physical Attack</span></p>
             <p><span class="stat">Passive: Heal 3 HP every turn</span></p>
@@ -1444,7 +1492,7 @@
           </div>
           
           <div class="doc-item">
-            <h4>Wand of Fire</h4>
+            <h4 class="doc-item-name">Wand of Fire</h4>
             <p><span class="stat">Command: <span class="kbd">/item weapon wand_of_fire</span></span></p>
             <p><span class="stat">+6 Intellect</span></p>
             <p><span class="stat">Passive: Burn enemy for 2 HP/turn on hit</span></p>
@@ -1452,7 +1500,7 @@
           </div>
           
           <div class="doc-item">
-            <h4>Staff of Immortality</h4>
+            <h4 class="doc-item-name">Staff of Immortality</h4>
             <p><span class="stat">Command: <span class="kbd">/item weapon staff_of_immortality</span></span></p>
             <p><span class="stat">+3 Intellect</span></p>
             <p><span class="stat">Passive: Heal 4 HP every turn</span></p>
@@ -1460,7 +1508,7 @@
           </div>
 
           <div class="doc-item">
-            <h4>Steel Daggers</h4>
+            <h4 class="doc-item-name">Steel Daggers</h4>
             <p><span class="stat">Command: <span class="kbd">/item weapon steel_daggers</span></span></p>
             <p><span class="stat">+4 Physical Attack</span></p>
             <p><span class="stat">Passive: 25% chance to strike again for 40% damage</span></p>
@@ -1468,7 +1516,7 @@
           </div>
 
           <div class="doc-item">
-            <h4>Spear of Light</h4>
+            <h4 class="doc-item-name">Spear of Light</h4>
             <p><span class="stat">Command: <span class="kbd">/item weapon spear_of_light</span></span></p>
             <p><span class="stat">+3 Physical Attack</span> | <span class="stat">+3 Intellect</span></p>
             <p><span class="stat">Magic Resist: 2</span></p>
@@ -1476,7 +1524,7 @@
           </div>
 
           <div class="doc-item">
-            <h4>Void Blades</h4>
+            <h4 class="doc-item-name">Void Blades</h4>
             <p><span class="stat">Command: <span class="kbd">/item weapon void_blades</span></span></p>
             <p><span class="stat">+3 Physical Attack</span> | <span class="stat">+2 Intellect</span></p>
             <p><span class="stat">Passive: Void Blade triggers extra magic damage (Intellect x0.4 + d4)</span></p>
@@ -1484,7 +1532,7 @@
           </div>
 
           <div class="doc-item">
-            <h4>Thunderfury, Blessed Blade of the Windseeker</h4>
+            <h4 class="doc-item-name">Thunderfury, Blessed Blade of the Windseeker</h4>
             <p><span class="stat">Command: <span class="kbd">/item weapon thunderfury</span></span></p>
             <p><span class="stat">+8 Physical Attack</span> | <span class="stat">Magic Resist: 1</span></p>
             <p><span class="stat">Passive: 25% chance on hit to blast the enemy with lightning (Attack x0.5 + d3 magic damage)</span></p>
@@ -1493,7 +1541,7 @@
           </div>
 
           <div class="doc-item">
-            <h4>Dragonwrath, Tarecgosa's Rest</h4>
+            <h4 class="doc-item-name">Dragonwrath, Tarecgosa's Rest</h4>
             <p><span class="stat">Command: <span class="kbd">/item weapon dragonwrath</span></span></p>
             <p><span class="stat">+7 Intellect</span></p>
             <p><span class="stat">Passive: 20% chance on hit to duplicate offensive spells</span></p>
@@ -1501,7 +1549,7 @@
           </div>
 
           <div class="doc-item">
-            <h4>Twin Blades of Azzinoth</h4>
+            <h4 class="doc-item-name">Twin Blades of Azzinoth</h4>
             <p><span class="stat">Command: <span class="kbd">/item weapon twin_blades_azzinoth</span></span></p>
             <p><span class="stat">+7 Physical Attack</span></p>
             <p><span class="stat">Passive: 30% chance on successful damaging hit to strike again for 40% of the hit damage</span></p>
@@ -1509,7 +1557,7 @@
           </div>
 
           <div class="doc-item">
-            <h4>Glock 19</h4>
+            <h4 class="doc-item-name">Glock 19</h4>
             <p><span class="stat">Command: <span class="kbd">/item weapon glock_19</span></span></p>
             <p><span class="stat">+17 Physical Attack</span></p>
             <p><span class="stat">Passive: 55% chance to miss</span></p>
@@ -1523,7 +1571,7 @@
         <h3>Armor</h3>
         <div class="doc-grid">
           <div class="doc-item">
-            <h4>Leather Armor</h4>
+            <h4 class="doc-item-name">Leather Armor</h4>
             <p><span class="stat">Command: <span class="kbd">/item armor leather_armor</span></span></p>
             <p><span class="stat">Physical Reduction: 3</span></p>
             <p><span class="stat">Magic Resist: 3</span></p>
@@ -1531,7 +1579,7 @@
           </div>
 
           <div class="doc-item">
-            <h4>Cloth Armor</h4>
+            <h4 class="doc-item-name">Cloth Armor</h4>
             <p><span class="stat">Command: <span class="kbd">/item armor cloth_armor</span></span></p>
             <p><span class="stat">Physical Reduction: 1</span></p>
             <p><span class="stat">Magic Resist: 5</span></p>
@@ -1539,7 +1587,7 @@
           </div>
           
           <div class="doc-item">
-            <h4>Plate Armor</h4>
+            <h4 class="doc-item-name">Plate Armor</h4>
             <p><span class="stat">Command: <span class="kbd">/item armor plate_armor</span></span></p>
             <p><span class="stat">Physical Reduction: 6</span></p>
             <p><span class="stat">Magic Resist: 0</span></p>
@@ -1553,7 +1601,7 @@
         <h3>Trinkets</h3>
         <div class="doc-grid">
           <div class="doc-item">
-            <h4>Focus Charm</h4>
+            <h4 class="doc-item-name">Focus Charm</h4>
             <p><span class="stat">Command: <span class="kbd">/item trinket focus_charm</span></span></p>
             <p><span class="stat">+10 Mana</span></p>
             <p><span class="stat">Passive: Deal 10% more damage while above 70% HP</span></p>
@@ -1561,7 +1609,7 @@
           </div>
 
           <div class="doc-item">
-            <h4>Rage Crystal</h4>
+            <h4 class="doc-item-name">Rage Crystal</h4>
             <p><span class="stat">Command: <span class="kbd">/item trinket rage_crystal</span></span></p>
             <p><span class="stat">+20 Rage</span></p>
             <p><span class="stat">Passive: Deal 15% more damage while below 30% HP</span></p>
@@ -2412,6 +2460,37 @@
         initTwinBladesFx(element);
       }
 
+      function setChampionLabel(element, label) {
+        if (!element) {
+          return;
+        }
+        if (!label) {
+          element.textContent = "--";
+          return;
+        }
+        const match = String(label).match(/^(.*?)(\s*\(YOU\))?$/);
+        const className = (match?.[1] || label).trim();
+        const suffix = match?.[2] || "";
+        const classKey = classKeyFromLabel(label);
+        const safeClassName = escapeHtml(className);
+        const safeSuffix = escapeHtml(suffix);
+        if (!classKey) {
+          element.textContent = label;
+          return;
+        }
+        element.innerHTML = `<span class="champion-name-class ${classKey}">${safeClassName}</span>${safeSuffix}`;
+      }
+
+      function applyDocumentationItemRarityColors(root = document) {
+        root.querySelectorAll(".doc-item-name").forEach((element) => {
+          element.classList.remove("log-item-green", "log-item-blue", "log-item-purple", "log-item-orange");
+          const itemClass = itemClassForName(element.textContent.trim());
+          if (itemClass) {
+            element.classList.add(itemClass);
+          }
+        });
+      }
+
 
       function randomInRange(min, max) {
         return min + Math.random() * (max - min);
@@ -3168,6 +3247,8 @@
         chatBox.scrollTop = chatBox.scrollHeight;
       }
 
+      applyDocumentationItemRarityColors();
+
       socket.on("connect", () => {
         lastLogLength = 0;
         connDot.classList.add("connected");
@@ -3451,10 +3532,10 @@
       socket.on("duel_snapshot", (data) => {
         // Update class names
         if (data.you_class) {
-          friendlyLabel.textContent = data.you_class;
+          setChampionLabel(friendlyLabel, data.you_class);
         }
         if (data.enemy_class) {
-          enemyLabel.textContent = data.enemy_class;
+          setChampionLabel(enemyLabel, data.enemy_class);
         }
         
         // Update equipped items

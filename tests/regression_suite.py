@@ -779,8 +779,8 @@ def scenario_hunter_flare_logs_stealth_breaks() -> bool:
     submit_turn(match, "flare", _DEF_PASS)
     latest_turn = match.log[match.log.index("Turn 2") + 1:]
     assert any("Flare reveals the target." in line for line in latest_turn), "Flare should keep its reveal summary log"
-    assert any(f"{match.players[1][:5]}'s stealth broken by Flare" in line for line in latest_turn), "Flare should log the player stealth break"
-    assert any("Frostsaber's stealth broken by Flare" in line for line in latest_turn), "Flare should log pet stealth breaks when present"
+    assert any(line == f"{match.players[1][:5]}'s stealth broken by Flare." for line in latest_turn), "Flare should log the player stealth break on its own line"
+    assert any(line == "Frostsaber's stealth broken by Flare." for line in latest_turn), "Flare should log pet stealth breaks on their own lines when present"
     assert not _has_effect(enemy, "stealth"), "Flare should remove player stealth"
     assert not _has_effect(enemy_pet, "stealth"), "Flare should remove pet stealth"
     return True

@@ -1055,7 +1055,7 @@ ABILITIES = {
         "cooldown": 15,
         "classes": ["hunter"],
         "target_effects": [
-            {"type": "remove_effect", "effect_id": "stealth", "log": "Flare reveals the target.", "removed_log_template": "{target}'s stealth broken by Flare"}
+            {"type": "remove_effect", "effect_id": "stealth", "log": "Flare reveals the target.", "removed_log_template": "{target}'s stealth broken by Flare."}
         ],
     },
     "freezing_trap": {

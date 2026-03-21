@@ -327,8 +327,9 @@ def resolve_turn(match: MatchState) -> None:
         actor: PlayerState,
         target: PlayerState | PetState,
         ability: Dict[str, Any],
-        log_parts: list,
+        log_parts: list[str],
         pre_log_parts: list[str] | None = None,
+        extra_log_parts: list[str] | None = None,
         skip_self_effect_ids: set[str] | None = None,
     ) -> None:
         def format_entry_log(message: str | None) -> str | None:
@@ -338,6 +339,8 @@ def resolve_turn(match: MatchState) -> None:
 
         if pre_log_parts is None:
             pre_log_parts = []
+        if extra_log_parts is None:
+            extra_log_parts = []
         skip_self_effect_ids = skip_self_effect_ids or set()
         target_entries: list[PlayerState | PetState] = [target]
         if ability_target_mode(ability) == "aoe_enemy" and isinstance(target, PlayerState):
@@ -394,7 +397,7 @@ def resolve_turn(match: MatchState) -> None:
                 removed_log_template = entry.get("removed_log_template")
                 if removed_log_template:
                     for removed_target in removed_targets:
-                        log_parts.append(
+                        extra_log_parts.append(
                             str(removed_log_template).format(
                                 target=entity_log_label(removed_target),
                                 effect=effect_name(effect_id) if effect_id else "Effect",
@@ -736,6 +739,7 @@ def resolve_turn(match: MatchState) -> None:
             }
 
         log_parts = [f"{actor_sid[:5]} uses {weapon_name} to cast {ability['name']}."]
+        extra_logs: list[str] = []
         pre_log_parts: list[str] = []
 
         has_target_effects = bool(ability.get("target_effects"))
@@ -751,6 +755,7 @@ def resolve_turn(match: MatchState) -> None:
 
         consume_costs(actor, ability.get("cost", {}))
 
+        extra_logs: list[str] = []
         dice_data = ability.get("dice")
         scaling = ability.get("scaling", {}) or {}
         flat_damage = ability.get("flat_damage")
@@ -800,7 +805,14 @@ def resolve_turn(match: MatchState) -> None:
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
 
         if has_self_effects or has_target_effects:
-            apply_effect_entries(actor, target, ability, log_parts, pre_log_parts=pre_log_parts)
+            apply_effect_entries(
+                actor,
+                target,
+                ability,
+                log_parts,
+                pre_log_parts=pre_log_parts,
+                extra_log_parts=extra_logs,
+            )
 
         if ability_id == "healthstone":
             heal_value = max(1, int(actor.res.hp_max * 0.25))
@@ -1143,7 +1155,7 @@ def resolve_turn(match: MatchState) -> None:
             set_cooldown(actor, ability_id, ability)
             if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
                 remove_stealth(actor)
-            return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
+            return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "extra_logs": extra_logs}
 
         # Calculate base damage using appropriate stat
         damage_type = ability.get("damage_type", "physical")
@@ -1167,7 +1179,6 @@ def resolve_turn(match: MatchState) -> None:
             modify_stat(target, "eva", target.stats.get("eva", 0)),
         )
 
-        extra_logs: list[str] = []
         ability_hit_landed = False
         on_hit_base_damage = 0
         per_hit_damage_values: list[int] = []
@@ -1618,6 +1629,7 @@ def resolve_turn(match: MatchState) -> None:
             weapon_id = actor.build.items.get("weapon")
         weapon_name = ITEMS.get(weapon_id, {}).get("name", "their bare hands")
         log_parts = [f"{actor_sid[:5]} uses {weapon_name} to cast {ability['name']}."]
+        extra_logs: list[str] = []
 
         actor_stunned = is_stunned(actor) or incoming_immediate_stun.get(actor_sid, False)
         if actor_stunned and not can_cast_while_cc(ability):
@@ -1675,6 +1687,7 @@ def resolve_turn(match: MatchState) -> None:
                 target,
                 ability,
                 log_parts,
+                extra_log_parts=extra_logs,
                 skip_self_effect_ids=skip_self_effect_ids,
             )
 
@@ -1724,6 +1737,7 @@ def resolve_turn(match: MatchState) -> None:
         set_cooldown(actor, ability_id, ability)
         ctx["damage"] = 0
         ctx["log"] = " ".join(log_parts)
+        ctx["extra_logs"] = extra_logs
         ctx["resolved"] = True
         if is_offensive_action(ability) and stealth_start_at_turn_begin.get(actor_sid, False):
             remove_stealth(actor)
