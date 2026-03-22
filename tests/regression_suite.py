@@ -788,6 +788,70 @@ def scenario_hunter_freezing_trap_respects_active_cloak() -> bool:
     return True
 
 
+def scenario_mage_hot_streak_lasts_three_turns() -> bool:
+    match = make_match("mage", "warrior", seed=123)
+    mage = match.state[match.players[0]]
+
+    submit_turn(match, "fire_blast", _DEF_PASS)
+    hot_streak = next((fx for fx in mage.effects if fx.get("id") == "hot_streak"), None)
+    assert hot_streak is not None, "Fire Blast should apply Hot Streak"
+    assert int(hot_streak.get("duration", 0) or 0) == 2, "Hot Streak should leave the next 2 turns after the proc turn"
+
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+    hot_streak = next((fx for fx in mage.effects if fx.get("id") == "hot_streak"), None)
+    assert hot_streak is not None and int(hot_streak.get("duration", 0) or 0) == 1, "Hot Streak should still be available on the following turn"
+
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+    assert not _has_effect(mage, "hot_streak"), "Hot Streak should expire after the 3-turn window"
+    return True
+
+
+def scenario_ring_of_ice_freezes_and_breaks_on_damage() -> bool:
+    match = make_match("mage", "warrior", seed=123)
+    warrior = match.state[match.players[1]]
+
+    submit_turn(match, "ring_of_ice", _DEF_PASS)
+    freeze = next((fx for fx in warrior.effects if fx.get("id") == "ring_of_ice_freeze"), None)
+    assert freeze is not None, "Ring of Ice should apply its freeze effect"
+    assert freeze.get("cant_act_reason") == "frozen", "Ring of Ice should use the frozen action-lock reason"
+
+    submit_turn(match, _DEF_PASS, "basic_attack")
+    latest_turn = _turn_lines(match, 2)
+    assert any("is frozen and cannot act" in line for line in latest_turn), "Frozen targets should be unable to act"
+
+    submit_turn(match, "fireball", _DEF_PASS)
+    assert not _has_effect(warrior, "ring_of_ice_freeze"), "Any damage should break Ring of Ice freeze"
+    return True
+
+
+def scenario_fear_applies_feared_and_breaks_on_damage() -> bool:
+    match = make_match("warlock", "warrior", seed=123)
+    warrior = match.state[match.players[1]]
+
+    submit_turn(match, "fear", _DEF_PASS)
+    assert _has_effect(warrior, "feared"), "Fear should apply the feared effect"
+    assert not _has_effect(warrior, "stunned"), "Fear should not apply the stunned effect"
+
+    submit_turn(match, _DEF_PASS, "basic_attack")
+    latest_turn = _turn_lines(match, 2)
+    assert any("is feared and cannot act" in line for line in latest_turn), "Feared targets should be unable to act"
+
+    submit_turn(match, "drain_life", _DEF_PASS)
+    assert not _has_effect(warrior, "feared"), "Any damage should break Fear"
+    return True
+
+
+def scenario_cc_status_display_metadata_is_exposed() -> bool:
+    ring_display = effects.effect_template("ring_of_ice_freeze").get("display", {})
+    trap_display = effects.effect_template("freezing_trap_freeze").get("display", {})
+    fear_display = effects.effect_template("feared").get("display", {})
+
+    assert ring_display.get("war_council") and ring_display.get("label") == "Frozen", "Ring of Ice should expose Frozen status metadata"
+    assert trap_display.get("war_council") and trap_display.get("label") == "Frozen", "Freezing Trap should expose Frozen status metadata"
+    assert fear_display.get("war_council") and fear_display.get("label") == "Feared", "Fear should expose Feared status metadata"
+    return True
+
+
 def scenario_hunter_disengage_uses_custom_miss_text() -> bool:
     match = make_match("warrior", "hunter", seed=123)
     submit_turn(match, "basic_attack", "disengage")
@@ -1064,6 +1128,10 @@ SCENARIOS = [
     scenario_hunter_freezing_trap_breaks_on_damage,
     scenario_hunter_freezing_trap_respects_cloak_same_turn,
     scenario_hunter_freezing_trap_respects_active_cloak,
+    scenario_mage_hot_streak_lasts_three_turns,
+    scenario_ring_of_ice_freezes_and_breaks_on_damage,
+    scenario_fear_applies_feared_and_breaks_on_damage,
+    scenario_cc_status_display_metadata_is_exposed,
     scenario_hunter_disengage_uses_custom_miss_text,
     scenario_hunter_flare_logs_stealth_breaks,
     scenario_hunter_pet_permanent_death_resummon_blocked,

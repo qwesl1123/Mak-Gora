@@ -50,7 +50,7 @@ ABILITIES = {
         "scaling": {"int": 0.4},
         "damage_type": "magic",
         "tags": ["spell", "attack", "magic"],
-        "cooldown": 2,
+        "cooldown": 6,
         "classes": ["mage"],
         "hits": 3,
     },
@@ -191,10 +191,12 @@ ABILITIES = {
         "cost": {"mp": 0},
         "dice": None,
         "tags": ["spell", "control"],
-        "cooldown": 3,
+        "cooldown": 6,
         "classes": ["mage"],
+        "damage_type": "magic",
+        "school": "frost",
         "target_effects": [
-            {"id": "ring_of_ice_freeze", "duration": 1, "log": "freezes the enemy solid."}
+            {"id": "ring_of_ice_freeze", "duration": 2, "log": "freezes the enemy solid."}
         ],
     },
     "ice_barrier": {
@@ -641,9 +643,9 @@ ABILITIES = {
         "cost": {"mp": 5},
         "dice": None,
         "tags": ["spell", "control"],
-        "cooldown": 6,
+        "cooldown": 7,
         "classes": ["warlock"],
-        "target_effects": [{"id": "stunned", "duration": 1, "overrides": {"cant_act_reason": "feared"}, "log": "Enemy is feared and cannot act."}],
+        "target_effects": [{"id": "feared", "duration": 2, "log": "Enemy is feared and cannot act."}],
     },
     "healthstone": {
         "name": "Healthstone",

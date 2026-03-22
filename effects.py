@@ -12,7 +12,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
     "hot_streak": {
         "type": "status",
         "name": "Hot Streak",
-        "duration": 999,
+        "duration": 3,
         "flags": {"hot_streak": True},
     },
     "die_by_sword": {
@@ -109,15 +109,37 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
             "priority": 85,
         },
     },
-    "ring_of_ice_freeze": {
+    "feared": {
         "type": "status",
-        "name": "Ring of Ice",
-        "duration": 1,
+        "name": "Fear",
+        "duration": 2,
         "category": "cc",
         "school": "magical",
         "harmful": True,
-        "flags": {"stunned": True},
+        "flags": {"break_on_damage": True},
+        "cant_act_reason": "feared",
+        "display": {
+            "war_council": True,
+            "label": "Feared",
+            "color": "#9B59B6",
+            "priority": 83,
+        },
+    },
+    "ring_of_ice_freeze": {
+        "type": "status",
+        "name": "Ring of Ice",
+        "duration": 2,
+        "category": "cc",
+        "school": "magical",
+        "harmful": True,
+        "flags": {"stunned": True, "break_on_damage": True},
         "cant_act_reason": "frozen",
+        "display": {
+            "war_council": True,
+            "label": "Frozen",
+            "color": "#79C7FF",
+            "priority": 84,
+        },
     },
     "stealth": {
         "type": "stealth",
@@ -757,6 +779,10 @@ def has_flag(target, flag: str) -> bool:
 
 def is_stunned(target) -> bool:
     return has_flag(target, "stunned")
+
+
+def cannot_act(target) -> bool:
+    return get_cant_act_reason(target) is not None
 
 
 def get_cant_act_reason(target) -> Optional[str]:

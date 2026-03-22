@@ -26,6 +26,7 @@ from .effects import (
     remove_stealth,
     modify_stat,
     is_stunned,
+    cannot_act,
     get_cant_act_reason,
     is_stealthed,
     is_immune_all,
@@ -740,7 +741,7 @@ def resolve_turn(match: MatchState) -> None:
 
         weapon_name = ITEMS.get(weapon_id, {}).get("name", "their bare hands")
 
-        if is_stunned(actor) and not can_cast_while_cc(ability):
+        if cannot_act(actor) and not can_cast_while_cc(ability):
             reason = get_cant_act_reason(actor)
             if reason:
                 reason_text = f"is {reason} and cannot act"
@@ -1473,7 +1474,7 @@ def resolve_turn(match: MatchState) -> None:
         if not ability:
             return {"damage": 0, "log": f"{actor_sid[:5]} fumbles (unknown ability).", "resolved": True}
 
-        if stunned_at_start.get(actor_sid, False) and not can_cast_while_cc(ability):
+        if cannot_act(actor) and not can_cast_while_cc(ability):
             reason = get_cant_act_reason(actor)
             if reason:
                 reason_text = f"is {reason} and cannot act"
@@ -1666,8 +1667,8 @@ def resolve_turn(match: MatchState) -> None:
         log_parts = [f"{actor_sid[:5]} uses {weapon_name} to cast {ability['name']}."]
         extra_logs: list[str] = []
 
-        actor_stunned = is_stunned(actor) or incoming_immediate_stun.get(actor_sid, False)
-        if actor_stunned and not can_cast_while_cc(ability):
+        actor_cannot_act = cannot_act(actor) or incoming_immediate_stun.get(actor_sid, False)
+        if actor_cannot_act and not can_cast_while_cc(ability):
             reason = get_cant_act_reason(actor)
             if reason:
                 reason_text = f"is {reason} and cannot act"
@@ -2393,7 +2394,7 @@ def resolve_turn(match: MatchState) -> None:
                 continue
             if is_on_cooldown(ps, "execute", execute_ability):
                 continue
-            if is_stunned(ps):
+            if cannot_act(ps):
                 continue
             if opponent.res.hp / max(1, opponent.res.hp_max) >= float(execute_threshold):
                 continue
@@ -2412,7 +2413,7 @@ def resolve_turn(match: MatchState) -> None:
                 continue
             if is_on_cooldown(ps, "death", death_ability):
                 continue
-            if is_stunned(ps):
+            if cannot_act(ps):
                 continue
             if opponent.res.hp / max(1, opponent.res.hp_max) >= death_threshold:
                 continue
