@@ -737,22 +737,18 @@ def scenario_hunter_boar_redirect() -> bool:
 
 
 def scenario_hunter_boar_redirect_same_turn_brace() -> bool:
-    match = make_match("rogue", "hunter", seed=123)
+    match = make_match("warlock", "hunter", seed=3)
     hunter = match.state[match.players[1]]
-    submit_turn(match, "shadow_blade", "call_boar")
+    hunter_hp_before = hunter.res.hp
+    submit_turn(match, "drain_life", "call_boar")
+
     boar = _active_pet(hunter, "barrens_boar")
     assert boar is not None, "Boar should be active"
-
-    effects.apply_effect_by_id(hunter, "raptor_strike_proc")
-    hunter_hp_before = hunter.res.hp
-    boar_hp_before = boar.hp
-    submit_turn(match, "shadow_blade", "raptor_strike")
-
-    latest_turn = match.log[match.log.index("Turn 2") + 1:]
-    assert any("Barrens Boar braces to intercept attacks." in line for line in latest_turn), "Boar should brace during the same turn"
-    assert any("Barrens Boar intercepts Shadow Blade" in line for line in latest_turn), "Intercept log should reference the redirected Shadow Blade"
-    assert hunter.res.hp == hunter_hp_before, "Same-turn Blocking Defence should keep Shadow Blade off the Hunter"
-    assert boar.hp < boar_hp_before, "Same-turn Blocking Defence should route Shadow Blade damage into the boar"
+    latest_turn = _turn_lines(match, 1)
+    assert any("Barrens Boar braces to intercept attacks." in line for line in latest_turn), "Boar should brace on its summon turn when the pre-action special fires"
+    assert any("Barrens Boar intercepts Drain Life" in line for line in latest_turn), "Intercept log should reference the redirected Drain Life"
+    assert hunter.res.hp == hunter_hp_before, "Same-turn Blocking Defence should keep Drain Life off the Hunter"
+    assert boar.hp < boar.hp_max, "Same-turn Blocking Defence should route Drain Life damage into the boar"
     return True
 
 

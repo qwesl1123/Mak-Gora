@@ -9,7 +9,7 @@ from ..content.classes import CLASSES, class_display_name, normalize_class_id
 from ..content.items import ITEMS
 from ..content.balance import DEFAULTS, CAPS
 from ..content.pets import PETS
-from .pet_ai import run_pet_phase, cleanup_pets, prepare_pet_pre_action_effects
+from .pet_ai import run_pet_phase, cleanup_pets, prepare_pet_pre_action_effects, trigger_pre_action_special
 
 # Centralized mechanics (passives/DoTs/mitigation/regen) live here.
 from .effects import (
@@ -871,6 +871,8 @@ def resolve_turn(match: MatchState) -> None:
                         log_parts.append(f"summons {template.get('name', summon_pet_id.title())} with {summoned_pet.hp}/{summoned_pet.hp_max} HP.")
                     else:
                         log_parts.append(f"summons {template.get('name', summon_pet_id.title())}.")
+            if summoned_pet is not None and not refreshed:
+                trigger_pre_action_special(actor, summoned_pet, actor_sid, match, r, consume_action=True)
             set_cooldown(actor, ability_id, ability)
             remove_effect(actor, summon_pet_id)
             return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
@@ -1726,7 +1728,7 @@ def resolve_turn(match: MatchState) -> None:
 
         summon_pet_id = ability.get("summon_pet_id")
         if summon_pet_id:
-            _, refreshed, summon_error = summon_pet_from_template(actor, summon_pet_id)
+            summoned_pet, refreshed, summon_error = summon_pet_from_template(actor, summon_pet_id)
             template = PETS.get(summon_pet_id, {})
             summon_log = ability.get("summon_log")
             if summon_error:
@@ -1735,6 +1737,8 @@ def resolve_turn(match: MatchState) -> None:
                 log_parts.append(f"refreshes {template.get('name', summon_pet_id.title())}.")
             elif summon_log:
                 log_parts.append(str(summon_log))
+            if summoned_pet is not None and not refreshed:
+                trigger_pre_action_special(actor, summoned_pet, actor_sid, match, r, consume_action=True)
             remove_effect(actor, summon_pet_id)
 
         apply_hp_sacrifice_absorb(actor, ability, log_parts)

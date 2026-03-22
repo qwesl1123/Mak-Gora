@@ -67,6 +67,30 @@ def _apply_effect_special(owner, pet, owner_sid, match, special_id: str) -> bool
     return True
 
 
+def trigger_pre_action_special(owner, pet, owner_sid, match, rng, *, consume_action: bool = True) -> bool:
+    template = PETS.get(pet.template_id, {})
+    special_id = template.get("special_id")
+    special_data = ((template.get("specials") or {}).get(special_id) or {})
+    if special_data.get("timing") != "pre_action":
+        return False
+
+    forced_command = owner.pending_pet_command
+    use_special = forced_command == "special"
+    if not use_special:
+        use_special = rng.random() <= float(template.get("special_chance", 0) or 0)
+    if not use_special:
+        return False
+
+    if not _apply_effect_special(owner, pet, owner_sid, match, str(special_id)):
+        return False
+
+    if consume_action:
+        pet.action_consumed = True
+    if forced_command == "special":
+        owner.pending_pet_command = None
+    return True
+
+
 def _run_imp_firebolt(
     owner,
     enemy,
@@ -468,23 +492,7 @@ def prepare_pet_pre_action_effects(match, rng):
             if not pet or pet.hp <= 0:
                 continue
 
-            template = PETS.get(pet.template_id, {})
-            special_id = template.get("special_id")
-            special_data = ((template.get("specials") or {}).get(special_id) or {})
-            if special_data.get("timing") != "pre_action":
-                continue
-
-            forced_command = owner.pending_pet_command
-            use_special = forced_command == "special"
-            if not use_special:
-                use_special = rng.random() <= float(template.get("special_chance", 0) or 0)
-            if not use_special:
-                continue
-
-            if _apply_effect_special(owner, pet, owner_sid, match, str(special_id)):
-                pet.action_consumed = True
-                if forced_command == "special":
-                    owner.pending_pet_command = None
+            trigger_pre_action_special(owner, pet, owner_sid, match, rng, consume_action=True)
 
 
 def cleanup_pets(match):
