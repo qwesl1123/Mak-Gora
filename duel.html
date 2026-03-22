@@ -2086,7 +2086,7 @@
             <h4>Arcane Shot</h4>
             <p><span class="stat">Cost: 5 Mana</span> | <span class="stat">Type: Magic</span> | <span class="stat">Cooldown: 0</span></p>
             <p><span class="stat">Command: <span class="kbd">arcane_shot</span></span></p>
-            <p>Requires the proc from casting Wildfire Bomb. Fires an arcane blast for [Attack (1.1x) + d6] magic damage.</p>
+            <p>Requires the proc from casting Wildfire Bomb. Proc expires if not used on the very next turn. Fires an arcane blast for [Attack (1.1x) + d6] magic damage.</p>
           </div>
           <div class="doc-item">
             <h4>Aspect of the Turtle</h4>
@@ -2122,7 +2122,7 @@
             <h4>Raptor Strike</h4>
             <p><span class="stat">Cost: 8 Mana</span> | <span class="stat">Type: Physical</span> | <span class="stat">Cooldown: 8</span></p>
             <p><span class="stat">Command: <span class="kbd">raptor_strike</span></span></p>
-            <p>Requires the proc from casting Aimed Shot. Deals [Attack (1.7x) + d6] physical damage and forces the active pet to use its special attack this turn.</p>
+            <p>Requires the proc from casting Aimed Shot. Proc expires if not used on the very next turn. Deals [Attack (1.7x) + d6] physical damage and forces the active pet to use its special attack this turn.</p>
           </div>
           <div class="doc-item">
             <h4>Multi-Shot</h4>
@@ -2460,6 +2460,23 @@
         initTwinBladesFx(element);
       }
 
+      function splitChampionLabel(label) {
+        const normalizedLabel = String(label || "").trim();
+        const match = normalizedLabel.match(/^(.*?)(\s*\((?:YOU|you)\))?$/);
+        return {
+          className: (match?.[1] || normalizedLabel).trim(),
+          suffix: match?.[2] || "",
+        };
+      }
+
+      function normalizeChampionPlaceholder(label) {
+        const { className, suffix } = splitChampionLabel(label);
+        if (className.toLowerCase() !== "unselected") {
+          return label;
+        }
+        return suffix ? "Adventurer(you)" : "Adventurer";
+      }
+
       function setChampionLabel(element, label) {
         if (!element) {
           return;
@@ -2468,14 +2485,13 @@
           element.textContent = "--";
           return;
         }
-        const match = String(label).match(/^(.*?)(\s*\(YOU\))?$/);
-        const className = (match?.[1] || label).trim();
-        const suffix = match?.[2] || "";
-        const classKey = classKeyFromLabel(label);
+        const displayLabel = normalizeChampionPlaceholder(label);
+        const { className, suffix } = splitChampionLabel(displayLabel);
+        const classKey = classKeyFromLabel(displayLabel);
         const safeClassName = escapeHtml(className);
         const safeSuffix = escapeHtml(suffix);
-        if (!classKey) {
-          element.textContent = label;
+        if (!isStyledChampionClass(classKey)) {
+          element.textContent = displayLabel;
           return;
         }
         element.innerHTML = `<span class="champion-name-class ${classKey}">${safeClassName}</span>${safeSuffix}`;
@@ -3384,7 +3400,11 @@
         if (!label) {
           return "";
         }
-        return label.replace(" (YOU)", "").trim().toLowerCase();
+        return splitChampionLabel(label).className.toLowerCase();
+      }
+
+      function isStyledChampionClass(classKey) {
+        return ["warrior", "mage", "rogue", "druid", "warlock", "paladin", "priest", "hunter"].includes(classKey);
       }
 
       function setStatusClass(element, classKey) {
