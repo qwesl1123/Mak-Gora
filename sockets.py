@@ -7,7 +7,7 @@ from . import state
 from .engine import resolver
 from .engine.effects import current_form_id, effect_template, is_stealthed
 from .content.pets import PETS
-from .content.classes import CLASSES
+from .content.classes import CLASSES, class_display_name, normalize_class_id
 from .content.items import ITEMS
 from .content.abilities import ABILITIES
 
@@ -19,6 +19,29 @@ ITEM_FX_MARKUP = [
     (DRAGONWRATH_NAME, "fx_dragonwrath"),
     (TWIN_BLADES_AZZINOTH_NAME, "fx_twin_blades_azzinoth"),
 ]
+
+
+def _picked_class_id(match, sid):
+    picked = match.picks.get(sid, {})
+    class_id = None
+    if isinstance(picked, dict):
+        class_id = picked.get("class_id")
+    if not class_id:
+        ps = match.state.get(sid)
+        if ps and ps.build:
+            class_id = ps.build.class_id
+    return normalize_class_id(class_id)
+
+
+def _picked_class_name(match, sid, default="Unknown Class"):
+    return class_display_name(_picked_class_id(match, sid), default=default)
+
+
+def _invalid_class_message(class_id):
+    attempted = str(class_id).strip() if class_id is not None else ""
+    if attempted:
+        return f"Unknown class '{attempted}'. Choose a valid class before locking in."
+    return "Choose a valid class before locking in."
 
 
 def apply_item_fx_markup(text):
@@ -41,27 +64,10 @@ def snapshot_for(match, viewer_sid):
     enemy_totals = totals.get(enemy, {"damage": 0, "healing": 0})
 
     def class_name_for(sid):
-        picked = match.picks.get(sid, {})
-        class_id = None
-        if isinstance(picked, dict):
-            class_id = picked.get("class_id")
-        if not class_id:
-            ps = match.state.get(sid)
-            if ps and ps.build:
-                class_id = ps.build.class_id
-        class_data = CLASSES.get(class_id or "", {})
-        return class_data.get("name", "Adventurer")
+        return _picked_class_name(match, sid, default="Unselected")
 
     def resource_config_for(sid):
-        picked = match.picks.get(sid, {})
-        class_id = None
-        if isinstance(picked, dict):
-            class_id = picked.get("class_id")
-        if not class_id:
-            ps = match.state.get(sid)
-            if ps and ps.build:
-                class_id = ps.build.class_id
-        class_data = CLASSES.get(class_id or "", {})
+        class_data = CLASSES.get(_picked_class_id(match, sid) or "", {})
         return class_data.get("resource_display", {
             "primary": {"id": "mp", "label": "Mana", "color": "var(--mana-blue)"},
         })
@@ -332,25 +338,39 @@ def register_duel_socket_handlers(socketio):
             current = {}
         if not isinstance(payload, dict):
             payload = {}
-        merged = {**current, **payload}
+
+        merged = {**current}
+        class_error = None
+        if "class_id" in payload:
+            normalized_class_id = normalize_class_id(payload.get("class_id"))
+            if normalized_class_id:
+                merged["class_id"] = normalized_class_id
+            else:
+                class_error = _invalid_class_message(payload.get("class_id"))
+        for key, value in payload.items():
+            if key != "class_id":
+                merged[key] = value
         items = dict(current.get("items", {}))
         items.update(payload.get("items", {}))
         if items:
             merged["items"] = items
-        match.picks[sid] = merged  # later: validate schema
+        match.picks[sid] = merged
         selection_name = None
-        if isinstance(payload, dict):
-            class_id = payload.get("class_id")
-            if class_id:
-                selection_name = CLASSES.get(class_id, {}).get("name", class_id)
-            else:
-                items_payload = payload.get("items", {})
-                if isinstance(items_payload, dict):
-                    for item_id in items_payload.values():
-                        if item_id and item_id in ITEMS:
-                            selection_name = ITEMS[item_id]["name"]
-                            break
-        if selection_name:
+        class_id = merged.get("class_id")
+        if class_id:
+            selection_name = class_display_name(class_id, default=None)
+        else:
+            items_payload = payload.get("items", {})
+            if isinstance(items_payload, dict):
+                for item_id in items_payload.values():
+                    if item_id and item_id in ITEMS:
+                        selection_name = ITEMS[item_id]["name"]
+                        break
+        if class_error and selection_name:
+            emit("duel_system", f"{class_error} Existing selection unchanged; saved {selection_name}.")
+        elif class_error:
+            emit("duel_system", class_error)
+        elif selection_name:
             emit("duel_system", f"🛡️ Prep saved, {selection_name}.")
         else:
             emit("duel_system", "🛡️ Prep saved.")
@@ -360,10 +380,7 @@ def register_duel_socket_handlers(socketio):
         return all(match.locked_in.get(sid) for sid in match.players)
 
     def player_has_class(match, sid):
-        picked = match.picks.get(sid, {})
-        if isinstance(picked, dict):
-            return bool(picked.get("class_id"))
-        return False
+        return _picked_class_id(match, sid) is not None
 
     def try_start_combat(match):
         if match.phase != "prep":
@@ -371,9 +388,18 @@ def register_duel_socket_handlers(socketio):
         if not both_players_locked(match):
             return
         if not all(player_has_class(match, sid) for sid in match.players):
+            for player_sid in match.players:
+                picked = match.picks.get(player_sid, {})
+                if isinstance(picked, dict) and picked.get("class_id") and not normalize_class_id(picked.get("class_id")):
+                    socketio.emit("duel_system", _invalid_class_message(picked.get("class_id")), to=player_sid)
+            return
+        try:
+            resolver.apply_prep_build(match)
+        except ValueError as exc:
+            for player_sid in match.players:
+                socketio.emit("duel_system", f"Cannot start combat: {exc}", to=player_sid)
             return
         match.phase = "combat"
-        resolver.apply_prep_build(match)
         socketio.emit("duel_snapshot", snapshot_for(match, match.players[0]), to=match.players[0])
         socketio.emit("duel_snapshot", snapshot_for(match, match.players[1]), to=match.players[1])
         socketio.emit("duel_system", "Combat begins.", to=match.room_id)
@@ -389,7 +415,9 @@ def register_duel_socket_handlers(socketio):
             emit("duel_system", "Prep phase is over.")
             return
         if not player_has_class(match, sid):
-            emit("duel_system", "Choose a class before locking in.")
+            picked = match.picks.get(sid, {})
+            attempted_class_id = picked.get("class_id") if isinstance(picked, dict) else None
+            emit("duel_system", _invalid_class_message(attempted_class_id))
             return
         match.locked_in[sid] = True
         emit("duel_system", "Locked in. Waiting for opponent...")
@@ -455,18 +483,7 @@ def register_duel_socket_handlers(socketio):
         role = "P1" if sid == p1 else "P2"
         
         # Get player class name
-        picked = match.picks.get(sid, {})
-        class_id = None
-        if isinstance(picked, dict):
-            class_id = picked.get("class_id")
-        if not class_id:
-            ps = match.state.get(sid)
-            if ps and ps.build:
-                class_id = ps.build.class_id
-        
-        from .content.classes import CLASSES
-        class_data = CLASSES.get(class_id or "", {})
-        player_class = class_data.get("name", "Adventurer")
+        player_class = _picked_class_name(match, sid)
         
         # Broadcast the chat message to both players with class name
         socketio.emit("duel_chat", {
@@ -490,17 +507,7 @@ def register_duel_socket_handlers(socketio):
         role = "P1" if sid == p1 else "P2"
         
         # Get disconnecting player's class name for better message
-        picked = match.picks.get(sid, {})
-        class_id = None
-        if isinstance(picked, dict):
-            class_id = picked.get("class_id")
-        if not class_id:
-            ps = match.state.get(sid)
-            if ps and ps.build:
-                class_id = ps.build.class_id
-        
-        class_data = CLASSES.get(class_id or "", {})
-        player_class = class_data.get("name", "Adventurer")
+        player_class = _picked_class_name(match, sid)
         
         # Send disconnect message to the room BEFORE leaving
         disconnect_msg = f"⚠️ {player_class} ({role}) has left the instance"

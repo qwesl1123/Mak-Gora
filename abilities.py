@@ -1125,30 +1125,33 @@ ABILITIES = {
         "cooldown": 7,
         "classes": ["hunter"],
     },
-    "summon_saber": {
+    "call_saber": {
         "name": "Summon Frostsaber",
         "display_color": "#AAD372",
         "summon_pet_id": "frostsaber",
+        "summon_log": "calls for Frostsaber.",
         "cost": {"mp": 0},
         "dice": None,
         "tags": ["defense"],
         "cooldown": 10,
         "classes": ["hunter"],
     },
-    "summon_serpent": {
+    "call_serpent": {
         "name": "Summon Emerald Serpent",
         "display_color": "#AAD372",
         "summon_pet_id": "emerald_serpent",
+        "summon_log": "calls for Emerald Serpent.",
         "cost": {"mp": 0},
         "dice": None,
         "tags": ["defense"],
         "cooldown": 10,
         "classes": ["hunter"],
     },
-    "summon_boar": {
+    "call_boar": {
         "name": "Summon Barrens Boar",
         "display_color": "#AAD372",
         "summon_pet_id": "barrens_boar",
+        "summon_log": "calls for Barrens Boar.",
         "cost": {"mp": 0},
         "dice": None,
         "tags": ["defense"],

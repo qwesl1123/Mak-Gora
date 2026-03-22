@@ -232,6 +232,17 @@ def _assert_no_stun_effect(ps) -> None:
     assert not (active & stun_ids), f"Expected no stun/freeze effects, found: {sorted(active & stun_ids)}"
 
 
+def _turn_lines(match, turn_number: int) -> List[str]:
+    header = f"Turn {turn_number}"
+    start = match.log.index(header) + 1
+    end = len(match.log)
+    for idx in range(start, len(match.log)):
+        if match.log[idx].startswith("Turn "):
+            end = idx
+            break
+    return match.log[start:end]
+
+
 def scenario_mindgames_lay_on_hands() -> bool:
     match = make_match("priest", "paladin", seed=123)
     pal = match.state[match.players[1]]
@@ -544,17 +555,19 @@ def scenario_hunter_pet_summon_swap_memory() -> bool:
     match = make_match("hunter", "warrior", seed=123)
     hunter = match.state[match.players[0]]
 
-    submit_turn(match, "summon_saber", _DEF_PASS)
+    submit_turn(match, "call_saber", _DEF_PASS)
     saber = _active_pet(hunter, "frostsaber")
     assert saber is not None, "Frostsaber should summon"
+    assert any("calls for Frostsaber." in line for line in _turn_lines(match, 1)), "Hunter summon log should say calls for Frostsaber"
     saber.hp = 12
 
-    submit_turn(match, "summon_serpent", _DEF_PASS)
+    submit_turn(match, "call_serpent", _DEF_PASS)
     assert _active_pet(hunter, "frostsaber") is None, "Frostsaber should be dismissed when serpent is summoned"
     assert hunter.hunter_pet_memory.get("frostsaber") == 12, "Dismissed Frostsaber HP should be remembered"
+    assert any("calls for Emerald Serpent." in line for line in _turn_lines(match, 2)), "Hunter summon log should say calls for Emerald Serpent"
 
-    hunter.cooldowns.pop("summon_saber", None)
-    submit_turn(match, "summon_saber", _DEF_PASS)
+    hunter.cooldowns.pop("call_saber", None)
+    submit_turn(match, "call_saber", _DEF_PASS)
     saber = _active_pet(hunter, "frostsaber")
     assert saber is not None and saber.hp == 12, "Re-summoned Frostsaber should return with remembered HP"
     return True
@@ -563,7 +576,7 @@ def scenario_hunter_pet_summon_swap_memory() -> bool:
 def scenario_hunter_only_one_active_pet() -> bool:
     match = make_match("hunter", "warrior", seed=123)
     hunter = match.state[match.players[0]]
-    run_turns(match, [("summon_saber", _DEF_PASS), ("summon_boar", _DEF_PASS)])
+    run_turns(match, [("call_saber", _DEF_PASS), ("call_boar", _DEF_PASS)])
     active_templates = sorted(pet.template_id for pet in hunter.pets.values())
     assert active_templates == ["barrens_boar"], "Hunter should have exactly one active pet at a time"
     assert hunter.hunter_pet_memory.get("frostsaber", 0) > 0, "Dismissed saber HP should be stored"
@@ -677,7 +690,7 @@ def scenario_hunter_aimed_shot_raptor_pet_special() -> bool:
     hunter = match.state[match.players[0]]
     enemy = match.state[match.players[1]]
     enemy.res.hp = enemy.res.hp_max = 999
-    run_turns(match, [("summon_saber", _DEF_PASS)])
+    run_turns(match, [("call_saber", _DEF_PASS)])
 
     while not _has_effect(hunter, "raptor_strike_proc"):
         submit_turn(match, "aimed_shot", _DEF_PASS)
@@ -698,7 +711,7 @@ def scenario_hunter_boar_redirect() -> bool:
     hunter_sid, warrior_sid = match.players
     hunter = match.state[hunter_sid]
     warrior = match.state[warrior_sid]
-    run_turns(match, [("summon_boar", _DEF_PASS)])
+    run_turns(match, [("call_boar", _DEF_PASS)])
     boar = _active_pet(hunter, "barrens_boar")
     assert boar is not None, "Boar should be active"
 
@@ -726,7 +739,7 @@ def scenario_hunter_boar_redirect() -> bool:
 def scenario_hunter_boar_redirect_same_turn_brace() -> bool:
     match = make_match("rogue", "hunter", seed=123)
     hunter = match.state[match.players[1]]
-    submit_turn(match, "shadow_blade", "summon_boar")
+    submit_turn(match, "shadow_blade", "call_boar")
     boar = _active_pet(hunter, "barrens_boar")
     assert boar is not None, "Boar should be active"
 
@@ -791,7 +804,7 @@ def scenario_hunter_disengage_uses_custom_miss_text() -> bool:
 def scenario_hunter_flare_logs_stealth_breaks() -> bool:
     match = make_match("hunter", "hunter", seed=123)
     enemy = match.state[match.players[1]]
-    submit_turn(match, _DEF_PASS, "summon_saber")
+    submit_turn(match, _DEF_PASS, "call_saber")
     enemy_pet = _active_pet(enemy, "frostsaber")
     assert enemy_pet is not None, "Enemy pet should be present for Flare reveal coverage"
     effects.apply_effect_by_id(enemy, "stealth", overrides={"duration": 2})
@@ -806,42 +819,130 @@ def scenario_hunter_flare_logs_stealth_breaks() -> bool:
     return True
 
 
-def scenario_hunter_pet_permanent_death() -> bool:
+def scenario_hunter_pet_permanent_death_resummon_blocked() -> bool:
     match = make_match("hunter", "warrior", seed=123)
     hunter = match.state[match.players[0]]
-    submit_turn(match, "summon_saber", _DEF_PASS)
+    submit_turn(match, "call_saber", _DEF_PASS)
     saber = _active_pet(hunter, "frostsaber")
     assert saber is not None
     saber.hp = 0
     resolver.cleanup_pets(match)
     assert hunter.dead_hunter_pets.get("frostsaber"), "Dead hunter pet should be marked permanently dead"
+    assert hunter.hunter_pet_memory.get("frostsaber") == 0, "Permanent pet death should zero remembered HP"
+    assert not any(pet.template_id == "frostsaber" for pet in hunter.pets.values()), "Dead Frostsaber should be removed from active pets"
 
     hunter.cooldowns.clear()
-    submit_turn(match, "summon_saber", _DEF_PASS)
+    pet_count_before = len(hunter.pets)
+    submit_turn(match, "call_saber", _DEF_PASS)
     assert _active_pet(hunter, "frostsaber") is None, "Permanently dead hunter pet should not be summoned again"
-    assert any("cannot be summoned again" in line for line in match.log), "Failure message should be logged"
+    assert len(hunter.pets) == pet_count_before, "Re-summon attempt should not create a replacement Frostsaber"
+    latest_turn = _turn_lines(match, match.turn)
+    assert any("Frostsaber has fallen and cannot be summoned again this match." in line for line in latest_turn), "Failure message should be logged"
     return True
 
 
-def scenario_hunter_dismissed_pet_drops_dots() -> bool:
+def scenario_hunter_dead_pet_type_does_not_block_other_pet_types() -> bool:
     match = make_match("hunter", "warrior", seed=123)
     hunter = match.state[match.players[0]]
-    submit_turn(match, "summon_saber", _DEF_PASS)
+    submit_turn(match, "call_saber", _DEF_PASS)
+    saber = _active_pet(hunter, "frostsaber")
+    assert saber is not None, "Frostsaber should summon before testing permanent death lockout"
+
+    saber.hp = 0
+    resolver.cleanup_pets(match)
+    assert hunter.dead_hunter_pets.get("frostsaber"), "Frostsaber should be marked permanently dead"
+
+    hunter.cooldowns.clear()
+    submit_turn(match, "call_saber", _DEF_PASS)
+    assert _active_pet(hunter, "frostsaber") is None, "Dead pet type should stay blocked"
+
+    hunter.cooldowns.clear()
+    submit_turn(match, "call_serpent", _DEF_PASS)
+    serpent = _active_pet(hunter, "emerald_serpent")
+    assert serpent is not None, "Other living pet types should still summon normally"
+    assert not hunter.dead_hunter_pets.get("emerald_serpent"), "Living pet types should not be marked dead when another pet dies"
+    return True
+
+
+def scenario_hunter_dismissed_pet_clears_runtime_effects() -> bool:
+    match = make_match("hunter", "warrior", seed=123)
+    hunter = match.state[match.players[0]]
+    submit_turn(match, "call_saber", _DEF_PASS)
     saber = _active_pet(hunter, "frostsaber")
     assert saber is not None
     effects.apply_effect_by_id(saber, "wildfire_burn", overrides={"duration": 2, "tick_damage": 4, "source_sid": match.players[1]})
     remembered_hp = saber.hp
 
-    submit_turn(match, "summon_serpent", _DEF_PASS)
+    submit_turn(match, "call_serpent", _DEF_PASS)
     assert hunter.hunter_pet_memory.get("frostsaber") == remembered_hp, "Dismiss should store current HP before removing the pet"
+    dismissed_turn = match.turn
     run_turns(match, [(_DEF_PASS, _DEF_PASS), (_DEF_PASS, _DEF_PASS)])
     assert hunter.hunter_pet_memory.get("frostsaber") == remembered_hp, "Dismissed pet should not keep taking DoT ticks"
+    idle_turn_logs = _turn_lines(match, dismissed_turn + 1) + _turn_lines(match, dismissed_turn + 2)
+    assert not any("Frostsaber" in line for line in idle_turn_logs), "Dismissed pet should not keep acting or logging runtime effects while inactive"
 
-    hunter.cooldowns.pop("summon_saber", None)
-    submit_turn(match, "summon_saber", _DEF_PASS)
+    hunter.cooldowns.pop("call_saber", None)
+    submit_turn(match, "call_saber", _DEF_PASS)
     saber_returned = _active_pet(hunter, "frostsaber")
     assert saber_returned is not None and saber_returned.hp == remembered_hp, "Re-summoned pet should return at remembered HP"
     assert not saber_returned.effects, "Dismissed pet should return without old DoT effects"
+    return True
+
+
+def scenario_hunter_multi_pet_memory_swap_cycle() -> bool:
+    match = make_match("hunter", "warrior", seed=123)
+    hunter = match.state[match.players[0]]
+
+    submit_turn(match, "call_saber", _DEF_PASS)
+    saber = _active_pet(hunter, "frostsaber")
+    assert saber is not None, "Frostsaber should summon"
+    saber.hp = 12
+
+    hunter.cooldowns.clear()
+    submit_turn(match, "call_serpent", _DEF_PASS)
+    serpent = _active_pet(hunter, "emerald_serpent")
+    assert serpent is not None, "Emerald Serpent should summon"
+    assert hunter.hunter_pet_memory.get("frostsaber") == 12, "Frostsaber HP should be remembered on dismissal"
+    serpent.hp = 9
+
+    hunter.cooldowns.clear()
+    submit_turn(match, "call_boar", _DEF_PASS)
+    boar = _active_pet(hunter, "barrens_boar")
+    assert boar is not None, "Barrens Boar should summon"
+    assert hunter.hunter_pet_memory.get("emerald_serpent") == 9, "Serpent HP should be remembered on dismissal"
+    boar.hp = 7
+
+    hunter.cooldowns.clear()
+    submit_turn(match, "call_saber", _DEF_PASS)
+    saber_returned = _active_pet(hunter, "frostsaber")
+    assert saber_returned is not None and saber_returned.hp == 12, "Frostsaber should return at its remembered HP after multiple swaps"
+    assert hunter.hunter_pet_memory.get("barrens_boar") == 7, "Boar HP should be remembered when it is dismissed"
+    assert sorted(pet.template_id for pet in hunter.pets.values()) == ["frostsaber"], "Only one Hunter pet should remain active after repeated swaps"
+    return True
+
+
+def scenario_hunter_redirect_removed_on_pet_dismiss() -> bool:
+    match = make_match("hunter", "warrior", seed=123)
+    hunter_sid, warrior_sid = match.players
+    hunter = match.state[hunter_sid]
+    warrior = match.state[warrior_sid]
+
+    submit_turn(match, "call_boar", _DEF_PASS)
+    boar = _active_pet(hunter, "barrens_boar")
+    assert boar is not None, "Boar should summon before redirect coverage"
+    assert any("calls for Barrens Boar." in line for line in _turn_lines(match, 1)), "Hunter summon log should say calls for Barrens Boar"
+
+    effects.apply_effect_by_id(hunter, "blocking_defence", overrides={"duration": 1, "redirect_to_pet_id": boar.id})
+    hunter.cooldowns.clear()
+    submit_turn(match, "call_serpent", _DEF_PASS)
+    assert _active_pet(hunter, "barrens_boar") is None, "Boar should be dismissed when another companion is summoned"
+
+    warrior.res.rage = warrior.res.rage_max
+    hunter_hp_before = hunter.res.hp
+    submit_turn(match, _DEF_PASS, "mortal_strike")
+    latest_turn = _turn_lines(match, match.turn)
+    assert hunter.res.hp < hunter_hp_before, "Dismissed boar should no longer intercept single-target attacks"
+    assert not any("Barrens Boar intercepts Mortal Strike" in line for line in latest_turn), "Dismissed boar should not produce redirect logs"
     return True
 
 
@@ -850,7 +951,7 @@ def scenario_hunter_serpent_special_respects_stealth() -> bool:
     hunter = match.state[match.players[0]]
     rogue = match.state[match.players[1]]
 
-    submit_turn(match, "summon_serpent", _DEF_PASS)
+    submit_turn(match, "call_serpent", _DEF_PASS)
     hunter.pending_pet_command = "special"
     submit_turn(match, _DEF_PASS, "vanish")
 
@@ -865,7 +966,7 @@ def scenario_hunter_serpent_special_respects_stealth() -> bool:
 def scenario_pet_action_text_persists_on_miss() -> bool:
     hunter_match = make_match("hunter", "rogue", seed=123)
     hunter = hunter_match.state[hunter_match.players[0]]
-    submit_turn(hunter_match, "summon_serpent", _DEF_PASS)
+    submit_turn(hunter_match, "call_serpent", _DEF_PASS)
     hunter.pending_pet_command = "special"
     submit_turn(hunter_match, _DEF_PASS, "vanish")
     latest_hunter_turn = hunter_match.log[hunter_match.log.index("Turn 2") + 1:]
@@ -912,6 +1013,34 @@ def scenario_mindgames_still_allows_direct_damage_dots() -> bool:
     return True
 
 
+def scenario_invalid_class_rejected() -> bool:
+    match = MatchState(room_id="invalid-class", players=["p1_sid", "p2_sid"], phase="prep", seed=123)
+    match.picks["p1_sid"] = {"class_id": "warlock"}
+    match.picks["p2_sid"] = {"class_id": "adventurer", "items": {"weapon": "dagger"}}
+
+    try:
+        apply_prep_build(match)
+    except ValueError as exc:
+        assert "unknown class_id 'adventurer'" in str(exc), "invalid class error should mention the rejected class id"
+    else:
+        raise AssertionError("apply_prep_build should reject unknown class ids instead of creating a fake class")
+
+    assert not match.state, "invalid prep build should not create partial player state"
+    return True
+
+
+def scenario_valid_class_id_is_normalized_before_build() -> bool:
+    match = MatchState(room_id="normalized-class", players=["p1_sid", "p2_sid"], phase="prep", seed=123)
+    match.picks["p1_sid"] = {"class_id": " WarLock "}
+    match.picks["p2_sid"] = {"class_id": "warrior"}
+
+    apply_prep_build(match)
+
+    assert match.state["p1_sid"].build.class_id == "warlock", "valid class ids should be normalized before combat"
+    assert match.state["p1_sid"].res.hp == match.state["p1_sid"].res.hp_max, "normalized class should still build a valid player state"
+    return True
+
+
 SCENARIOS = [
     scenario_mindgames_lay_on_hands,
     scenario_mass_dispel_selective_removal,
@@ -941,11 +1070,16 @@ SCENARIOS = [
     scenario_hunter_freezing_trap_respects_active_cloak,
     scenario_hunter_disengage_uses_custom_miss_text,
     scenario_hunter_flare_logs_stealth_breaks,
-    scenario_hunter_pet_permanent_death,
-    scenario_hunter_dismissed_pet_drops_dots,
+    scenario_hunter_pet_permanent_death_resummon_blocked,
+    scenario_hunter_dead_pet_type_does_not_block_other_pet_types,
+    scenario_hunter_dismissed_pet_clears_runtime_effects,
+    scenario_hunter_multi_pet_memory_swap_cycle,
+    scenario_hunter_redirect_removed_on_pet_dismiss,
     scenario_hunter_serpent_special_respects_stealth,
     scenario_pet_action_text_persists_on_miss,
     scenario_mindgames_still_allows_direct_damage_dots,
+    scenario_invalid_class_rejected,
+    scenario_valid_class_id_is_normalized_before_build,
 ]
 
 

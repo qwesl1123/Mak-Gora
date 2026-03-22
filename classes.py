@@ -1,4 +1,7 @@
 # games/duel/content/classes.py
+from typing import Optional
+
+
 CLASSES = {
     "warrior": {
         "name": "Warrior",
@@ -57,3 +60,24 @@ CLASSES = {
         "resource_display": {"primary": {"id": "mp", "label": "Mana", "color": "var(--mana-blue)"}},
     },
 }
+
+
+def normalize_class_id(class_id: object) -> Optional[str]:
+    """Return a canonical class id when the selection is valid."""
+    if not isinstance(class_id, str):
+        return None
+    normalized = class_id.strip().lower()
+    if normalized in CLASSES:
+        return normalized
+    return None
+
+
+def is_valid_class_id(class_id: object) -> bool:
+    return normalize_class_id(class_id) is not None
+
+
+def class_display_name(class_id: object, default: str = "Unknown Class") -> str:
+    normalized = normalize_class_id(class_id)
+    if not normalized:
+        return default
+    return CLASSES[normalized].get("name", default)

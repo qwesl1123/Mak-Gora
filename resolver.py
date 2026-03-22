@@ -5,7 +5,7 @@ from .models import MatchState, PlayerState, PlayerBuild, Resources, PetState
 from .dice import rng_for, roll
 from .rules import base_damage, mitigate, hit_chance, clamp
 from ..content.abilities import ABILITIES
-from ..content.classes import CLASSES
+from ..content.classes import CLASSES, class_display_name, normalize_class_id
 from ..content.items import ITEMS
 from ..content.balance import DEFAULTS, CAPS
 from ..content.pets import PETS
@@ -72,12 +72,27 @@ def cooldown_remaining(ps: PlayerState, ability_id: str, ability: Dict[str, Any]
         return 0
     return min(slots) if slots else 0
 
+
+def validated_class_id(class_id: object) -> str:
+    normalized = normalize_class_id(class_id)
+    if not normalized:
+        attempted = str(class_id).strip() if class_id is not None else ""
+        if attempted:
+            raise ValueError(f"unknown class_id '{attempted}'")
+        raise ValueError("missing class_id")
+    return normalized
+
+
+def validated_class_data(class_id: object) -> tuple[str, Dict[str, Any]]:
+    normalized = validated_class_id(class_id)
+    return normalized, CLASSES[normalized]
+
 def apply_prep_build(match: MatchState) -> None:
     """
     Called once when both players have selected class + items.
     Creates PlayerState.res/stats from content + item modifiers.
     """
-    match.combat_totals = {sid: {"damage": 0, "healing": 0} for sid in match.players}
+    prepared_builds: Dict[str, tuple[PlayerBuild, Dict[str, Any]]] = {}
     for sid in match.players:
         pick = match.picks.get(sid)
         if isinstance(pick, PlayerBuild):
@@ -87,7 +102,13 @@ def apply_prep_build(match: MatchState) -> None:
             build = PlayerBuild(class_id=payload.get("class_id"))
             build.items.update(payload.get("items", {}))
 
-        class_data = CLASSES.get(build.class_id, next(iter(CLASSES.values())))
+        build.class_id, class_data = validated_class_data(build.class_id)
+        prepared_builds[sid] = (build, class_data)
+
+    match.combat_totals = {sid: {"damage": 0, "healing": 0} for sid in match.players}
+    match.state = {}
+    for sid in match.players:
+        build, class_data = prepared_builds[sid]
         stats = dict(class_data["base_stats"])
         stats.setdefault("int", 0)
         
@@ -479,7 +500,7 @@ def resolve_turn(match: MatchState) -> None:
                 source_name=ability.get("name") or "Shield",
             )
 
-        class_name = (actor.build.class_id or "Actor").title()
+        class_name = class_display_name(actor.build.class_id, default="Actor")
         source_name = ability.get("name") or "ability"
         log_parts.append(f"{class_name} sacrifices {sacrificed_hp} HP and gains {absorb_value} absorb from {source_name}.")
 
@@ -836,16 +857,20 @@ def resolve_turn(match: MatchState) -> None:
                 return {"damage": 0, "healing": 0, "log": summon_error, "ability_id": ability_id}
             max_count = int(template.get("max_count", 1) or 1)
             current = len([p for p in actor.pets.values() if p.template_id == summon_pet_id])
+            summon_log = ability.get("summon_log")
             if refreshed:
                 log_parts.append(f"refreshes {template.get('name', summon_pet_id.title())}.")
             elif max_count > 1:
                 log_parts.append(f"summons a {template.get('name', summon_pet_id.title())} ({current}/{max_count}).")
             elif summoned_pet is not None:
-                remembered = actor.hunter_pet_memory.get(summon_pet_id)
-                if remembered is not None:
-                    log_parts.append(f"summons {template.get('name', summon_pet_id.title())} with {summoned_pet.hp}/{summoned_pet.hp_max} HP.")
+                if summon_log:
+                    log_parts.append(str(summon_log))
                 else:
-                    log_parts.append(f"summons {template.get('name', summon_pet_id.title())}.")
+                    remembered = actor.hunter_pet_memory.get(summon_pet_id)
+                    if remembered is not None:
+                        log_parts.append(f"summons {template.get('name', summon_pet_id.title())} with {summoned_pet.hp}/{summoned_pet.hp_max} HP.")
+                    else:
+                        log_parts.append(f"summons {template.get('name', summon_pet_id.title())}.")
             set_cooldown(actor, ability_id, ability)
             remove_effect(actor, summon_pet_id)
             return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
@@ -1703,10 +1728,13 @@ def resolve_turn(match: MatchState) -> None:
         if summon_pet_id:
             _, refreshed, summon_error = summon_pet_from_template(actor, summon_pet_id)
             template = PETS.get(summon_pet_id, {})
+            summon_log = ability.get("summon_log")
             if summon_error:
                 log_parts.append(summon_error)
             elif refreshed:
                 log_parts.append(f"refreshes {template.get('name', summon_pet_id.title())}.")
+            elif summon_log:
+                log_parts.append(str(summon_log))
             remove_effect(actor, summon_pet_id)
 
         apply_hp_sacrifice_absorb(actor, ability, log_parts)
