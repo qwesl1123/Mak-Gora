@@ -243,6 +243,13 @@ def _turn_lines(match, turn_number: int) -> List[str]:
     return match.log[start:end]
 
 
+_BREAK_ON_DAMAGE_CC_CASES = (
+    ("ring_of_ice_freeze", "Ring of Ice", "frozen"),
+    ("freezing_trap_freeze", "Freezing Trap", "frozen"),
+    ("feared", "Fear", "feared"),
+)
+
+
 def scenario_mindgames_lay_on_hands() -> bool:
     match = make_match("priest", "paladin", seed=123)
     pal = match.state[match.players[1]]
@@ -641,7 +648,9 @@ def scenario_hunter_wildfire_arcane_proc() -> bool:
     hunter = match.state[match.players[0]]
 
     submit_turn(match, "wildfire_bomb", _DEF_PASS)
-    assert _has_effect(hunter, "arcane_shot_proc"), "Wildfire Bomb should grant Arcane Shot proc"
+    arcane_proc = next((fx for fx in hunter.effects if fx.get("id") == "arcane_shot_proc"), None)
+    assert arcane_proc is not None, "Wildfire Bomb should grant Arcane Shot proc"
+    assert int(arcane_proc.get("duration", 0) or 0) == 1, "Arcane Shot proc should be available for the next turn only after the proc turn resolves"
     proc_line = f"{match.players[0][:5]} can use Arcane Shot!"
     assert proc_line in match.log, "Wildfire Bomb proc log should use the actor sid token so snapshots can render Hunter(you)"
     assert not any("Wildfire Bomb. can use Arcane Shot!" in line or "Wildfire Bomb. Hunter can use Arcane Shot!" in line for line in match.log), "Wildfire Bomb action line should not embed the proc sentence"
@@ -652,6 +661,8 @@ def scenario_hunter_wildfire_arcane_proc() -> bool:
     match2 = make_match("hunter", "warrior", seed=123)
     hunter2 = match2.state[match2.players[0]]
     submit_turn(match2, "wildfire_bomb", _DEF_PASS)
+    arcane_proc_2 = next((fx for fx in hunter2.effects if fx.get("id") == "arcane_shot_proc"), None)
+    assert arcane_proc_2 is not None and int(arcane_proc_2.get("duration", 0) or 0) == 1, "Unused Arcane Shot proc should still be present immediately after the proc turn"
     submit_turn(match2, _DEF_PASS, _DEF_PASS)
     assert not _has_effect(hunter2, "arcane_shot_proc"), "Arcane Shot proc should expire if unused next turn"
     return True
@@ -756,7 +767,9 @@ def scenario_hunter_freezing_trap_breaks_on_damage() -> bool:
     match = make_match("hunter", "warrior", seed=123)
     warrior = match.state[match.players[1]]
     submit_turn(match, "freezing_trap", _DEF_PASS)
-    assert _has_effect(warrior, "freezing_trap_freeze"), "Freezing Trap should apply freeze"
+    freeze = next((fx for fx in warrior.effects if fx.get("id") == "freezing_trap_freeze"), None)
+    assert freeze is not None, "Freezing Trap should apply freeze"
+    assert int(freeze.get("duration", 0) or 0) == 1, "Freezing Trap should leave exactly one locked turn after the application turn resolves"
     submit_turn(match, "aimed_shot", _DEF_PASS)
     assert not _has_effect(warrior, "freezing_trap_freeze"), "Any damage should break Freezing Trap freeze"
     return True
@@ -814,12 +827,11 @@ def scenario_ring_of_ice_freezes_and_breaks_on_damage() -> bool:
     freeze = next((fx for fx in warrior.effects if fx.get("id") == "ring_of_ice_freeze"), None)
     assert freeze is not None, "Ring of Ice should apply its freeze effect"
     assert freeze.get("cant_act_reason") == "frozen", "Ring of Ice should use the frozen action-lock reason"
-
-    submit_turn(match, _DEF_PASS, "basic_attack")
-    latest_turn = _turn_lines(match, 2)
-    assert any("is frozen and cannot act" in line for line in latest_turn), "Frozen targets should be unable to act"
+    assert int(freeze.get("duration", 0) or 0) == 1, "Ring of Ice should leave exactly one locked turn after the application turn resolves"
 
     submit_turn(match, "fireball", _DEF_PASS)
+    latest_turn = _turn_lines(match, 2)
+    assert any("deals" in line or "damage" in line for line in latest_turn), "Ring of Ice regression should verify an actual damaging hit lands on the frozen target"
     assert not _has_effect(warrior, "ring_of_ice_freeze"), "Any damage should break Ring of Ice freeze"
     return True
 
@@ -832,12 +844,300 @@ def scenario_fear_applies_feared_and_breaks_on_damage() -> bool:
     assert _has_effect(warrior, "feared"), "Fear should apply the feared effect"
     assert not _has_effect(warrior, "stunned"), "Fear should not apply the stunned effect"
 
-    submit_turn(match, _DEF_PASS, "basic_attack")
-    latest_turn = _turn_lines(match, 2)
-    assert any("is feared and cannot act" in line for line in latest_turn), "Feared targets should be unable to act"
-
     submit_turn(match, "drain_life", _DEF_PASS)
+    latest_turn = _turn_lines(match, 2)
+    assert any("deals" in line or "damage" in line for line in latest_turn), "Fear regression should verify an actual damaging hit lands on the feared target"
     assert not _has_effect(warrior, "feared"), "Any damage should break Fear"
+    return True
+
+
+def scenario_break_on_damage_cc_no_damage_turn_preserves_lockout() -> bool:
+    for effect_id, effect_name, reason in _BREAK_ON_DAMAGE_CC_CASES:
+        match = make_match("hunter", "warrior", seed=123)
+        hunter = match.state[match.players[0]]
+        effects.apply_effect_by_id(hunter, effect_id, overrides={"duration": 2})
+
+        submit_turn(match, "basic_attack", _DEF_PASS)
+
+        latest_turn = _turn_lines(match, 1)
+        assert any(f"is {reason} and cannot act" in line for line in latest_turn), f"{effect_name} should keep the target locked on the no-damage turn after application"
+    return True
+
+
+def scenario_break_on_damage_cc_dot_tick_breaks() -> bool:
+    for effect_id, effect_name, _ in _BREAK_ON_DAMAGE_CC_CASES:
+        match = make_match("hunter", "warrior", seed=123)
+        hunter = match.state[match.players[0]]
+        warrior_sid = match.players[1]
+
+        effects.apply_effect_by_id(hunter, effect_id, overrides={"duration": 2})
+        effects.apply_effect_by_id(hunter, "wildfire_burn", overrides={"duration": 2, "tick_damage": 3, "source_sid": warrior_sid})
+        hp_before = hunter.res.hp
+
+        submit_turn(match, _DEF_PASS, _DEF_PASS)
+
+        assert hunter.res.hp < hp_before, f"{effect_name} should break from incoming DoT damage"
+        assert not _has_effect(hunter, effect_id), f"{effect_name} should be removed after a damaging DoT tick"
+    return True
+
+
+def scenario_break_on_damage_cc_aoe_breaks() -> bool:
+    for effect_id, effect_name, _ in _BREAK_ON_DAMAGE_CC_CASES:
+        match = make_match("hunter", "warrior", seed=123)
+        hunter = match.state[match.players[0]]
+        warrior = match.state[match.players[1]]
+
+        effects.apply_effect_by_id(hunter, effect_id, overrides={"duration": 2})
+        hp_before = hunter.res.hp
+        warrior.res.rage = warrior.res.rage_max
+
+        submit_turn(match, _DEF_PASS, "dragon_roar")
+
+        assert hunter.res.hp < hp_before, f"{effect_name} should break from AoE damage"
+        assert not _has_effect(hunter, effect_id), f"{effect_name} should be removed after AoE damage lands"
+    return True
+
+
+def scenario_break_on_damage_cc_pet_damage_breaks() -> bool:
+    for effect_id, effect_name, _ in _BREAK_ON_DAMAGE_CC_CASES:
+        match = make_match("hunter", "warrior", seed=123)
+        hunter = match.state[match.players[0]]
+        warrior = match.state[match.players[1]]
+
+        submit_turn(match, "call_saber", _DEF_PASS)
+        effects.apply_effect_by_id(warrior, effect_id, overrides={"duration": 2})
+        hp_before = warrior.res.hp
+
+        submit_turn(match, _DEF_PASS, _DEF_PASS)
+
+        assert warrior.res.hp < hp_before, f"{effect_name} should break from Hunter pet damage"
+        assert not _has_effect(warrior, effect_id), f"{effect_name} should be removed after Hunter pet damage lands"
+    return True
+
+
+def scenario_break_on_damage_cc_persists_after_same_turn_mutual_freeze() -> bool:
+    match = make_match("mage", "hunter", seed=123)
+    mage = match.state[match.players[0]]
+    hunter = match.state[match.players[1]]
+
+    submit_turn(match, "ring_of_ice", "freezing_trap")
+    latest_turn = _turn_lines(match, 1)
+    assert any("uses their bare hands to cast Ring of Ice." in line for line in latest_turn), "Ring of Ice should still resolve on the mutual-CC turn"
+    assert any("uses their bare hands to cast Freezing Trap." in line for line in latest_turn), "Freezing Trap should still resolve on the mutual-CC turn"
+    assert _has_effect(mage, "freezing_trap_freeze"), "Freezing Trap should remain active after same-turn mutual CC"
+    assert _has_effect(hunter, "ring_of_ice_freeze"), "Ring of Ice should remain active after same-turn mutual CC"
+    assert int(next(fx for fx in mage.effects if fx.get("id") == "freezing_trap_freeze").get("duration", 0) or 0) == 1, "Freezing Trap should carry its remaining duration into the next turn after same-turn mutual CC"
+    assert int(next(fx for fx in hunter.effects if fx.get("id") == "ring_of_ice_freeze").get("duration", 0) or 0) == 1, "Ring of Ice should carry its remaining duration into the next turn after same-turn mutual CC"
+
+    submit_turn(match, "fireball", "aimed_shot")
+    latest_turn = _turn_lines(match, 2)
+    assert any("tries to use Fireball but is frozen and cannot act." in line for line in latest_turn), "Ring of Ice / Freezing Trap mutual CC should keep the Mage frozen on the next turn"
+    assert any("tries to use Aimed Shot but is frozen and cannot act." in line for line in latest_turn), "Ring of Ice / Freezing Trap mutual CC should keep the Hunter frozen on the next turn"
+    return True
+
+
+def scenario_break_on_damage_cc_persists_after_same_turn_fear_vs_freeze() -> bool:
+    match = make_match("warlock", "hunter", seed=123)
+    warlock = match.state[match.players[0]]
+    hunter = match.state[match.players[1]]
+
+    submit_turn(match, "fear", "freezing_trap")
+    latest_turn = _turn_lines(match, 1)
+    assert any("uses their bare hands to cast Fear." in line for line in latest_turn), "Fear should still resolve on the mutual-CC turn"
+    assert any("uses their bare hands to cast Freezing Trap." in line for line in latest_turn), "Freezing Trap should still resolve on the mutual-CC turn"
+    assert _has_effect(warlock, "freezing_trap_freeze"), "Freezing Trap should remain active after same-turn mutual CC"
+    assert _has_effect(hunter, "feared"), "Fear should remain active after same-turn mutual CC"
+    assert int(next(fx for fx in warlock.effects if fx.get("id") == "freezing_trap_freeze").get("duration", 0) or 0) == 1, "Freezing Trap should carry its remaining duration into the next turn after same-turn mutual CC"
+    assert int(next(fx for fx in hunter.effects if fx.get("id") == "feared").get("duration", 0) or 0) == 1, "Fear should carry its remaining duration into the next turn after same-turn mutual CC"
+
+    submit_turn(match, "drain_life", "aimed_shot")
+    latest_turn = _turn_lines(match, 2)
+    assert any("tries to use Drain Life but is frozen and cannot act." in line for line in latest_turn), "Freezing Trap should keep the Warlock frozen on the next turn"
+    assert any("tries to use Aimed Shot but is feared and cannot act." in line for line in latest_turn), "Fear should keep the Hunter feared on the next turn"
+    return True
+
+
+def scenario_break_on_damage_logs_use_clean_wording_and_bottom_order() -> bool:
+    match = make_match("mage", "hunter", seed=123)
+
+    submit_turn(match, "ring_of_ice", _DEF_PASS)
+    submit_turn(match, "fireball", _DEF_PASS)
+    latest_turn = _turn_lines(match, 2)
+    assert latest_turn[-1] == f"Ring of Ice on {match.players[1][:5]} breaks on damage.", "Ring of Ice break log should use clean wording and appear at the bottom of the turn"
+
+    match = make_match("warlock", "hunter", seed=123)
+    submit_turn(match, "fear", _DEF_PASS)
+    submit_turn(match, "drain_life", _DEF_PASS)
+    latest_turn = _turn_lines(match, 2)
+    assert latest_turn[-1] == f"Fear on {match.players[1][:5]} breaks on damage.", "Fear break log should use clean wording and appear at the bottom of the turn"
+
+    match = make_match("hunter", "mage", seed=123)
+    submit_turn(match, "freezing_trap", _DEF_PASS)
+    submit_turn(match, "basic_attack", _DEF_PASS)
+    latest_turn = _turn_lines(match, 2)
+    assert latest_turn[-1] == f"Freezing Trap on {match.players[1][:5]} breaks on damage.", "Freezing Trap break log should use clean wording and appear at the bottom of the turn"
+    return True
+
+
+def scenario_redirected_damage_does_not_break_frozen() -> bool:
+    match = make_match("hunter", "warrior", seed=123)
+    hunter_sid, warrior_sid = match.players
+    hunter = match.state[hunter_sid]
+    warrior = match.state[warrior_sid]
+
+    submit_turn(match, "call_boar", _DEF_PASS)
+    boar = _active_pet(hunter, "barrens_boar")
+    assert boar is not None, "Barrens Boar should be active for redirect coverage"
+
+    effects.apply_effect_by_id(hunter, "ring_of_ice_freeze", overrides={"duration": 2})
+    effects.apply_effect_by_id(hunter, "blocking_defence", overrides={"duration": 1, "redirect_to_pet_id": boar.id})
+    hunter_hp_before = hunter.res.hp
+    boar_hp_before = boar.hp
+    warrior.res.rage = warrior.res.rage_max
+
+    submit_turn(match, _DEF_PASS, "mortal_strike")
+
+    assert hunter.res.hp == hunter_hp_before, "Redirected single-target damage should not count as damage taken by the frozen Hunter"
+    assert boar.hp < boar_hp_before, "Barrens Boar should absorb the redirected single-target hit"
+    assert _has_effect(hunter, "ring_of_ice_freeze"), "Frozen should remain when the champion itself takes no damage"
+    return True
+
+
+def scenario_redirected_damage_does_not_break_feared() -> bool:
+    match = make_match("hunter", "warrior", seed=123)
+    hunter_sid, warrior_sid = match.players
+    hunter = match.state[hunter_sid]
+    warrior = match.state[warrior_sid]
+
+    submit_turn(match, "call_boar", _DEF_PASS)
+    boar = _active_pet(hunter, "barrens_boar")
+    assert boar is not None, "Barrens Boar should be active for redirect coverage"
+
+    effects.apply_effect_by_id(hunter, "feared", overrides={"duration": 2})
+    effects.apply_effect_by_id(hunter, "blocking_defence", overrides={"duration": 1, "redirect_to_pet_id": boar.id})
+    hunter_hp_before = hunter.res.hp
+    boar_hp_before = boar.hp
+    warrior.res.rage = warrior.res.rage_max
+
+    submit_turn(match, _DEF_PASS, "mortal_strike")
+
+    assert hunter.res.hp == hunter_hp_before, "Redirected single-target damage should not count as damage taken by the feared Hunter"
+    assert boar.hp < boar_hp_before, "Barrens Boar should absorb the redirected single-target hit"
+    assert _has_effect(hunter, "feared"), "Fear should remain when the champion itself takes no damage"
+    return True
+
+
+def scenario_aoe_bypasses_redirect_and_breaks_frozen() -> bool:
+    match = make_match("hunter", "warrior", seed=123)
+    hunter_sid, warrior_sid = match.players
+    hunter = match.state[hunter_sid]
+    warrior = match.state[warrior_sid]
+
+    submit_turn(match, "call_boar", _DEF_PASS)
+    boar = _active_pet(hunter, "barrens_boar")
+    assert boar is not None, "Barrens Boar should be active for redirect coverage"
+
+    effects.apply_effect_by_id(hunter, "ring_of_ice_freeze", overrides={"duration": 2})
+    effects.apply_effect_by_id(hunter, "blocking_defence", overrides={"duration": 1, "redirect_to_pet_id": boar.id})
+    hunter_hp_before = hunter.res.hp
+    warrior.res.rage = warrior.res.rage_max
+
+    submit_turn(match, _DEF_PASS, "dragon_roar")
+
+    assert hunter.res.hp < hunter_hp_before, "AoE damage should still hit the frozen Hunter directly through redirect"
+    assert not _has_effect(hunter, "ring_of_ice_freeze"), "Frozen should break when AoE damage reaches the champion directly"
+    return True
+
+
+def scenario_dot_bypasses_redirect_and_breaks_feared() -> bool:
+    match = make_match("hunter", "warrior", seed=123)
+    hunter_sid, warrior_sid = match.players
+    hunter = match.state[hunter_sid]
+
+    submit_turn(match, "call_boar", _DEF_PASS)
+    boar = _active_pet(hunter, "barrens_boar")
+    assert boar is not None, "Barrens Boar should be active for redirect coverage"
+
+    effects.apply_effect_by_id(hunter, "feared", overrides={"duration": 2})
+    effects.apply_effect_by_id(hunter, "blocking_defence", overrides={"duration": 1, "redirect_to_pet_id": boar.id})
+    effects.apply_effect_by_id(hunter, "wildfire_burn", overrides={"duration": 2, "tick_damage": 3, "source_sid": warrior_sid})
+    hunter_hp_before = hunter.res.hp
+
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+
+    assert hunter.res.hp < hunter_hp_before, "DoT damage should bypass redirect and still hurt the feared Hunter"
+    assert not _has_effect(hunter, "feared"), "Fear should break when a DoT ticks on the champion directly"
+    return True
+
+
+def scenario_proc_raptor_strike_expires_correctly() -> bool:
+    match = make_match("hunter", "warrior", seed=1)
+    hunter = match.state[match.players[0]]
+    enemy = match.state[match.players[1]]
+    enemy.res.hp = enemy.res.hp_max = 999
+
+    while not _has_effect(hunter, "raptor_strike_proc"):
+        submit_turn(match, "aimed_shot", _DEF_PASS)
+        assert match.turn < 10, "Aimed Shot should proc within a few deterministic turns"
+
+    proc_effect = next((fx for fx in hunter.effects if fx.get("id") == "raptor_strike_proc"), None)
+    assert proc_effect is not None and int(proc_effect.get("duration", 0) or 0) == 1, "Raptor Strike proc should be available for the next turn only after the proc turn resolves"
+
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+    assert not _has_effect(hunter, "raptor_strike_proc"), "Raptor Strike proc should expire after being skipped for its one available follow-up turn"
+    return True
+
+
+def scenario_proc_pyroblast_window_correct() -> bool:
+    match = make_match("mage", "warrior", seed=123)
+    mage = match.state[match.players[0]]
+
+    submit_turn(match, "fire_blast", _DEF_PASS)
+    hot_streak = next((fx for fx in mage.effects if fx.get("id") == "hot_streak"), None)
+    assert hot_streak is not None and int(hot_streak.get("duration", 0) or 0) == 2, "Hot Streak should leave exactly the next 2 turns for Pyroblast after the proc turn"
+
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+    hot_streak = next((fx for fx in mage.effects if fx.get("id") == "hot_streak"), None)
+    assert hot_streak is not None and int(hot_streak.get("duration", 0) or 0) == 1, "Hot Streak should still allow Pyroblast on the second turn of the window"
+
+    submit_turn(match, "pyroblast", _DEF_PASS)
+    assert not _has_effect(mage, "hot_streak"), "Pyroblast should consume Hot Streak on the last valid turn of the window"
+
+    match2 = make_match("mage", "warrior", seed=123)
+    mage2 = match2.state[match2.players[0]]
+    submit_turn(match2, "fire_blast", _DEF_PASS)
+    submit_turn(match2, _DEF_PASS, _DEF_PASS)
+    submit_turn(match2, _DEF_PASS, _DEF_PASS)
+    assert not _has_effect(mage2, "hot_streak"), "Hot Streak should expire after the full Pyroblast window if Pyroblast is not used"
+    submit_turn(match2, "pyroblast", _DEF_PASS)
+    latest_turn = _turn_lines(match2, 4)
+    assert any("Pyroblast requires Hot Streak." in line for line in latest_turn), "Pyroblast should be rejected once the Hot Streak window has expired"
+    return True
+
+
+def scenario_negative_non_damage_effect_does_not_break_frozen() -> bool:
+    match = make_match("mage", "hunter", seed=123)
+    mage = match.state[match.players[0]]
+    effects.apply_effect_by_id(mage, "ring_of_ice_freeze", overrides={"duration": 2})
+    hp_before = mage.res.hp
+
+    submit_turn(match, _DEF_PASS, "flare")
+
+    assert mage.res.hp == hp_before, "Hostile non-damaging utility should not damage a frozen target"
+    assert _has_effect(mage, "ring_of_ice_freeze"), "Frozen should remain after a hostile non-damaging effect"
+    return True
+
+
+def scenario_negative_non_damage_effect_does_not_break_feared() -> bool:
+    match = make_match("warlock", "hunter", seed=123)
+    warlock = match.state[match.players[0]]
+    effects.apply_effect_by_id(warlock, "feared", overrides={"duration": 2})
+    hp_before = warlock.res.hp
+
+    submit_turn(match, _DEF_PASS, "flare")
+
+    assert warlock.res.hp == hp_before, "Hostile non-damaging utility should not damage a feared target"
+    assert _has_effect(warlock, "feared"), "Fear should remain after a hostile non-damaging effect"
     return True
 
 
@@ -931,6 +1231,7 @@ def scenario_hunter_dismissed_pet_clears_runtime_effects() -> bool:
     saber = _active_pet(hunter, "frostsaber")
     assert saber is not None
     effects.apply_effect_by_id(saber, "wildfire_burn", overrides={"duration": 2, "tick_damage": 4, "source_sid": match.players[1]})
+    effects.apply_effect_by_id(saber, "stealth", overrides={"duration": 2})
     remembered_hp = saber.hp
 
     submit_turn(match, "call_serpent", _DEF_PASS)
@@ -945,7 +1246,7 @@ def scenario_hunter_dismissed_pet_clears_runtime_effects() -> bool:
     submit_turn(match, "call_saber", _DEF_PASS)
     saber_returned = _active_pet(hunter, "frostsaber")
     assert saber_returned is not None and saber_returned.hp == remembered_hp, "Re-summoned pet should return at remembered HP"
-    assert not saber_returned.effects, "Dismissed pet should return without old DoT effects"
+    assert not saber_returned.effects, "Dismissed pet should return without old runtime effects"
     return True
 
 
@@ -978,6 +1279,16 @@ def scenario_hunter_multi_pet_memory_swap_cycle() -> bool:
     assert saber_returned is not None and saber_returned.hp == 12, "Frostsaber should return at its remembered HP after multiple swaps"
     assert hunter.hunter_pet_memory.get("barrens_boar") == 7, "Boar HP should be remembered when it is dismissed"
     assert sorted(pet.template_id for pet in hunter.pets.values()) == ["frostsaber"], "Only one Hunter pet should remain active after repeated swaps"
+
+    hunter.cooldowns.clear()
+    submit_turn(match, "call_serpent", _DEF_PASS)
+    serpent_returned = _active_pet(hunter, "emerald_serpent")
+    assert serpent_returned is not None and serpent_returned.hp >= 9, "Emerald Serpent should return with at least its remembered HP after multiple swaps before any same-turn self-healing"
+
+    hunter.cooldowns.clear()
+    submit_turn(match, "call_boar", _DEF_PASS)
+    boar_returned = _active_pet(hunter, "barrens_boar")
+    assert boar_returned is not None and boar_returned.hp == 7, "Barrens Boar should return at its remembered HP after multiple swaps"
     return True
 
 
@@ -1131,6 +1442,19 @@ SCENARIOS = [
     scenario_mage_hot_streak_lasts_three_turns,
     scenario_ring_of_ice_freezes_and_breaks_on_damage,
     scenario_fear_applies_feared_and_breaks_on_damage,
+    scenario_break_on_damage_cc_no_damage_turn_preserves_lockout,
+    scenario_break_on_damage_cc_dot_tick_breaks,
+    scenario_break_on_damage_cc_aoe_breaks,
+    scenario_break_on_damage_cc_pet_damage_breaks,
+    scenario_break_on_damage_cc_persists_after_same_turn_mutual_freeze,
+    scenario_break_on_damage_cc_persists_after_same_turn_fear_vs_freeze,
+    scenario_break_on_damage_logs_use_clean_wording_and_bottom_order,
+    scenario_redirected_damage_does_not_break_frozen,
+    scenario_redirected_damage_does_not_break_feared,
+    scenario_aoe_bypasses_redirect_and_breaks_frozen,
+    scenario_dot_bypasses_redirect_and_breaks_feared,
+    scenario_proc_raptor_strike_expires_correctly,
+    scenario_proc_pyroblast_window_correct,
     scenario_cc_status_display_metadata_is_exposed,
     scenario_hunter_disengage_uses_custom_miss_text,
     scenario_hunter_flare_logs_stealth_breaks,
@@ -1139,6 +1463,8 @@ SCENARIOS = [
     scenario_hunter_dismissed_pet_clears_runtime_effects,
     scenario_hunter_multi_pet_memory_swap_cycle,
     scenario_hunter_redirect_removed_on_pet_dismiss,
+    scenario_negative_non_damage_effect_does_not_break_frozen,
+    scenario_negative_non_damage_effect_does_not_break_feared,
     scenario_hunter_serpent_special_respects_stealth,
     scenario_pet_action_text_persists_on_miss,
     scenario_mindgames_still_allows_direct_damage_dots,

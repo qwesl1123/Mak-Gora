@@ -249,6 +249,11 @@ def resolve_turn(match: MatchState) -> None:
     def effect_name(effect_id: str) -> str:
         return effect_id.replace("_", " ").title()
 
+    def break_on_damage_effect_name(effect: Dict[str, Any]) -> str:
+        effect_id = effect.get("id")
+        template = effect_template(effect_id) if effect_id else {}
+        return str(effect.get("name") or template.get("name") or effect_name(effect_id or "effect"))
+
     def has_circle(ps: PlayerState) -> bool:
         return has_flag(ps, "demonic_circle") or has_effect(ps, "demonic_circle")
 
@@ -1578,6 +1583,7 @@ def resolve_turn(match: MatchState) -> None:
         sids[0]: build_immediate_resolution(sids[0], sids[1], a1),
         sids[1]: build_immediate_resolution(sids[1], sids[0], a2),
     }
+    start_of_turn_cant_act = {sid: cannot_act(match.state[sid]) for sid in sids}
 
     def apply_pre_resolution_defensive(actor_sid: str, ctx: Dict[str, Any]) -> None:
         if ctx.get("resolved"):
@@ -1641,6 +1647,8 @@ def resolve_turn(match: MatchState) -> None:
             flags = effect.get("flags", {}) or {}
             if has_effect(target, "cloak_of_shadows") and is_magical_harmful_effect(effect):
                 continue
+            if flags.get("break_on_damage"):
+                continue
             if flags.get("stunned") or effect.get("cant_act_reason"):
                 return True
         return False
@@ -1667,7 +1675,7 @@ def resolve_turn(match: MatchState) -> None:
         log_parts = [f"{actor_sid[:5]} uses {weapon_name} to cast {ability['name']}."]
         extra_logs: list[str] = []
 
-        actor_cannot_act = cannot_act(actor) or incoming_immediate_stun.get(actor_sid, False)
+        actor_cannot_act = start_of_turn_cant_act.get(actor_sid, False) or incoming_immediate_stun.get(actor_sid, False)
         if actor_cannot_act and not can_cast_while_cc(ability):
             reason = get_cant_act_reason(actor)
             if reason:
@@ -1858,6 +1866,8 @@ def resolve_turn(match: MatchState) -> None:
         return updated
 
     # Apply damage
+    deferred_break_on_damage_logs: list[str] = []
+
     def apply_damage(
         source: PlayerState,
         target: PlayerState | PetState,
@@ -1934,7 +1944,10 @@ def resolve_turn(match: MatchState) -> None:
                 if was_stealthed and not is_stealthed(target):
                     match.log.append(f"{target_sid[:5]} stealth broken by {source_ability_name}.")
                 for effect_id in broken_effects:
-                    match.log.append(f"{target_sid[:5]}'s {effect_name(effect_id)} breaks on damage.")
+                    effect = build_effect(effect_id)
+                    deferred_break_on_damage_logs.append(
+                        f"{break_on_damage_effect_name(effect)} on {target_sid[:5]} breaks on damage."
+                    )
                 if current_form_id(target) == "bear_form":
                     current = target.res.rage
                     cap = target.res.rage_max
@@ -1943,7 +1956,10 @@ def resolve_turn(match: MatchState) -> None:
                 target.hp -= total_remaining
                 broken_effects = break_effects_on_damage(target)
                 for effect_id in broken_effects:
-                    match.log.append(f"{target.name}'s {effect_name(effect_id)} breaks on damage.")
+                    effect = build_effect(effect_id)
+                    deferred_break_on_damage_logs.append(
+                        f"{break_on_damage_effect_name(effect)} on {target.name} breaks on damage."
+                    )
         return {
             "hp_damage": max(0, total_remaining),
             "absorbed": total_absorbed,
@@ -2420,6 +2436,8 @@ def resolve_turn(match: MatchState) -> None:
             ok, _ = can_pay_costs(ps, death_ability.get("cost", {}))
             if ok:
                 match.log.append(f"{sid[:5]} Shadow Word: Death Damage Doubled!")
+
+    match.log.extend(deferred_break_on_damage_logs)
 
     match.submitted.clear()
     match.turn += 1
