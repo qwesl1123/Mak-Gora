@@ -44,6 +44,24 @@ def _invalid_class_message(class_id):
     return "Choose a valid class before locking in."
 
 
+def _prep_selection_name(payload):
+    if not isinstance(payload, dict):
+        return None
+
+    normalized_class_id = normalize_class_id(payload.get("class_id"))
+    if normalized_class_id:
+        return class_display_name(normalized_class_id, default=None)
+
+    items_payload = payload.get("items", {})
+    if not isinstance(items_payload, dict):
+        return None
+
+    for item_id in items_payload.values():
+        if item_id and item_id in ITEMS:
+            return ITEMS[item_id]["name"]
+    return None
+
+
 def apply_item_fx_markup(text):
     if not isinstance(text, str):
         return text
@@ -355,17 +373,7 @@ def register_duel_socket_handlers(socketio):
         if items:
             merged["items"] = items
         match.picks[sid] = merged
-        selection_name = None
-        class_id = merged.get("class_id")
-        if class_id:
-            selection_name = class_display_name(class_id, default=None)
-        else:
-            items_payload = payload.get("items", {})
-            if isinstance(items_payload, dict):
-                for item_id in items_payload.values():
-                    if item_id and item_id in ITEMS:
-                        selection_name = ITEMS[item_id]["name"]
-                        break
+        selection_name = _prep_selection_name(payload)
         if class_error and selection_name:
             emit("duel_system", f"{class_error} Existing selection unchanged; saved {selection_name}.")
         elif class_error:

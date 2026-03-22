@@ -78,6 +78,26 @@ def _bootstrap_engine_modules() -> Dict[str, Any]:
     }
 
 
+def _bootstrap_socket_module():
+    if "games.duel.sockets" in sys.modules:
+        return sys.modules["games.duel.sockets"]
+
+    _bootstrap_engine_modules()
+    _load_module("games.duel.state", _REPO_ROOT / "state.py")
+
+    flask_module = types.ModuleType("flask")
+    flask_module.request = types.SimpleNamespace(sid=None)
+    sys.modules.setdefault("flask", flask_module)
+
+    flask_socketio_module = types.ModuleType("flask_socketio")
+    flask_socketio_module.emit = lambda *args, **kwargs: None
+    flask_socketio_module.join_room = lambda *args, **kwargs: None
+    flask_socketio_module.leave_room = lambda *args, **kwargs: None
+    sys.modules.setdefault("flask_socketio", flask_socketio_module)
+
+    return _load_module("games.duel.sockets", _REPO_ROOT / "sockets.py")
+
+
 _MODS = _bootstrap_engine_modules()
 MatchState = _MODS["models"].MatchState
 PlayerBuild = _MODS["models"].PlayerBuild
@@ -85,6 +105,7 @@ PetState = _MODS["models"].PetState
 resolver = _MODS["resolver"]
 effects = _MODS["effects"]
 PETS = sys.modules["games.duel.content.pets"].PETS
+SOCKETS = _bootstrap_socket_module()
 
 
 apply_prep_build = resolver.apply_prep_build
@@ -1412,6 +1433,15 @@ def scenario_valid_class_id_is_normalized_before_build() -> bool:
     return True
 
 
+def scenario_prep_selection_name_uses_current_submission() -> bool:
+    assert SOCKETS._prep_selection_name({"class_id": "warrior"}) == "Warrior", "class submissions should log the chosen class"
+    assert SOCKETS._prep_selection_name({"items": {"weapon": "thunderfury"}}) == "Thunderfury, Blessed Blade of the Windseeker", "weapon submissions should log the weapon name"
+    assert SOCKETS._prep_selection_name({"items": {"armor": "leather_armor"}}) == "Leather Armor", "armor submissions should log the armor name"
+    assert SOCKETS._prep_selection_name({"items": {"trinket": "rage_crystal"}}) == "Rage Crystal", "trinket submissions should log the trinket name"
+    assert SOCKETS._prep_selection_name({"class_id": "warrior", "items": {"weapon": "thunderfury"}}) == "Warrior", "class submissions should take precedence when sent together"
+    return True
+
+
 SCENARIOS = [
     scenario_mindgames_lay_on_hands,
     scenario_mass_dispel_selective_removal,
@@ -1470,6 +1500,7 @@ SCENARIOS = [
     scenario_mindgames_still_allows_direct_damage_dots,
     scenario_invalid_class_rejected,
     scenario_valid_class_id_is_normalized_before_build,
+    scenario_prep_selection_name_uses_current_submission,
 ]
 
 
