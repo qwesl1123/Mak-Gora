@@ -9,7 +9,7 @@ from ..content.classes import CLASSES
 from ..content.items import ITEMS
 from ..content.balance import DEFAULTS, CAPS
 from ..content.pets import PETS
-from .pet_ai import run_pet_phase, cleanup_pets
+from .pet_ai import run_pet_phase, cleanup_pets, prepare_pet_pre_action_effects
 
 # Centralized mechanics (passives/DoTs/mitigation/regen) live here.
 from .effects import (
@@ -1578,6 +1578,14 @@ def resolve_turn(match: MatchState) -> None:
 
     apply_pre_resolution_defensive(sids[0], contexts[sids[0]])
     apply_pre_resolution_defensive(sids[1], contexts[sids[1]])
+    for sid in sids:
+        ctx = contexts[sid]
+        if ctx.get("resolved"):
+            continue
+        pet_command = (ctx.get("ability") or {}).get("pet_command")
+        if pet_command:
+            match.state[sid].pending_pet_command = pet_command
+    prepare_pet_pre_action_effects(match, r)
     stealth_targeting = {sid: is_stealthed(match.state[sid]) for sid in sids}
 
     def immediate_action_can_stun(actor_sid: str, target_sid: str, ctx: Dict[str, Any]) -> bool:

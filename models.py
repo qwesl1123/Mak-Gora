@@ -34,6 +34,7 @@ class PetState:
     hp_max: int
     effects: List[Dict[str, Any]] = field(default_factory=list)
     duration: Optional[int] = None
+    action_consumed: bool = False
 
 @dataclass
 class PlayerState:

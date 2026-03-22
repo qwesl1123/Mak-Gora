@@ -94,7 +94,14 @@ PETS = {
         "persistent_owner_memory": True,
         "permanent_death": True,
         "basic_attack": {"school": "physical", "stat": "atk", "scaling": 1.0, "dice": "d6", "action_text": "melees the target"},
-        "specials": {"blocking_defence": {"action_text": "braces to intercept attacks"}},
+        "specials": {
+            "blocking_defence": {
+                "action_text": "braces to intercept attacks",
+                "timing": "pre_action",
+                "effect_id": "blocking_defence",
+                "effect_overrides": {"duration": 1, "redirect_to_pet_id": "self.id"},
+            }
+        },
         "special_id": "blocking_defence",
         "special_chance": 0.30,
         "display": {

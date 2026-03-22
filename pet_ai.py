@@ -47,6 +47,26 @@ def _template_action_text(pet, *, action_key: str | None = None, special_id: str
     return str(template.get("action_text") or fallback)
 
 
+def _resolve_special_overrides(pet, overrides: dict | None) -> dict:
+    resolved = dict(overrides or {})
+    for key, value in list(resolved.items()):
+        if value == "self.id":
+            resolved[key] = pet.id
+    return resolved
+
+
+def _apply_effect_special(owner, pet, owner_sid, match, special_id: str) -> bool:
+    template = PETS.get(pet.template_id, {})
+    special_data = ((template.get("specials") or {}).get(special_id) or {})
+    effect_id = special_data.get("effect_id")
+    if not effect_id:
+        return False
+    overrides = _resolve_special_overrides(pet, special_data.get("effect_overrides"))
+    apply_effect_by_id(owner, effect_id, overrides=overrides or None)
+    match.log.append(_pet_log(owner_sid, pet, _template_action_text(pet, special_id=special_id, fallback="acts")))
+    return True
+
+
 def _run_imp_firebolt(
     owner,
     enemy,
@@ -370,9 +390,8 @@ def _run_pet_special(
         return
 
     if special_id == "blocking_defence":
-        apply_effect_by_id(owner, "blocking_defence", overrides={"duration": 1, "redirect_to_pet_id": pet.id})
-        match.log.append(_pet_log(owner_sid, pet, _template_action_text(pet, special_id=special_id, fallback="braces to intercept attacks")))
-        return
+        if _apply_effect_special(owner, pet, owner_sid, match, special_id):
+            return
 
 
 BEHAVIOR_RUNNERS: dict[str, Callable] = {
@@ -406,6 +425,9 @@ def run_pet_phase(
             pet = owner.pets.get(pet_id)
             if not pet or pet.hp <= 0:
                 continue
+            if pet.action_consumed:
+                pet.action_consumed = False
+                continue
 
             template = PETS.get(pet.template_id, {})
             behavior_id = template.get("behavior_id") or template.get("behavior")
@@ -429,6 +451,40 @@ def run_pet_phase(
                 can_evasion_force_miss,
             )
         owner.pending_pet_command = None
+
+
+def prepare_pet_pre_action_effects(match, rng):
+    sids = list(match.players)
+    for owner_sid in sids:
+        owner = match.state[owner_sid]
+        enemy_sid = sids[1] if owner_sid == sids[0] else sids[0]
+        enemy = match.state[enemy_sid]
+        if not owner.res or owner.res.hp <= 0 or not enemy.res or enemy.res.hp <= 0:
+            owner.pending_pet_command = None
+            continue
+
+        for pet_id in sorted((owner.pets or {}).keys()):
+            pet = owner.pets.get(pet_id)
+            if not pet or pet.hp <= 0:
+                continue
+
+            template = PETS.get(pet.template_id, {})
+            special_id = template.get("special_id")
+            special_data = ((template.get("specials") or {}).get(special_id) or {})
+            if special_data.get("timing") != "pre_action":
+                continue
+
+            forced_command = owner.pending_pet_command
+            use_special = forced_command == "special"
+            if not use_special:
+                use_special = rng.random() <= float(template.get("special_chance", 0) or 0)
+            if not use_special:
+                continue
+
+            if _apply_effect_special(owner, pet, owner_sid, match, str(special_id)):
+                pet.action_consumed = True
+                if forced_command == "special":
+                    owner.pending_pet_command = None
 
 
 def cleanup_pets(match):
