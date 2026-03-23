@@ -9,6 +9,23 @@ from ..content.classes import CLASSES, class_display_name, normalize_class_id
 from ..content.items import ITEMS
 from ..content.balance import DEFAULTS, CAPS
 from ..content.pets import PETS
+
+
+def normalize_command_input(text: object) -> str:
+    """Normalize player-entered command text to canonical lookup form."""
+    if not isinstance(text, str):
+        return ""
+    return "_".join(text.strip().lower().split())
+
+
+def normalize_player_action(action: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize player-entered action payloads without changing internal canonical ids."""
+    if not isinstance(action, dict):
+        return {}
+    normalized = dict(action)
+    if "ability_id" in normalized:
+        normalized["ability_id"] = normalize_command_input(normalized.get("ability_id"))
+    return normalized
 from .pet_ai import run_pet_phase, cleanup_pets, prepare_pet_pre_action_effects, trigger_pre_action_special
 
 # Centralized mechanics (passives/DoTs/mitigation/regen) live here.
@@ -195,7 +212,7 @@ def apply_prep_build(match: MatchState) -> None:
         match.state[sid] = ps
 
 def submit_action(match: MatchState, sid: str, action: Dict[str, Any]) -> None:
-    match.submitted[sid] = action
+    match.submitted[sid] = normalize_player_action(action)
 
 def ready_to_resolve(match: MatchState) -> bool:
     return len(match.submitted) == 2

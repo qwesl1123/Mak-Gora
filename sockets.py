@@ -11,6 +11,8 @@ from .content.classes import CLASSES, class_display_name, normalize_class_id
 from .content.items import ITEMS
 from .content.abilities import ABILITIES
 
+_ITEM_SLOTS = {"weapon", "armor", "trinket"}
+
 THUNDERFURY_NAME = "Thunderfury, Blessed Blade of the Windseeker"
 DRAGONWRATH_NAME = "Dragonwrath, Tarecgosa's Rest"
 TWIN_BLADES_AZZINOTH_NAME = "Twin Blades of Azzinoth"
@@ -44,6 +46,25 @@ def _invalid_class_message(class_id):
     return "Choose a valid class before locking in."
 
 
+def _normalized_item_updates(items_payload):
+    if not isinstance(items_payload, dict):
+        return {}
+
+    normalized_items = {}
+    for raw_slot, raw_item_id in items_payload.items():
+        item_id = resolver.normalize_command_input(raw_item_id)
+        if not item_id or item_id not in ITEMS:
+            continue
+
+        slot = resolver.normalize_command_input(raw_slot)
+        if slot not in _ITEM_SLOTS:
+            slot = ITEMS[item_id].get("slot", "")
+        if slot in _ITEM_SLOTS:
+            normalized_items[slot] = item_id
+
+    return normalized_items
+
+
 def _prep_selection_name(payload):
     if not isinstance(payload, dict):
         return None
@@ -52,13 +73,8 @@ def _prep_selection_name(payload):
     if normalized_class_id:
         return class_display_name(normalized_class_id, default=None)
 
-    items_payload = payload.get("items", {})
-    if not isinstance(items_payload, dict):
-        return None
-
-    for item_id in items_payload.values():
-        if item_id and item_id in ITEMS:
-            return ITEMS[item_id]["name"]
+    for item_id in _normalized_item_updates(payload.get("items", {})).values():
+        return ITEMS[item_id]["name"]
     return None
 
 
@@ -366,10 +382,10 @@ def register_duel_socket_handlers(socketio):
             else:
                 class_error = _invalid_class_message(payload.get("class_id"))
         for key, value in payload.items():
-            if key != "class_id":
+            if key not in {"class_id", "items"}:
                 merged[key] = value
-        items = dict(current.get("items", {}))
-        items.update(payload.get("items", {}))
+        items = _normalized_item_updates(current.get("items", {}))
+        items.update(_normalized_item_updates(payload.get("items", {})))
         if items:
             merged["items"] = items
         match.picks[sid] = merged
@@ -442,7 +458,7 @@ def register_duel_socket_handlers(socketio):
             emit("duel_system", "Prep phase: choose class/items before combat.")
             return
 
-        action = payload if isinstance(payload, dict) else {"ability_id": str(payload).strip()}
+        action = resolver.normalize_player_action(payload if isinstance(payload, dict) else {"ability_id": payload})
         ability_id = action.get("ability_id", "")
         if ability_id not in ABILITIES:
             emit("duel_system", f"Unknown ability '{ability_id}'. Try again.")

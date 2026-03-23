@@ -1442,6 +1442,23 @@ def scenario_prep_selection_name_uses_current_submission() -> bool:
     return True
 
 
+def scenario_command_input_normalizes_abilities_and_items() -> bool:
+    assert resolver.normalize_command_input(" ring  of   ice ") == "ring_of_ice", "spaces should collapse into underscores"
+    assert resolver.normalize_command_input("freeZing trAp") == "freezing_trap", "commands should be case-insensitive"
+    assert resolver.normalize_command_input("rage cristal") == "rage_cristal", "item commands should normalize the same way"
+
+    match = make_match("mage", "hunter", seed=321)
+    submit_action(match, match.players[0], {"ability_id": " ring  of   ice "})
+    submit_action(match, match.players[1], {"ability_id": "freeZing trAp"})
+    assert match.submitted[match.players[0]]["ability_id"] == "ring_of_ice", "underscore ability input should stay canonical"
+    assert match.submitted[match.players[1]]["ability_id"] == "freezing_trap", "mixed-case spaced ability input should normalize before lookup"
+
+    normalized_items = SOCKETS._normalized_item_updates({"": " rage   crystal ", "armor": " leather  armor "})
+    assert normalized_items == {"trinket": "rage_crystal", "armor": "leather_armor"}, "item payloads should infer slots and normalize names generically"
+    assert SOCKETS._prep_selection_name({"items": {"": " rage   crystal "}}) == "Rage Crystal", "selection logging should use normalized item ids"
+    return True
+
+
 SCENARIOS = [
     scenario_mindgames_lay_on_hands,
     scenario_mass_dispel_selective_removal,
@@ -1501,6 +1518,7 @@ SCENARIOS = [
     scenario_invalid_class_rejected,
     scenario_valid_class_id_is_normalized_before_build,
     scenario_prep_selection_name_uses_current_submission,
+    scenario_command_input_normalizes_abilities_and_items,
 ]
 
 

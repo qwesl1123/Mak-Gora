@@ -3623,23 +3623,44 @@
         lockBtn.disabled = data.phase !== "prep";
       });
 
+      function normalizeCommandInput(text) {
+        return (text || "")
+          .trim()
+          .toLowerCase()
+          .split(/\s+/)
+          .filter(Boolean)
+          .join("_");
+      }
+
       function sendCommand() {
         const text = cmdInput.value.trim();
         if (!text) return;
 
         if (text.toLowerCase().startsWith("/class")) {
-          const parts = text.split(/\s+/);
-          const classId = (parts[1] || "").toLowerCase();
-          socket.emit("duel_prep_submit", { class_id: classId });
+          const classId = normalizeCommandInput(text.slice(6));
+          if (classId) {
+            socket.emit("duel_prep_submit", { class_id: classId });
+          }
         } else if (text.toLowerCase().startsWith("/item")) {
-          const parts = text.split(/\s+/);
-          const slot = parts[1] || "";
-          const itemId = parts[2] || "";
-          if (slot && itemId) {
+          const itemArgs = text.slice(5).trim();
+          const itemParts = itemArgs ? itemArgs.split(/\s+/) : [];
+          let slot = "";
+          let itemText = itemArgs;
+
+          if (itemParts.length > 1) {
+            const slotCandidate = normalizeCommandInput(itemParts[0]);
+            if (["weapon", "armor", "trinket"].includes(slotCandidate)) {
+              slot = slotCandidate;
+              itemText = itemParts.slice(1).join(" ");
+            }
+          }
+
+          const itemId = normalizeCommandInput(itemText);
+          if (itemId) {
             socket.emit("duel_prep_submit", { items: { [slot]: itemId } });
           }
         } else {
-          socket.emit("duel_action", { ability_id: text.toLowerCase() });
+          socket.emit("duel_action", { ability_id: text });
         }
 
         cmdInput.value = "";
