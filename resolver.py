@@ -622,6 +622,17 @@ def resolve_turn(match: MatchState) -> None:
             actor.active_pet_id = None
         del actor.pets[pet_id]
 
+    def handle_pet_defeat(owner: PlayerState, pet: PetState) -> None:
+        template = PETS.get(pet.template_id, {})
+        if template.get("permanent_death"):
+            owner.dead_hunter_pets[pet.template_id] = True
+            owner.hunter_pet_memory[pet.template_id] = 0
+        if owner.active_pet_id == pet.id:
+            owner.active_pet_id = None
+        if pet.id in owner.pets:
+            del owner.pets[pet.id]
+        match.log.append(f"{pet.name} dies.")
+
     def summon_pet_from_template(actor: PlayerState, template_id: str) -> tuple[PetState | None, bool, str | None]:
         template = PETS.get(template_id, {})
         max_count = int(template.get("max_count", 1) or 1)
@@ -2058,8 +2069,7 @@ def resolve_turn(match: MatchState) -> None:
             if remaining > 0:
                 pet_total_damage += remaining
             if pet.hp <= 0:
-                del target.pets[pet.id]
-                match.log.append(f"{pet.name} dies.")
+                handle_pet_defeat(target, pet)
 
         return {"champion": champion_dealt_data, "pet_total_damage": pet_total_damage}
 

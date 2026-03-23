@@ -1200,6 +1200,33 @@ def scenario_hunter_flare_logs_stealth_breaks() -> bool:
     return True
 
 
+def scenario_hunter_pet_permanent_death() -> bool:
+    match = make_match("hunter", "warrior", seed=123)
+    hunter = match.state[match.players[0]]
+    warrior = match.state[match.players[1]]
+    submit_turn(match, "call_serpent", _DEF_PASS)
+    serpent = _active_pet(hunter, "emerald_serpent")
+    assert serpent is not None, "Emerald Serpent should summon before testing permanent death lockout"
+
+    warrior.res.rage = 10
+    submit_turn(match, _DEF_PASS, "dragon_roar")
+    latest_turn = _turn_lines(match, match.turn)
+    assert any("Dragon Roar hits" in line and "Emerald Serpent" in line for line in latest_turn), "AoE should hit the active hunter pet"
+    assert any(line == "Emerald Serpent dies." for line in latest_turn), "Lethal AoE damage should kill the pet immediately"
+    assert hunter.dead_hunter_pets.get("emerald_serpent"), "Dead hunter pet should be marked permanently dead"
+    assert hunter.hunter_pet_memory.get("emerald_serpent") == 0, "Permanent pet death should zero remembered HP"
+    assert not any(pet.template_id == "emerald_serpent" for pet in hunter.pets.values()), "Dead Emerald Serpent should be removed from active pets"
+
+    hunter.cooldowns.clear()
+    pet_count_before = len(hunter.pets)
+    submit_turn(match, "call_serpent", _DEF_PASS)
+    assert _active_pet(hunter, "emerald_serpent") is None, "Permanently dead hunter pet should not be summoned again"
+    assert len(hunter.pets) == pet_count_before, "Re-summon attempt should not create a replacement Emerald Serpent"
+    latest_turn = _turn_lines(match, match.turn)
+    assert any("Emerald Serpent has fallen and cannot be summoned again this match." in line for line in latest_turn), "Failure message should be logged"
+    return True
+
+
 def scenario_hunter_pet_permanent_death_resummon_blocked() -> bool:
     match = make_match("hunter", "warrior", seed=123)
     hunter = match.state[match.players[0]]
@@ -1505,6 +1532,7 @@ SCENARIOS = [
     scenario_cc_status_display_metadata_is_exposed,
     scenario_hunter_disengage_uses_custom_miss_text,
     scenario_hunter_flare_logs_stealth_breaks,
+    scenario_hunter_pet_permanent_death,
     scenario_hunter_pet_permanent_death_resummon_blocked,
     scenario_hunter_dead_pet_type_does_not_block_other_pet_types,
     scenario_hunter_dismissed_pet_clears_runtime_effects,
