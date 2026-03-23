@@ -1263,7 +1263,7 @@ def resolve_turn(match: MatchState) -> None:
                 log_parts.append(f"{prefix}Misfire!")
                 continue
 
-            if r.randint(1, 100) > accuracy:
+            if not ability.get("cannot_miss") and r.randint(1, 100) > accuracy:
                 log_parts.append(f"{prefix}Miss!")
                 continue
 

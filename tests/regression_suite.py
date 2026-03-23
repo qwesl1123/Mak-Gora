@@ -594,7 +594,7 @@ def scenario_hunter_pet_summon_swap_memory() -> bool:
     assert hunter.hunter_pet_memory.get("frostsaber") == 12, "Dismissed Frostsaber HP should be remembered"
     assert any("calls for Emerald Serpent." in line for line in _turn_lines(match, 2)), "Hunter summon log should say calls for Emerald Serpent"
 
-    hunter.cooldowns.pop("call_saber", None)
+    assert not hunter.cooldowns.get("call_saber"), "Companion calls should not go on cooldown"
     submit_turn(match, "call_saber", _DEF_PASS)
     saber = _active_pet(hunter, "frostsaber")
     assert saber is not None and saber.hp == 12, "Re-summoned Frostsaber should return with remembered HP"
@@ -608,6 +608,22 @@ def scenario_hunter_only_one_active_pet() -> bool:
     active_templates = sorted(pet.template_id for pet in hunter.pets.values())
     assert active_templates == ["barrens_boar"], "Hunter should have exactly one active pet at a time"
     assert hunter.hunter_pet_memory.get("frostsaber", 0) > 0, "Dismissed saber HP should be stored"
+    return True
+
+
+def scenario_hunter_companion_calls_have_no_cooldown() -> bool:
+    match = make_match("hunter", "warrior", seed=123)
+    hunter = match.state[match.players[0]]
+
+    submit_turn(match, "call_saber", _DEF_PASS)
+    assert not hunter.cooldowns.get("call_saber"), "Call Frostsaber should have no cooldown entry after use"
+
+    submit_turn(match, "call_serpent", _DEF_PASS)
+    assert not hunter.cooldowns.get("call_serpent"), "Call Emerald Serpent should have no cooldown entry after use"
+
+    submit_turn(match, "call_boar", _DEF_PASS)
+    assert not hunter.cooldowns.get("call_boar"), "Call Barrens Boar should have no cooldown entry after use"
+    assert any("cast Call Emerald Serpent. calls for Emerald Serpent." in line for line in match.log), "Hunter combat log should use the Call Emerald Serpent name"
     return True
 
 
@@ -635,6 +651,25 @@ def scenario_hunter_multi_shot_aoe() -> bool:
         elif "(imp3)" in line:
             observed.append("imp3")
     assert observed[:3] == ["imp1", "imp2", "imp3"], "Multi-Shot pet hit order should be deterministic"
+    return True
+
+
+def scenario_dragon_roar_cannot_miss_from_accuracy() -> bool:
+    match = make_match("warrior", "rogue", seed=123)
+    warrior_sid, rogue_sid = match.players
+    warrior = match.state[warrior_sid]
+    rogue = match.state[rogue_sid]
+
+    warrior.res.rage = warrior.res.rage_max
+    warrior.stats["acc"] = 1
+    rogue.stats["eva"] = 999
+    hp_before = rogue.res.hp
+
+    submit_turn(match, "dragon_roar", _DEF_PASS)
+
+    assert rogue.res.hp < hp_before, "Dragon Roar should still land through extreme accuracy/evasion mismatch"
+    dragon_lines = [line for line in match.log if "Dragon Roar" in line]
+    assert not any("Miss!" in line for line in dragon_lines), "Dragon Roar should not log a normal miss roll"
     return True
 
 
@@ -1290,7 +1325,7 @@ def scenario_hunter_dismissed_pet_clears_runtime_effects() -> bool:
     idle_turn_logs = _turn_lines(match, dismissed_turn + 1) + _turn_lines(match, dismissed_turn + 2)
     assert not any("Frostsaber" in line for line in idle_turn_logs), "Dismissed pet should not keep acting or logging runtime effects while inactive"
 
-    hunter.cooldowns.pop("call_saber", None)
+    assert not hunter.cooldowns.get("call_saber"), "Companion calls should remain off cooldown after swaps"
     submit_turn(match, "call_saber", _DEF_PASS)
     saber_returned = _active_pet(hunter, "frostsaber")
     assert saber_returned is not None and saber_returned.hp == remembered_hp, "Re-summoned pet should return at remembered HP"
@@ -1502,7 +1537,9 @@ SCENARIOS = [
     scenario_pet_summon_data_driven,
     scenario_hunter_pet_summon_swap_memory,
     scenario_hunter_only_one_active_pet,
+    scenario_hunter_companion_calls_have_no_cooldown,
     scenario_hunter_multi_shot_aoe,
+    scenario_dragon_roar_cannot_miss_from_accuracy,
     scenario_hunter_turtle_priority,
     scenario_hunter_wildfire_arcane_proc,
     scenario_hunter_wildfire_dot_log_order,

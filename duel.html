@@ -1680,7 +1680,7 @@
             <h4>Dragon Roar</h4>
             <p><span class="stat">Cost: 10 Rage</span> | <span class="stat">Type: Physical (AoE)</span> | <span class="stat">Cooldown: 25</span></p>
             <p><span class="stat">Command: <span class="kbd">dragon_roar</span></span></p>
-            <p>Roar ferociously to damage all enemies for [Attack (0.8x) + d6] damage. Always critically strikes, ignores Physical Reduction, and applies a 4-turn physical bleed on hit, dealing [Attack (0.4x) + d2] damage each turn. As AoE, it can reveal stealth and destroys Imps when it deals damage.</p>
+            <p>Roar ferociously to damage all enemies for [Attack (0.8x) + d6] damage. Always critically strikes, cannot miss, ignores Physical Reduction, and applies a 4-turn physical bleed on hit, dealing [Attack (0.4x) + d2] damage each turn. It still respects blink-like untargetability. As AoE, it can reveal stealth and destroys Imps when it deals damage.</p>
           </div>
 
           <div class="doc-item">
@@ -2079,7 +2079,7 @@
         <div class="doc-grid">
           <div class="doc-item">
             <h4>Wildfire Bomb</h4>
-            <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Type: Magic</span> | <span class="stat">Cooldown: 7</span></p>
+            <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Type: Magic</span> | <span class="stat">Cooldown: 13</span></p>
             <p><span class="stat">Command: <span class="kbd">wildfire_bomb</span></span></p>
             <p>Deals [Attack (1.5x) + d8] magic damage, applies a 2-turn Wildfire Burn, and enables <span class="stat">Arcane Shot</span> for the next turn.</p>
           </div>
@@ -2134,7 +2134,7 @@
           <div class="doc-item">
             <h4>Companion Calls</h4>
             <p><span class="stat">Commands: <span class="kbd">call_saber</span>, <span class="kbd">call_serpent</span>, <span class="kbd">call_boar</span></span></p>
-            <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 10</span></p>
+            <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 0</span></p>
             <p>Call a Frostsaber, Emerald Serpent, or Barrens Boar. Only one companion is active at a time; swaps remember HP, clear old effects, and permanently dead pets cannot return that match.</p>
           </div>
           <div class="doc-item">
@@ -2335,9 +2335,9 @@
         "Aimed Shot",
         "Raptor Strike",
         "Multi-Shot",
-        "Summon Frostsaber",
-        "Summon Emerald Serpent",
-        "Summon Barrens Boar",
+        "Call Frostsaber",
+        "Call Emerald Serpent",
+        "Call Barrens Boar",
       ];
       const druidAbilities = [
         "Bear Form",
