@@ -33,6 +33,7 @@ from .effects import (
     mitigation_multiplier,
     trigger_on_hit_passives,
     damage_multiplier_from_passives,
+    resource_gain_multiplier_from_passives,
     end_of_turn,
     end_of_turn_pet,
     apply_effect_by_id,
@@ -322,6 +323,23 @@ def resolve_turn(match: MatchState) -> None:
                 return str(custom)
         return "Target blinks away — Miss."
 
+    def grant_resource(player: PlayerState, resource: str, base_amount: int) -> int:
+        if not player.res or not hasattr(player.res, resource):
+            return 0
+        amount = max(0, int(base_amount or 0))
+        if amount <= 0:
+            return 0
+        multiplier = resource_gain_multiplier_from_passives(player, resource)
+        adjusted = int(amount * multiplier)
+        if adjusted <= 0:
+            return 0
+        current = getattr(player.res, resource)
+        cap = getattr(player.res, f"{resource}_max", current)
+        new_value = max(0, min(current + adjusted, cap))
+        gained = new_value - current
+        setattr(player.res, resource, new_value)
+        return gained
+
     def entity_log_label(target: PlayerState | PetState) -> str:
         if isinstance(target, PlayerState):
             return f"{target.sid[:5]}"
@@ -362,9 +380,7 @@ def resolve_turn(match: MatchState) -> None:
         if was_stealthed and not is_stealthed(ps):
             match.log.append(f"{ps.sid[:5]} stealth broken by Mindgames.")
         if current_form_id(ps) == "bear_form":
-            current = ps.res.rage
-            cap = ps.res.rage_max
-            ps.res.rage = min(current + remaining, cap)
+            grant_resource(ps, "rage", remaining)
         return remaining
 
     def apply_effect_entries(
@@ -375,6 +391,7 @@ def resolve_turn(match: MatchState) -> None:
         pre_log_parts: list[str] | None = None,
         extra_log_parts: list[str] | None = None,
         skip_self_effect_ids: set[str] | None = None,
+        skip_primary_target: bool = False,
     ) -> None:
         def format_entry_log(message: str | None) -> str | None:
             if not isinstance(message, str):
@@ -386,7 +403,9 @@ def resolve_turn(match: MatchState) -> None:
         if extra_log_parts is None:
             extra_log_parts = []
         skip_self_effect_ids = skip_self_effect_ids or set()
-        target_entries: list[PlayerState | PetState] = [target]
+        target_entries: list[PlayerState | PetState] = []
+        if not skip_primary_target:
+            target_entries.append(target)
         if ability_target_mode(ability) == "aoe_enemy" and isinstance(target, PlayerState):
             target_entries.extend(target.pets[pet_id] for pet_id in sorted((target.pets or {}).keys()))
         for entry in ability.get("self_effects", []) or []:
@@ -824,6 +843,8 @@ def resolve_turn(match: MatchState) -> None:
                 log_parts.append(stealth_log)
 
         has_damage = any(value for value in (dice_data, scaling, flat_damage))
+        aoe_skip_champion = False
+        aoe_champion_log_override: str | None = None
 
         if has_damage or has_target_effects:
             if should_miss_due_to_stealth(actor, target, ability, stealth_targeting):
@@ -835,14 +856,18 @@ def resolve_turn(match: MatchState) -> None:
                     remove_stealth(actor)
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
             if has_flag(target, "untargetable"):
-                log_parts.append(untargetable_miss_log(target))
-                set_cooldown(actor, ability_id, ability)
-                if ability.get("consume_effect"):
-                    remove_effect(actor, ability["consume_effect"])
-                if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
-                    remove_stealth(actor)
-                return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
-            if single_target_miss_active(target, ability):
+                if is_aoe:
+                    aoe_skip_champion = True
+                    aoe_champion_log_override = " ".join([*log_parts, untargetable_miss_log(target)])
+                else:
+                    log_parts.append(untargetable_miss_log(target))
+                    set_cooldown(actor, ability_id, ability)
+                    if ability.get("consume_effect"):
+                        remove_effect(actor, ability["consume_effect"])
+                    if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
+                        remove_stealth(actor)
+                    return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
+            if not is_aoe and single_target_miss_active(target, ability):
                 log_parts.append(single_target_miss_log())
                 set_cooldown(actor, ability_id, ability)
                 if ability.get("consume_effect"):
@@ -867,6 +892,7 @@ def resolve_turn(match: MatchState) -> None:
                 log_parts,
                 pre_log_parts=pre_log_parts,
                 extra_log_parts=extra_logs,
+                skip_primary_target=aoe_skip_champion,
             )
 
         if ability_id == "healthstone":
@@ -1376,12 +1402,7 @@ def resolve_turn(match: MatchState) -> None:
                     amount = int(gain.get("amount", 0) or 0)
                     if not resource or amount <= 0 or not hasattr(actor.res, resource):
                         continue
-                    cap = getattr(actor.res, f"{resource}_max", None)
-                    new_value = getattr(actor.res, resource) + amount
-                    if cap is not None:
-                        new_value = min(new_value, cap)
-                    gained = new_value - getattr(actor.res, resource)
-                    setattr(actor.res, resource, new_value)
+                    gained = grant_resource(actor, resource, amount)
                     if gained > 0 and gain.get("log"):
                         log_parts.append(f"{prefix}{gain['log']}")
 
@@ -1457,9 +1478,7 @@ def resolve_turn(match: MatchState) -> None:
                 else:
                     gain_value = int(gain)
                 if gain_value > 0 and hasattr(actor.res, resource):
-                    current = getattr(actor.res, resource)
-                    cap = getattr(actor.res, f"{resource}_max", current)
-                    setattr(actor.res, resource, max(0, min(current + gain_value, cap)))
+                    grant_resource(actor, resource, gain_value)
 
         mindgames_flip_damage = bool(has_effect(actor, "mindgames") and total_damage > 0)
 
@@ -1484,6 +1503,8 @@ def resolve_turn(match: MatchState) -> None:
             damage_instances.append(total_damage - sum(damage_instances))
 
         outgoing_damage = aoe_incoming_damage if ability_target_mode(ability) == "aoe_enemy" else total_damage
+        if aoe_skip_champion and ability_target_mode(ability) == "aoe_enemy":
+            outgoing_damage = 0
         outgoing_instances = aoe_damage_instances if ability_target_mode(ability) == "aoe_enemy" else damage_instances
 
         return {
@@ -1492,11 +1513,12 @@ def resolve_turn(match: MatchState) -> None:
             "aoe_incoming_damage": aoe_incoming_damage,
             "damage_type": damage_type,
             "healing": total_healing,
-            "log": " ".join(log_parts),
+            "log": aoe_champion_log_override or " ".join(log_parts),
             "pre_logs": pre_log_parts,
             "extra_logs": extra_logs,
             "ability_id": ability_id,
             "mindgames_flip_damage": mindgames_flip_damage,
+            "skip_direct_target_damage": aoe_skip_champion,
         }
 
     def build_immediate_resolution(actor_sid: str, target_sid: str, action: Dict[str, Any]) -> Dict[str, Any]:
@@ -1977,9 +1999,7 @@ def resolve_turn(match: MatchState) -> None:
                         f"{break_on_damage_effect_name(effect)} on {target_sid[:5]} breaks on damage."
                     )
                 if current_form_id(target) == "bear_form":
-                    current = target.res.rage
-                    cap = target.res.rage_max
-                    target.res.rage = min(current + total_remaining, cap)
+                    grant_resource(target, "rage", total_remaining)
             else:
                 target.hp -= total_remaining
                 broken_effects = break_effects_on_damage(target)
@@ -2134,27 +2154,35 @@ def resolve_turn(match: MatchState) -> None:
 
     source_name_1 = ABILITIES.get(result1.get("ability_id", ""), {}).get("name", "attack")
     source_name_2 = ABILITIES.get(result2.get("ability_id", ""), {}).get("name", "attack")
-    dealt1_data = apply_damage(
-        match.state[sids[0]],
-        match.state[sids[1]],
-        result1["damage"],
-        sids[1],
-        source_name_1,
-        bool(result1.get("mindgames_flip_damage")),
-        result1.get("damage_instances"),
-        school=result1.get("damage_type") or "physical",
-        allow_redirect=ability_target_mode(ABILITIES.get(result1.get("ability_id", ""), {})) != "aoe_enemy",
+    dealt1_data = (
+        {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0}
+        if result1.get("skip_direct_target_damage")
+        else apply_damage(
+            match.state[sids[0]],
+            match.state[sids[1]],
+            result1["damage"],
+            sids[1],
+            source_name_1,
+            bool(result1.get("mindgames_flip_damage")),
+            result1.get("damage_instances"),
+            school=result1.get("damage_type") or "physical",
+            allow_redirect=ability_target_mode(ABILITIES.get(result1.get("ability_id", ""), {})) != "aoe_enemy",
+        )
     )
-    dealt2_data = apply_damage(
-        match.state[sids[1]],
-        match.state[sids[0]],
-        result2["damage"],
-        sids[0],
-        source_name_2,
-        bool(result2.get("mindgames_flip_damage")),
-        result2.get("damage_instances"),
-        school=result2.get("damage_type") or "physical",
-        allow_redirect=ability_target_mode(ABILITIES.get(result2.get("ability_id", ""), {})) != "aoe_enemy",
+    dealt2_data = (
+        {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0}
+        if result2.get("skip_direct_target_damage")
+        else apply_damage(
+            match.state[sids[1]],
+            match.state[sids[0]],
+            result2["damage"],
+            sids[0],
+            source_name_2,
+            bool(result2.get("mindgames_flip_damage")),
+            result2.get("damage_instances"),
+            school=result2.get("damage_type") or "physical",
+            allow_redirect=ability_target_mode(ABILITIES.get(result2.get("ability_id", ""), {})) != "aoe_enemy",
+        )
     )
     dealt1 = int(dealt1_data.get("hp_damage", 0) or 0)
     dealt2 = int(dealt2_data.get("hp_damage", 0) or 0)

@@ -1613,7 +1613,8 @@
             <p><span class="stat">Command: <span class="kbd">/item trinket rage_crystal</span></span></p>
             <p><span class="stat">+20 Rage</span></p>
             <p><span class="stat">Passive: Deal 15% more damage while below 30% HP</span></p>
-            <p>A volatile crystal that empowers desperate finishing blows.</p>
+            <p><span class="stat">Passive: Gain 25% more rage from all sources</span></p>
+            <p>A volatile crystal that supercharges every source of rage generation.</p>
           </div>
 
         </div>
@@ -3173,9 +3174,14 @@
           const pattern = new RegExp(`\\b${escapeRegExp(ability)}\\b`, "g");
           output = output.replace(pattern, `<span class="log-ability-hunter">$&</span>`);
         });
-        ["Frostsaber", "Emerald Serpent", "Barrens Boar"].forEach((petName) => {
-          const pattern = new RegExp(`\\b${escapeRegExp(petName)}\\b`, "g");
-          output = output.replace(pattern, `<span class="log-class-hunter">$&</span>`);
+        [
+          { names: ["Frostsaber", "Emerald Serpent", "Barrens Boar"], className: "log-class-hunter" },
+          { names: ["Imp"], className: "log-class-warlock" },
+        ].forEach(({ names, className }) => {
+          names.forEach((petName) => {
+            const pattern = new RegExp(`\\b${escapeRegExp(petName)}\\b`, "g");
+            output = output.replace(pattern, `<span class="${className}">$&</span>`);
+          });
         });
         greenItems.forEach((item) => {
           const escapedItem = escapeRegExp(item).replace(/'/g, "(?:'|&#039;)");

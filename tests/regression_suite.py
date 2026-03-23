@@ -433,6 +433,29 @@ def scenario_iceblock_priority_vs_aoe_with_pets() -> bool:
     return True
 
 
+def scenario_blink_like_aoe_still_hits_pets() -> bool:
+    match = make_match("warrior", "mage", seed=123)
+    warrior, mage = _player_states(match)
+    _add_pet(mage, "mage_imp_1")
+    _add_pet(mage, "mage_imp_2")
+    _add_pet(mage, "mage_imp_3")
+    imp_ids = sorted(mage.pets.keys())
+
+    mage_hp_before = mage.res.hp
+    imp_hp_before = {pid: mage.pets[pid].hp for pid in imp_ids}
+    warrior.res.rage = warrior.res.rage_max
+
+    submit_turn(match, "dragon_roar", "blink")
+
+    assert _has_effect(mage, "blink"), "Blink should still activate on the defending champion"
+    assert mage.res.hp == mage_hp_before, "Blink should preserve the champion's current AoE avoidance behavior"
+    for pid in imp_ids:
+        assert _pet_took_damage_or_died(mage, pid, imp_hp_before[pid]), "Blink-like defenses must not stop AoE pet damage"
+    assert any("Target blinks away — Miss." in line for line in match.log), "Champion log should still reflect blink-like avoidance"
+    assert any("Dragon Roar hits" in line and "Imp" in line for line in match.log), "AoE fanout should still log pet hits"
+    return True
+
+
 def scenario_iceblock_blocks_same_turn_stun_and_next_turn_attack() -> bool:
     match = make_match("rogue", "mage", seed=123)
     submit_turn(match, "kidney_shot", "iceblock")
@@ -516,6 +539,41 @@ def scenario_aoe_hits_pets_with_immune_champion() -> bool:
     effects.apply_effect_by_id(sov.state[pal_sid], "shield_of_vengeance", overrides={"duration": 1, "absorbed": 25})
     submit_turn(sov, _DEF_PASS, _DEF_PASS)
     assert any(_pet_took_damage_or_died(sov.state[warlock_sid], pid, imp_hp_before[pid]) for pid in imp_ids), "SoV explosion should damage enemy pets"
+    return True
+
+
+def scenario_rage_crystal_increases_all_rage_gain_sources() -> bool:
+    baseline = make_match("warrior", "mage", seed=123)
+    crystal = make_match("warrior", "mage", p1_items={"trinket": "rage_crystal"}, seed=123)
+
+    baseline_warrior = baseline.state[baseline.players[0]]
+    crystal_warrior = crystal.state[crystal.players[0]]
+
+    baseline_warrior.res.rage = 0
+    crystal_warrior.res.rage = 0
+    submit_turn(baseline, "overpower", _DEF_PASS)
+    submit_turn(crystal, "overpower", _DEF_PASS)
+    baseline_overpower_rage = baseline_warrior.res.rage
+    crystal_overpower_rage = crystal_warrior.res.rage
+    assert crystal_overpower_rage == int(baseline_overpower_rage * 1.25), "Rage Crystal should grant 25% more rage from damage-based rage gain"
+
+    baseline_druid = make_match("mage", "druid", seed=123)
+    crystal_druid = make_match("mage", "druid", p2_items={"trinket": "rage_crystal"}, seed=123)
+    submit_turn(baseline_druid, _DEF_PASS, "bear_form")
+    submit_turn(crystal_druid, _DEF_PASS, "bear_form")
+    baseline_bear = baseline_druid.state[baseline_druid.players[1]]
+    crystal_bear = crystal_druid.state[crystal_druid.players[1]]
+    baseline_bear.res.rage = 0
+    crystal_bear.res.rage = 0
+    submit_turn(baseline_druid, "fireball", _DEF_PASS)
+    submit_turn(crystal_druid, "fireball", _DEF_PASS)
+    assert crystal_bear.res.rage == int(baseline_bear.res.rage * 1.25), "Rage Crystal should grant 25% more rage from damage taken in Bear Form"
+    return True
+
+
+def scenario_warlock_imp_log_coloring_mapping_present() -> bool:
+    duel_html = (_REPO_ROOT / "duel.html").read_text(encoding="utf-8")
+    assert '{ names: ["Imp"], className: "log-class-warlock" }' in duel_html, "Combat log pet styling should map Imp to warlock class color"
     return True
 
 
@@ -1531,8 +1589,10 @@ SCENARIOS = [
     scenario_stun_priority_over_blink_like,
     scenario_blink_like_blocks_attacks_for_two_turns,
     scenario_iceblock_priority_vs_aoe_with_pets,
+    scenario_blink_like_aoe_still_hits_pets,
     scenario_iceblock_blocks_same_turn_stun_and_next_turn_attack,
     scenario_aoe_hits_pets_with_immune_champion,
+    scenario_rage_crystal_increases_all_rage_gain_sources,
     scenario_absorb_layering,
     scenario_pet_summon_data_driven,
     scenario_hunter_pet_summon_swap_memory,
@@ -1584,6 +1644,7 @@ SCENARIOS = [
     scenario_valid_class_id_is_normalized_before_build,
     scenario_prep_selection_name_uses_current_submission,
     scenario_command_input_normalizes_abilities_and_items,
+    scenario_warlock_imp_log_coloring_mapping_present,
 ]
 
 

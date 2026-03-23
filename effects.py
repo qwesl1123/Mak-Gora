@@ -1246,6 +1246,25 @@ def damage_multiplier_from_passives(attacker: PlayerState) -> float:
                 multiplier *= float(passive.get("multiplier", 1.0) or 1.0)
     return multiplier
 
+
+def resource_gain_multiplier_from_passives(player: PlayerState, resource: str) -> float:
+    """Apply item passives that modify resource gains from any source."""
+    if not player.res:
+        return 1.0
+    multiplier = 1.0
+    normalized_resource = str(resource or "").strip().lower()
+    for effect in player.effects:
+        if effect.get("type") != "item_passive":
+            continue
+        passive = effect.get("passive", {}) or {}
+        if passive.get("type") != "resource_gain_multiplier":
+            continue
+        passive_resource = str(passive.get("resource", "") or "").strip().lower()
+        if passive_resource and passive_resource != normalized_resource:
+            continue
+        multiplier *= float(passive.get("multiplier", 1.0) or 1.0)
+    return multiplier
+
 def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[dict[str, Any]]:
     """Compute DoT tick events after mitigation; resolution/logging happens in resolver."""
     if is_immune_all(ps):
