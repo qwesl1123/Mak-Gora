@@ -323,6 +323,11 @@ def resolve_turn(match: MatchState) -> None:
                 return str(custom)
         return "Target blinks away — Miss."
 
+    def aoe_untargetable_resolution(target: PlayerState) -> tuple[bool, str | None]:
+        if not has_flag(target, "untargetable"):
+            return False, None
+        return True, untargetable_miss_log(target)
+
     def grant_resource(player: PlayerState, resource: str, base_amount: int) -> int:
         if not player.res or not hasattr(player.res, resource):
             return 0
@@ -855,12 +860,13 @@ def resolve_turn(match: MatchState) -> None:
                 if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
                     remove_stealth(actor)
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
-            if has_flag(target, "untargetable"):
+            aoe_untargetable, aoe_untargetable_log = aoe_untargetable_resolution(target)
+            if aoe_untargetable:
                 if is_aoe:
                     aoe_skip_champion = True
-                    aoe_champion_log_override = " ".join([*log_parts, untargetable_miss_log(target)])
+                    aoe_champion_log_override = " ".join([*log_parts, aoe_untargetable_log or untargetable_miss_log(target)])
                 else:
-                    log_parts.append(untargetable_miss_log(target))
+                    log_parts.append(aoe_untargetable_log or untargetable_miss_log(target))
                     set_cooldown(actor, ability_id, ability)
                     if ability.get("consume_effect"):
                         remove_effect(actor, ability["consume_effect"])
@@ -2035,7 +2041,10 @@ def resolve_turn(match: MatchState) -> None:
             return {"champion": {"hp_damage": 0}, "pet_total_damage": 0}
 
         champion_dealt_data = {"hp_damage": 0, "mindgames_healing": 0}
-        if not skip_champion:
+        if skip_champion:
+            if champion_immune_log:
+                match.log.append(champion_immune_log)
+        else:
             champion_dealt_data = apply_damage(
                 actor,
                 target,
@@ -2108,6 +2117,10 @@ def resolve_turn(match: MatchState) -> None:
         if absorbed_total <= 0:
             return
         match.log.append("Shield of Vengeance explodes!")
+        enemy = match.state[enemy_sid]
+        skip_champion, untargetable_log = aoe_untargetable_resolution(enemy)
+        if untargetable_log and untargetable_log.startswith("Target "):
+            untargetable_log = f"{enemy_sid[:5]} {untargetable_log[len('Target '):] }"
         aoe_result = resolve_aoe_enemy_attack(
             owner_sid,
             enemy_sid,
@@ -2115,7 +2128,8 @@ def resolve_turn(match: MatchState) -> None:
             "Shield of Vengeance",
             "magical",
             champion_log_template=f"Shield of Vengeance hits {enemy_sid[:5]} for __DMG_0__ damage.",
-            champion_immune_log=f"{enemy_sid[:5]} is immune to Shield of Vengeance explosion.",
+            champion_immune_log=untargetable_log or f"{enemy_sid[:5]} is immune to Shield of Vengeance explosion.",
+            skip_champion=skip_champion,
         )
         champion_hp_damage = int(aoe_result.get("champion", {}).get("hp_damage", 0) or 0)
         totals = match.combat_totals.setdefault(owner_sid, {"damage": 0, "healing": 0})
@@ -2722,7 +2736,8 @@ def debug_simulate_aoe_normalization_suite() -> Dict[str, Any]:
         pet = warlock_after.pets[pid]
         assert not any((fx.get("id") == "dragon_roar_bleed") for fx in (pet.effects or [])), "Dragon Roar bleed must not apply to pets."
 
-    # Scenario 2: Shield of Vengeance explosion now uses AoE fanout and hits pets.
+    # Scenario 2: Shield of Vengeance explosion now uses AoE fanout, respects blink-like untargetability,
+    # and still hits pets.
     p1p = "p1_warlock"
     p2p = "p2_paladin"
     sov_match = MatchState(room_id="debug_sov", players=[p1p, p2p], phase="combat", seed=9010)
@@ -2741,9 +2756,11 @@ def debug_simulate_aoe_normalization_suite() -> Dict[str, Any]:
 
     # Force deterministic explosion payload and tick into expiration turn.
     pal = sov_match.state[p2p]
+    apply_effect_by_id(wlk, "blink", overrides={"duration": 1, "miss_log": "Target returned to their dark ward — Miss."})
     apply_effect_by_id(pal, "shield_of_vengeance", overrides={"duration": 1, "absorbed": 30})
     sov_fx = get_effect(pal, "shield_of_vengeance")
     assert sov_fx is not None, "Expected Shield of Vengeance effect to be active."
+    hp_before_sov = wlk.res.hp
 
     submit_action(sov_match, p1p, {"ability_id": "pass_turn"})
     submit_action(sov_match, p2p, {"ability_id": "pass_turn"})
@@ -2753,6 +2770,7 @@ def debug_simulate_aoe_normalization_suite() -> Dict[str, Any]:
     imp_after_sov = {pid: wlk_after.pets[pid].hp for pid in imp_ids_sov if pid in wlk_after.pets}
     sov_damaged_pets = [pid for pid in imp_ids_sov if pid in imp_after_sov and imp_after_sov[pid] < imp_before_sov[pid]]
     assert sov_damaged_pets, "Shield of Vengeance explosion should damage enemy pets."
+    assert wlk_after.res.hp == hp_before_sov, "Shield of Vengeance explosion should respect blink-like untargetability."
 
     # Log-label regression checks: AoE fanout/champion lines should use sid[:5] tokens
     # so snapshot formatting can render viewer-aware "(you)" names.
@@ -2762,8 +2780,11 @@ def debug_simulate_aoe_normalization_suite() -> Dict[str, Any]:
     )
 
     sov_lines = [line for line in sov_match.log if "Shield of Vengeance" in line]
-    assert any((f"Shield of Vengeance hits {p1p[:5]} for" in line) for line in sov_lines), (
-        "Shield of Vengeance champion hit should reference sid token labels."
+    assert any(("Target returned to their dark ward — Miss." in line) for line in sov_lines), (
+        "Shield of Vengeance explosion should log blink-like untargetable misses for the champion."
+    )
+    assert not any((f"Shield of Vengeance hits {p1p[:5]} for" in line) for line in sov_lines), (
+        "Shield of Vengeance champion hit should be skipped while blink-like untargetability is active."
     )
     assert any((f"Shield of Vengeance hits {p1p[:5]}'s Imp (imp1)" in line) for line in sov_lines), (
         "Shield of Vengeance pet fanout should reference sid token owner labels."
