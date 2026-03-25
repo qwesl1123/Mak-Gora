@@ -298,6 +298,41 @@ def scenario_mass_dispel_selective_removal() -> bool:
     return True
 
 
+def scenario_healing_resolves_from_negative_hp_before_winner_check() -> bool:
+    match = make_match("priest", "warrior", seed=123)
+    priest_sid, warrior_sid = match.players
+    priest = match.state[priest_sid]
+    warrior = match.state[warrior_sid]
+
+    priest.res.hp = -6
+    effects.apply_effect_by_id(
+        warrior,
+        "devouring_plague",
+        overrides={"duration": 2, "tick_damage": 12, "source_sid": priest_sid, "lifesteal_pct": 1.0},
+    )
+
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+
+    assert priest.res.hp > 0, "DoT lifesteal should revive a source from negative HP in the same turn"
+    assert match.phase != "ended", "Winner finalization should happen after same-turn healing/lifesteal resolves"
+    return True
+
+
+def scenario_mass_dispel_can_remove_pain_suppression_and_devouring_plague() -> bool:
+    pain_match = make_match("priest", "warrior", seed=123)
+    warrior = pain_match.state[pain_match.players[1]]
+    effects.apply_effect_by_id(warrior, "pain_suppression", overrides={"duration": 3})
+    submit_turn(pain_match, "mass_dispel", _DEF_PASS)
+    assert not _has_effect(warrior, "pain_suppression"), "Mass Dispel should remove Pain Suppression via dispel metadata"
+
+    plague_match = make_match("priest", "warrior", seed=123)
+    priest = plague_match.state[plague_match.players[0]]
+    effects.apply_effect_by_id(priest, "devouring_plague", overrides={"duration": 3, "source_sid": plague_match.players[1]})
+    submit_turn(plague_match, "mass_dispel", _DEF_PASS)
+    assert not _has_effect(priest, "devouring_plague"), "Mass Dispel should remove Devouring Plague via dispel metadata"
+    return True
+
+
 def scenario_cloak_of_shadows_interactions() -> bool:
     # Ring of Ice blocked.
     ring_match = make_match("rogue", "mage", seed=123)
@@ -572,13 +607,7 @@ def scenario_rage_crystal_increases_all_rage_gain_sources() -> bool:
 
 
 def scenario_warlock_imp_log_coloring_mapping_present() -> bool:
-    duel_html_path_candidates = [
-        _REPO_ROOT / "duel.html",
-        _REPO_ROOT.parent.parent / "templates" / "duel.html",
-    ]
-    duel_html_path = next((path for path in duel_html_path_candidates if path.exists()), None)
-    assert duel_html_path is not None, "Unable to locate duel.html in repo root or ../../templates/"
-    duel_html = duel_html_path.read_text(encoding="utf-8")
+    duel_html = (_REPO_ROOT / "duel.html").read_text(encoding="utf-8")
     assert '{ names: ["Imp"], className: "log-class-warlock" }' in duel_html, "Combat log pet styling should map Imp to warlock class color"
     return True
 
@@ -800,6 +829,18 @@ def scenario_hunter_wildfire_dot_log_order() -> bool:
     pass_idx = next(i for i, line in enumerate(match.log) if "uses their bare hands to cast Pass Turn" in line)
 
     assert wildfire_idx < burn_idx < pass_idx, "Wildfire Burn application should log after Wildfire Bomb and before the enemy action"
+    return True
+
+
+def scenario_mass_dispel_removes_same_turn_wildfire_burn() -> bool:
+    match = make_match("priest", "hunter", seed=123)
+    priest_sid, hunter_sid = match.players
+
+    submit_turn(match, "mass_dispel", "wildfire_bomb")
+
+    priest = match.state[priest_sid]
+    assert not _has_effect(priest, "wildfire_burn"), "Mass Dispel should remove Wildfire Burn applied in the same turn"
+    assert any("Wildfire Burn" in line and "removed by Mass Dispel" in line for line in match.log), "Same-turn Wildfire removal should be logged by Mass Dispel"
     return True
 
 
@@ -1531,6 +1572,30 @@ def scenario_mindgames_still_allows_direct_damage_dots() -> bool:
     return True
 
 
+def scenario_devouring_plague_heals_for_full_tick_damage() -> bool:
+    match = make_match("priest", "warrior", seed=123)
+    priest_sid, warrior_sid = match.players
+    priest = match.state[priest_sid]
+    warrior = match.state[warrior_sid]
+
+    priest.res.hp = max(1, priest.res.hp - 40)
+    effects.apply_effect_by_id(
+        warrior,
+        "devouring_plague",
+        overrides={"duration": 3, "tick_damage": 11, "source_sid": priest_sid},
+    )
+    hp_before_tick = priest.res.hp
+    enemy_before_tick = warrior.res.hp
+
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+
+    priest_gain = priest.res.hp - hp_before_tick
+    warrior_loss = max(0, enemy_before_tick - warrior.res.hp)
+    assert warrior_loss > 0, "Devouring Plague should deal DoT damage on tick"
+    assert priest_gain == warrior_loss, "Devouring Plague should heal for 100% of tick damage dealt"
+    return True
+
+
 def scenario_invalid_class_rejected() -> bool:
     match = MatchState(room_id="invalid-class", players=["p1_sid", "p2_sid"], phase="prep", seed=123)
     match.picks["p1_sid"] = {"class_id": "warlock"}
@@ -1589,7 +1654,7 @@ def scenario_mutual_stuns_count_current_turn_immediately() -> bool:
     rogue_druid = make_match("rogue", "druid", seed=123)
     rogue_sid, druid_sid = rogue_druid.players
     effects.remove_effect(rogue_druid.state[rogue_sid], "stealth")
-    effects.apply_effect_by_id(rogue_druid.state[druid_sid], "cat_form", overrides={"duration": 999})
+    submit_turn(rogue_druid, _DEF_PASS, "cat_form")
     submit_turn(rogue_druid, "kidney_shot", "maim")
     rogue_stun = next((fx for fx in rogue_druid.state[rogue_sid].effects if fx.get("id") == "stunned"), None)
     druid_stun = next((fx for fx in rogue_druid.state[druid_sid].effects if fx.get("id") == "stunned"), None)
@@ -1637,6 +1702,8 @@ def scenario_mutual_freeze_duration_model_remains_unchanged() -> bool:
 SCENARIOS = [
     scenario_mindgames_lay_on_hands,
     scenario_mass_dispel_selective_removal,
+    scenario_healing_resolves_from_negative_hp_before_winner_check,
+    scenario_mass_dispel_can_remove_pain_suppression_and_devouring_plague,
     scenario_cloak_of_shadows_interactions,
     scenario_stealth_priority_over_stun,
     scenario_immunity_priority_over_stuns,
@@ -1658,6 +1725,7 @@ SCENARIOS = [
     scenario_hunter_turtle_priority,
     scenario_hunter_wildfire_arcane_proc,
     scenario_hunter_wildfire_dot_log_order,
+    scenario_mass_dispel_removes_same_turn_wildfire_burn,
     scenario_hunter_proc_log_stays_at_top_of_turn,
     scenario_hunter_aimed_shot_raptor_pet_special,
     scenario_hunter_boar_redirect,
@@ -1697,6 +1765,7 @@ SCENARIOS = [
     scenario_hunter_serpent_special_respects_stealth,
     scenario_pet_action_text_persists_on_miss,
     scenario_mindgames_still_allows_direct_damage_dots,
+    scenario_devouring_plague_heals_for_full_tick_damage,
     scenario_invalid_class_rejected,
     scenario_valid_class_id_is_normalized_before_build,
     scenario_prep_selection_name_uses_current_submission,

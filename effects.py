@@ -309,9 +309,9 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 4,
         "category": "dot",
         "school": "magical",
-        "dispellable": False,
+        "dispellable": True,
         "tick_damage": 1,
-        "lifesteal_pct": 0.3,
+        "lifesteal_pct": 1.0,
         "refresh_only": True,
     },
     "pain_suppression": {
@@ -319,6 +319,8 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "name": "Pain Suppression",
         "duration": 3,
         "value": 0.4,
+        "dispellable": True,
+        "school": "magical",
     },
     "mindgames": {
         "type": "status",

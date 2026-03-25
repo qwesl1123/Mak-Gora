@@ -1166,12 +1166,15 @@ def resolve_turn(match: MatchState) -> None:
             duration = int(dot_data.get("duration", 1) or 1)
             tick_damage = max(1, total_dot // max(1, duration))
             dot_id = dot_data.get("id")
+            dot_template = effect_template(dot_id) if dot_id else {}
+            lifesteal_pct = float(dot_template.get("lifesteal_pct", 0) or 0)
+            dispellable = bool(dot_template.get("dispellable", False))
             if dot_id and refresh_dot_effect(target, dot_id, duration=duration, tick_damage=tick_damage, source_sid=actor.sid):
                 for fx in target.effects:
                     if fx.get("id") == dot_id:
-                        fx["lifesteal_pct"] = 0.4 if dot_id == "vampiric_touch" else 0.3
+                        fx["lifesteal_pct"] = lifesteal_pct
                         fx["school"] = "magical"
-                        fx["dispellable"] = (dot_id == "vampiric_touch")
+                        fx["dispellable"] = dispellable
                         break
                 log_parts.append(f"refreshes {effect_name(dot_id)}.")
             elif dot_id:
@@ -1180,8 +1183,8 @@ def resolve_turn(match: MatchState) -> None:
                     "tick_damage": tick_damage,
                     "source_sid": actor.sid,
                     "school": "magical",
-                    "dispellable": (dot_id == "vampiric_touch"),
-                    "lifesteal_pct": 0.4 if dot_id == "vampiric_touch" else 0.3,
+                    "dispellable": dispellable,
+                    "lifesteal_pct": lifesteal_pct,
                 })
                 log_parts.append(f"applies {effect_name(dot_id)}.")
             if ability.get("consume_effect"):
@@ -1875,11 +1878,6 @@ def resolve_turn(match: MatchState) -> None:
     result1 = finalize_action(sids[0], sids[1], a1, contexts[sids[0]])
     result2 = finalize_action(sids[1], sids[0], a2, contexts[sids[1]])
 
-    if result1.get("deferred"):
-        result1 = resolve_action(sids[0], sids[1], a1)
-    if result2.get("deferred"):
-        result2 = resolve_action(sids[1], sids[0], a2)
-
     for sid, result in ((sids[0], result1), (sids[1], result2)):
         totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
         totals["damage"] += int(result.get("damage", 0) or 0)
@@ -2293,6 +2291,15 @@ def resolve_turn(match: MatchState) -> None:
     match.log.extend(result2.get("extra_logs", []))
     apply_direct_damage_dot(sids[1], sids[0], result2, dealt2_data)
 
+    if result1.get("deferred"):
+        result1 = resolve_action(sids[0], sids[1], a1)
+        if result1.get("log"):
+            match.log.append(result1["log"])
+    if result2.get("deferred"):
+        result2 = resolve_action(sids[1], sids[0], a2)
+        if result2.get("log"):
+            match.log.append(result2["log"])
+
     for actor_sid, target_sid, result in ((sids[0], sids[1], result1), (sids[1], sids[0], result2)):
         ability = ABILITIES.get(result.get("ability_id", ""), {})
         if ability_target_mode(ability) != "aoe_enemy":
@@ -2317,7 +2324,7 @@ def resolve_turn(match: MatchState) -> None:
         ability = ABILITIES.get(result.get("ability_id", ""), {})
         if dealt > 0 and ability.get("heal_from_dealt_damage"):
             actor = match.state[actor_sid]
-            if actor.res and actor.res.hp > 0:
+            if actor.res:
                 before_hp = actor.res.hp
                 actor.res.hp = min(actor.res.hp + dealt, actor.res.hp_max)
                 gained = actor.res.hp - before_hp
@@ -2342,7 +2349,7 @@ def resolve_turn(match: MatchState) -> None:
         lifesteal = float(ability.get("heal_from_damage", 0) or 0)
         if dealt > 0 and lifesteal > 0:
             actor = match.state[actor_sid]
-            if actor.res and actor.res.hp > 0:
+            if actor.res:
                 heal_value = int(dealt * lifesteal)
                 before_hp = actor.res.hp
                 actor.res.hp = min(actor.res.hp + heal_value, actor.res.hp_max)
