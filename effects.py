@@ -1007,11 +1007,12 @@ def trigger_on_hit_passives(
     ability: Optional[Dict[str, Any]] = None,
     include_strike_again: bool = True,
     only_strike_again: bool = False,
-) -> tuple[int, List[str], int]:
+) -> tuple[int, List[str], int, List[Dict[str, Any]]]:
     """Run attacker item passives that trigger on_hit."""
     bonus_damage = 0
     bonus_healing = 0
     log_lines: List[str] = []
+    damage_events: List[Dict[str, Any]] = []
     for effect in attacker.effects:
         if effect.get("type") != "item_passive":
             continue
@@ -1045,8 +1046,15 @@ def trigger_on_hit_passives(
                 extra = int(base_damage * multiplier)
                 if extra > 0:
                     bonus_damage += extra
-                    log_lines.append(
-                        f"{attacker.sid[:5]} strikes again with {effect.get('source_item', 'item')} for {extra} bonus damage."
+                    damage_events.append(
+                        {
+                            "incoming": extra,
+                            "school": "physical",
+                            "log_template": (
+                                f"{attacker.sid[:5]} strikes again with {effect.get('source_item', 'item')} "
+                                "for __DMG_0__ bonus damage."
+                            ),
+                        }
                     )
         elif passive_type == "void_blade":
             if base_damage <= 0:
@@ -1066,8 +1074,15 @@ def trigger_on_hit_passives(
                 reduced = 0
             if reduced > 0:
                 bonus_damage += reduced
-                log_lines.append(
-                    f"{attacker.sid[:5]} calls upon the void with {effect.get('source_item', 'item')}. Roll {dice} = {roll_power}. Deals {reduced} magic damage."
+                damage_events.append(
+                    {
+                        "incoming": reduced,
+                        "school": "magical",
+                        "log_template": (
+                            f"{attacker.sid[:5]} calls upon the void with {effect.get('source_item', 'item')}. "
+                            f"Roll {dice} = {roll_power}. Deals __DMG_0__ magic damage."
+                        ),
+                    }
                 )
         elif passive_type == "lightning_blast":
             chance = float(passive.get("chance", 0) or 0)
@@ -1099,8 +1114,15 @@ def trigger_on_hit_passives(
                 reduced = 0
             if reduced > 0:
                 bonus_damage += reduced
-                log_lines.append(
-                    f"{attacker.sid[:5]} blasts the target with lightning from {effect.get('source_item', 'item')}. Roll {dice} = {roll_power}. Deals {reduced} magic damage."
+                damage_events.append(
+                    {
+                        "incoming": reduced,
+                        "school": "magical",
+                        "log_template": (
+                            f"{attacker.sid[:5]} blasts the target with lightning from {effect.get('source_item', 'item')}. "
+                            f"Roll {dice} = {roll_power}. Deals __DMG_0__ magic damage."
+                        ),
+                    }
                 )
         elif passive_type == "heal_on_hit":
             chance = float(passive.get("chance", 0) or 0)
@@ -1224,7 +1246,7 @@ def trigger_on_hit_passives(
                 log_lines.append(f"{item_name} duplicates {ability_name}!")
 
 
-    return bonus_damage, log_lines, bonus_healing
+    return bonus_damage, log_lines, bonus_healing, damage_events
 
 def damage_multiplier_from_passives(attacker: PlayerState) -> float:
     """Apply conditional damage multipliers from item passives."""

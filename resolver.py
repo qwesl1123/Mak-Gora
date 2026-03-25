@@ -609,8 +609,12 @@ def resolve_turn(match: MatchState) -> None:
             and is_single_target_ability(ability)
         )
 
-    def can_cast_while_cc(ability: Dict[str, Any]) -> bool:
-        return bool(ability.get("allow_while_stunned") or ability.get("priority_defensive"))
+    def can_cast_while_cc(ability: Dict[str, Any], *, reason: str | None = None, incoming_cc: bool = False) -> bool:
+        if ability.get("allow_while_stunned"):
+            return True
+        if not ability.get("priority_defensive"):
+            return False
+        return incoming_cc and reason == "stunned"
 
     def is_harmful_target_effect_entry(entry: Dict[str, Any]) -> bool:
         effect_id = entry.get("id")
@@ -798,17 +802,18 @@ def resolve_turn(match: MatchState) -> None:
 
         weapon_name = ITEMS.get(weapon_id, {}).get("name", "their bare hands")
 
-        if cannot_act(actor) and not can_cast_while_cc(ability):
+        if cannot_act(actor):
             reason = get_cant_act_reason(actor)
-            if reason:
-                reason_text = f"is {reason} and cannot act"
-            else:
-                reason_text = "cannot act"
-            return {
-                "damage": 0,
-                "healing": 0,
-                "log": f"{actor_sid[:5]} tries to use {ability['name']} but {reason_text}.",
-            }
+            if not can_cast_while_cc(ability, reason=reason, incoming_cc=False):
+                if reason:
+                    reason_text = f"is {reason} and cannot act"
+                else:
+                    reason_text = "cannot act"
+                return {
+                    "damage": 0,
+                    "healing": 0,
+                    "log": f"{actor_sid[:5]} tries to use {ability['name']} but {reason_text}.",
+                }
 
         if has_flag(actor, "disable_attacks") and "attack" in (ability.get("tags") or []):
             return {
@@ -818,7 +823,7 @@ def resolve_turn(match: MatchState) -> None:
             }
 
         log_parts = [f"{actor_sid[:5]} uses {weapon_name} to cast {ability['name']}."]
-        extra_logs: list[str] = []
+        extra_logs: list[Any] = []
         pre_log_parts: list[str] = []
 
         has_target_effects = bool(ability.get("target_effects"))
@@ -834,7 +839,7 @@ def resolve_turn(match: MatchState) -> None:
 
         consume_costs(actor, ability.get("cost", {}))
 
-        extra_logs: list[str] = []
+        extra_logs: list[Any] = []
         dice_data = ability.get("dice")
         scaling = ability.get("scaling", {}) or {}
         flat_damage = ability.get("flat_damage")
@@ -1257,6 +1262,7 @@ def resolve_turn(match: MatchState) -> None:
         damage_type = ability.get("damage_type", "physical")
         hits = int(ability.get("hits", 1) or 1)
         total_damage = 0
+        passive_bonus_damage_total = 0
         aoe_incoming_damage = 0
         total_healing = 0
         empower_multiplier = 1.0
@@ -1332,12 +1338,13 @@ def resolve_turn(match: MatchState) -> None:
                 log_parts.append(f"{prefix}Critical hit!")
 
             # Apply defense mitigation
-            reduced = mitigate(raw, modify_stat(target, "def", target.stats.get("def", 0)))
+            mitigated_def = 0 if ability.get("ignore_armor") else modify_stat(target, "def", target.stats.get("def", 0))
+            reduced = mitigate(raw, mitigated_def)
 
             # Apply damage type specific resistance
             if damage_type == "physical":
                 resist = 0
-                if not ability.get("ignore_physical_reduction"):
+                if not ability.get("ignore_physical_reduction") and not ability.get("ignore_armor"):
                     resist = modify_stat(target, "physical_reduction", target.stats.get("physical_reduction", 0))
                 reduced = max(0, reduced - resist)
             elif damage_type == "magic":
@@ -1442,9 +1449,25 @@ def resolve_turn(match: MatchState) -> None:
 
             total_damage += reduced
 
+        def queue_passive_damage_events(events: list[Dict[str, Any]]) -> None:
+            for event in events:
+                incoming = int(event.get("incoming", 0) or 0)
+                template = event.get("log_template")
+                if incoming <= 0 or not template:
+                    continue
+                extra_logs.append(
+                    {
+                        "type": "damage_event",
+                        "source_name": ability.get("name", "attack"),
+                        "incoming": incoming,
+                        "school": event.get("school", "physical"),
+                        "log_template": str(template),
+                    }
+                )
+
         # Apply non-strike-again on-hit passive effects once per ability execution.
         if ability_hit_landed:
-            bonus_damage, passive_logs, bonus_healing = trigger_on_hit_passives(
+            bonus_damage, passive_logs, bonus_healing, passive_damage_events = trigger_on_hit_passives(
                 actor,
                 target,
                 on_hit_base_damage,
@@ -1454,15 +1477,16 @@ def resolve_turn(match: MatchState) -> None:
                 include_strike_again=False,
             )
             if bonus_damage > 0:
-                total_damage += bonus_damage
+                passive_bonus_damage_total += bonus_damage
             if bonus_healing > 0:
                 total_healing += bonus_healing
             if passive_logs:
                 extra_logs.extend(passive_logs)
+            queue_passive_damage_events(passive_damage_events)
 
         # Strike-again passives can proc per successful damaging strike.
         for strike_damage in per_hit_damage_values:
-            strike_bonus_damage, strike_logs, _ = trigger_on_hit_passives(
+            strike_bonus_damage, strike_logs, _, strike_damage_events = trigger_on_hit_passives(
                 actor,
                 target,
                 strike_damage,
@@ -1473,17 +1497,19 @@ def resolve_turn(match: MatchState) -> None:
                 only_strike_again=True,
             )
             if strike_bonus_damage > 0:
-                total_damage += strike_bonus_damage
+                passive_bonus_damage_total += strike_bonus_damage
             if strike_logs:
                 extra_logs.extend(strike_logs)
+            queue_passive_damage_events(strike_damage_events)
 
         resource_gain = ability.get("resource_gain", {})
-        if total_damage > 0 and resource_gain:
+        total_effective_damage_for_resources = total_damage + passive_bonus_damage_total
+        if total_effective_damage_for_resources > 0 and resource_gain:
             for resource, gain in resource_gain.items():
                 if gain == "damage":
-                    gain_value = total_damage
+                    gain_value = total_effective_damage_for_resources
                 elif gain == "damage_x3":
-                    gain_value = total_damage * 3
+                    gain_value = total_effective_damage_for_resources * 3
                 else:
                     gain_value = int(gain)
                 if gain_value > 0 and hasattr(actor.res, resource):
@@ -1538,17 +1564,18 @@ def resolve_turn(match: MatchState) -> None:
         if not ability:
             return {"damage": 0, "log": f"{actor_sid[:5]} fumbles (unknown ability).", "resolved": True}
 
-        if cannot_act(actor) and not can_cast_while_cc(ability):
+        if cannot_act(actor):
             reason = get_cant_act_reason(actor)
-            if reason:
-                reason_text = f"is {reason} and cannot act"
-            else:
-                reason_text = "cannot act"
-            return {
-                "damage": 0,
-                "log": f"{actor_sid[:5]} tries to use {ability['name']} but {reason_text}.",
-                "resolved": True,
-            }
+            if not can_cast_while_cc(ability, reason=reason, incoming_cc=False):
+                if reason:
+                    reason_text = f"is {reason} and cannot act"
+                else:
+                    reason_text = "cannot act"
+                return {
+                    "damage": 0,
+                    "log": f"{actor_sid[:5]} tries to use {ability['name']} but {reason_text}.",
+                    "resolved": True,
+                }
 
         allowed_classes = ability.get("classes")
         if allowed_classes and actor.build.class_id not in allowed_classes:
@@ -1706,8 +1733,6 @@ def resolve_turn(match: MatchState) -> None:
             flags = effect.get("flags", {}) or {}
             if has_effect(target, "cloak_of_shadows") and is_magical_harmful_effect(effect):
                 continue
-            if flags.get("break_on_damage"):
-                continue
             if flags.get("stunned") or effect.get("cant_act_reason"):
                 return True
         return False
@@ -1737,21 +1762,21 @@ def resolve_turn(match: MatchState) -> None:
             weapon_id = actor.build.items.get("weapon")
         weapon_name = ITEMS.get(weapon_id, {}).get("name", "their bare hands")
         log_parts = [f"{actor_sid[:5]} uses {weapon_name} to cast {ability['name']}."]
-        extra_logs: list[str] = []
+        extra_logs: list[Any] = []
 
-        actor_cannot_act = start_of_turn_cant_act.get(actor_sid, False) or (
-            incoming_immediate_stun.get(actor_sid, False) and not outgoing_immediate_stun.get(actor_sid, False)
-        )
-        if actor_cannot_act and not can_cast_while_cc(ability):
+        incoming_lock = incoming_immediate_stun.get(actor_sid, False) and not outgoing_immediate_stun.get(actor_sid, False)
+        actor_cannot_act = start_of_turn_cant_act.get(actor_sid, False) or incoming_lock
+        if actor_cannot_act:
             reason = get_cant_act_reason(actor)
-            if reason:
-                reason_text = f"is {reason} and cannot act"
-            else:
-                reason_text = "cannot act"
-            ctx["damage"] = 0
-            ctx["log"] = f"{actor_sid[:5]} tries to use {ability['name']} but {reason_text}."
-            ctx["resolved"] = True
-            return
+            if not can_cast_while_cc(ability, reason=reason, incoming_cc=incoming_lock):
+                if reason:
+                    reason_text = f"is {reason} and cannot act"
+                else:
+                    reason_text = "cannot act"
+                ctx["damage"] = 0
+                ctx["log"] = f"{actor_sid[:5]} tries to use {ability['name']} but {reason_text}."
+                ctx["resolved"] = True
+                return
 
         consume_costs(actor, ability.get("cost", {}))
 
@@ -2270,6 +2295,38 @@ def resolve_turn(match: MatchState) -> None:
             verb = "refreshes" if refreshed else "applies"
             match.log.append(f"{actor_sid[:5]} {verb} {effect_name(dot_id)} for {tick_damage} per turn.")
 
+    def append_extra_logs(actor_sid: str, target_sid: str, result: Dict[str, Any]) -> None:
+        for entry in result.get("extra_logs", []) or []:
+            if isinstance(entry, str):
+                match.log.append(entry)
+                continue
+            if not isinstance(entry, dict) or entry.get("type") != "damage_event":
+                continue
+            incoming = int(entry.get("incoming", 0) or 0)
+            if incoming <= 0:
+                continue
+            dealt_data = apply_damage(
+                match.state[actor_sid],
+                match.state[target_sid],
+                incoming,
+                target_sid,
+                str(entry.get("source_name") or "attack"),
+                bool(result.get("mindgames_flip_damage")),
+                [incoming],
+                school=str(entry.get("school") or "physical"),
+                allow_redirect=ability_target_mode(ABILITIES.get(result.get("ability_id", ""), {})) != "aoe_enemy",
+            )
+            dealt_amount = int(dealt_data.get("hp_damage", 0) or 0)
+            if dealt_amount > 0:
+                totals = match.combat_totals.setdefault(actor_sid, {"damage": 0, "healing": 0})
+                totals["damage"] += dealt_amount
+            formatted = format_damage_log(str(entry.get("log_template") or ""), dealt_data)
+            flipped_heal = int(dealt_data.get("mindgames_healing", 0) or 0)
+            if flipped_heal > 0:
+                formatted = f"{formatted} Mindgames flips damage into {flipped_heal} healing for the target."
+            if formatted:
+                match.log.append(formatted)
+
     match.log.extend(result1.get("pre_logs", []))
     match.log.extend(result2.get("pre_logs", []))
     result1_log = format_damage_log(result1["log"], dealt1_data)
@@ -2277,18 +2334,18 @@ def resolve_turn(match: MatchState) -> None:
         result1_log = (
             f"{result1_log} Mindgames flips damage into "
             f"{int(dealt1_data.get('mindgames_healing', 0) or 0)} healing for the target."
-        )
+    )
     match.log.append(result1_log)
-    match.log.extend(result1.get("extra_logs", []))
+    append_extra_logs(sids[0], sids[1], result1)
     apply_direct_damage_dot(sids[0], sids[1], result1, dealt1_data)
     result2_log = format_damage_log(result2["log"], dealt2_data)
     if int(dealt2_data.get("mindgames_healing", 0) or 0) > 0:
         result2_log = (
             f"{result2_log} Mindgames flips damage into "
             f"{int(dealt2_data.get('mindgames_healing', 0) or 0)} healing for the target."
-        )
+    )
     match.log.append(result2_log)
-    match.log.extend(result2.get("extra_logs", []))
+    append_extra_logs(sids[1], sids[0], result2)
     apply_direct_damage_dot(sids[1], sids[0], result2, dealt2_data)
 
     if result1.get("deferred"):

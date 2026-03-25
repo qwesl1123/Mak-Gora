@@ -340,6 +340,8 @@ ABILITIES = {
         "dice": {"type": "d6", "power_on": "roll"},
         "scaling": {"atk": 0.2},
         "damage_type": "physical",
+        "cannot_miss": True,
+        "ignore_armor": True,
         "tags": ["attack", "physical"],
         "cooldown": 25,
         "hits": 4,

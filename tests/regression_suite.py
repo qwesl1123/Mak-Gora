@@ -15,6 +15,22 @@ from typing import Any, Dict, Iterable, List, Tuple
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+def _detect_duel_html_path() -> Path:
+    candidates = [
+        _REPO_ROOT / "duel.html",
+        _REPO_ROOT / "templates" / "duel.html",
+        _REPO_ROOT.parent / "templates" / "duel.html",
+        _REPO_ROOT.parent.parent / "templates" / "duel.html",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError(
+        "Unable to find duel.html; checked: "
+        + ", ".join(str(path) for path in candidates)
+    )
+
+
 def _detect_layout() -> tuple[Path, Path]:
     nested_engine = _REPO_ROOT / "engine"
     nested_content = _REPO_ROOT / "content"
@@ -607,7 +623,7 @@ def scenario_rage_crystal_increases_all_rage_gain_sources() -> bool:
 
 
 def scenario_warlock_imp_log_coloring_mapping_present() -> bool:
-    duel_html = (_REPO_ROOT / "duel.html").read_text(encoding="utf-8")
+    duel_html = _detect_duel_html_path().read_text(encoding="utf-8")
     assert '{ names: ["Imp"], className: "log-class-warlock" }' in duel_html, "Combat log pet styling should map Imp to warlock class color"
     return True
 
@@ -1654,7 +1670,7 @@ def scenario_mutual_stuns_count_current_turn_immediately() -> bool:
     rogue_druid = make_match("rogue", "druid", seed=123)
     rogue_sid, druid_sid = rogue_druid.players
     effects.remove_effect(rogue_druid.state[rogue_sid], "stealth")
-    submit_turn(rogue_druid, _DEF_PASS, "cat_form")
+    submit_turn(rogue_druid, _DEF_PASS, "cat")
     submit_turn(rogue_druid, "kidney_shot", "maim")
     rogue_stun = next((fx for fx in rogue_druid.state[rogue_sid].effects if fx.get("id") == "stunned"), None)
     druid_stun = next((fx for fx in rogue_druid.state[druid_sid].effects if fx.get("id") == "stunned"), None)
@@ -1696,6 +1712,78 @@ def scenario_mutual_freeze_duration_model_remains_unchanged() -> bool:
     hunter_freeze = next((fx for fx in trap_match.state[trap_match.players[1]].effects if fx.get("id") == "ring_of_ice_freeze"), None)
     assert mage_freeze is not None and int(mage_freeze.get("duration", 0) or 0) == 1, "Freezing Trap should still keep one frozen turn after application"
     assert hunter_freeze is not None and int(hunter_freeze.get("duration", 0) or 0) == 1, "Ring of Ice should still keep one frozen turn after application"
+    return True
+
+
+def scenario_break_on_damage_cc_blocks_form_shift_same_turn() -> bool:
+    fear_match = make_match("warlock", "druid", seed=3101)
+    submit_turn(fear_match, "fear", "bear")
+    fear_turn = fear_match.log[fear_match.log.index("Turn 1") + 1:]
+    assert any("tries to use Bear Form but is feared and cannot act." in line for line in fear_turn), "Fear should block Bear Form on the application turn"
+    assert not _has_effect(fear_match.state[fear_match.players[1]], "bear_form"), "Bear Form should not apply while feared"
+
+    trap_match = make_match("hunter", "druid", seed=3102)
+    submit_turn(trap_match, "freezing_trap", "bear")
+    trap_turn = trap_match.log[trap_match.log.index("Turn 1") + 1:]
+    assert any("tries to use Bear Form but is frozen and cannot act." in line for line in trap_turn), "Freezing Trap should block Bear Form on the application turn"
+    assert not _has_effect(trap_match.state[trap_match.players[1]], "bear_form"), "Bear Form should not apply while frozen"
+
+    ring_match = make_match("mage", "druid", seed=3103)
+    submit_turn(ring_match, "ring_of_ice", "bear")
+    ring_turn = ring_match.log[ring_match.log.index("Turn 1") + 1:]
+    assert any("tries to use Bear Form but is frozen and cannot act." in line for line in ring_turn), "Ring of Ice should block Bear Form on the application turn"
+    assert not _has_effect(ring_match.state[ring_match.players[1]], "bear_form"), "Bear Form should not apply while frozen"
+    return True
+
+
+def scenario_break_on_damage_cc_blocks_other_normal_actions_same_turn() -> bool:
+    match = make_match("hunter", "druid", seed=3104)
+    submit_turn(match, "freezing_trap", "basic_attack")
+    latest_turn = match.log[match.log.index("Turn 1") + 1:]
+    assert any("tries to use Basic Attack but is frozen and cannot act." in line for line in latest_turn), "Frozen lockout should block normal non-form abilities as well"
+    return True
+
+
+def scenario_passive_secondary_damage_logs_own_absorb_suffix() -> bool:
+    for seed in range(1, 500):
+        match = make_match("warrior", "priest", p1_items={"weapon": "thunderfury"}, seed=seed)
+        target = match.state[match.players[1]]
+        effects.add_absorb(target, 999, source_name="Power Word: Shield", effect_id="power_word_shield")
+        submit_turn(match, "overpower", _DEF_PASS)
+        thunder_line = next((line for line in match.log if "blasts the target with lightning from Thunderfury" in line), None)
+        if not thunder_line:
+            continue
+        overpower_line = next((line for line in match.log if "cast Overpower." in line), "")
+        assert "absorbed by Power Word: Shield" in thunder_line, "Lightning absorb should be appended to the lightning line"
+        lightning_absorb_segment = thunder_line[thunder_line.rfind("("):]
+        assert lightning_absorb_segment not in overpower_line, "Lightning absorb should not be appended to the primary ability line"
+        return True
+    raise AssertionError("Could not find a deterministic Thunderfury lightning proc seed in range")
+
+
+def scenario_fury_of_azzinoth_cannot_miss_and_ignores_armor() -> bool:
+    low_acc_match = make_match("rogue", "warrior", p1_items={"weapon": "twin_blades_azzinoth"}, seed=3201)
+    rogue = low_acc_match.state[low_acc_match.players[0]]
+    warrior = low_acc_match.state[low_acc_match.players[1]]
+    rogue.stats["acc"] = 0
+    warrior.stats["eva"] = 999
+    before_hp = warrior.res.hp
+    submit_turn(low_acc_match, "fury_of_azzinoth", _DEF_PASS)
+    latest_turn = low_acc_match.log[low_acc_match.log.index("Turn 1") + 1:]
+    assert not any("Miss!" in line for line in latest_turn if "Fury of Azzinoth" in line), "Fury of Azzinoth should not miss even at 0 accuracy"
+    assert warrior.res.hp < before_hp, "Fury of Azzinoth should still deal damage at 0 accuracy"
+
+    baseline = make_match("rogue", "warrior", p1_items={"weapon": "twin_blades_azzinoth"}, seed=3202)
+    armored = make_match("rogue", "warrior", p1_items={"weapon": "twin_blades_azzinoth"}, seed=3202)
+    armored_target = armored.state[armored.players[1]]
+    armored_target.stats["def"] += 999
+    armored_target.stats["physical_reduction"] += 999
+    baseline_target = baseline.state[baseline.players[1]]
+    submit_turn(baseline, "fury_of_azzinoth", _DEF_PASS)
+    submit_turn(armored, "fury_of_azzinoth", _DEF_PASS)
+    baseline_damage = baseline_target.res.hp_max - baseline_target.res.hp
+    armored_damage = armored_target.res.hp_max - armored_target.res.hp
+    assert armored_damage == baseline_damage, "Fury of Azzinoth should ignore armor-derived mitigation"
     return True
 
 
@@ -1742,6 +1830,8 @@ SCENARIOS = [
     scenario_break_on_damage_cc_dot_tick_breaks,
     scenario_break_on_damage_cc_aoe_breaks,
     scenario_break_on_damage_cc_pet_damage_breaks,
+    scenario_break_on_damage_cc_blocks_form_shift_same_turn,
+    scenario_break_on_damage_cc_blocks_other_normal_actions_same_turn,
     scenario_break_on_damage_cc_persists_after_same_turn_mutual_freeze,
     scenario_break_on_damage_cc_persists_after_same_turn_fear_vs_freeze,
     scenario_break_on_damage_logs_use_clean_wording_and_bottom_order,
@@ -1766,6 +1856,8 @@ SCENARIOS = [
     scenario_pet_action_text_persists_on_miss,
     scenario_mindgames_still_allows_direct_damage_dots,
     scenario_devouring_plague_heals_for_full_tick_damage,
+    scenario_passive_secondary_damage_logs_own_absorb_suffix,
+    scenario_fury_of_azzinoth_cannot_miss_and_ignores_armor,
     scenario_invalid_class_rejected,
     scenario_valid_class_id_is_normalized_before_build,
     scenario_prep_selection_name_uses_current_submission,
