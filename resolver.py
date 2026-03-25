@@ -1714,6 +1714,11 @@ def resolve_turn(match: MatchState) -> None:
         sids[1]: immediate_action_can_stun(sids[0], sids[1], contexts[sids[0]]),
     }
 
+    outgoing_immediate_stun = {
+        sid: immediate_action_can_stun(sid, sids[1] if sid == sids[0] else sids[0], contexts[sid])
+        for sid in sids
+    }
+
     def resolve_immediate_effects(actor_sid: str, target_sid: str, ctx: Dict[str, Any]) -> None:
         if ctx.get("resolved") or not ctx.get("immediate_only"):
             return
@@ -1731,7 +1736,9 @@ def resolve_turn(match: MatchState) -> None:
         log_parts = [f"{actor_sid[:5]} uses {weapon_name} to cast {ability['name']}."]
         extra_logs: list[str] = []
 
-        actor_cannot_act = start_of_turn_cant_act.get(actor_sid, False) or incoming_immediate_stun.get(actor_sid, False)
+        actor_cannot_act = start_of_turn_cant_act.get(actor_sid, False) or (
+            incoming_immediate_stun.get(actor_sid, False) and not outgoing_immediate_stun.get(actor_sid, False)
+        )
         if actor_cannot_act and not can_cast_while_cc(ability):
             reason = get_cant_act_reason(actor)
             if reason:

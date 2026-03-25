@@ -572,7 +572,13 @@ def scenario_rage_crystal_increases_all_rage_gain_sources() -> bool:
 
 
 def scenario_warlock_imp_log_coloring_mapping_present() -> bool:
-    duel_html = (_REPO_ROOT / "duel.html").read_text(encoding="utf-8")
+    duel_html_path_candidates = [
+        _REPO_ROOT / "duel.html",
+        _REPO_ROOT.parent.parent / "templates" / "duel.html",
+    ]
+    duel_html_path = next((path for path in duel_html_path_candidates if path.exists()), None)
+    assert duel_html_path is not None, "Unable to locate duel.html in repo root or ../../templates/"
+    duel_html = duel_html_path.read_text(encoding="utf-8")
     assert '{ names: ["Imp"], className: "log-class-warlock" }' in duel_html, "Combat log pet styling should map Imp to warlock class color"
     return True
 
@@ -1579,6 +1585,55 @@ def scenario_command_input_normalizes_abilities_and_items() -> bool:
     return True
 
 
+def scenario_mutual_stuns_count_current_turn_immediately() -> bool:
+    rogue_druid = make_match("rogue", "druid", seed=123)
+    rogue_sid, druid_sid = rogue_druid.players
+    effects.remove_effect(rogue_druid.state[rogue_sid], "stealth")
+    effects.apply_effect_by_id(rogue_druid.state[druid_sid], "cat_form", overrides={"duration": 999})
+    submit_turn(rogue_druid, "kidney_shot", "maim")
+    rogue_stun = next((fx for fx in rogue_druid.state[rogue_sid].effects if fx.get("id") == "stunned"), None)
+    druid_stun = next((fx for fx in rogue_druid.state[druid_sid].effects if fx.get("id") == "stunned"), None)
+    assert rogue_stun is not None, "Maim should stun the Rogue on the mutual-stun turn"
+    assert druid_stun is not None, "Kidney Shot should stun the Druid on the mutual-stun turn"
+    assert int(rogue_stun.get("duration", 0) or 0) == 2, "Maim(3) should leave 2 turns after the application turn resolves"
+    assert int(druid_stun.get("duration", 0) or 0) == 1, "Kidney Shot(2) should leave 1 turn after the application turn resolves"
+
+    mirrored_rogues = make_match("rogue", "rogue", seed=456)
+    for sid in mirrored_rogues.players:
+        effects.remove_effect(mirrored_rogues.state[sid], "stealth")
+    submit_turn(mirrored_rogues, "cheap_shot", "cheap_shot")
+    assert not _has_effect(mirrored_rogues.state[mirrored_rogues.players[0]], "stunned"), "Cheap Shot(1) should expire at end of the mutual application turn"
+    assert not _has_effect(mirrored_rogues.state[mirrored_rogues.players[1]], "stunned"), "Cheap Shot(1) should expire at end of the mutual application turn"
+    latest_turn = mirrored_rogues.log[mirrored_rogues.log.index("Turn 1") + 1:]
+    assert any("uses their bare hands to cast Cheap Shot. Target stunned." in line for line in latest_turn), "Both Cheap Shots should resolve instead of being pre-blocked"
+
+    paladin_rogue = make_match("paladin", "rogue", seed=789)
+    effects.remove_effect(paladin_rogue.state[paladin_rogue.players[1]], "stealth")
+    submit_turn(paladin_rogue, "hammer_of_justice", "kidney_shot")
+    paladin_stun = next((fx for fx in paladin_rogue.state[paladin_rogue.players[0]].effects if fx.get("id") == "stunned"), None)
+    rogue_stun_hybrid = next((fx for fx in paladin_rogue.state[paladin_rogue.players[1]].effects if fx.get("id") == "stunned"), None)
+    assert paladin_stun is not None and int(paladin_stun.get("duration", 0) or 0) == 1, "Kidney Shot(2) should leave one future turn on the Paladin"
+    assert rogue_stun_hybrid is not None and int(rogue_stun_hybrid.get("duration", 0) or 0) == 1, "HoJ(2) should leave one future turn on the Rogue"
+    return True
+
+
+def scenario_mutual_freeze_duration_model_remains_unchanged() -> bool:
+    ring_match = make_match("mage", "mage", seed=111)
+    submit_turn(ring_match, "ring_of_ice", "ring_of_ice")
+    p1_freeze = next((fx for fx in ring_match.state[ring_match.players[0]].effects if fx.get("id") == "ring_of_ice_freeze"), None)
+    p2_freeze = next((fx for fx in ring_match.state[ring_match.players[1]].effects if fx.get("id") == "ring_of_ice_freeze"), None)
+    assert p1_freeze is not None and int(p1_freeze.get("duration", 0) or 0) == 1, "Mutual Ring of Ice should still keep one frozen turn after application"
+    assert p2_freeze is not None and int(p2_freeze.get("duration", 0) or 0) == 1, "Mutual Ring of Ice should still keep one frozen turn after application"
+
+    trap_match = make_match("mage", "hunter", seed=222)
+    submit_turn(trap_match, "ring_of_ice", "freezing_trap")
+    mage_freeze = next((fx for fx in trap_match.state[trap_match.players[0]].effects if fx.get("id") == "freezing_trap_freeze"), None)
+    hunter_freeze = next((fx for fx in trap_match.state[trap_match.players[1]].effects if fx.get("id") == "ring_of_ice_freeze"), None)
+    assert mage_freeze is not None and int(mage_freeze.get("duration", 0) or 0) == 1, "Freezing Trap should still keep one frozen turn after application"
+    assert hunter_freeze is not None and int(hunter_freeze.get("duration", 0) or 0) == 1, "Ring of Ice should still keep one frozen turn after application"
+    return True
+
+
 SCENARIOS = [
     scenario_mindgames_lay_on_hands,
     scenario_mass_dispel_selective_removal,
@@ -1613,6 +1668,8 @@ SCENARIOS = [
     scenario_mage_hot_streak_lasts_three_turns,
     scenario_ring_of_ice_freezes_and_breaks_on_damage,
     scenario_fear_applies_feared_and_breaks_on_damage,
+    scenario_mutual_stuns_count_current_turn_immediately,
+    scenario_mutual_freeze_duration_model_remains_unchanged,
     scenario_break_on_damage_cc_no_damage_turn_preserves_lockout,
     scenario_break_on_damage_cc_dot_tick_breaks,
     scenario_break_on_damage_cc_aoe_breaks,
