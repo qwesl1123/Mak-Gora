@@ -824,7 +824,7 @@ ABILITIES = {
             "effect_id": "shield_of_vengeance",
         },
         "self_effects": [
-            {"id": "shield_of_vengeance", "duration": 8}
+            {"id": "shield_of_vengeance", "duration": 3}
         ],
     },
     "lay_on_hands": {

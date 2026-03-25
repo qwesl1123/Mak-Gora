@@ -246,7 +246,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
     "shield_of_vengeance": {
         "type": "status",
         "name": "Shield of Vengeance",
-        "duration": 8,
+        "duration": 3,
         "category": "absorb",
         "dispellable": True,
         "school": "magical",

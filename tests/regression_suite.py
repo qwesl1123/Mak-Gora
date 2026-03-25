@@ -390,6 +390,29 @@ def scenario_cloak_of_shadows_interactions() -> bool:
     return True
 
 
+def scenario_shield_of_vengeance_duration_counts_current_turn() -> bool:
+    match = make_match("paladin", "warrior", seed=123)
+    paladin_sid = match.players[0]
+    enemy_sid = match.players[1]
+    paladin = match.state[paladin_sid]
+    enemy = match.state[enemy_sid]
+
+    submit_turn(match, "shield_of_vengeance", _DEF_PASS)
+    shield = next((effect for effect in paladin.effects if effect.get("id") == "shield_of_vengeance"), None)
+    assert shield is not None, "Shield of Vengeance should be applied when cast"
+    assert int(shield.get("duration", 0) or 0) == 2, "Current turn should count; SoV should have 2 turns remaining after cast turn"
+
+    shield["absorbed"] = 8
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+    assert any(effect.get("id") == "shield_of_vengeance" for effect in paladin.effects), "SoV should still exist one turn before expiry"
+
+    hp_before = enemy.res.hp
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+    assert enemy.res.hp < hp_before, "SoV should explode on the following turn after the cast turn"
+    assert any("Shield of Vengeance explodes!" in line for line in match.log), "Explosion log should be present on expiry"
+    return True
+
+
 def scenario_stealth_priority_over_stun() -> bool:
     match = make_match("rogue", "paladin", seed=123)
     submit_turn(match, "vanish", "hammer_of_justice")
@@ -1793,6 +1816,7 @@ SCENARIOS = [
     scenario_healing_resolves_from_negative_hp_before_winner_check,
     scenario_mass_dispel_can_remove_pain_suppression_and_devouring_plague,
     scenario_cloak_of_shadows_interactions,
+    scenario_shield_of_vengeance_duration_counts_current_turn,
     scenario_stealth_priority_over_stun,
     scenario_immunity_priority_over_stuns,
     scenario_stealth_priority_over_stuns_expanded,
