@@ -130,17 +130,17 @@ ITEMS = {
     "leather_armor": {
         "name": "Leather Armor",
         "slot": "armor",
-        "mods": {"physical_reduction": 3, "magic_resist": 3},
+        "mods": {"physical_reduction": 9, "magic_resist": 9},
     },
     "cloth_armor": {
         "name": "Cloth Armor",
         "slot": "armor",
-        "mods": {"physical_reduction": 1, "magic_resist": 5},
+        "mods": {"physical_reduction": 3, "magic_resist": 15},
     },
     "plate_armor": {
         "name": "Plate Armor",
         "slot": "armor",
-        "mods": {"physical_reduction": 6, "magic_resist": 0},
+        "mods": {"physical_reduction": 18, "magic_resist": 3},
     },
     
     # Trinkets
