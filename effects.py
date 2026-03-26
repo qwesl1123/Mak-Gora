@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from .models import PlayerState
 from ..content.balance import DEFAULTS
+from ..content.classes import class_display_name
 from .dice import roll
 from .rules import base_damage as calc_base_damage, mitigate
 
@@ -1208,9 +1209,9 @@ def trigger_on_hit_passives(
 
             item_name = effect.get("source_item", "item")
             ability_name = ability.get("name", "spell")
+            owner_class = class_display_name((attacker.build.class_id or "").strip().lower()) if attacker.build else "Player"
+            duplicate_prefix = f"{owner_class}(you)'s {item_name}"
             duplicate_damage = 0
-            duplicate_segments: List[str] = []
-
             for hit_index in range(1, hits + 1):
                 roll_power = 0
                 dice_type = None
@@ -1246,24 +1247,35 @@ def trigger_on_hit_passives(
                 duplicate_damage += duplicate_reduced
                 if hits > 1:
                     if dice_type:
-                        duplicate_segments.append(
-                            f"Hit {hit_index}: Roll {dice_type} = {roll_power}. Deals {duplicate_reduced} damage."
+                        template = (
+                            f"{duplicate_prefix} duplicates {ability_name}! "
+                            f"Hit {hit_index}: Roll {dice_type} = {roll_power}. Deals __DMG_0__ damage."
                         )
                     else:
-                        duplicate_segments.append(f"Hit {hit_index}: Deals {duplicate_reduced} damage.")
+                        template = (
+                            f"{duplicate_prefix} duplicates {ability_name}! "
+                            f"Hit {hit_index}: Deals __DMG_0__ damage."
+                        )
                 elif dice_type:
-                    duplicate_segments.append(f"Roll {dice_type} = {roll_power}. Deals {duplicate_reduced} damage.")
+                    template = (
+                        f"{duplicate_prefix} duplicates {ability_name}! "
+                        f"Roll {dice_type} = {roll_power}. Deals __DMG_0__ damage."
+                    )
                 else:
-                    duplicate_segments.append(f"Deals {duplicate_reduced} damage.")
+                    template = f"{duplicate_prefix} duplicates {ability_name}! Deals __DMG_0__ damage."
+
+                damage_events.append(
+                    {
+                        "incoming": duplicate_reduced,
+                        "school": spell_damage_type,
+                        "log_template": template,
+                    }
+                )
 
             if duplicate_damage <= 0:
                 continue
 
             bonus_damage += duplicate_damage
-            if duplicate_segments:
-                log_lines.append(f"{item_name} duplicates {ability_name}! {' '.join(duplicate_segments)}")
-            else:
-                log_lines.append(f"{item_name} duplicates {ability_name}!")
 
 
     return bonus_damage, log_lines, bonus_healing, damage_events

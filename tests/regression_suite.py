@@ -6,6 +6,7 @@ Uses stdlib only and directly exercises MatchState + apply_prep_build + resolve_
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 import types
 from pathlib import Path
@@ -1842,6 +1843,108 @@ def scenario_passive_secondary_damage_logs_own_absorb_suffix() -> bool:
     raise AssertionError("Could not find a deterministic Thunderfury lightning proc seed in range")
 
 
+def scenario_dragonwrath_duplicate_spell_deals_real_damage() -> bool:
+    for seed in range(1, 600):
+        baseline = make_match("mage", "warrior", seed=seed)
+        baseline_target = baseline.state[baseline.players[1]]
+        baseline_before = baseline_target.res.hp
+        submit_turn(baseline, "fireball", _DEF_PASS)
+        baseline_loss = baseline_before - baseline_target.res.hp
+
+        dragon = make_match("mage", "warrior", p1_items={"weapon": "dragonwrath"}, seed=seed)
+        dragon_target = dragon.state[dragon.players[1]]
+        dragon_before = dragon_target.res.hp
+        submit_turn(dragon, "fireball", _DEF_PASS)
+
+        duplicate_line = next((line for line in dragon.log if "duplicates Fireball" in line), None)
+        if not duplicate_line:
+            continue
+
+        dragon_loss = dragon_before - dragon_target.res.hp
+        assert dragon_loss > baseline_loss, "Dragonwrath duplicate must apply real HP damage, not only text"
+        assert "Deals " in duplicate_line, "Duplicate strike should appear as its own damage log line"
+        return True
+    raise AssertionError("Could not find deterministic Dragonwrath duplicate proc seed in range")
+
+
+def scenario_dragonwrath_duplicate_log_includes_class_owner_prefix() -> bool:
+    for seed in range(1, 800):
+        match = make_match("priest", "warrior", p1_items={"weapon": "dragonwrath"}, seed=seed)
+        submit_turn(match, "mind_flay", _DEF_PASS)
+        duplicate_line = next((line for line in match.log if "duplicates Mind Flay!" in line), None)
+        if not duplicate_line:
+            continue
+        assert duplicate_line.startswith("Priest(you)'s Dragonwrath, Tarecgosa's Rest duplicates Mind Flay!"), (
+            "Dragonwrath duplicate log should include class(you)'s weapon owner prefix"
+        )
+        return True
+    raise AssertionError("Could not find deterministic Dragonwrath Mind Flay duplicate proc seed in range")
+
+
+def scenario_thunderfury_lightning_uses_damage_pipeline() -> bool:
+    for seed in range(1, 600):
+        match = make_match("warrior", "priest", p1_items={"weapon": "thunderfury"}, seed=seed)
+        target = match.state[match.players[1]]
+        effects.add_absorb(target, 999, source_name="Power Word: Shield", effect_id="power_word_shield")
+        before_hp = target.res.hp
+        submit_turn(match, "overpower", _DEF_PASS)
+        lightning_line = next((line for line in match.log if "blasts the target with lightning from Thunderfury" in line), None)
+        if not lightning_line:
+            continue
+
+        assert "absorbed by Power Word: Shield" in lightning_line, "Lightning should route through absorb-aware apply_damage path"
+        parsed = re.search(r"Deals (\d+) magic damage\. \((\d+) absorbed by Power Word: Shield\)", lightning_line)
+        assert parsed is not None, "Lightning log should include both incoming damage and absorb suffix"
+        incoming = int(parsed.group(1))
+        absorbed = int(parsed.group(2))
+        expected_hp_loss = max(0, incoming - absorbed)
+        actual_hp_loss = before_hp - target.res.hp
+        assert actual_hp_loss >= expected_hp_loss, "Lightning HP change should reflect post-absorb pipeline result"
+        return True
+    raise AssertionError("Could not find deterministic Thunderfury lightning proc seed in range")
+
+
+def scenario_thunderfury_heal_proc_restores_expected_amount() -> bool:
+    for seed in range(1, 600):
+        match = make_match("warrior", "priest", p1_items={"weapon": "thunderfury"}, seed=seed)
+        actor = match.state[match.players[0]]
+        actor.res.hp = max(1, actor.res.hp - 40)
+        before_hp = actor.res.hp
+        submit_turn(match, "overpower", _DEF_PASS)
+        heal_line = next((line for line in match.log if "draws strength from Thunderfury" in line), None)
+        if not heal_line:
+            continue
+        heal_match = re.search(r"healing (\d+) HP\.", heal_line)
+        assert heal_match is not None, "Thunderfury heal line should include the rolled heal amount"
+        healed_for = int(heal_match.group(1))
+        assert actor.res.hp - before_hp == healed_for, "Thunderfury heal should restore exactly the passive's rolled amount"
+        return True
+    raise AssertionError("Could not find deterministic Thunderfury heal proc seed in range")
+
+
+def scenario_azzinoth_strike_again_deals_secondary_damage() -> bool:
+    for seed in range(1, 600):
+        baseline = make_match("rogue", "warrior", seed=seed)
+        effects.remove_effect(baseline.state[baseline.players[0]], "stealth")
+        baseline_target = baseline.state[baseline.players[1]]
+        baseline_before = baseline_target.res.hp
+        submit_turn(baseline, "basic_attack", _DEF_PASS)
+        baseline_loss = baseline_before - baseline_target.res.hp
+
+        azzinoth = make_match("rogue", "warrior", p1_items={"weapon": "twin_blades_azzinoth"}, seed=seed)
+        effects.remove_effect(azzinoth.state[azzinoth.players[0]], "stealth")
+        azzinoth_target = azzinoth.state[azzinoth.players[1]]
+        azzinoth_before = azzinoth_target.res.hp
+        submit_turn(azzinoth, "basic_attack", _DEF_PASS)
+        strike_again_line = next((line for line in azzinoth.log if "strikes again with Twin Blades of Azzinoth" in line), None)
+        if not strike_again_line:
+            continue
+        azzinoth_loss = azzinoth_before - azzinoth_target.res.hp
+        assert azzinoth_loss > baseline_loss, "Strike Again should produce extra applied damage beyond the primary swing"
+        return True
+    raise AssertionError("Could not find deterministic Azzinoth strike-again proc seed in range")
+
+
 def scenario_fury_of_azzinoth_cannot_miss_and_ignores_armor() -> bool:
     low_acc_match = make_match("rogue", "warrior", p1_items={"weapon": "twin_blades_azzinoth"}, seed=3201)
     rogue = low_acc_match.state[low_acc_match.players[0]]
@@ -2049,6 +2152,11 @@ SCENARIOS = [
     scenario_mindgames_still_allows_direct_damage_dots,
     scenario_devouring_plague_heals_for_full_tick_damage,
     scenario_passive_secondary_damage_logs_own_absorb_suffix,
+    scenario_dragonwrath_duplicate_spell_deals_real_damage,
+    scenario_dragonwrath_duplicate_log_includes_class_owner_prefix,
+    scenario_thunderfury_lightning_uses_damage_pipeline,
+    scenario_thunderfury_heal_proc_restores_expected_amount,
+    scenario_azzinoth_strike_again_deals_secondary_damage,
     scenario_fury_of_azzinoth_cannot_miss_and_ignores_armor,
     scenario_mitigation_physical_uses_def_plus_armor,
     scenario_mitigation_magic_uses_def_plus_magic_resist,
