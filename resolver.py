@@ -3,7 +3,7 @@ import json
 from typing import Dict, Any, Tuple
 from .models import MatchState, PlayerState, PlayerBuild, Resources, PetState
 from .dice import rng_for, roll
-from .rules import base_damage, mitigate, hit_chance, clamp
+from .rules import base_damage, hit_chance, clamp
 from ..content.abilities import ABILITIES
 from ..content.classes import CLASSES, class_display_name, normalize_class_id
 from ..content.items import ITEMS
@@ -30,7 +30,6 @@ from .pet_ai import run_pet_phase, cleanup_pets, prepare_pet_pre_action_effects,
 
 # Centralized mechanics (passives/DoTs/mitigation/regen) live here.
 from .effects import (
-    mitigation_multiplier,
     trigger_on_hit_passives,
     damage_multiplier_from_passives,
     resource_gain_multiplier_from_passives,
@@ -43,6 +42,7 @@ from .effects import (
     remove_effect,
     remove_stealth,
     modify_stat,
+    mitigate_damage,
     is_stunned,
     cannot_act,
     get_cant_act_reason,
@@ -1337,22 +1337,14 @@ def resolve_turn(match: MatchState) -> None:
                 raw = int(raw * 1.5)
                 log_parts.append(f"{prefix}Critical hit!")
 
-            # Apply defense mitigation
-            mitigated_def = 0 if ability.get("ignore_armor") else modify_stat(target, "def", target.stats.get("def", 0))
-            reduced = mitigate(raw, mitigated_def)
-
-            # Apply damage type specific resistance
-            if damage_type == "physical":
-                resist = 0
-                if not ability.get("ignore_physical_reduction") and not ability.get("ignore_armor"):
-                    resist = modify_stat(target, "physical_reduction", target.stats.get("physical_reduction", 0))
-                reduced = max(0, reduced - resist)
-            elif damage_type == "magic":
-                resist = modify_stat(target, "magic_resist", target.stats.get("magic_resist", 0))
-                reduced = max(0, reduced - resist)
-
-            # Apply defensive buff mitigation
-            reduced = int(reduced * mitigation_multiplier(target))
+            # Apply stat-based mitigation (DEF + Armor for physical, DEF + Magic Resist for magical).
+            reduced = mitigate_damage(
+                raw,
+                target,
+                damage_type,
+                ignore_armor=bool(ability.get("ignore_armor") or ability.get("ignore_physical_reduction")),
+                ignore_magic_resist=bool(ability.get("ignore_magic_resist")),
+            )
 
             incoming_for_hit = reduced
             multiplier = damage_multiplier_from_passives(actor)

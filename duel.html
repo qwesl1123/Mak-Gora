@@ -1573,7 +1573,7 @@
           <div class="doc-item">
             <h4 class="doc-item-name">Leather Armor</h4>
             <p><span class="stat">Command: <span class="kbd">/item armor leather_armor</span></span></p>
-            <p><span class="stat">Physical Reduction: 3</span></p>
+            <p><span class="stat">Armor: 3</span></p>
             <p><span class="stat">Magic Resist: 3</span></p>
             <p>Flexible protection. Reduces damage from all sources. Balanced defense.</p>
           </div>
@@ -1581,7 +1581,7 @@
           <div class="doc-item">
             <h4 class="doc-item-name">Cloth Armor</h4>
             <p><span class="stat">Command: <span class="kbd">/item armor cloth_armor</span></span></p>
-            <p><span class="stat">Physical Reduction: 1</span></p>
+            <p><span class="stat">Armor: 1</span></p>
             <p><span class="stat">Magic Resist: 5</span></p>
             <p>Lightweight cloth with strong enchantments. Great against spell damage.</p>
           </div>
@@ -1589,7 +1589,7 @@
           <div class="doc-item">
             <h4 class="doc-item-name">Plate Armor</h4>
             <p><span class="stat">Command: <span class="kbd">/item armor plate_armor</span></span></p>
-            <p><span class="stat">Physical Reduction: 6</span></p>
+            <p><span class="stat">Armor: 6</span></p>
             <p><span class="stat">Magic Resist: 0</span></p>
             <p>Heavy steel plating. Exceptional physical protection but vulnerable to magic.</p>
           </div>
@@ -1681,7 +1681,7 @@
             <h4>Dragon Roar</h4>
             <p><span class="stat">Cost: 10 Rage</span> | <span class="stat">Type: Physical (AoE)</span> | <span class="stat">Cooldown: 25</span></p>
             <p><span class="stat">Command: <span class="kbd">dragon_roar</span></span></p>
-            <p>Roar ferociously to damage all enemies for [Attack (0.8x) + d6] damage. Always critically strikes, cannot miss, ignores Physical Reduction, and applies a 4-turn physical bleed on hit, dealing [Attack (0.4x) + d2] damage each turn. It still respects blink-like untargetability. As AoE, it can reveal stealth and destroys Imps when it deals damage.</p>
+            <p>Roar ferociously to damage all enemies for [Attack (0.8x) + d6] damage. Always critically strikes, cannot miss, ignores Armor, and applies a 4-turn physical bleed on hit, dealing [Attack (0.4x) + d2] damage each turn. It still respects blink-like untargetability. As AoE, it can reveal stealth and destroys Imps when it deals damage.</p>
           </div>
 
           <div class="doc-item">
@@ -2163,7 +2163,7 @@
 
         <h3>Combat Mechanics</h3>
         <div class="doc-content">
-          <p><strong>Damage Types:</strong> Physical damage is reduced by Physical Reduction. Magic damage is reduced by Magic Resist.</p>
+          <p><strong>Damage Types:</strong> Physical damage is reduced by DEF + Armor. Magic damage is reduced by DEF + Magic Resist.</p>
           
           <p><strong>Critical Hits:</strong> Each class has a crit chance. Critical hits deal 150% damage.</p>
           

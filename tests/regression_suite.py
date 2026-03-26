@@ -120,6 +120,7 @@ PlayerBuild = _MODS["models"].PlayerBuild
 PetState = _MODS["models"].PetState
 resolver = _MODS["resolver"]
 effects = _MODS["effects"]
+PET_AI = sys.modules["games.duel.engine.pet_ai"]
 PETS = sys.modules["games.duel.content.pets"].PETS
 SOCKETS = _bootstrap_socket_module()
 
@@ -1796,17 +1797,126 @@ def scenario_fury_of_azzinoth_cannot_miss_and_ignores_armor() -> bool:
     assert not any("Miss!" in line for line in latest_turn if "Fury of Azzinoth" in line), "Fury of Azzinoth should not miss even at 0 accuracy"
     assert warrior.res.hp < before_hp, "Fury of Azzinoth should still deal damage at 0 accuracy"
 
-    baseline = make_match("rogue", "warrior", p1_items={"weapon": "twin_blades_azzinoth"}, seed=3202)
+    def_only = make_match("rogue", "warrior", p1_items={"weapon": "twin_blades_azzinoth"}, seed=3202)
     armored = make_match("rogue", "warrior", p1_items={"weapon": "twin_blades_azzinoth"}, seed=3202)
+    def_only_target = def_only.state[def_only.players[1]]
     armored_target = armored.state[armored.players[1]]
+    def_only_target.stats["def"] += 999
     armored_target.stats["def"] += 999
     armored_target.stats["physical_reduction"] += 999
-    baseline_target = baseline.state[baseline.players[1]]
-    submit_turn(baseline, "fury_of_azzinoth", _DEF_PASS)
+    submit_turn(def_only, "fury_of_azzinoth", _DEF_PASS)
     submit_turn(armored, "fury_of_azzinoth", _DEF_PASS)
-    baseline_damage = baseline_target.res.hp_max - baseline_target.res.hp
+    baseline_damage = def_only_target.res.hp_max - def_only_target.res.hp
     armored_damage = armored_target.res.hp_max - armored_target.res.hp
-    assert armored_damage == baseline_damage, "Fury of Azzinoth should ignore armor-derived mitigation"
+    assert armored_damage == baseline_damage, "Fury of Azzinoth should ignore Armor but still respect DEF"
+    return True
+
+
+def _expected_mitigated(raw: int, effective_stat: int) -> int:
+    return int(raw * (40 / (max(0, effective_stat) + 40)))
+
+
+def scenario_mitigation_physical_uses_def_plus_armor() -> bool:
+    raw = 120
+    target = make_match("warrior", "warrior", seed=4001).state["p2_sid"]
+
+    target.stats["def"] = 20
+    target.stats["physical_reduction"] = 0
+    def_only = effects.mitigate_damage(raw, target, "physical")
+    assert def_only == _expected_mitigated(raw, 20), "physical mitigation should include DEF"
+
+    target.stats["def"] = 0
+    target.stats["physical_reduction"] = 20
+    armor_only = effects.mitigate_damage(raw, target, "physical")
+    assert armor_only == _expected_mitigated(raw, 20), "physical mitigation should include Armor"
+
+    target.stats["def"] = 20
+    target.stats["physical_reduction"] = 20
+    def_plus_armor = effects.mitigate_damage(raw, target, "physical")
+    assert def_plus_armor == _expected_mitigated(raw, 40), "physical mitigation should use DEF + Armor"
+    assert def_plus_armor < def_only, "combined DEF + Armor should mitigate more than either stat alone"
+    return True
+
+
+def scenario_mitigation_magic_uses_def_plus_magic_resist() -> bool:
+    raw = 120
+    target = make_match("warrior", "warrior", seed=4002).state["p2_sid"]
+
+    target.stats["def"] = 20
+    target.stats["magic_resist"] = 0
+    def_only = effects.mitigate_damage(raw, target, "magic")
+    assert def_only == _expected_mitigated(raw, 20), "magic mitigation should include DEF"
+
+    target.stats["def"] = 0
+    target.stats["magic_resist"] = 20
+    mr_only = effects.mitigate_damage(raw, target, "magic")
+    assert mr_only == _expected_mitigated(raw, 20), "magic mitigation should include Magic Resist"
+
+    target.stats["def"] = 20
+    target.stats["magic_resist"] = 20
+    def_plus_mr = effects.mitigate_damage(raw, target, "magic")
+    assert def_plus_mr == _expected_mitigated(raw, 40), "magic mitigation should use DEF + Magic Resist"
+    assert def_plus_mr < def_only, "combined DEF + Magic Resist should mitigate more than either stat alone"
+    return True
+
+
+def scenario_ignore_armor_bypasses_only_armor_component() -> bool:
+    raw = 120
+    target = make_match("warrior", "warrior", seed=4003).state["p2_sid"]
+    target.stats["def"] = 20
+    target.stats["physical_reduction"] = 20
+
+    normal = effects.mitigate_damage(raw, target, "physical")
+    ignored = effects.mitigate_damage(raw, target, "physical", ignore_armor=True)
+    assert normal == _expected_mitigated(raw, 40), "normal physical mitigation should use DEF + Armor"
+    assert ignored == _expected_mitigated(raw, 20), "ignore_armor should remove only Armor from mitigation"
+    assert ignored > normal, "ignore_armor should increase damage taken compared to normal mitigation"
+    return True
+
+
+def scenario_pet_attacks_use_shared_mitigation_stats() -> bool:
+    raw = 100
+    target = make_match("warrior", "warrior", seed=4004).state["p2_sid"]
+    target.stats["def"] = 20
+    target.stats["physical_reduction"] = 15
+    target.stats["magic_resist"] = 10
+
+    physical = PET_AI._damage_after_reduction(raw, target, "physical")
+    magical = PET_AI._damage_after_reduction(raw, target, "magic")
+    assert physical == _expected_mitigated(raw, 35), "physical pet attacks should use DEF + Armor"
+    assert magical == _expected_mitigated(raw, 30), "magical pet attacks should use DEF + Magic Resist"
+    return True
+
+
+def scenario_break_on_damage_and_lifesteal_use_post_mitigation_damage() -> bool:
+    cc_match = make_match("rogue", "mage", seed=4005)
+    rogue_sid, mage_sid = cc_match.players
+    mage = cc_match.state[mage_sid]
+    effects.apply_effect_by_id(mage, "ring_of_ice_freeze", overrides={"duration": 2})
+    mage.stats["def"] = 9999
+    mage.stats["physical_reduction"] = 9999
+    submit_turn(cc_match, "sinister_strike", _DEF_PASS)
+    assert _has_effect(mage, "ring_of_ice_freeze"), "break-on-damage CC should persist when post-mitigation damage is 0"
+
+    life_match = make_match("priest", "warrior", seed=4006)
+    priest_sid, warrior_sid = life_match.players
+    priest = life_match.state[priest_sid]
+    warrior = life_match.state[warrior_sid]
+    priest.res.hp = max(1, priest.res.hp - 30)
+    warrior.stats["def"] = 35
+    warrior.stats["magic_resist"] = 25
+    effects.apply_effect_by_id(
+        warrior,
+        "devouring_plague",
+        overrides={"duration": 2, "tick_damage": 20, "source_sid": priest_sid},
+    )
+    hp_before = priest.res.hp
+    enemy_before = warrior.res.hp
+    submit_turn(life_match, _DEF_PASS, _DEF_PASS)
+    healed = priest.res.hp - hp_before
+    dealt = max(0, enemy_before - warrior.res.hp)
+    assert dealt > 0, "sanity check requires mitigated damage to still be positive"
+    assert healed == dealt, "lifesteal/heal-from-damage should use actual post-mitigation damage dealt"
     return True
 
 
@@ -1882,6 +1992,11 @@ SCENARIOS = [
     scenario_devouring_plague_heals_for_full_tick_damage,
     scenario_passive_secondary_damage_logs_own_absorb_suffix,
     scenario_fury_of_azzinoth_cannot_miss_and_ignores_armor,
+    scenario_mitigation_physical_uses_def_plus_armor,
+    scenario_mitigation_magic_uses_def_plus_magic_resist,
+    scenario_ignore_armor_bypasses_only_armor_component,
+    scenario_pet_attacks_use_shared_mitigation_stats,
+    scenario_break_on_damage_and_lifesteal_use_post_mitigation_damage,
     scenario_invalid_class_rejected,
     scenario_valid_class_id_is_normalized_before_build,
     scenario_prep_selection_name_uses_current_submission,

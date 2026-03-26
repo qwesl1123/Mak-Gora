@@ -2,9 +2,9 @@ from typing import Callable
 
 from ..content.pets import PETS
 from .dice import roll
-from .rules import base_damage, mitigate, hit_chance
+from .rules import base_damage, hit_chance
 from .effects import (
-    mitigation_multiplier,
+    mitigate_damage,
     modify_stat,
     has_flag,
     is_immune_all,
@@ -14,17 +14,16 @@ from .effects import (
 
 
 def _damage_after_reduction(raw: int, enemy, school: str) -> int:
-    reduced = mitigate(raw, modify_stat(enemy, "def", enemy.stats.get("def", 0)))
     normalized = "magical" if school == "magic" else school
     if normalized == "physical":
-        reduced = max(0, reduced - modify_stat(enemy, "physical_reduction", enemy.stats.get("physical_reduction", 0)))
+        reduced = mitigate_damage(raw, enemy, "physical")
         if is_damage_immune(enemy, "physical"):
             return 0
     else:
-        reduced = max(0, reduced - modify_stat(enemy, "magic_resist", enemy.stats.get("magic_resist", 0)))
+        reduced = mitigate_damage(raw, enemy, "magic")
         if is_damage_immune(enemy, "magic"):
             return 0
-    return int(reduced * mitigation_multiplier(enemy))
+    return reduced
 
 
 def _pet_log(owner_sid, pet, action_text: str, result_text: str | None = None) -> str:

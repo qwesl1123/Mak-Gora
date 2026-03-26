@@ -842,6 +842,40 @@ def modify_stat(target: PlayerState, stat: str, base_value: int) -> int:
     return int(value * multiplier)
 
 
+def mitigation_effective_stat(
+    target: PlayerState,
+    school: str,
+    *,
+    ignore_armor: bool = False,
+    ignore_magic_resist: bool = False,
+) -> int:
+    normalized = normalize_school(school)
+    defense = modify_stat(target, "def", target.stats.get("def", 0))
+    if normalized == "physical":
+        armor = 0 if ignore_armor else modify_stat(target, "physical_reduction", target.stats.get("physical_reduction", 0))
+        return max(0, defense + armor)
+    magic_resist = 0 if ignore_magic_resist else modify_stat(target, "magic_resist", target.stats.get("magic_resist", 0))
+    return max(0, defense + magic_resist)
+
+
+def mitigate_damage(
+    raw: int,
+    target: PlayerState,
+    school: str,
+    *,
+    ignore_armor: bool = False,
+    ignore_magic_resist: bool = False,
+) -> int:
+    effective_stat = mitigation_effective_stat(
+        target,
+        school,
+        ignore_armor=ignore_armor,
+        ignore_magic_resist=ignore_magic_resist,
+    )
+    reduced = mitigate(raw, effective_stat)
+    return int(reduced * mitigation_multiplier(target))
+
+
 def mitigation_multiplier(target: PlayerState) -> float:
     """Sum mitigation effects and cap at 80%. Returns multiplier for damage."""
     total = 0.0
@@ -1066,10 +1100,7 @@ def trigger_on_hit_passives(
             raw = int(intellect * int_multiplier) + int(roll_power)
             if raw <= 0:
                 continue
-            reduced = mitigate(raw, modify_stat(target, "def", target.stats.get("def", 0)))
-            resist = modify_stat(target, "magic_resist", target.stats.get("magic_resist", 0))
-            reduced = max(0, reduced - resist)
-            reduced = int(reduced * mitigation_multiplier(target))
+            reduced = mitigate_damage(raw, target, "magic")
             if is_damage_immune(target, "magic"):
                 reduced = 0
             if reduced > 0:
@@ -1106,10 +1137,7 @@ def trigger_on_hit_passives(
                 )
             if raw <= 0:
                 continue
-            reduced = mitigate(raw, modify_stat(target, "def", target.stats.get("def", 0)))
-            resist = modify_stat(target, "magic_resist", target.stats.get("magic_resist", 0))
-            reduced = max(0, reduced - resist)
-            reduced = int(reduced * mitigation_multiplier(target))
+            reduced = mitigate_damage(raw, target, "magic")
             if is_damage_immune(target, "magic"):
                 reduced = 0
             if reduced > 0:
@@ -1209,15 +1237,7 @@ def trigger_on_hit_passives(
                 if duplicate_raw <= 0:
                     continue
 
-                duplicate_reduced = mitigate(duplicate_raw, modify_stat(target, "def", target.stats.get("def", 0)))
-                if spell_damage_type == "physical":
-                    resist = modify_stat(target, "physical_reduction", target.stats.get("physical_reduction", 0))
-                    duplicate_reduced = max(0, duplicate_reduced - resist)
-                elif spell_damage_type == "magic":
-                    resist = modify_stat(target, "magic_resist", target.stats.get("magic_resist", 0))
-                    duplicate_reduced = max(0, duplicate_reduced - resist)
-
-                duplicate_reduced = int(duplicate_reduced * mitigation_multiplier(target))
+                duplicate_reduced = mitigate_damage(duplicate_raw, target, spell_damage_type)
                 if is_damage_immune(target, spell_damage_type):
                     duplicate_reduced = 0
                 if duplicate_reduced <= 0:
@@ -1310,19 +1330,12 @@ def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[dict[str, Any
         if raw_damage <= 0:
             continue
 
-        reduced = mitigate(raw_damage, modify_stat(ps, "def", ps.stats.get("def", 0)))
         school = effect.get("school")
-        if school == "physical":
-            resist = modify_stat(ps, "physical_reduction", ps.stats.get("physical_reduction", 0))
-            reduced = max(0, reduced - resist)
-            if is_damage_immune(ps, "physical"):
-                reduced = 0
-        else:
-            resist = modify_stat(ps, "magic_resist", ps.stats.get("magic_resist", 0))
-            reduced = max(0, reduced - resist)
-            if school == "magical" and is_damage_immune(ps, "magic"):
-                reduced = 0
-        reduced = int(reduced * mitigation_multiplier(ps))
+        reduced = mitigate_damage(raw_damage, ps, school)
+        if school == "physical" and is_damage_immune(ps, "physical"):
+            reduced = 0
+        if school in ("magic", "magical") and is_damage_immune(ps, "magic"):
+            reduced = 0
 
         source_sid = effect.get("source_sid")
         damage_sources.append({
