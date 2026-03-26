@@ -499,6 +499,7 @@ def scenario_iceblock_priority_vs_aoe_with_pets() -> bool:
     mage_hp_before = mage.res.hp
     imp_hp_before = {pid: mage.pets[pid].hp for pid in imp_ids}
     warrior.res.rage = warrior.res.rage_max
+    warrior.stats["atk"] = 1
     submit_turn(match, "dragon_roar", "iceblock")
 
     assert _has_effect(mage, "iceblock"), "Ice Block should apply this turn"
@@ -803,6 +804,62 @@ def scenario_dragon_roar_cannot_miss_from_accuracy() -> bool:
     assert rogue.res.hp < hp_before, "Dragon Roar should still land through extreme accuracy/evasion mismatch"
     dragon_lines = [line for line in match.log if "Dragon Roar" in line]
     assert not any("Miss!" in line for line in dragon_lines), "Dragon Roar should not log a normal miss roll"
+    return True
+
+
+def scenario_dragon_roar_bleed_applies_to_pets_with_independent_rolls() -> bool:
+    match = make_match("warrior", "warlock", seed=1010)
+    warrior_sid, warlock_sid = match.players
+    warrior = match.state[warrior_sid]
+    warlock = match.state[warlock_sid]
+
+    submit_turn(match, _DEF_PASS, "summon_imp")
+    submit_turn(match, _DEF_PASS, "summon_imp")
+    assert len(warlock.pets) == 2, "Warlock should have two imps before Dragon Roar"
+
+    warrior.res.rage = warrior.res.rage_max
+    hp_before = warlock.res.hp
+    pet_hp_before = {pid: pet.hp for pid, pet in warlock.pets.items()}
+
+    original_roll = resolver.roll
+    dot_roll_counter = {"count": 0}
+
+    def _spy_roll(die: str, rng: Any) -> int:
+        if die == "d2":
+            dot_roll_counter["count"] += 1
+            return dot_roll_counter["count"]
+        return original_roll(die, rng)
+
+    resolver.roll = _spy_roll
+    try:
+        submit_turn(match, "dragon_roar", _DEF_PASS)
+    finally:
+        resolver.roll = original_roll
+
+    assert warlock.res.hp < hp_before, "Dragon Roar should still damage the enemy champion"
+    for pid, before_hp in pet_hp_before.items():
+        assert _pet_took_damage_or_died(warlock, pid, before_hp), "Dragon Roar should still damage every enemy pet"
+
+    champ_bleed = next((fx for fx in warlock.effects if fx.get("id") == "dragon_roar_bleed"), None)
+    assert champ_bleed is not None, "Dragon Roar should apply bleed to the enemy champion"
+
+    pet_bleeds = []
+    for pet in warlock.pets.values():
+        bleed = next((fx for fx in pet.effects if fx.get("id") == "dragon_roar_bleed"), None)
+        assert bleed is not None, f"Dragon Roar should apply bleed to pet {pet.name}"
+        pet_bleeds.append((pet.name, int(bleed.get('tick_damage', 0) or 0)))
+
+    expected_dot_rolls = 1 + len(pet_hp_before)
+    assert dot_roll_counter["count"] == expected_dot_rolls, "Dragon Roar bleed should roll once per affected target"
+
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+    latest_turn = _turn_lines(match, match.turn)
+    assert any("suffers" in line and "Dragon Roar Bleed" in line and warlock_sid[:5] in line for line in latest_turn), "Champion bleed should tick independently"
+    for pet_name, _ in pet_bleeds:
+        assert any("suffers" in line and "Dragon Roar Bleed" in line and pet_name in line for line in latest_turn), f"Pet bleed should tick independently for {pet_name}"
+
+    assert any("Dragon Roar applies bleed on Warlock." in line for line in match.log), "Champion bleed log should use champion class label"
+    assert any("Dragon Roar applies bleed on Warlock's Imp." in line for line in match.log), "Pet bleed log should use owner and pet name"
     return True
 
 
@@ -1944,6 +2001,7 @@ SCENARIOS = [
     scenario_hunter_companion_calls_have_no_cooldown,
     scenario_hunter_multi_shot_aoe,
     scenario_dragon_roar_cannot_miss_from_accuracy,
+    scenario_dragon_roar_bleed_applies_to_pets_with_independent_rolls,
     scenario_hunter_turtle_priority,
     scenario_hunter_wildfire_arcane_proc,
     scenario_hunter_wildfire_dot_log_order,

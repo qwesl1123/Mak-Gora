@@ -2092,6 +2092,7 @@ def resolve_turn(match: MatchState) -> None:
                     match.log.append(champion_log)
 
         pet_total_damage = 0
+        pet_hits: list[Dict[str, Any]] = []
         pet_targets = [target.pets[pid] for pid in sorted(target.pets.keys())]
         alive_imp_ids = [pet.id for pet in pet_targets if pet and pet.hp > 0 and pet.template_id == "imp"]
         imp_ordinal_by_id = {pid: idx + 1 for idx, pid in enumerate(alive_imp_ids)}
@@ -2119,10 +2120,11 @@ def resolve_turn(match: MatchState) -> None:
                 match.log.append(pet_log)
             if remaining > 0:
                 pet_total_damage += remaining
+                pet_hits.append({"pet": pet, "damage_data": pet_result})
             if pet.hp <= 0:
                 handle_pet_defeat(target, pet)
 
-        return {"champion": champion_dealt_data, "pet_total_damage": pet_total_damage}
+        return {"champion": champion_dealt_data, "pet_total_damage": pet_total_damage, "pet_hits": pet_hits}
 
     def trigger_shield_of_vengeance_explosion(owner_sid: str, enemy_sid: str) -> None:
         owner = match.state[owner_sid]
@@ -2223,11 +2225,19 @@ def resolve_turn(match: MatchState) -> None:
     dealt1 = int(dealt1_data.get("hp_damage", 0) or 0)
     dealt2 = int(dealt2_data.get("hp_damage", 0) or 0)
 
+    def combatant_label(sid: str) -> str:
+        ps = match.state[sid]
+        class_id = (ps.build.class_id or "").strip().lower()
+        return class_display_name(class_id) if class_id else sid[:5]
+
     def apply_direct_damage_dot(
         actor_sid: str,
         target_sid: str,
         result: Dict[str, Any],
         damage_data: Dict[str, Any],
+        *,
+        target_entity: Any | None = None,
+        target_label: str | None = None,
     ) -> None:
         ability = ABILITIES.get(result.get("ability_id", ""), {})
         dot_data = ability.get("dot") or {}
@@ -2237,7 +2247,7 @@ def resolve_turn(match: MatchState) -> None:
         if trigger_total <= 0:
             return
         actor = match.state[actor_sid]
-        target = match.state[target_sid]
+        target = target_entity or match.state[target_sid]
         dot_id = dot_data.get("id")
         duration = int(dot_data.get("duration", 1) or 1)
         school = dot_data.get("school", "magical")
@@ -2277,12 +2287,12 @@ def resolve_turn(match: MatchState) -> None:
             )
         if not dot_id:
             return
-        target_label = target_sid[:5]
+        resolved_target_label = target_label or target_sid[:5]
         if dot_id == "dragon_roar_bleed":
-            match.log.append(f"Dragon Roar applies bleed on {target_label}.")
+            match.log.append(f"Dragon Roar applies bleed on {resolved_target_label}.")
         elif dot_id == "wildfire_burn":
             verb = "refreshes" if refreshed else "applies"
-            match.log.append(f"Wildfire Bomb {verb} Wildfire Burn on {target_label}.")
+            match.log.append(f"Wildfire Bomb {verb} Wildfire Burn on {resolved_target_label}.")
         else:
             verb = "refreshes" if refreshed else "applies"
             match.log.append(f"{actor_sid[:5]} {verb} {effect_name(dot_id)} for {tick_damage} per turn.")
@@ -2329,7 +2339,13 @@ def resolve_turn(match: MatchState) -> None:
     )
     match.log.append(result1_log)
     append_extra_logs(sids[0], sids[1], result1)
-    apply_direct_damage_dot(sids[0], sids[1], result1, dealt1_data)
+    apply_direct_damage_dot(
+        sids[0],
+        sids[1],
+        result1,
+        dealt1_data,
+        target_label=combatant_label(sids[1]),
+    )
     result2_log = format_damage_log(result2["log"], dealt2_data)
     if int(dealt2_data.get("mindgames_healing", 0) or 0) > 0:
         result2_log = (
@@ -2338,7 +2354,13 @@ def resolve_turn(match: MatchState) -> None:
     )
     match.log.append(result2_log)
     append_extra_logs(sids[1], sids[0], result2)
-    apply_direct_damage_dot(sids[1], sids[0], result2, dealt2_data)
+    apply_direct_damage_dot(
+        sids[1],
+        sids[0],
+        result2,
+        dealt2_data,
+        target_label=combatant_label(sids[0]),
+    )
 
     if result1.get("deferred"):
         result1 = resolve_action(sids[0], sids[1], a1)
@@ -2368,6 +2390,21 @@ def resolve_turn(match: MatchState) -> None:
         if pet_damage > 0:
             totals = match.combat_totals.setdefault(actor_sid, {"damage": 0, "healing": 0})
             totals["damage"] += pet_damage
+        if ability.get("dot"):
+            enemy_label = combatant_label(target_sid)
+            for pet_hit in aoe_result.get("pet_hits", []):
+                pet = pet_hit.get("pet")
+                if not pet:
+                    continue
+                pet_label = f"{enemy_label}'s {pet.name}"
+                apply_direct_damage_dot(
+                    actor_sid,
+                    target_sid,
+                    result,
+                    pet_hit.get("damage_data", {}),
+                    target_entity=pet,
+                    target_label=pet_label,
+                )
 
     for actor_sid, dealt, result in ((sids[0], dealt1, result1), (sids[1], dealt2, result2)):
         ability = ABILITIES.get(result.get("ability_id", ""), {})
@@ -2725,7 +2762,7 @@ def debug_simulate_aoe_normalization_suite() -> Dict[str, Any]:
     - Swipe and Dragon Roar both use champion-first then sorted pet fanout.
     - Champion immune_all does not prevent pet AoE damage.
     - Shield of Vengeance explosion damages enemy pets.
-    - Dragon Roar bleed remains champion-only.
+    - Dragon Roar bleed is applied to champion and AoE-hit pets.
     """
 
     # Scenario 1: Swipe + Dragon Roar both AoE, champion immunity doesn't block pet damage.
@@ -2767,7 +2804,7 @@ def debug_simulate_aoe_normalization_suite() -> Dict[str, Any]:
     assert all(delta > 0 for delta in swipe_deltas), "Swipe should still damage all pets while champion is immune."
     assert len(set(swipe_deltas)) == 1, "Swipe should deal same AoE incoming damage to all pets."
 
-    # Dragon Roar AoE + bleed champion-only.
+    # Dragon Roar AoE + bleed applies to champion and pets.
     warlock = match.state[p1]
     warrior = match.state[p2]
     warrior.stats["acc"] = 999
@@ -2794,10 +2831,10 @@ def debug_simulate_aoe_normalization_suite() -> Dict[str, Any]:
     assert len(set(deltas)) == 1, "Dragon Roar should apply same AoE incoming damage to each pet."
     assert has_effect(warlock_after, "dragon_roar_bleed"), "Dragon Roar bleed should be on enemy champion."
 
-    # Ensure no bleed was applied to pets.
+    # Ensure bleed was also applied to pets.
     for pid in sorted(warlock_after.pets.keys()):
         pet = warlock_after.pets[pid]
-        assert not any((fx.get("id") == "dragon_roar_bleed") for fx in (pet.effects or [])), "Dragon Roar bleed must not apply to pets."
+        assert any((fx.get("id") == "dragon_roar_bleed") for fx in (pet.effects or [])), "Dragon Roar bleed should apply to pets."
 
     # Scenario 2: Shield of Vengeance explosion now uses AoE fanout, respects blink-like untargetability,
     # and still hits pets.
