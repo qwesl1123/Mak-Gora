@@ -6,6 +6,7 @@ Uses stdlib only and directly exercises MatchState + apply_prep_build + resolve_
 from __future__ import annotations
 
 import importlib.util
+import random
 import re
 import sys
 import types
@@ -123,6 +124,8 @@ resolver = _MODS["resolver"]
 effects = _MODS["effects"]
 PET_AI = sys.modules["games.duel.engine.pet_ai"]
 PETS = sys.modules["games.duel.content.pets"].PETS
+ABILITIES = sys.modules["games.duel.content.abilities"].ABILITIES
+EFFECT_TEMPLATES = effects.EFFECT_TEMPLATES
 SOCKETS = _bootstrap_socket_module()
 
 
@@ -152,6 +155,7 @@ def state_extract(match) -> Dict[str, Any]:
                 "duration": fx.get("duration"),
                 "category": fx.get("category"),
                 "school": fx.get("school"),
+                "subschool": fx.get("subschool"),
                 "flags": dict(sorted((fx.get("flags") or {}).items())),
             }
             for fx in sorted(ps.effects, key=lambda entry: (str(entry.get("id")), str(entry.get("name"))))
@@ -2080,6 +2084,86 @@ def scenario_break_on_damage_and_lifesteal_use_post_mitigation_damage() -> bool:
     return True
 
 
+def scenario_subschool_metadata_and_templates() -> bool:
+    direct_expectations = {
+        "fireball": "fire",
+        "arcane_shot": "arcane",
+        "wrath": "nature",
+        "mind_blast": "shadow",
+        "judgment": "holy",
+    }
+    for ability_id, subschool in direct_expectations.items():
+        ability = ABILITIES[ability_id]
+        assert ability.get("school") == "magical", f"{ability_id} should be magical"
+        assert ability.get("subschool") == subschool, f"{ability_id} should be tagged as {subschool}"
+
+    effect_expectations = {
+        "ring_of_ice_freeze": "frost",
+        "iceblock": "frost",
+        "divine_shield": "holy",
+        "power_word_shield": "holy",
+        "feared": "shadow",
+    }
+    for effect_id, subschool in effect_expectations.items():
+        effect = EFFECT_TEMPLATES[effect_id]
+        assert effect.get("school") == "magical", f"{effect_id} should be magical"
+        assert effect.get("subschool") == subschool, f"{effect_id} should be tagged as {subschool}"
+
+    no_subschool_magical = ("turtle", "innervate", "dark_pact", "healthstone", "unending_resolve")
+    for ability_id in no_subschool_magical:
+        ability = ABILITIES[ability_id]
+        assert ability.get("school") == "magical", f"{ability_id} should stay magical"
+        assert "subschool" not in ability, f"{ability_id} should intentionally remain without subschool"
+
+    assert PETS["imp"].get("subschool") == "fire", "Imp should be tagged as fire"
+    assert PETS["emerald_serpent"].get("subschool") == "nature", "Emerald Serpent should be tagged as nature"
+    return True
+
+
+def scenario_subschool_event_plumbing_for_dots_and_passives() -> bool:
+    match = make_match("hunter", "warrior", p1_items={"weapon": "thunderfury"}, seed=5001)
+    hunter_sid, warrior_sid = match.players
+    hunter = match.state[hunter_sid]
+    warrior = match.state[warrior_sid]
+
+    # DoT runtime copies should preserve school + subschool metadata from data templates.
+    submit_turn(match, "wildfire_bomb", _DEF_PASS)
+    burn = next((fx for fx in warrior.effects if fx.get("id") == "wildfire_burn"), None)
+    assert burn is not None, "Wildfire Burn should be applied"
+    assert burn.get("school") == "magical", "Wildfire Burn should stay magical"
+    assert burn.get("subschool") == "fire", "Wildfire Burn should preserve fire subschool"
+
+    # Triggered passive damage events should carry subschool metadata through the shared payload.
+    lightning_effect = {
+        "type": "item_passive",
+        "source_item": "Thunderfury",
+        "passive": {
+            "type": "lightning_blast",
+            "trigger": "on_hit",
+            "chance": 1.0,
+            "scaling": {"atk": 0.5},
+            "dice": "d3",
+            "school": "magical",
+            "subschool": "nature",
+        },
+    }
+    hunter.effects.append(lightning_effect)
+    _, _, _, damage_events = effects.trigger_on_hit_passives(
+        hunter,
+        warrior,
+        base_damage=10,
+        damage_type="physical",
+        rng=random.Random(777),
+        ability=ABILITIES["overpower"],
+        include_strike_again=False,
+    )
+    assert any(
+        evt.get("school") == "magical" and evt.get("subschool") == "nature"
+        for evt in damage_events
+    ), "Thunderfury lightning blast event should carry magical/nature"
+    return True
+
+
 SCENARIOS = [
     scenario_mindgames_lay_on_hands,
     scenario_mass_dispel_selective_removal,
@@ -2163,6 +2247,8 @@ SCENARIOS = [
     scenario_ignore_armor_bypasses_only_armor_component,
     scenario_pet_attacks_use_shared_mitigation_stats,
     scenario_break_on_damage_and_lifesteal_use_post_mitigation_damage,
+    scenario_subschool_metadata_and_templates,
+    scenario_subschool_event_plumbing_for_dots_and_passives,
     scenario_invalid_class_rejected,
     scenario_valid_class_id_is_normalized_before_build,
     scenario_prep_selection_name_uses_current_submission,

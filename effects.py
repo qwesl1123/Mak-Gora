@@ -34,6 +34,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 3,
         "dispellable": True,
         "school": "magical",
+        "subschool": "frost",
         "flags": {"immune_all": True, "stunned": True},
         "display": {
             "war_council": True,
@@ -69,6 +70,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 10,
         "category": "dot",
         "school": "magical",
+        "subschool": "shadow",
         "dispellable": False,
         "tick_damage": 1,
         "dot_mode": "ramp",
@@ -79,6 +81,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 8,
         "category": "dot",
         "school": "magical",
+        "subschool": "shadow",
         "dispellable": True,
         "tick_damage": 1,
     },
@@ -88,6 +91,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 10,
         "category": "dot",
         "school": "magical",
+        "subschool": "shadow",
         "dispellable": True,
         "tick_damage": 1,
     },
@@ -116,6 +120,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 2,
         "category": "cc",
         "school": "magical",
+        "subschool": "shadow",
         "harmful": True,
         "flags": {"break_on_damage": True},
         "cant_act_reason": "feared",
@@ -132,6 +137,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 2,
         "category": "cc",
         "school": "magical",
+        "subschool": "frost",
         "harmful": True,
         "flags": {"stunned": True, "break_on_damage": True},
         "cant_act_reason": "frozen",
@@ -236,6 +242,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 2,
         "dispellable": True,
         "school": "magical",
+        "subschool": "holy",
         "flags": {"immune_all": True},
         "display": {
             "war_council": True,
@@ -251,6 +258,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "category": "absorb",
         "dispellable": True,
         "school": "magical",
+        "subschool": "holy",
         "flags": {"shield_of_vengeance": True},
         "absorbed": 0,
     },
@@ -273,6 +281,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "category": "absorb",
         "dispellable": True,
         "school": "magical",
+        "subschool": "holy",
     },
     "ice_barrier": {
         "type": "status",
@@ -281,6 +290,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "category": "absorb",
         "dispellable": True,
         "school": "magical",
+        "subschool": "frost",
     },
     "mind_blast_empowered": {
         "type": "status",
@@ -300,6 +310,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 6,
         "category": "dot",
         "school": "magical",
+        "subschool": "shadow",
         "dispellable": True,
         "tick_damage": 1,
         "lifesteal_pct": 0.4,
@@ -310,6 +321,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 4,
         "category": "dot",
         "school": "magical",
+        "subschool": "shadow",
         "dispellable": True,
         "tick_damage": 1,
         "lifesteal_pct": 1.0,
@@ -322,6 +334,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "value": 0.4,
         "dispellable": True,
         "school": "magical",
+        "subschool": "holy",
     },
     "mindgames": {
         "type": "status",
@@ -329,6 +342,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 1,
         "category": "debuff",
         "school": "magical",
+        "subschool": "shadow",
         "harmful": True,
         "flags": {"mindgames": True},
     },
@@ -343,6 +357,8 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "type": "status",
         "name": "Shadowfiend",
         "duration": 5,
+        "school": "magical",
+        "subschool": "shadow",
         "flags": {"shadowfiend": True},
     },
     "dragon_roar_bleed": {
@@ -360,6 +376,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 4,
         "dispellable": True,
         "school": "magical",
+        "subschool": "holy",
         "outgoing_damage_mult": 1.2,
         "flags": {"avenging_wrath": True},
         "display": {
@@ -469,12 +486,16 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "type": "status",
         "name": "Typhoon",
         "duration": 2,
+        "school": "magical",
+        "subschool": "nature",
         "flags": {"forced_miss": True},
     },
     "cyclone": {
         "type": "status",
         "name": "Cyclone",
         "duration": 2,
+        "school": "magical",
+        "subschool": "nature",
         "flags": {"cycloned": True, "stunned": True, "immune_all": True},
     },
     "frenzied_regeneration": {
@@ -491,6 +512,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "category": "hot",
         "dispellable": True,
         "school": "magical",
+        "subschool": "nature",
         "regen": {"hp": 0},
     },
     "wildfire_burn": {
@@ -499,6 +521,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 2,
         "category": "dot",
         "school": "magical",
+        "subschool": "fire",
         "dispellable": True,
         "tick_damage": 1,
     },
@@ -520,6 +543,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 2,
         "category": "cc",
         "school": "magical",
+        "subschool": "frost",
         "harmful": True,
         "flags": {"stunned": True, "break_on_damage": True},
         "cant_act_reason": "frozen",
@@ -535,6 +559,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "name": "Aspect of the Turtle",
         "duration": 2,
         "value": 0.3,
+        "school": "magical",
         "flags": {"incoming_single_target_miss": True, "disable_attacks": True},
         "regen": {"mp": 10},
     },
@@ -1085,6 +1110,7 @@ def trigger_on_hit_passives(
                         {
                             "incoming": extra,
                             "school": "physical",
+                            "subschool": None,
                             "log_template": (
                                 f"{attacker.sid[:5]} strikes again with {effect.get('source_item', 'item')} "
                                 "for __DMG_0__ bonus damage."
@@ -1109,7 +1135,8 @@ def trigger_on_hit_passives(
                 damage_events.append(
                     {
                         "incoming": reduced,
-                        "school": "magical",
+                        "school": normalize_school(passive.get("school") or "magical"),
+                        "subschool": passive.get("subschool"),
                         "log_template": (
                             f"{attacker.sid[:5]} calls upon the void with {effect.get('source_item', 'item')}. "
                             f"Roll {dice} = {roll_power}. Deals __DMG_0__ magic damage."
@@ -1146,7 +1173,8 @@ def trigger_on_hit_passives(
                 damage_events.append(
                     {
                         "incoming": reduced,
-                        "school": "magical",
+                        "school": normalize_school(passive.get("school") or "magical"),
+                        "subschool": passive.get("subschool"),
                         "log_template": (
                             f"{attacker.sid[:5]} blasts the target with lightning from {effect.get('source_item', 'item')}. "
                             f"Roll {dice} = {roll_power}. Deals __DMG_0__ magic damage."
@@ -1205,6 +1233,8 @@ def trigger_on_hit_passives(
             scaling = ability.get("scaling", {}) or {}
             flat_damage = ability.get("flat_damage")
             spell_damage_type = ability.get("damage_type", damage_type)
+            spell_school = normalize_school(ability.get("school") or spell_damage_type or "physical")
+            spell_subschool = ability.get("subschool")
             hits = max(1, int(ability.get("hits", 1) or 1))
 
             item_name = effect.get("source_item", "item")
@@ -1267,7 +1297,8 @@ def trigger_on_hit_passives(
                 damage_events.append(
                     {
                         "incoming": duplicate_reduced,
-                        "school": spell_damage_type,
+                        "school": spell_school,
+                        "subschool": spell_subschool,
                         "log_template": template,
                     }
                 )
@@ -1356,6 +1387,7 @@ def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[dict[str, Any
             "effect_id": effect.get("id"),
             "effect_name": effect.get("name", "DoT"),
             "school": school,
+            "subschool": effect.get("subschool"),
             "lifesteal_pct": float(effect.get("lifesteal_pct", 0) or 0),
         })
     return damage_sources
@@ -1416,6 +1448,7 @@ def trigger_end_of_turn_effects(ps: PlayerState, log: List[str], label: str) -> 
                         "effect_id": "mindgames",
                         "effect_name": "Mindgames",
                         "school": "magical",
+                        "subschool": "shadow",
                         "suppress_log": True,
                     }
                 )
@@ -1473,6 +1506,7 @@ def end_of_turn_pet(pet, log: List[str], label: str) -> dict[str, Any]:
                         "effect_id": effect.get("id"),
                         "effect_name": effect.get("name", "DoT"),
                         "school": effect.get("school", "magical"),
+                        "subschool": effect.get("subschool"),
                     }
                 )
         regen = effect.get("regen", {}) or {}

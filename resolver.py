@@ -439,6 +439,10 @@ def resolve_turn(match: MatchState) -> None:
             overrides = dict(entry.get("overrides", {}) or {})
             if entry.get("duration"):
                 overrides["duration"] = int(entry.get("duration"))
+            if "school" not in overrides and ability.get("school"):
+                overrides["school"] = ability.get("school")
+            if "subschool" not in overrides and ability.get("subschool"):
+                overrides["subschool"] = ability.get("subschool")
             if effect_id in FORM_EFFECT_IDS:
                 apply_form(actor, effect_id, overrides=overrides or None)
             else:
@@ -476,6 +480,10 @@ def resolve_turn(match: MatchState) -> None:
             overrides = dict(entry.get("overrides", {}) or {})
             if entry.get("duration"):
                 overrides["duration"] = int(entry.get("duration"))
+            if "school" not in overrides and ability.get("school"):
+                overrides["school"] = ability.get("school")
+            if "subschool" not in overrides and ability.get("subschool"):
+                overrides["subschool"] = ability.get("subschool")
             effect = build_effect(entry["id"], overrides=overrides or None)
             applied_any = False
             for entry_target in target_entries:
@@ -1174,11 +1182,14 @@ def resolve_turn(match: MatchState) -> None:
             dot_template = effect_template(dot_id) if dot_id else {}
             lifesteal_pct = float(dot_template.get("lifesteal_pct", 0) or 0)
             dispellable = bool(dot_template.get("dispellable", False))
+            dot_school = dot_data.get("school") or ability.get("school") or dot_template.get("school") or "magical"
+            dot_subschool = dot_data.get("subschool") or ability.get("subschool") or dot_template.get("subschool")
             if dot_id and refresh_dot_effect(target, dot_id, duration=duration, tick_damage=tick_damage, source_sid=actor.sid):
                 for fx in target.effects:
                     if fx.get("id") == dot_id:
                         fx["lifesteal_pct"] = lifesteal_pct
-                        fx["school"] = "magical"
+                        fx["school"] = dot_school
+                        fx["subschool"] = dot_subschool
                         fx["dispellable"] = dispellable
                         break
                 log_parts.append(f"refreshes {effect_name(dot_id)}.")
@@ -1187,7 +1198,8 @@ def resolve_turn(match: MatchState) -> None:
                     "duration": duration,
                     "tick_damage": tick_damage,
                     "source_sid": actor.sid,
-                    "school": "magical",
+                    "school": dot_school,
+                    "subschool": dot_subschool,
                     "dispellable": dispellable,
                     "lifesteal_pct": lifesteal_pct,
                 })
@@ -1260,6 +1272,8 @@ def resolve_turn(match: MatchState) -> None:
 
         # Calculate base damage using appropriate stat
         damage_type = ability.get("damage_type", "physical")
+        ability_school = normalize_school(ability.get("school") or damage_type or "physical") or "physical"
+        ability_subschool = ability.get("subschool")
         hits = int(ability.get("hits", 1) or 1)
         total_damage = 0
         passive_bonus_damage_total = 0
@@ -1453,6 +1467,7 @@ def resolve_turn(match: MatchState) -> None:
                         "source_name": ability.get("name", "attack"),
                         "incoming": incoming,
                         "school": event.get("school", "physical"),
+                        "subschool": event.get("subschool"),
                         "log_template": str(template),
                     }
                 )
@@ -1539,6 +1554,8 @@ def resolve_turn(match: MatchState) -> None:
             "damage_instances": outgoing_instances,
             "aoe_incoming_damage": aoe_incoming_damage,
             "damage_type": damage_type,
+            "school": ability_school,
+            "subschool": ability_subschool,
             "healing": total_healing,
             "log": aoe_champion_log_override or " ".join(log_parts),
             "pre_logs": pre_log_parts,
@@ -1955,11 +1972,13 @@ def resolve_turn(match: MatchState) -> None:
         mindgames_flip_damage: bool = False,
         damage_instances: list[int] | None = None,
         school: str = "physical",
+        subschool: str | None = None,
         allow_redirect: bool = True,
     ) -> Dict[str, Any]:
+        normalized_school = normalize_school(school) or "physical"
         is_player_target = hasattr(target, "res") and target.res is not None
         if incoming <= 0:
-            return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0}
+            return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0, "school": normalized_school, "subschool": subschool}
         redirected_to = None
         if is_player_target and allow_redirect and has_flag(target, "redirect_single_target_to_pet"):
             redirect_effect = next((fx for fx in reversed(target.effects) if (fx.get("flags", {}) or {}).get("redirect_single_target_to_pet")), None)
@@ -1973,13 +1992,13 @@ def resolve_turn(match: MatchState) -> None:
                 is_player_target = False
         if is_player_target:
             if is_immune_all(target):
-                return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0}
+                return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0, "school": normalized_school, "subschool": subschool}
             if has_flag(target, "cycloned"):
                 match.log.append(f"{target_sid[:5]} is cycloned and takes no damage.")
-                return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0}
-            if normalize_school(school) == "magical" and has_effect(target, "cloak_of_shadows"):
+                return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0, "school": normalized_school, "subschool": subschool}
+            if normalized_school == "magical" and has_effect(target, "cloak_of_shadows"):
                 match.log.append(f"{target_sid[:5]} is immune to magical harm under Cloak of Shadows.")
-                return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0}
+                return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0, "school": normalized_school, "subschool": subschool}
         instance_values = [max(0, int(value or 0)) for value in (damage_instances or []) if int(value or 0) > 0]
         accounted = sum(instance_values)
         if incoming > accounted:
@@ -1997,6 +2016,8 @@ def resolve_turn(match: MatchState) -> None:
                 "absorbed_breakdown": [],
                 "instances": instance_results,
                 "mindgames_healing": incoming,
+                "school": normalized_school,
+                "subschool": subschool,
             }
 
         instance_results: list[Dict[str, Any]] = []
@@ -2043,6 +2064,8 @@ def resolve_turn(match: MatchState) -> None:
             "instances": instance_results,
             "mindgames_healing": 0,
             "redirected_to": redirected_to,
+            "school": normalized_school,
+            "subschool": subschool,
         }
 
     def resolve_aoe_enemy_attack(
@@ -2051,6 +2074,7 @@ def resolve_turn(match: MatchState) -> None:
         incoming: int,
         source_name: str,
         school: str,
+        subschool: str | None = None,
         *,
         mindgames_flip_damage: bool = False,
         champion_log_template: str | None = None,
@@ -2076,6 +2100,7 @@ def resolve_turn(match: MatchState) -> None:
                 bool(mindgames_flip_damage),
                 [incoming],
                 school=school,
+                subschool=subschool,
                 allow_redirect=False,
             )
             champion_hp_damage = int(champion_dealt_data.get("hp_damage", 0) or 0)
@@ -2100,7 +2125,7 @@ def resolve_turn(match: MatchState) -> None:
         for pet in pet_targets:
             if not pet or pet.hp <= 0:
                 continue
-            pet_result = apply_damage(actor, pet, incoming, pet.name, source_name, school=school)
+            pet_result = apply_damage(actor, pet, incoming, pet.name, source_name, school=school, subschool=subschool)
             remaining = int(pet_result.get("hp_damage", 0) or 0)
             absorbed = int(pet_result.get("absorbed", 0) or 0)
             breakdown = pet_result.get("absorbed_breakdown", [])
@@ -2151,6 +2176,7 @@ def resolve_turn(match: MatchState) -> None:
             absorbed_total,
             "Shield of Vengeance",
             "magical",
+            "holy",
             champion_log_template=f"Shield of Vengeance hits {enemy_sid[:5]} for __DMG_0__ damage.",
             champion_immune_log=untargetable_log or f"{enemy_sid[:5]} is immune to Shield of Vengeance explosion.",
             skip_champion=skip_champion,
@@ -2177,6 +2203,7 @@ def resolve_turn(match: MatchState) -> None:
             bool(has_effect(source_ps, "mindgames")),
             [incoming],
             school=source.get("school") or "magical",
+            subschool=source.get("subschool"),
             allow_redirect=False,
         )
         formatted = format_damage_log(
@@ -2204,6 +2231,7 @@ def resolve_turn(match: MatchState) -> None:
             bool(result1.get("mindgames_flip_damage")),
             result1.get("damage_instances"),
             school=result1.get("damage_type") or "physical",
+            subschool=result1.get("subschool"),
             allow_redirect=ability_target_mode(ABILITIES.get(result1.get("ability_id", ""), {})) != "aoe_enemy",
         )
     )
@@ -2219,6 +2247,7 @@ def resolve_turn(match: MatchState) -> None:
             bool(result2.get("mindgames_flip_damage")),
             result2.get("damage_instances"),
             school=result2.get("damage_type") or "physical",
+            subschool=result2.get("subschool"),
             allow_redirect=ability_target_mode(ABILITIES.get(result2.get("ability_id", ""), {})) != "aoe_enemy",
         )
     )
@@ -2250,7 +2279,9 @@ def resolve_turn(match: MatchState) -> None:
         target = target_entity or match.state[target_sid]
         dot_id = dot_data.get("id")
         duration = int(dot_data.get("duration", 1) or 1)
-        school = dot_data.get("school", "magical")
+        dot_template = effect_template(dot_id) if dot_id else {}
+        school = dot_data.get("school") or dot_template.get("school") or "magical"
+        subschool = dot_data.get("subschool") or dot_template.get("subschool")
         if dot_data.get("from_dealt_damage"):
             tick_damage = max(1, int(trigger_total // max(1, duration)))
         else:
@@ -2278,12 +2309,13 @@ def resolve_turn(match: MatchState) -> None:
             for effect in target.effects:
                 if effect.get("id") == dot_id:
                     effect["school"] = school
+                    effect["subschool"] = subschool
                     break
         elif dot_id:
             apply_effect_by_id(
                 target,
                 dot_id,
-                overrides={"duration": duration, "tick_damage": tick_damage, "source_sid": actor_sid, "school": school},
+                overrides={"duration": duration, "tick_damage": tick_damage, "source_sid": actor_sid, "school": school, "subschool": subschool},
             )
         if not dot_id:
             return
@@ -2316,6 +2348,7 @@ def resolve_turn(match: MatchState) -> None:
                 bool(result.get("mindgames_flip_damage")),
                 [incoming],
                 school=str(entry.get("school") or "physical"),
+                subschool=entry.get("subschool"),
                 allow_redirect=ability_target_mode(ABILITIES.get(result.get("ability_id", ""), {})) != "aoe_enemy",
             )
             dealt_amount = int(dealt_data.get("hp_damage", 0) or 0)
@@ -2384,6 +2417,7 @@ def resolve_turn(match: MatchState) -> None:
             incoming,
             ability.get("name", "AoE"),
             result.get("damage_type") or "physical",
+            result.get("subschool"),
             skip_champion=True,
         )
         pet_damage = int(aoe_result.get("pet_total_damage", 0) or 0)
@@ -2427,7 +2461,7 @@ def resolve_turn(match: MatchState) -> None:
         if target.res.hp > 0 and dealt > 0:
             backlash = int(dealt * 1.0)
             if backlash > 0:
-                apply_damage(actor, actor, backlash, actor_sid, "Shadow Word: Death backlash", school="magical", allow_redirect=False)
+                apply_damage(actor, actor, backlash, actor_sid, "Shadow Word: Death backlash", school="magical", subschool="shadow", allow_redirect=False)
                 match.log.append(f"{actor_sid[:5]} suffers {backlash} backlash from Shadow Word: Death.")
 
     for actor_sid, dealt, result in ((sids[0], dealt1, result1), (sids[1], dealt2, result2)):
@@ -2518,6 +2552,7 @@ def resolve_turn(match: MatchState) -> None:
                     False,
                     [int(source.get("incoming", 0) or 0)],
                     school=source.get("school") or "magical",
+                    subschool=source.get("subschool"),
                     allow_redirect=False,
                 )
                 damage = int(dealt.get("hp_damage", 0) or 0)

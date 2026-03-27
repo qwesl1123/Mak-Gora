@@ -119,7 +119,15 @@ def _run_imp_firebolt(
     fire_roll = roll("d4", rng)
     raw_fire = base_damage(modify_stat(owner, "int", owner.stats.get("int", 0)), 0.2, fire_roll)
     reduced = _damage_after_reduction(raw_fire, enemy, "magical")
-    dealt_data = apply_damage(owner, enemy, reduced, enemy_sid, "Imp Firebolt", school="magical")
+    dealt_data = apply_damage(
+        owner,
+        enemy,
+        reduced,
+        enemy_sid,
+        "Imp Firebolt",
+        school="magical",
+        subschool=(PETS.get(pet.template_id, {}) or {}).get("subschool"),
+    )
     remaining = int(dealt_data.get("hp_damage", 0) or 0)
     absorbed = int(dealt_data.get("absorbed", 0) or 0)
     breakdown = dealt_data.get("absorbed_breakdown", [])
@@ -260,6 +268,7 @@ def _run_hunter_basic_plus_special(
         scaling=float(profile.get("scaling", 1.0) or 1.0),
         dice=profile.get("dice", "d4"),
         school=profile.get("school", "physical"),
+        subschool=profile.get("subschool"),
         label=f"{pet.name} attacks",
         action_text=profile.get("action_text", "attacks"),
     )
@@ -285,6 +294,7 @@ def _run_pet_attack(
     scaling: float,
     dice: str,
     school: str,
+    subschool: str | None,
     label: str,
     action_text: str = "attacks",
 ):
@@ -315,7 +325,7 @@ def _run_pet_attack(
     rolled = roll(dice, rng) if dice else 0
     raw = base_damage(stat_value, scaling, rolled)
     reduced = _damage_after_reduction(raw, enemy, school)
-    dealt = apply_damage(owner, enemy, reduced, enemy_sid, label, school=school)
+    dealt = apply_damage(owner, enemy, reduced, enemy_sid, label, school=school, subschool=subschool)
     remaining = int(dealt.get("hp_damage", 0) or 0)
     absorbed = int(dealt.get("absorbed", 0) or 0)
     breakdown = dealt.get("absorbed_breakdown", [])
@@ -366,6 +376,7 @@ def _run_pet_special(
             scaling=2.0,
             dice="d6",
             school="physical",
+            subschool=None,
             label="Bite",
             action_text=_template_action_text(pet, special_id=special_id, fallback="bites the target"),
         )
@@ -388,7 +399,15 @@ def _run_pet_special(
             return
         raw = base_damage(int(PETS.get(pet.template_id, {}).get("int", 0) or 0), 1.5, roll("d6", rng))
         reduced = _damage_after_reduction(raw, enemy, "magical")
-        dealt = apply_damage(owner, enemy, reduced, enemy_sid, "Lightning Breath", school="magical")
+        dealt = apply_damage(
+            owner,
+            enemy,
+            reduced,
+            enemy_sid,
+            "Lightning Breath",
+            school="magical",
+            subschool=((PETS.get(pet.template_id, {}).get("specials", {}) or {}).get("lightning_breath", {}) or {}).get("subschool"),
+        )
         remaining = int(dealt.get("hp_damage", 0) or 0)
         absorbed = int(dealt.get("absorbed", 0) or 0)
         breakdown = dealt.get("absorbed_breakdown", [])

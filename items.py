@@ -78,6 +78,8 @@ ITEMS = {
                 "chance": 0.25,
                 "scaling": {"atk": 0.5},
                 "dice": "d3",
+                "school": "magical",
+                "subschool": "nature",
             },
             {
                 "type": "heal_on_hit",
