@@ -2145,7 +2145,8 @@ def resolve_turn(match: MatchState) -> None:
                 match.log.append(pet_log)
             if remaining > 0:
                 pet_total_damage += remaining
-                pet_hits.append({"pet": pet, "damage_data": pet_result})
+                if pet.hp > 0:
+                    pet_hits.append({"pet": pet, "damage_data": pet_result})
             if pet.hp <= 0:
                 handle_pet_defeat(target, pet)
 

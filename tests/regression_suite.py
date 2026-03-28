@@ -854,7 +854,7 @@ def scenario_dragon_roar_bleed_applies_to_pets_with_independent_rolls() -> bool:
         assert bleed is not None, f"Dragon Roar should apply bleed to pet {pet.name}"
         pet_bleeds.append((pet.name, int(bleed.get('tick_damage', 0) or 0)))
 
-    expected_dot_rolls = 1 + len(pet_hp_before)
+    expected_dot_rolls = 1 + len(pet_bleeds)
     assert dot_roll_counter["count"] == expected_dot_rolls, "Dragon Roar bleed should roll once per affected target"
 
     submit_turn(match, _DEF_PASS, _DEF_PASS)
@@ -864,7 +864,37 @@ def scenario_dragon_roar_bleed_applies_to_pets_with_independent_rolls() -> bool:
         assert any("suffers" in line and "Dragon Roar Bleed" in line and pet_name in line for line in latest_turn), f"Pet bleed should tick independently for {pet_name}"
 
     assert any("Dragon Roar applies bleed on Warlock." in line for line in match.log), "Champion bleed log should use champion class label"
-    assert any("Dragon Roar applies bleed on Warlock's Imp." in line for line in match.log), "Pet bleed log should use owner and pet name"
+    if pet_bleeds:
+        assert any("Dragon Roar applies bleed on Warlock's Imp." in line for line in match.log), "Pet bleed log should use owner and pet name"
+    else:
+        assert not any("Dragon Roar applies bleed on Warlock's Imp." in line for line in match.log), "Dead pets should not get bleed logs"
+    return True
+
+
+def scenario_dragon_roar_dead_pets_do_not_log_bleed_application() -> bool:
+    match = make_match("warrior", "warlock", seed=1313)
+    warrior_sid, warlock_sid = match.players
+    warrior = match.state[warrior_sid]
+    warlock = match.state[warlock_sid]
+
+    submit_turn(match, _DEF_PASS, "summon_imp")
+    submit_turn(match, _DEF_PASS, "summon_imp")
+    submit_turn(match, _DEF_PASS, "summon_imp")
+    assert len(warlock.pets) == 3, "Expected three imps before Dragon Roar"
+
+    # Force all imps to die from the AoE hit so only champion should receive bleed logs.
+    for pet in warlock.pets.values():
+        pet.hp = 1
+        pet.hp_max = max(1, pet.hp_max)
+
+    warrior.res.rage = warrior.res.rage_max
+    submit_turn(match, "dragon_roar", _DEF_PASS)
+
+    dragon_roar_lines = [line for line in match.log if "Dragon Roar" in line]
+    pet_bleed_lines = [line for line in dragon_roar_lines if "Dragon Roar applies bleed on Warlock's Imp." in line]
+    assert not pet_bleed_lines, "Dead pets should not emit Dragon Roar bleed application logs"
+    assert any("Dragon Roar applies bleed on Warlock." in line for line in dragon_roar_lines), "Champion bleed should still apply"
+    assert sum(1 for line in match.log if line == "Imp dies.") == 3, "All imps should die from Dragon Roar in this setup"
     return True
 
 
@@ -2189,6 +2219,7 @@ SCENARIOS = [
     scenario_hunter_multi_shot_aoe,
     scenario_dragon_roar_cannot_miss_from_accuracy,
     scenario_dragon_roar_bleed_applies_to_pets_with_independent_rolls,
+    scenario_dragon_roar_dead_pets_do_not_log_bleed_application,
     scenario_hunter_turtle_priority,
     scenario_hunter_wildfire_arcane_proc,
     scenario_hunter_wildfire_dot_log_order,
