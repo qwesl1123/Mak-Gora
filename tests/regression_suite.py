@@ -2194,6 +2194,134 @@ def scenario_subschool_event_plumbing_for_dots_and_passives() -> bool:
     return True
 
 
+def scenario_direct_damage_dot_inherits_ability_subschool() -> bool:
+    ability_id = "test_direct_dot_subschool_fallback"
+    effect_id = "test_direct_dot_no_subschool"
+    ABILITIES[ability_id] = {
+        "name": "Fallback Arcane Lash",
+        "requires_target": True,
+        "cannot_miss": True,
+        "flat_damage": 8,
+        "damage_type": "magic",
+        "school": "magical",
+        "subschool": "arcane",
+        "dot": {"id": effect_id, "duration": 2, "from_dealt_damage": True},
+        "tags": ["attack", "spell"],
+    }
+    EFFECT_TEMPLATES[effect_id] = {
+        "type": "dot",
+        "name": "Fallback Arcane Lash DoT",
+        "duration": 2,
+        "category": "dot",
+        "school": "magical",
+        "tick_damage": 1,
+    }
+
+    try:
+        match = make_match("mage", "warrior", seed=5002)
+        mage_sid, warrior_sid = match.players
+        warrior = match.state[warrior_sid]
+
+        submit_turn(match, ability_id, _DEF_PASS)
+        dot = next((fx for fx in warrior.effects if fx.get("id") == effect_id), None)
+        assert dot is not None, "Direct-damage ability should apply the configured DoT"
+        assert dot.get("school") == "magical", "DoT school should remain magical"
+        assert dot.get("subschool") == "arcane", "DoT should inherit ability-level arcane subschool fallback"
+
+        summary = effects.end_of_turn(warrior, [], "Warrior")
+        sources = summary.get("damage_sources", [])
+        assert any(
+            src.get("effect_id") == effect_id
+            and src.get("school") == "magical"
+            and src.get("subschool") == "arcane"
+            for src in sources
+        ), "DoT ticks should preserve inherited magical subschool metadata"
+        return True
+    finally:
+        ABILITIES.pop(ability_id, None)
+        EFFECT_TEMPLATES.pop(effect_id, None)
+
+
+def scenario_true_aoe_school_subschool_propagation() -> bool:
+    magical_aoe_id = "test_arcane_storm_aoe"
+    physical_aoe_id = "test_slam_wave_aoe"
+    magical_effect_id = "test_arcane_storm_burn"
+    ABILITIES[magical_aoe_id] = {
+        "name": "Arcane Storm",
+        "requires_target": True,
+        "target_mode": "aoe_enemy",
+        "cannot_miss": True,
+        "flat_damage": 10,
+        "damage_type": "magic",
+        "school": "magical",
+        "subschool": "arcane",
+        "dot": {"id": magical_effect_id, "duration": 2, "from_dealt_damage": True},
+        "tags": ["attack", "spell", "aoe"],
+    }
+    ABILITIES[physical_aoe_id] = {
+        "name": "Slam Wave",
+        "requires_target": True,
+        "target_mode": "aoe_enemy",
+        "cannot_miss": True,
+        "flat_damage": 10,
+        "damage_type": "physical",
+        "dot": {"id": "dragon_roar_bleed", "duration": 2, "from_dealt_damage": True},
+        "tags": ["attack", "physical", "aoe"],
+    }
+    EFFECT_TEMPLATES[magical_effect_id] = {
+        "type": "dot",
+        "name": "Arcane Storm Burn",
+        "duration": 2,
+        "category": "dot",
+        "school": "magical",
+        "tick_damage": 1,
+    }
+
+    try:
+        match = make_match("mage", "warlock", seed=5003)
+        mage_sid, warlock_sid = match.players
+        warlock = match.state[warlock_sid]
+        warlock.pets["p2_imp_2"] = PetState(id="p2_imp_2", template_id="imp", name="Imp", owner_sid=warlock_sid, hp=40, hp_max=40)
+        warlock.pets["p2_imp_1"] = PetState(id="p2_imp_1", template_id="imp", name="Imp", owner_sid=warlock_sid, hp=40, hp_max=40)
+
+        champion_hp_before = warlock.res.hp
+        submit_turn(match, magical_aoe_id, _DEF_PASS)
+        turn_one_lines = _turn_lines(match, 1)
+        assert warlock.res.hp < champion_hp_before, "AoE should damage champion target"
+        action_log_idx = next((i for i, line in enumerate(turn_one_lines) if "cast Arcane Storm" in line), -1)
+        pet1_log_idx = next((i for i, line in enumerate(turn_one_lines) if "hits p2_si's Imp (imp1)" in line), -1)
+        pet2_log_idx = next((i for i, line in enumerate(turn_one_lines) if "hits p2_si's Imp (imp2)" in line), -1)
+        assert action_log_idx >= 0, "AoE action log should be present"
+        assert pet1_log_idx >= 0 and pet2_log_idx >= 0, "AoE should fan out to both pets"
+        assert action_log_idx < pet1_log_idx < pet2_log_idx, "AoE pet fanout should remain deterministic"
+
+        champion_dot = next((fx for fx in warlock.effects if fx.get("id") == magical_effect_id), None)
+        assert champion_dot is not None, "Champion should receive Arcane Storm DoT"
+        assert champion_dot.get("school") == "magical"
+        assert champion_dot.get("subschool") == "arcane"
+        for pet_id in ("p2_imp_1", "p2_imp_2"):
+            pet_dot = next((fx for fx in warlock.pets[pet_id].effects if fx.get("id") == magical_effect_id), None)
+            assert pet_dot is not None, f"{pet_id} should receive Arcane Storm DoT"
+            assert pet_dot.get("school") == "magical"
+            assert pet_dot.get("subschool") == "arcane"
+
+        submit_turn(match, physical_aoe_id, _DEF_PASS)
+        champion_bleed = next((fx for fx in warlock.effects if fx.get("id") == "dragon_roar_bleed"), None)
+        assert champion_bleed is not None, "Physical AoE should apply dragon_roar_bleed to champion"
+        assert champion_bleed.get("school") == "physical"
+        assert champion_bleed.get("subschool") is None
+        for pet_id in ("p2_imp_1", "p2_imp_2"):
+            pet_bleed = next((fx for fx in warlock.pets[pet_id].effects if fx.get("id") == "dragon_roar_bleed"), None)
+            assert pet_bleed is not None, f"{pet_id} should receive dragon_roar_bleed"
+            assert pet_bleed.get("school") == "physical"
+            assert pet_bleed.get("subschool") is None
+        return True
+    finally:
+        ABILITIES.pop(magical_aoe_id, None)
+        ABILITIES.pop(physical_aoe_id, None)
+        EFFECT_TEMPLATES.pop(magical_effect_id, None)
+
+
 SCENARIOS = [
     scenario_mindgames_lay_on_hands,
     scenario_mass_dispel_selective_removal,
@@ -2280,6 +2408,8 @@ SCENARIOS = [
     scenario_break_on_damage_and_lifesteal_use_post_mitigation_damage,
     scenario_subschool_metadata_and_templates,
     scenario_subschool_event_plumbing_for_dots_and_passives,
+    scenario_direct_damage_dot_inherits_ability_subschool,
+    scenario_true_aoe_school_subschool_propagation,
     scenario_invalid_class_rejected,
     scenario_valid_class_id_is_normalized_before_build,
     scenario_prep_selection_name_uses_current_submission,

@@ -610,9 +610,9 @@ def resolve_turn(match: MatchState) -> None:
     def can_evasion_force_miss(ability: Dict[str, Any], has_damage: bool) -> bool:
         if not has_damage:
             return False
-        damage_type = ability.get("damage_type", "physical")
+        school = normalize_school(ability.get("school") or ability.get("damage_type") or "physical") or "physical"
         return (
-            damage_type == "physical"
+            school == "physical"
             and not is_aoe_ability(ability)
             and is_single_target_ability(ability)
         )
@@ -974,10 +974,30 @@ def resolve_turn(match: MatchState) -> None:
             duration = int(dot_data.get("duration", 1) or 1)
             tick_damage = max(1, total_dot // max(1, duration))
             dot_id = dot_data.get("id")
-            if dot_id and refresh_dot_effect(target, dot_id, duration=duration, tick_damage=tick_damage, source_sid=actor.sid):
+            dot_school = normalize_school(dot_data.get("school") or ability.get("school") or "magical") or "magical"
+            dot_subschool = (dot_data.get("subschool") or ability.get("subschool")) if dot_school == "magical" else None
+            if dot_id and refresh_dot_effect(
+                target,
+                dot_id,
+                duration=duration,
+                tick_damage=tick_damage,
+                source_sid=actor.sid,
+                school=dot_school,
+                subschool=dot_subschool,
+            ):
                 log_parts.append(f"refreshes {effect_name(dot_id)}.")
             elif dot_id:
-                apply_effect_by_id(target, dot_id, overrides={"duration": duration, "tick_damage": tick_damage, "source_sid": actor.sid})
+                apply_effect_by_id(
+                    target,
+                    dot_id,
+                    overrides={
+                        "duration": duration,
+                        "tick_damage": tick_damage,
+                        "source_sid": actor.sid,
+                        "school": dot_school,
+                        "subschool": dot_subschool,
+                    },
+                )
                 log_parts.append(f"applies {effect_name(dot_id)}.")
             set_cooldown(actor, ability_id, ability)
             return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
@@ -1182,14 +1202,22 @@ def resolve_turn(match: MatchState) -> None:
             dot_template = effect_template(dot_id) if dot_id else {}
             lifesteal_pct = float(dot_template.get("lifesteal_pct", 0) or 0)
             dispellable = bool(dot_template.get("dispellable", False))
-            dot_school = dot_data.get("school") or ability.get("school") or dot_template.get("school") or "magical"
-            dot_subschool = dot_data.get("subschool") or ability.get("subschool") or dot_template.get("subschool")
-            if dot_id and refresh_dot_effect(target, dot_id, duration=duration, tick_damage=tick_damage, source_sid=actor.sid):
+            dot_school = normalize_school(dot_data.get("school") or ability.get("school") or dot_template.get("school") or "magical") or "magical"
+            dot_subschool = (
+                dot_data.get("subschool") or ability.get("subschool") or dot_template.get("subschool")
+            ) if dot_school == "magical" else None
+            if dot_id and refresh_dot_effect(
+                target,
+                dot_id,
+                duration=duration,
+                tick_damage=tick_damage,
+                source_sid=actor.sid,
+                school=dot_school,
+                subschool=dot_subschool,
+            ):
                 for fx in target.effects:
                     if fx.get("id") == dot_id:
                         fx["lifesteal_pct"] = lifesteal_pct
-                        fx["school"] = dot_school
-                        fx["subschool"] = dot_subschool
                         fx["dispellable"] = dispellable
                         break
                 log_parts.append(f"refreshes {effect_name(dot_id)}.")
@@ -1271,9 +1299,8 @@ def resolve_turn(match: MatchState) -> None:
             return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "extra_logs": extra_logs}
 
         # Calculate base damage using appropriate stat
-        damage_type = ability.get("damage_type", "physical")
-        ability_school = normalize_school(ability.get("school") or damage_type or "physical") or "physical"
-        ability_subschool = ability.get("subschool")
+        ability_school = normalize_school(ability.get("school") or ability.get("damage_type") or "physical") or "physical"
+        ability_subschool = ability.get("subschool") if ability_school == "magical" else None
         hits = int(ability.get("hits", 1) or 1)
         total_damage = 0
         passive_bonus_damage_total = 0
@@ -1355,7 +1382,7 @@ def resolve_turn(match: MatchState) -> None:
             reduced = mitigate_damage(
                 raw,
                 target,
-                damage_type,
+                ability_school,
                 ignore_armor=bool(ability.get("ignore_armor") or ability.get("ignore_physical_reduction")),
                 ignore_magic_resist=bool(ability.get("ignore_magic_resist")),
             )
@@ -1375,7 +1402,7 @@ def resolve_turn(match: MatchState) -> None:
                 aoe_incoming_damage += incoming_for_hit
                 aoe_damage_instances.append(incoming_for_hit)
 
-            if is_damage_immune(target, damage_type):
+            if is_damage_immune(target, "physical" if ability_school == "physical" else "magic"):
                 reduced = 0
                 log_parts.append(f"{prefix}Immune!")
             else:
@@ -1478,7 +1505,7 @@ def resolve_turn(match: MatchState) -> None:
                 actor,
                 target,
                 on_hit_base_damage,
-                damage_type,
+                ability_school,
                 r,
                 ability=ability,
                 include_strike_again=False,
@@ -1497,7 +1524,7 @@ def resolve_turn(match: MatchState) -> None:
                 actor,
                 target,
                 strike_damage,
-                damage_type,
+                ability_school,
                 r,
                 ability=ability,
                 include_strike_again=True,
@@ -1553,7 +1580,7 @@ def resolve_turn(match: MatchState) -> None:
             "damage": outgoing_damage,
             "damage_instances": outgoing_instances,
             "aoe_incoming_damage": aoe_incoming_damage,
-            "damage_type": damage_type,
+            "damage_type": ability_school,
             "school": ability_school,
             "subschool": ability_subschool,
             "healing": total_healing,
@@ -2231,7 +2258,7 @@ def resolve_turn(match: MatchState) -> None:
             source_name_1,
             bool(result1.get("mindgames_flip_damage")),
             result1.get("damage_instances"),
-            school=result1.get("damage_type") or "physical",
+            school=result1.get("school") or "physical",
             subschool=result1.get("subschool"),
             allow_redirect=ability_target_mode(ABILITIES.get(result1.get("ability_id", ""), {})) != "aoe_enemy",
         )
@@ -2247,7 +2274,7 @@ def resolve_turn(match: MatchState) -> None:
             source_name_2,
             bool(result2.get("mindgames_flip_damage")),
             result2.get("damage_instances"),
-            school=result2.get("damage_type") or "physical",
+            school=result2.get("school") or "physical",
             subschool=result2.get("subschool"),
             allow_redirect=ability_target_mode(ABILITIES.get(result2.get("ability_id", ""), {})) != "aoe_enemy",
         )
@@ -2281,8 +2308,12 @@ def resolve_turn(match: MatchState) -> None:
         dot_id = dot_data.get("id")
         duration = int(dot_data.get("duration", 1) or 1)
         dot_template = effect_template(dot_id) if dot_id else {}
-        school = dot_data.get("school") or dot_template.get("school") or "magical"
-        subschool = dot_data.get("subschool") or dot_template.get("subschool")
+        school = normalize_school(dot_data.get("school") or ability.get("school") or dot_template.get("school") or "magical") or "magical"
+        subschool = (
+            dot_data.get("subschool")
+            or ability.get("subschool")
+            or dot_template.get("subschool")
+        ) if school == "magical" else None
         if dot_data.get("from_dealt_damage"):
             tick_damage = max(1, int(trigger_total // max(1, duration)))
         else:
@@ -2305,13 +2336,16 @@ def resolve_turn(match: MatchState) -> None:
                 tick_damage = int(dot_data.get("tick_damage", 0) or 0)
             tick_damage = max(1, int(tick_damage))
         refreshed = False
-        if dot_id and refresh_dot_effect(target, dot_id, duration=duration, tick_damage=tick_damage, source_sid=actor_sid):
+        if dot_id and refresh_dot_effect(
+            target,
+            dot_id,
+            duration=duration,
+            tick_damage=tick_damage,
+            source_sid=actor_sid,
+            school=school,
+            subschool=subschool,
+        ):
             refreshed = True
-            for effect in target.effects:
-                if effect.get("id") == dot_id:
-                    effect["school"] = school
-                    effect["subschool"] = subschool
-                    break
         elif dot_id:
             apply_effect_by_id(
                 target,
@@ -2417,7 +2451,7 @@ def resolve_turn(match: MatchState) -> None:
             target_sid,
             incoming,
             ability.get("name", "AoE"),
-            result.get("damage_type") or "physical",
+            result.get("school") or "physical",
             result.get("subschool"),
             skip_champion=True,
         )

@@ -966,7 +966,16 @@ def absorb_total(ps: PlayerState) -> int:
     return sum(max(0, int(layer.get("remaining", 0) or 0)) for layer in ps.res.absorbs.values())
 
 
-def refresh_dot_effect(target: PlayerState, effect_id: str, *, duration: int, tick_damage: int, source_sid: Optional[str] = None) -> bool:
+def refresh_dot_effect(
+    target: PlayerState,
+    effect_id: str,
+    *,
+    duration: int,
+    tick_damage: int,
+    source_sid: Optional[str] = None,
+    school: Optional[str] = None,
+    subschool: Optional[str] = None,
+) -> bool:
     for effect in target.effects:
         if effect.get("id") != effect_id:
             continue
@@ -974,6 +983,12 @@ def refresh_dot_effect(target: PlayerState, effect_id: str, *, duration: int, ti
         effect["tick_damage"] = int(tick_damage)
         if source_sid is not None:
             effect["source_sid"] = source_sid
+        if school is not None:
+            effect["school"] = normalize_school(school)
+            if effect["school"] != "magical":
+                effect["subschool"] = None
+        if subschool is not None and effect.get("school") == "magical":
+            effect["subschool"] = subschool
         return True
     return False
 
@@ -1232,9 +1247,10 @@ def trigger_on_hit_passives(
             dice_data = ability.get("dice")
             scaling = ability.get("scaling", {}) or {}
             flat_damage = ability.get("flat_damage")
-            spell_damage_type = ability.get("damage_type", damage_type)
-            spell_school = normalize_school(ability.get("school") or spell_damage_type or "physical")
-            spell_subschool = ability.get("subschool")
+            spell_school = normalize_school(
+                ability.get("school") or ability.get("damage_type") or damage_type or "physical"
+            )
+            spell_subschool = ability.get("subschool") if spell_school == "magical" else None
             hits = max(1, int(ability.get("hits", 1) or 1))
 
             item_name = effect.get("source_item", "item")
@@ -1268,8 +1284,10 @@ def trigger_on_hit_passives(
                 if duplicate_raw <= 0:
                     continue
 
-                duplicate_reduced = mitigate_damage(duplicate_raw, target, spell_damage_type)
-                if is_damage_immune(target, spell_damage_type):
+                duplicate_reduced = mitigate_damage(duplicate_raw, target, spell_school)
+                if spell_school == "physical" and is_damage_immune(target, "physical"):
+                    duplicate_reduced = 0
+                if spell_school == "magical" and is_damage_immune(target, "magic"):
                     duplicate_reduced = 0
                 if duplicate_reduced <= 0:
                     continue
@@ -1373,11 +1391,11 @@ def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[dict[str, Any
         if raw_damage <= 0:
             continue
 
-        school = effect.get("school")
+        school = normalize_school(effect.get("school") or "physical") or "physical"
         reduced = mitigate_damage(raw_damage, ps, school)
         if school == "physical" and is_damage_immune(ps, "physical"):
             reduced = 0
-        if school in ("magic", "magical") and is_damage_immune(ps, "magic"):
+        if school == "magical" and is_damage_immune(ps, "magic"):
             reduced = 0
 
         source_sid = effect.get("source_sid")
