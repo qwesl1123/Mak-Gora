@@ -15,18 +15,21 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "name": "Hot Streak",
         "duration": 3,
         "flags": {"hot_streak": True},
+        "tags": ["proc"],
     },
     "die_by_sword": {
         "type": "status",
         "name": "Die by the Sword",
         "duration": 2,
         "flags": {"immune_physical": True},
+        "tags": ["immune_part"],
     },
     "die_by_sword_mitigation": {
         "type": "mitigation",
         "name": "Die by the Sword",
         "duration": 2,
         "value": 0.3,
+        "tags": ["damage_reduction"],
     },
     "iceblock": {
         "type": "status",
@@ -36,6 +39,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "school": "magical",
         "subschool": "frost",
         "flags": {"immune_all": True, "stunned": True},
+        "tags": ["immune_all"],
         "display": {
             "war_council": True,
             "label": "Immune",
@@ -49,6 +53,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "name": "Cloak of Shadows",
         "duration": 2,
         "flags": {"immune_magic": True},
+        "tags": ["immune_part"],
     },
     "item_passive_template": {
         "type": "item_passive",
@@ -63,6 +68,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "school": "magical",
         "dispellable": True,
         "tick_damage": 1,
+        "tags": ["dot"],
     },
     "agony": {
         "type": "dot",
@@ -74,6 +80,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "dispellable": False,
         "tick_damage": 1,
         "dot_mode": "ramp",
+        "tags": ["dot"],
     },
     "corruption": {
         "type": "dot",
@@ -84,6 +91,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "subschool": "shadow",
         "dispellable": True,
         "tick_damage": 1,
+        "tags": ["dot"],
     },
     "unstable_affliction": {
         "type": "dot",
@@ -94,6 +102,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "subschool": "shadow",
         "dispellable": True,
         "tick_damage": 1,
+        "tags": ["dot"],
     },
     "demonic_circle": {
         "type": "status",
@@ -106,6 +115,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "name": "Stunned",
         "duration": 1,
         "flags": {"stunned": True},
+        "tags": ["incapacitating_cc"],
         "cant_act_reason": "stunned",
         "display": {
             "war_council": True,
@@ -123,6 +133,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "subschool": "shadow",
         "harmful": True,
         "flags": {"break_on_damage": True},
+        "tags": ["incapacitating_cc", "break_on_damage"],
         "cant_act_reason": "feared",
         "display": {
             "war_council": True,
@@ -140,6 +151,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "subschool": "frost",
         "harmful": True,
         "flags": {"stunned": True, "break_on_damage": True},
+        "tags": ["incapacitating_cc", "break_on_damage"],
         "cant_act_reason": "frozen",
         "display": {
             "war_council": True,
@@ -155,6 +167,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "dispellable": True,
         "school": "magical",
         "flags": {"stealthed": True},
+        "tags": ["stealth"],
         "break_on_damage_over": 5,
         "display": {
             "war_council": True,
@@ -168,6 +181,23 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "name": "Blink",
         "duration": 2,
         "flags": {"blinked": True, "untargetable": True},
+        "tags": ["blink_like"],
+    },
+    "demonic_gateway": {
+        "type": "status",
+        "name": "Demonic Gateway",
+        "duration": 2,
+        "flags": {"blinked": True, "untargetable": True},
+        "miss_log": "Target fled through the portal — Miss.",
+        "tags": ["blink_like"],
+    },
+    "teleport": {
+        "type": "status",
+        "name": "Demonic Circle: Teleport",
+        "duration": 2,
+        "flags": {"blinked": True, "untargetable": True},
+        "miss_log": "Target returned to their dark ward — Miss.",
+        "tags": ["blink_like"],
     },
     "disengage": {
         "type": "status",
@@ -175,6 +205,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 1,
         "flags": {"blinked": True, "untargetable": True, "incoming_single_target_miss": True},
         "miss_log": "Target leaps away — Miss.",
+        "tags": ["blink_like"],
         "display": {
             "war_council": True,
             "label": "Disengaged",
@@ -193,6 +224,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "name": "Ambush",
         "duration": 2,
         "flags": {"ambush_ready": True},
+        "tags": ["proc"],
     },
     "thistle_tea": {
         "type": "status",
@@ -206,12 +238,14 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 999,
         "damage_mult": 1.2,
         "flags": {"empower_next_offense": True},
+        "tags": ["proc"],
     },
     "paladin_final_verdict_empowered": {
         "type": "status",
         "name": "Final Verdict Empowered",
         "duration": 999,
         "flags": {"paladin_final_verdict_empowered": True},
+        "tags": ["proc"],
     },
     "dark_pact": {
         "type": "status",
@@ -221,6 +255,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "dispellable": True,
         "dispel_kind": "magical",
         "school": "magical",
+        "tags": ["absorb"],
     },
     "unending_resolve": {
         "type": "status",
@@ -229,6 +264,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "dispellable": True,
         "school": "magical",
         "flags": {"immune_all": True},
+        "tags": ["immune_all"],
         "display": {
             "war_council": True,
             "label": "Immune",
@@ -244,6 +280,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "school": "magical",
         "subschool": "holy",
         "flags": {"immune_all": True},
+        "tags": ["immune_all"],
         "display": {
             "war_council": True,
             "label": "Immune",
@@ -261,18 +298,21 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "subschool": "holy",
         "flags": {"shield_of_vengeance": True},
         "absorbed": 0,
+        "tags": ["absorb"],
     },
     "ignore_pain": {
         "type": "status",
         "name": "Ignore Pain",
         "duration": 8,
         "category": "absorb",
+        "tags": ["absorb"],
     },
     "shielded": {
         "type": "status",
         "name": "Shielded",
         "duration": 2,
         "category": "absorb",
+        "tags": ["absorb"],
     },
     "power_word_shield": {
         "type": "status",
@@ -282,6 +322,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "dispellable": True,
         "school": "magical",
         "subschool": "holy",
+        "tags": ["absorb"],
     },
     "ice_barrier": {
         "type": "status",
@@ -291,18 +332,21 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "dispellable": True,
         "school": "magical",
         "subschool": "frost",
+        "tags": ["absorb"],
     },
     "mind_blast_empowered": {
         "type": "status",
         "name": "Mind Blast Empowered",
         "duration": 999,
         "flags": {"mind_blast_empowered": True},
+        "tags": ["proc"],
     },
     "shadowy_insight": {
         "type": "status",
         "name": "Shadowy Insight",
         "duration": 999,
         "flags": {"shadowy_insight": True},
+        "tags": ["proc"],
     },
     "vampiric_touch": {
         "type": "dot",
@@ -314,6 +358,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "dispellable": True,
         "tick_damage": 1,
         "lifesteal_pct": 0.4,
+        "tags": ["dot"],
     },
     "devouring_plague": {
         "type": "dot",
@@ -326,6 +371,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "tick_damage": 1,
         "lifesteal_pct": 1.0,
         "refresh_only": True,
+        "tags": ["dot"],
     },
     "pain_suppression": {
         "type": "mitigation",
@@ -335,6 +381,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "dispellable": True,
         "school": "magical",
         "subschool": "holy",
+        "tags": ["damage_reduction"],
     },
     "mindgames": {
         "type": "status",
@@ -345,13 +392,6 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "subschool": "shadow",
         "harmful": True,
         "flags": {"mindgames": True},
-    },
-    "psychic_scream": {
-        "type": "status",
-        "name": "Psychic Scream",
-        "duration": 1,
-        "flags": {"stunned": True},
-        "cant_act_reason": "terrified",
     },
     "shadowfiend": {
         "type": "status",
@@ -369,6 +409,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "school": "physical",
         "dispellable": False,
         "tick_damage": 1,
+        "tags": ["dot"],
     },
     "avenging_wrath": {
         "type": "status",
@@ -391,6 +432,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "name": "Bear Form",
         "duration": 999,
         "flags": {"form": "bear", "bear_form": True},
+        "tags": ["form"],
         "display": {
             "war_council": True,
             "label": "Bear Form",
@@ -409,6 +451,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "name": "Cat Form",
         "duration": 999,
         "flags": {"form": "cat", "cat_form": True},
+        "tags": ["form"],
         "display": {
             "war_council": True,
             "label": "Cat Form",
@@ -427,6 +470,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "name": "Moonkin Form",
         "duration": 999,
         "flags": {"form": "moonkin", "moonkin_form": True},
+        "tags": ["form"],
         "display": {
             "war_council": True,
             "label": "Moonkin Form",
@@ -445,6 +489,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "name": "Tree Form",
         "duration": 999,
         "flags": {"form": "tree", "tree_form": True},
+        "tags": ["form"],
         "display": {
             "war_council": True,
             "label": "Tree Form",
@@ -463,18 +508,21 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "name": "Rip Ready",
         "duration": 999,
         "flags": {"rip_ready": True},
+        "tags": ["proc"],
     },
     "starfire_ready": {
         "type": "status",
         "name": "Starfire Ready",
         "duration": 999,
         "flags": {"starfire_ready": True},
+        "tags": ["proc"],
     },
     "barkskin": {
         "type": "mitigation",
         "name": "Barkskin",
         "duration": 3,
         "value": 0.35,
+        "tags": ["damage_reduction"],
     },
     "ironfur": {
         "type": "stat_mods",
@@ -497,6 +545,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "school": "magical",
         "subschool": "nature",
         "flags": {"cycloned": True, "stunned": True, "immune_all": True},
+        "tags": ["incapacitating_cc"],
     },
     "frenzied_regeneration": {
         "type": "status",
@@ -504,6 +553,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 4,
         "dispellable": False,
         "regen": {"hp": 0},
+        "tags": ["hot"],
     },
     "regrowth": {
         "type": "status",
@@ -514,6 +564,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "school": "magical",
         "subschool": "nature",
         "regen": {"hp": 0},
+        "tags": ["hot"],
     },
     "wildfire_burn": {
         "type": "dot",
@@ -524,18 +575,21 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "subschool": "fire",
         "dispellable": True,
         "tick_damage": 1,
+        "tags": ["dot"],
     },
     "arcane_shot_proc": {
         "type": "status",
         "name": "Arcane Shot",
         "duration": 2,
         "flags": {"arcane_shot_ready": True},
+        "tags": ["proc"],
     },
     "raptor_strike_proc": {
         "type": "status",
         "name": "Raptor Strike",
         "duration": 2,
         "flags": {"raptor_strike_ready": True},
+        "tags": ["proc"],
     },
     "freezing_trap_freeze": {
         "type": "status",
@@ -546,6 +600,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "subschool": "frost",
         "harmful": True,
         "flags": {"stunned": True, "break_on_damage": True},
+        "tags": ["incapacitating_cc", "break_on_damage"],
         "cant_act_reason": "frozen",
         "display": {
             "war_council": True,
@@ -562,12 +617,14 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "school": "magical",
         "flags": {"incoming_single_target_miss": True, "disable_attacks": True},
         "regen": {"mp": 10},
+        "tags": ["damage_reduction"],
     },
     "blocking_defence": {
         "type": "status",
         "name": "Blocking Defence",
         "duration": 1,
         "flags": {"redirect_single_target_to_pet": True},
+        "tags": ["redirect"],
         "display": {
             "war_council": True,
             "label": "Guarded",

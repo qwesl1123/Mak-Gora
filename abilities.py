@@ -647,7 +647,7 @@ ABILITIES = {
         "cooldown": 30,
         "classes": ["warlock"],
         "requires_circle": True,
-        "self_effects": [{"id": "blink", "duration": 2, "overrides": {"miss_log": "Target returned to their dark ward — Miss."}, "log": "teleports via Demonic Circle."}],
+        "self_effects": [{"id": "teleport", "duration": 2, "log": "teleports via Demonic Circle."}],
     },
     "demonic_circle": {
         "name": "Demonic Circle",
@@ -665,7 +665,7 @@ ABILITIES = {
         "tags": ["spell", "defense"],
         "cooldown": 25,
         "classes": ["warlock"],
-        "self_effects": [{"id": "blink", "duration": 2, "overrides": {"miss_log": "Target fled through the portal — Miss."}, "log": "slips through a Demonic Gateway."}],
+        "self_effects": [{"id": "demonic_gateway", "duration": 2, "log": "slips through a Demonic Gateway."}],
     },
     "fear": {
         "name": "Fear",
@@ -1035,6 +1035,21 @@ ABILITIES = {
         "priority_control": True,
         "target_effects": [
             {"id": "mindgames", "duration": 1, "log": "Assaults the enemy's mind."}
+        ],
+    },
+    "psychic_scream": {
+        "name": "Psychic Scream",
+        "display_color": "#FFFFFF",
+        "cost": {"mp": 20},
+        "dice": None,
+        "target_mode": "aoe_enemy",
+        "tags": ["spell", "control"],
+        "school": "magical",
+        "subschool": "shadow",
+        "cooldown": 15,
+        "classes": ["priest"],
+        "target_effects": [
+            {"id": "feared", "duration": 2, "overrides": {"name": "Feared"}, "log": "Lets out a terrifying scream fearing all enemies away"}
         ],
     },
     "flash_heal": {

@@ -7,6 +7,7 @@ from .effects import (
     mitigate_damage,
     modify_stat,
     has_flag,
+    get_cant_act_reason,
     is_immune_all,
     is_damage_immune,
     apply_effect_by_id,
@@ -469,6 +470,10 @@ def run_pet_phase(
                 continue
             if pet.action_consumed:
                 pet.action_consumed = False
+                continue
+            reason = get_cant_act_reason(pet)
+            if reason:
+                match.log.append(f"{owner_sid[:5]}'s {pet.name} is {reason} and cannot act.")
                 continue
 
             template = PETS.get(pet.template_id, {})
