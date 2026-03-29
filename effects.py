@@ -789,6 +789,58 @@ def has_effect(target, effect_id: str) -> bool:
     return any(effect.get("id") == effect_id for effect in target.effects)
 
 
+def effect_tags(effect: Any) -> set[str]:
+    if not isinstance(effect, dict):
+        return set()
+    raw_tags = effect.get("tags")
+    if raw_tags is None:
+        effect_id = effect.get("id")
+        template = EFFECT_TEMPLATES.get(effect_id) if effect_id else None
+        raw_tags = (template or {}).get("tags")
+    if not raw_tags:
+        return set()
+    if isinstance(raw_tags, str):
+        return {raw_tags}
+    if isinstance(raw_tags, (list, tuple, set, frozenset)):
+        return {str(tag) for tag in raw_tags if tag}
+    return set()
+
+
+def effect_has_tag(effect: Any, tag: str) -> bool:
+    return tag in effect_tags(effect)
+
+
+def target_effects_with_tag(target: Any, tag: str) -> list[dict]:
+    return [effect for effect in list(getattr(target, "effects", []) or []) if effect_has_tag(effect, tag)]
+
+
+def target_has_effect_tag(target: Any, tag: str) -> bool:
+    return any(effect_has_tag(effect, tag) for effect in list(getattr(target, "effects", []) or []))
+
+
+def target_has_any_effect_tag(target: Any, tags: list[str] | tuple[str, ...] | set[str]) -> bool:
+    return any(target_has_effect_tag(target, tag) for tag in tags)
+
+
+def target_has_incapacitating_cc(target: Any) -> bool:
+    return target_has_effect_tag(target, "incapacitating_cc")
+
+
+def target_has_break_on_damage_cc(target: Any) -> bool:
+    return any(
+        effect_has_tag(effect, "incapacitating_cc") and effect_has_tag(effect, "break_on_damage")
+        for effect in list(getattr(target, "effects", []) or [])
+    )
+
+
+def target_has_blink_like_state(target: Any) -> bool:
+    return target_has_effect_tag(target, "blink_like")
+
+
+def target_has_redirect_state(target: Any) -> bool:
+    return target_has_effect_tag(target, "redirect")
+
+
 def is_in_form(target, form_id: str) -> bool:
     return has_effect(target, form_id)
 
@@ -848,7 +900,8 @@ def break_stealth_on_damage(target, damage: int) -> None:
 def break_effects_on_damage(target) -> list[str]:
     removed: list[str] = []
     for effect in list(getattr(target, "effects", []) or []):
-        if not (effect.get("flags", {}) or {}).get("break_on_damage"):
+        has_legacy_flag = (effect.get("flags", {}) or {}).get("break_on_damage")
+        if not (effect_has_tag(effect, "break_on_damage") or has_legacy_flag):
             continue
         effect_id = effect.get("id")
         if not effect_id:
@@ -963,7 +1016,9 @@ def mitigation_multiplier(target: PlayerState) -> float:
     """Sum mitigation effects and cap at 80%. Returns multiplier for damage."""
     total = 0.0
     for effect in target.effects:
-        if effect.get("type") == "mitigation":
+        is_tagged_mitigation = effect_has_tag(effect, "damage_reduction")
+        is_legacy_mitigation = effect.get("type") == "mitigation"
+        if is_tagged_mitigation or is_legacy_mitigation:
             total += float(effect.get("value", 0) or 0.0)
     total = max(0.0, min(total, 0.8))
     return 1.0 - total

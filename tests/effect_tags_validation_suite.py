@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Dict, Set
 
-from regression_suite import ABILITIES, EFFECT_TEMPLATES, make_match, submit_turn  # type: ignore
+from regression_suite import ABILITIES, EFFECT_TEMPLATES, effects, make_match, submit_turn  # type: ignore
 
 
 PHASE_A_EXPECTED_TAGS: Dict[str, Set[str]] = {
@@ -213,6 +214,94 @@ def test_psychic_scream_feared_hunter_companion_does_not_act() -> None:
     assert not any("Frostsaber melees the target" in line or "Frostsaber bites the target" in line for line in latest_turn), "Feared hunter pet should not attack while feared"
 
 
+def test_phase_b_effect_tag_helper_api_validation() -> None:
+    feared = EFFECT_TEMPLATES["feared"]
+    assert effects.effect_has_tag(feared, "incapacitating_cc"), "effect_has_tag should detect tagged template effects"
+    assert effects.effect_has_tag(feared, "break_on_damage"), "effect_has_tag should detect multi-tag templates"
+    assert not effects.effect_has_tag(EFFECT_TEMPLATES["demonic_circle"], "blink_like"), "untagged effects should not falsely match tags"
+    assert effects.effect_tags({"id": "demonic_gateway"}) == {"blink_like"}, "effect_tags should fall back to template tags by id"
+    assert effects.effect_tags({"id": "demonic_circle"}) == set(), "effect_tags should safely return empty set for untagged effects"
+
+    live_target = SimpleNamespace(effects=[], res=None)
+    effects.apply_effect_by_id(live_target, "blink")
+    assert effects.target_has_effect_tag(live_target, "blink_like"), "target_has_effect_tag should detect live applied effect tags"
+    blink_effects = effects.target_effects_with_tag(live_target, "blink_like")
+    assert len(blink_effects) == 1 and blink_effects[0].get("id") == "blink", "target_effects_with_tag should return matching live effects"
+    assert effects.target_has_any_effect_tag(live_target, {"redirect", "blink_like"}), "target_has_any_effect_tag should match any provided tag"
+
+
+def test_phase_b_tag_model_guardrails() -> None:
+    assert effects.effect_has_tag(EFFECT_TEMPLATES["feared"], "incapacitating_cc")
+    assert effects.effect_has_tag(EFFECT_TEMPLATES["feared"], "break_on_damage")
+    assert effects.effect_has_tag(EFFECT_TEMPLATES["freezing_trap_freeze"], "incapacitating_cc")
+    assert effects.effect_has_tag(EFFECT_TEMPLATES["freezing_trap_freeze"], "break_on_damage")
+    assert effects.effect_has_tag(EFFECT_TEMPLATES["blink"], "blink_like")
+    assert effects.effect_has_tag(EFFECT_TEMPLATES["demonic_gateway"], "blink_like")
+    assert effects.effect_has_tag(EFFECT_TEMPLATES["teleport"], "blink_like")
+    assert effects.effect_has_tag(EFFECT_TEMPLATES["disengage"], "blink_like")
+    assert effects.effect_has_tag(EFFECT_TEMPLATES["blocking_defence"], "redirect")
+    assert effects.effect_has_tag(EFFECT_TEMPLATES["aspect_of_turtle"], "damage_reduction")
+    assert not effects.effect_has_tag(EFFECT_TEMPLATES["demonic_circle"], "blink_like")
+    assert effects.effect_has_tag(EFFECT_TEMPLATES["stealth"], "stealth")
+    assert not effects.effect_has_tag(EFFECT_TEMPLATES["stealth"], "immune_all")
+    if "cyclone" in EFFECT_TEMPLATES:
+        assert effects.effect_has_tag(EFFECT_TEMPLATES["cyclone"], "incapacitating_cc")
+        assert not effects.effect_has_tag(EFFECT_TEMPLATES["cyclone"], "immune_all")
+
+
+def test_phase_b_break_effects_on_damage_readthrough() -> None:
+    fear_target = SimpleNamespace(
+        effects=[effects.build_effect("feared"), effects.build_effect("freezing_trap_freeze")],
+        res=None,
+    )
+    removed = effects.break_effects_on_damage(fear_target)
+    assert {"feared", "freezing_trap_freeze"} <= set(removed), "tagged fear/freeze family should still be removed on damage"
+    assert not fear_target.effects, "break_on_damage removal should still clear these effects from target"
+
+    legacy_target = SimpleNamespace(
+        effects=[{"id": "legacy_break_only", "flags": {"break_on_damage": True}}],
+        res=None,
+    )
+    removed_legacy = effects.break_effects_on_damage(legacy_target)
+    assert removed_legacy == ["legacy_break_only"], "legacy break_on_damage flag fallback should be preserved"
+    assert not legacy_target.effects, "legacy break_on_damage effect should still be removed"
+
+
+def test_phase_b_mitigation_readthrough() -> None:
+    tagged_only = SimpleNamespace(
+        effects=[{"id": "tagged_reduction", "tags": ["damage_reduction"], "value": 0.25}],
+    )
+    legacy_only = SimpleNamespace(
+        effects=[{"id": "legacy_reduction", "type": "mitigation", "value": 0.25}],
+    )
+    assert effects.mitigation_multiplier(tagged_only) == 0.75, "damage_reduction tag path should be recognized"
+    assert effects.mitigation_multiplier(legacy_only) == 0.75, "legacy mitigation type path should still be recognized"
+
+
+def test_phase_b_no_gameplay_drift_core_paths() -> None:
+    crowd_control_target = SimpleNamespace(
+        effects=[effects.build_effect("feared")],
+        res=None,
+    )
+    assert effects.cannot_act(crowd_control_target), "cannot_act behavior should be unchanged for feared target"
+    assert effects.get_cant_act_reason(crowd_control_target) == "feared", "cant-act reason priority should be unchanged"
+
+    immunity_target = SimpleNamespace(
+        effects=[effects.build_effect("iceblock")],
+        res=None,
+    )
+    assert effects.is_immune_all(immunity_target), "is_immune_all should remain raw-flag based and unchanged"
+    assert effects.is_damage_immune(immunity_target, "magic"), "is_damage_immune behavior should be unchanged"
+
+    blink_match = make_match("warrior", "warlock", seed=7802)
+    submit_turn(blink_match, "basic_attack", "demonic_gateway")
+    assert any("Target fled through the portal — Miss." in line for line in blink_match.log), "blink-like miss behavior should be unchanged"
+
+    form_target = SimpleNamespace(effects=[], res=None)
+    effects.apply_form(form_target, "bear_form")
+    assert effects.current_form_id(form_target) == "bear_form", "form resolution should remain unchanged"
+
+
 def run_all() -> list[tuple[str, bool, str]]:
     tests = [
         test_phase_a_expected_effect_tags_present,
@@ -226,6 +315,11 @@ def run_all() -> list[tuple[str, bool, str]]:
         test_psychic_scream_status_text_and_family_alignment,
         test_psychic_scream_feared_warlock_imps_do_not_act,
         test_psychic_scream_feared_hunter_companion_does_not_act,
+        test_phase_b_effect_tag_helper_api_validation,
+        test_phase_b_tag_model_guardrails,
+        test_phase_b_break_effects_on_damage_readthrough,
+        test_phase_b_mitigation_readthrough,
+        test_phase_b_no_gameplay_drift_core_paths,
     ]
     results: list[tuple[str, bool, str]] = []
     for test in tests:
