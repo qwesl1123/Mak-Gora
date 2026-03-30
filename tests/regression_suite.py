@@ -1992,6 +1992,26 @@ def scenario_stealth_break_log_order_after_actions() -> bool:
     return True
 
 
+def scenario_shield_of_vengeance_explosion_flushes_stealth_break_log() -> bool:
+    match = make_match("paladin", "rogue", seed=321)
+    paladin_sid, rogue_sid = match.players
+    paladin = match.state[paladin_sid]
+
+    submit_turn(match, "shield_of_vengeance", "vanish")
+    shield = next((effect for effect in paladin.effects if effect.get("id") == "shield_of_vengeance"), None)
+    assert shield is not None, "Shield of Vengeance should be active after cast"
+    shield["absorbed"] = 9
+
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+
+    latest_turn = _turn_lines(match, 3)
+    assert any("Shield of Vengeance explodes!" in line for line in latest_turn), "Explosion should occur on expiry turn"
+    assert any(line == f"{rogue_sid[:5]} stealth broken by Shield of Vengeance." for line in latest_turn), "SoV explosion should flush deferred stealth-break logs"
+    assert not _has_effect(match.state[rogue_sid], "stealth"), "SoV explosion damage should still break stealth"
+    return True
+
+
 def scenario_hunter_pet_recall_uses_calls_for_wording() -> bool:
     match = make_match("hunter", "warrior", seed=145)
     submit_turn(match, "call_boar", _DEF_PASS)
@@ -2606,6 +2626,7 @@ SCENARIOS = [
     scenario_break_on_damage_cc_persists_after_same_turn_fear_vs_freeze,
     scenario_break_on_damage_logs_use_clean_wording_and_bottom_order,
     scenario_stealth_break_log_order_after_actions,
+    scenario_shield_of_vengeance_explosion_flushes_stealth_break_log,
     scenario_redirected_damage_does_not_break_frozen,
     scenario_redirected_damage_does_not_break_feared,
     scenario_aoe_bypasses_redirect_and_breaks_frozen,

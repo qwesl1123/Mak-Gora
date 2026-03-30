@@ -2006,6 +2006,12 @@ def resolve_turn(match: MatchState) -> None:
     deferred_break_on_damage_logs: list[str] = []
     deferred_stealth_break_logs: list[str] = []
 
+    def flush_deferred_stealth_break_logs() -> None:
+        if not deferred_stealth_break_logs:
+            return
+        match.log.extend(deferred_stealth_break_logs)
+        deferred_stealth_break_logs.clear()
+
     def apply_damage(
         source: PlayerState,
         target: PlayerState | PetState,
@@ -2546,7 +2552,7 @@ def resolve_turn(match: MatchState) -> None:
         can_evasion_force_miss,
     )
 
-    match.log.extend(deferred_stealth_break_logs)
+    flush_deferred_stealth_break_logs()
 
     # End of turn processing for both players (DoTs, passives, duration ticks, regen)
     for sid in sids:
@@ -2634,6 +2640,7 @@ def resolve_turn(match: MatchState) -> None:
 
     trigger_shield_of_vengeance_explosion(sids[0], sids[1])
     trigger_shield_of_vengeance_explosion(sids[1], sids[0])
+    flush_deferred_stealth_break_logs()
 
     for sid in sids:
         ps = match.state[sid]
