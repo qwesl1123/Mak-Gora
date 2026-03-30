@@ -264,10 +264,14 @@ def resolve_turn(match: MatchState) -> None:
         for key, value in costs.items():
             current = getattr(res, key)
             if current < value:
-                if key == "rage":
-                    return False, "not enough rage"
-                return False, f"not enough {key}"
+                return False, str(key)
         return True, ""
+
+    def resource_failure_log(actor_sid: str, ability_name: str, resource_key: str) -> str:
+        resource_name = str(resource_key or "resource").replace("_", " ").lower()
+        if resource_name == "mp":
+            resource_name = "mana"
+        return f"{actor_sid[:5]} tried to use {ability_name} but didn't have enough {resource_name}"
 
     def effect_name(effect_id: str) -> str:
         return effect_id.replace("_", " ").title()
@@ -823,13 +827,11 @@ def resolve_turn(match: MatchState) -> None:
 
         ok, fail_reason = can_pay_costs(actor, ability.get("cost", {}))
         if not ok:
-            if fail_reason == "not enough rage":
-                return {"resolved": True, "damage": 0, "healing": 0, "log": "not enough rage"}
             return {
                 "resolved": True,
                 "damage": 0,
                 "healing": 0,
-                "log": f"{actor_sid[:5]} tried {ability['name']} but lacked resources.",
+                "log": resource_failure_log(actor_sid, ability["name"], fail_reason),
             }
 
         return {
@@ -1003,8 +1005,12 @@ def resolve_turn(match: MatchState) -> None:
             max_count = int(template.get("max_count", 1) or 1)
             current = len([p for p in actor.pets.values() if p.template_id == summon_pet_id])
             summon_log = ability.get("summon_log")
+            force_call_wording = summon_pet_id in {"barrens_boar", "frostsaber", "emerald_serpent"} and bool(summon_log)
             if refreshed:
-                log_parts.append(f"refreshes {template.get('name', summon_pet_id.title())}.")
+                if force_call_wording:
+                    log_parts.append(str(summon_log))
+                else:
+                    log_parts.append(f"refreshes {template.get('name', summon_pet_id.title())}.")
             elif max_count > 1:
                 log_parts.append(f"summons a {template.get('name', summon_pet_id.title())} ({current}/{max_count}).")
             elif summoned_pet is not None:
@@ -1087,7 +1093,7 @@ def resolve_turn(match: MatchState) -> None:
             apply_effect_by_id(
                 target,
                 "agony",
-                overrides={"duration": 15, "tick_damage": 1, "source_sid": actor.sid, "dot_mode": "ramp"},
+                overrides={"duration": 15, "tick_damage": 1, "source_sid": actor.sid, "dot_mode": "ramp", "skip_first_tick": True},
             )
             log_parts.append("inflicts Agony.")
             set_cooldown(actor, ability_id, ability)
@@ -1095,7 +1101,7 @@ def resolve_turn(match: MatchState) -> None:
 
         if ability_id == "frenzied_regeneration":
             if actor.res.rage <= 0:
-                return {"damage": 0, "healing": 0, "log": "not enough rage"}
+                return {"damage": 0, "healing": 0, "log": resource_failure_log(actor_sid, ability["name"], "rage")}
             total_heal = int(actor.res.rage)
             per_tick = total_heal // 4
             actor.res.rage = 0
@@ -1872,10 +1878,14 @@ def resolve_turn(match: MatchState) -> None:
             summoned_pet, refreshed, summon_error = summon_pet_from_template(actor, summon_pet_id)
             template = PETS.get(summon_pet_id, {})
             summon_log = ability.get("summon_log")
+            force_call_wording = summon_pet_id in {"barrens_boar", "frostsaber", "emerald_serpent"} and bool(summon_log)
             if summon_error:
                 log_parts.append(summon_error)
             elif refreshed:
-                log_parts.append(f"refreshes {template.get('name', summon_pet_id.title())}.")
+                if force_call_wording:
+                    log_parts.append(str(summon_log))
+                else:
+                    log_parts.append(f"refreshes {template.get('name', summon_pet_id.title())}.")
             elif summon_log:
                 log_parts.append(str(summon_log))
             if summoned_pet is not None and not refreshed:
@@ -1994,6 +2004,7 @@ def resolve_turn(match: MatchState) -> None:
 
     # Apply damage
     deferred_break_on_damage_logs: list[str] = []
+    deferred_stealth_break_logs: list[str] = []
 
     def apply_damage(
         source: PlayerState,
@@ -2073,7 +2084,7 @@ def resolve_turn(match: MatchState) -> None:
                 break_stealth_on_damage(target, total_remaining)
                 broken_effects = break_effects_on_damage(target)
                 if was_stealthed and not is_stealthed(target):
-                    match.log.append(f"{target_sid[:5]} stealth broken by {source_ability_name}.")
+                    deferred_stealth_break_logs.append(f"{target_sid[:5]} stealth broken by {source_ability_name}.")
                 for effect_id in broken_effects:
                     effect = build_effect(effect_id)
                     deferred_break_on_damage_logs.append(
@@ -2379,6 +2390,11 @@ def resolve_turn(match: MatchState) -> None:
             incoming = int(entry.get("incoming", 0) or 0)
             if incoming <= 0:
                 continue
+            damage_instances = entry.get("damage_instances")
+            if isinstance(damage_instances, list):
+                normalized_instances = [max(0, int(value or 0)) for value in damage_instances]
+            else:
+                normalized_instances = [incoming]
             dealt_data = apply_damage(
                 match.state[actor_sid],
                 match.state[target_sid],
@@ -2386,7 +2402,7 @@ def resolve_turn(match: MatchState) -> None:
                 target_sid,
                 str(entry.get("source_name") or "attack"),
                 bool(result.get("mindgames_flip_damage")),
-                [incoming],
+                normalized_instances,
                 school=str(entry.get("school") or "physical"),
                 subschool=entry.get("subschool"),
                 allow_redirect=ability_target_mode(ABILITIES.get(result.get("ability_id", ""), {})) != "aoe_enemy",
@@ -2529,6 +2545,8 @@ def resolve_turn(match: MatchState) -> None:
         untargetable_miss_log,
         can_evasion_force_miss,
     )
+
+    match.log.extend(deferred_stealth_break_logs)
 
     # End of turn processing for both players (DoTs, passives, duration ticks, regen)
     for sid in sids:

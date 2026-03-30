@@ -1906,7 +1906,8 @@ def scenario_phase_c_pass1_early_resolution_stages_are_preserved() -> bool:
     submit_turn(resource_match, "bear", _DEF_PASS)
     submit_turn(resource_match, "frenzied_regeneration", _DEF_PASS)
     resource_turn = resource_match.log[resource_match.log.index("Turn 2") + 1:]
-    assert any(line == "not enough rage" for line in resource_turn), "Resource-gated ability should preserve exact not enough rage log"
+    expected_resource_log = f"{resource_match.players[0][:5]} tried to use Frenzied Regeneration but didn't have enough rage"
+    assert any(line == expected_resource_log for line in resource_turn), "Resource-gated ability should include actor, ability name, and missing resource"
 
     proc_match = make_match("mage", "warrior", seed=609)
     submit_turn(proc_match, "pyroblast", _DEF_PASS)
@@ -1922,6 +1923,13 @@ def scenario_phase_c_pass1_early_resolution_stages_are_preserved() -> bool:
     submit_turn(circle_match, "teleport", _DEF_PASS)
     circle_turn = circle_match.log[circle_match.log.index("Turn 1") + 1:]
     assert any("Demonic Circle is required." in line for line in circle_turn), "Circle-gated ability should preserve existing log"
+
+    mana_match = make_match("paladin", "warrior", seed=613)
+    mana_match.state[mana_match.players[0]].res.mp = 0
+    submit_turn(mana_match, "lay_on_hands", _DEF_PASS)
+    mana_turn = mana_match.log[mana_match.log.index("Turn 1") + 1:]
+    expected_mana_log = f"{mana_match.players[0][:5]} tried to use Lay on Hands but didn't have enough mana"
+    assert any(line == expected_mana_log for line in mana_turn), "MP resource failures should display 'mana' in logs"
 
     # action_denial: feared actors still cannot act; same-turn mutual denial still allows both CC actions.
     fear_match = make_match("warlock", "warrior", seed=612)
@@ -1943,6 +1951,65 @@ def scenario_phase_c_pass1_early_resolution_stages_are_preserved() -> bool:
     submit_turn(combat_match, "overpower", _DEF_PASS)
     mage_hp_after = combat_match.state[combat_match.players[1]].res.hp
     assert mage_hp_after < mage_hp_before, "Representative damage application should remain unchanged after early-stage structuring"
+    return True
+
+
+def scenario_agony_ramp_progression_restored() -> bool:
+    match = make_match("warlock", "warrior", seed=444)
+    warlock_sid, warrior_sid = match.players
+    submit_turn(match, "agony", _DEF_PASS)
+    turn_1_lines = _turn_lines(match, 1)
+    assert not any("suffers" in line and "Agony" in line for line in turn_1_lines), "Agony should not tick on the cast turn"
+
+    observed_ticks: list[int] = []
+    for _ in range(10):
+        submit_turn(match, _DEF_PASS, _DEF_PASS)
+        turn_lines = _turn_lines(match, match.turn)
+        agony_line = next((line for line in turn_lines if warrior_sid[:5] in line and "suffers" in line and "Agony" in line), None)
+        assert agony_line is not None, "Agony should produce a per-turn visible tick log"
+        parsed = re.search(r"suffers (\d+) damage from Agony", agony_line)
+        assert parsed is not None, "Agony tick log should include numeric damage"
+        observed_ticks.append(int(parsed.group(1)))
+
+    assert observed_ticks[:10] == list(range(1, 11)), "Agony visible ticks should ramp exactly 1..10 across the first 10 ticks"
+    return True
+
+
+def scenario_stealth_break_log_order_after_actions() -> bool:
+    match = make_match("warrior", "rogue", p1_items={"weapon": "twin_blades_azzinoth"}, seed=123)
+    warrior = match.state[match.players[0]]
+    warrior.res.rage = warrior.res.rage_max
+    effects.remove_effect(match.state[match.players[1]], "stealth")
+    submit_turn(match, "dragon_roar", "vanish")
+    latest_turn = _turn_lines(match, 1)
+
+    roar_idx = next(i for i, line in enumerate(latest_turn) if "cast Dragon Roar." in line)
+    vanish_idx = next(i for i, line in enumerate(latest_turn) if "cast Vanish." in line)
+    stealth_break_idx = next(i for i, line in enumerate(latest_turn) if "stealth broken by Dragon Roar." in line)
+    bleed_tick_idx = next(i for i, line in enumerate(latest_turn) if "Dragon Roar Bleed" in line and "suffers" in line)
+
+    assert roar_idx < vanish_idx < stealth_break_idx < bleed_tick_idx, "Stealth-break log should appear after action logs and before bleed tick logs"
+    return True
+
+
+def scenario_hunter_pet_recall_uses_calls_for_wording() -> bool:
+    match = make_match("hunter", "warrior", seed=145)
+    submit_turn(match, "call_boar", _DEF_PASS)
+    submit_turn(match, "call_boar", _DEF_PASS)
+    turn_two = _turn_lines(match, 2)
+    assert any("calls for Barrens Boar." in line for line in turn_two), "Re-calling Barrens Boar should keep calls-for wording"
+    assert not any("refreshes Barrens Boar." in line for line in turn_two), "Re-calling Barrens Boar should not say refreshes"
+    return True
+
+
+def scenario_shadowfiend_pet_box_hides_turn_counter_badge() -> bool:
+    match = make_match("priest", "warrior", seed=150)
+    submit_turn(match, "shadowfiend", _DEF_PASS)
+    snapshot = SOCKETS.snapshot_for(match, match.players[0])
+    fiend = next((pet for pet in snapshot.get("you_pets", []) if pet.get("name") == "Shadowfiend"), None)
+    assert fiend is not None, "Shadowfiend should appear in pet snapshot payload"
+    labels = [status.get("label") for status in fiend.get("statuses", []) if isinstance(status, dict)]
+    assert not any(isinstance(label, str) and label.endswith("T") for label in labels), "Shadowfiend pet box should not include remaining-turn badge text"
     return True
 
 
@@ -2058,6 +2125,20 @@ def scenario_dragonwrath_duplicate_log_includes_class_owner_prefix() -> bool:
         )
         return True
     raise AssertionError("Could not find deterministic Dragonwrath Mind Flay duplicate proc seed in range")
+
+
+def scenario_dragonwrath_multihit_duplicate_logs_as_single_line() -> bool:
+    for seed in range(1, 900):
+        match = make_match("mage", "warrior", p1_items={"weapon": "dragonwrath"}, seed=seed)
+        submit_turn(match, "arcane_barrage", _DEF_PASS)
+        duplicate_lines = [line for line in match.log if "duplicates Arcane Barrage!" in line]
+        if not duplicate_lines:
+            continue
+        assert len(duplicate_lines) == 1, "Dragonwrath duplicate should render Arcane Barrage multi-hit text as one line"
+        duplicate_line = duplicate_lines[0]
+        assert "Hit 1:" in duplicate_line and "Hit 2:" in duplicate_line and "Hit 3:" in duplicate_line, "Combined duplicate line should include all Arcane Barrage hits"
+        return True
+    raise AssertionError("Could not find deterministic Dragonwrath Arcane Barrage duplicate proc seed in range")
 
 
 def scenario_thunderfury_lightning_uses_damage_pipeline() -> bool:
@@ -2512,6 +2593,7 @@ SCENARIOS = [
     scenario_fear_applies_feared_and_breaks_on_damage,
     scenario_mutual_stuns_count_current_turn_immediately,
     scenario_phase_c_pass1_early_resolution_stages_are_preserved,
+    scenario_agony_ramp_progression_restored,
     scenario_immediate_path_denial_precedes_selection_failures,
     scenario_mutual_freeze_duration_model_remains_unchanged,
     scenario_break_on_damage_cc_no_damage_turn_preserves_lockout,
@@ -2523,6 +2605,7 @@ SCENARIOS = [
     scenario_break_on_damage_cc_persists_after_same_turn_mutual_freeze,
     scenario_break_on_damage_cc_persists_after_same_turn_fear_vs_freeze,
     scenario_break_on_damage_logs_use_clean_wording_and_bottom_order,
+    scenario_stealth_break_log_order_after_actions,
     scenario_redirected_damage_does_not_break_frozen,
     scenario_redirected_damage_does_not_break_feared,
     scenario_aoe_bypasses_redirect_and_breaks_frozen,
@@ -2538,15 +2621,18 @@ SCENARIOS = [
     scenario_hunter_dismissed_pet_clears_runtime_effects,
     scenario_hunter_multi_pet_memory_swap_cycle,
     scenario_hunter_redirect_removed_on_pet_dismiss,
+    scenario_hunter_pet_recall_uses_calls_for_wording,
     scenario_negative_non_damage_effect_does_not_break_frozen,
     scenario_negative_non_damage_effect_does_not_break_feared,
     scenario_hunter_serpent_special_respects_stealth,
     scenario_pet_action_text_persists_on_miss,
+    scenario_shadowfiend_pet_box_hides_turn_counter_badge,
     scenario_mindgames_still_allows_direct_damage_dots,
     scenario_devouring_plague_heals_for_full_tick_damage,
     scenario_passive_secondary_damage_logs_own_absorb_suffix,
     scenario_dragonwrath_duplicate_spell_deals_real_damage,
     scenario_dragonwrath_duplicate_log_includes_class_owner_prefix,
+    scenario_dragonwrath_multihit_duplicate_logs_as_single_line,
     scenario_thunderfury_lightning_uses_damage_pipeline,
     scenario_thunderfury_heal_proc_restores_expected_amount,
     scenario_azzinoth_strike_again_deals_secondary_damage,

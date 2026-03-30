@@ -1559,6 +1559,8 @@ def trigger_on_hit_passives(
             owner_class = class_display_name((attacker.build.class_id or "").strip().lower()) if attacker.build else "Player"
             duplicate_prefix = f"{owner_class}(you)'s {item_name}"
             duplicate_damage = 0
+            per_hit_reduced: list[int] = []
+            hit_segments: list[str] = []
             for hit_index in range(1, hits + 1):
                 roll_power = 0
                 dice_type = None
@@ -1594,38 +1596,30 @@ def trigger_on_hit_passives(
                     continue
 
                 duplicate_damage += duplicate_reduced
+                per_hit_reduced.append(duplicate_reduced)
                 if hits > 1:
                     if dice_type:
-                        template = (
-                            f"{duplicate_prefix} duplicates {ability_name}! "
-                            f"Hit {hit_index}: Roll {dice_type} = {roll_power}. Deals __DMG_0__ damage."
-                        )
+                        hit_segments.append(f"Hit {hit_index}: Roll {dice_type} = {roll_power}. Deals __DMG_{len(per_hit_reduced) - 1}__ damage.")
                     else:
-                        template = (
-                            f"{duplicate_prefix} duplicates {ability_name}! "
-                            f"Hit {hit_index}: Deals __DMG_0__ damage."
-                        )
+                        hit_segments.append(f"Hit {hit_index}: Deals __DMG_{len(per_hit_reduced) - 1}__ damage.")
                 elif dice_type:
-                    template = (
-                        f"{duplicate_prefix} duplicates {ability_name}! "
-                        f"Roll {dice_type} = {roll_power}. Deals __DMG_0__ damage."
-                    )
+                    hit_segments.append(f"Roll {dice_type} = {roll_power}. Deals __DMG_{len(per_hit_reduced) - 1}__ damage.")
                 else:
-                    template = f"{duplicate_prefix} duplicates {ability_name}! Deals __DMG_0__ damage."
-
-                damage_events.append(
-                    {
-                        "incoming": duplicate_reduced,
-                        "school": spell_school,
-                        "subschool": spell_subschool,
-                        "log_template": template,
-                    }
-                )
+                    hit_segments.append(f"Deals __DMG_{len(per_hit_reduced) - 1}__ damage.")
 
             if duplicate_damage <= 0:
                 continue
 
             bonus_damage += duplicate_damage
+            damage_events.append(
+                {
+                    "incoming": duplicate_damage,
+                    "damage_instances": per_hit_reduced,
+                    "school": spell_school,
+                    "subschool": spell_subschool,
+                    "log_template": f"{duplicate_prefix} duplicates {ability_name}! {' '.join(hit_segments)}",
+                }
+            )
 
 
     return bonus_damage, log_lines, bonus_healing, damage_events
@@ -1683,6 +1677,10 @@ def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[dict[str, Any
         if effect_type != "burn" and category != "dot":
             continue
 
+        if effect.get("skip_first_tick"):
+            effect["skip_first_tick"] = False
+            continue
+
         if effect_id == "agony":
             raw_damage = max(0, int(effect.get("tick_damage", 1) or 1))
             effect["tick_damage"] = min(15, raw_damage + 1)
@@ -1693,7 +1691,10 @@ def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[dict[str, Any
             continue
 
         school = normalize_school(effect.get("school") or "physical") or "physical"
-        reduced = mitigate_damage(raw_damage, ps, school)
+        if effect_id == "agony":
+            reduced = raw_damage
+        else:
+            reduced = mitigate_damage(raw_damage, ps, school)
         if school == "physical" and is_damage_immune(ps, "physical"):
             reduced = 0
         if school == "magical" and is_damage_immune(ps, "magic"):
