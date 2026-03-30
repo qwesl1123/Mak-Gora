@@ -77,6 +77,61 @@ PHASE_A_UNTAGGED = {
     "tree_form_stats",
 }
 
+PHASE_C_EXPECTED_RESOLUTION_LAYERS: Dict[str, str] = {
+    "stunned": "action_denial",
+    "feared": "action_denial",
+    "ring_of_ice_freeze": "action_denial",
+    "freezing_trap_freeze": "action_denial",
+    "cyclone": "action_denial",
+    "blink": "hit_resolution",
+    "demonic_gateway": "hit_resolution",
+    "teleport": "hit_resolution",
+    "disengage": "hit_resolution",
+    "evasion": "hit_resolution",
+    "blocking_defence": "target_resolution",
+    "stealth": "pre_resolution_protection",
+    "aspect_of_turtle": "pre_resolution_protection",
+    "divine_shield": "pre_resolution_protection",
+    "iceblock": "pre_resolution_protection",
+    "cloak_of_shadows": "pre_resolution_protection",
+    "unending_resolve": "pre_resolution_protection",
+    "die_by_sword_mitigation": "damage_modification",
+    "pain_suppression": "damage_modification",
+    "barkskin": "damage_modification",
+    "dark_pact": "damage_application",
+    "shield_of_vengeance": "damage_application",
+    "ignore_pain": "damage_application",
+    "shielded": "damage_application",
+    "power_word_shield": "damage_application",
+    "ice_barrier": "damage_application",
+    "burn": "end_of_turn",
+    "agony": "end_of_turn",
+    "corruption": "end_of_turn",
+    "unstable_affliction": "end_of_turn",
+    "vampiric_touch": "end_of_turn",
+    "devouring_plague": "end_of_turn",
+    "dragon_roar_bleed": "end_of_turn",
+    "wildfire_burn": "end_of_turn",
+    "regrowth": "end_of_turn",
+    "frenzied_regeneration": "end_of_turn",
+    "hot_streak": "action_selection_modifiers",
+    "ambush": "action_selection_modifiers",
+    "crusader_empower": "action_selection_modifiers",
+    "paladin_final_verdict_empowered": "action_selection_modifiers",
+    "mind_blast_empowered": "action_selection_modifiers",
+    "shadowy_insight": "action_selection_modifiers",
+    "arcane_shot_proc": "action_selection_modifiers",
+    "raptor_strike_proc": "action_selection_modifiers",
+    "rip_ready": "action_selection_modifiers",
+    "starfire_ready": "action_selection_modifiers",
+    "bear_form": "pre_action_state",
+    "cat_form": "pre_action_state",
+    "moonkin_form": "pre_action_state",
+    "tree_form": "pre_action_state",
+    "demonic_circle": "pre_action_state",
+    "shadowfiend": "effect_application",
+}
+
 
 def _has_effect(player, effect_id: str) -> bool:
     return any(fx.get("id") == effect_id for fx in player.effects)
@@ -302,6 +357,66 @@ def test_phase_b_no_gameplay_drift_core_paths() -> None:
     assert effects.current_form_id(form_target) == "bear_form", "form resolution should remain unchanged"
 
 
+def test_phase_c_resolution_constants_consistency() -> None:
+    assert isinstance(effects.RESOLUTION_LAYERS, dict)
+    assert isinstance(effects.ENGINE_RESOLUTION_ORDER, list)
+    assert effects.ENGINE_RESOLUTION_ORDER == [
+        "pre_action_state",
+        "action_selection_modifiers",
+        "action_denial",
+        "pre_resolution_protection",
+        "target_resolution",
+        "hit_resolution",
+        "damage_modification",
+        "damage_application",
+        "post_damage_reactions",
+        "effect_application",
+        "end_of_turn",
+    ], "ENGINE_RESOLUTION_ORDER must match locked design"
+    for layer in effects.ENGINE_RESOLUTION_ORDER:
+        assert layer in effects.RESOLUTION_LAYERS, f"{layer} missing from RESOLUTION_LAYERS"
+
+
+def test_phase_c_resolution_layers_are_known_and_mapped() -> None:
+    known_layers = set(effects.ENGINE_RESOLUTION_ORDER)
+    for effect_id, template in EFFECT_TEMPLATES.items():
+        layer = template.get("resolution_layer")
+        if layer is None:
+            continue
+        assert layer in known_layers, f"{effect_id} has unknown resolution layer: {layer}"
+    for effect_id, expected_layer in PHASE_C_EXPECTED_RESOLUTION_LAYERS.items():
+        assert EFFECT_TEMPLATES[effect_id].get("resolution_layer") == expected_layer
+
+
+def test_phase_c_resolution_layer_helper_api_template_and_live_effects() -> None:
+    assert effects.is_valid_resolution_layer("action_denial")
+    assert not effects.is_valid_resolution_layer("fear")
+    assert effects.effect_resolution_layer(EFFECT_TEMPLATES["feared"]) == "action_denial"
+    assert effects.effect_resolution_layer({"id": "teleport"}) == "hit_resolution"
+    assert effects.effect_resolution_layer({"id": "unknown_effect"}) is None
+    assert effects.effect_resolution_layer(None) is None
+
+    live_target = SimpleNamespace(effects=[], res=None)
+    effects.apply_effect_by_id(live_target, "blink")
+    effects.apply_effect_by_id(live_target, "feared")
+    hit_effects = effects.target_effects_in_resolution_layer(live_target, "hit_resolution")
+    assert [effect.get("id") for effect in hit_effects] == ["blink"]
+    assert effects.target_has_resolution_layer(live_target, "action_denial")
+    assert not effects.target_has_resolution_layer(live_target, "effect_application")
+    assert effects.target_effects_in_resolution_layer(live_target, "fear") == []
+
+
+def test_phase_c_resolution_layer_guardrails() -> None:
+    feared = EFFECT_TEMPLATES["feared"]
+    assert effects.effect_has_tag(feared, "incapacitating_cc"), "tags should remain semantic identity metadata"
+    assert feared.get("resolution_layer") == "action_denial", "resolution layer should remain separate timing metadata"
+    assert EFFECT_TEMPLATES["iceblock"]["display"]["priority"] == 90, "display.priority must remain unchanged"
+
+    blink_match = make_match("warrior", "warlock", seed=8801)
+    submit_turn(blink_match, "basic_attack", "demonic_gateway")
+    assert any("Target fled through the portal — Miss." in line for line in blink_match.log), "resolver behavior should remain unchanged"
+
+
 def run_all() -> list[tuple[str, bool, str]]:
     tests = [
         test_phase_a_expected_effect_tags_present,
@@ -320,6 +435,10 @@ def run_all() -> list[tuple[str, bool, str]]:
         test_phase_b_break_effects_on_damage_readthrough,
         test_phase_b_mitigation_readthrough,
         test_phase_b_no_gameplay_drift_core_paths,
+        test_phase_c_resolution_constants_consistency,
+        test_phase_c_resolution_layers_are_known_and_mapped,
+        test_phase_c_resolution_layer_helper_api_template_and_live_effects,
+        test_phase_c_resolution_layer_guardrails,
     ]
     results: list[tuple[str, bool, str]] = []
     for test in tests:

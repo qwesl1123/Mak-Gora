@@ -9,6 +9,107 @@ from ..content.classes import class_display_name
 from .dice import roll
 from .rules import base_damage as calc_base_damage, mitigate
 
+RESOLUTION_LAYERS: Dict[str, List[str]] = {
+    "pre_action_state": [
+        "form",
+        "stealth",
+        "pet_presence",
+        "proc_available",
+        "preexisting_buff",
+        "preexisting_debuff",
+    ],
+    "action_selection_modifiers": [
+        "cooldown_gate",
+        "resource_gate",
+        "proc_gate",
+        "state_gate",
+        "command_validation",
+    ],
+    "action_denial": [
+        "stun",
+        "freeze",
+        "fear",
+        "cannot_act",
+        "silence",
+    ],
+    "pre_resolution_protection": [
+        "immune_all",
+        "magic_immunity",
+        "single_target_protection",
+        "stealth_protection",
+    ],
+    "target_resolution": [
+        "redirect",
+        "reveal",
+        "retarget",
+    ],
+    "hit_resolution": [
+        "accuracy_check",
+        "evasion",
+        "blink_like",
+        "single_target_miss",
+    ],
+    "damage_modification": [
+        "armor_mitigation",
+        "magic_resist_mitigation",
+        "damage_reduction",
+        "damage_amplification",
+        "ignore_armor",
+        "ignore_magic_resist",
+    ],
+    "damage_application": [
+        "direct_damage",
+        "direct_heal",
+        "absorb_application",
+        "absorb_consumption",
+        "resource_restore",
+    ],
+    "post_damage_reactions": [
+        "break_on_damage",
+        "lifesteal",
+        "rage_on_damage",
+        "on_hit_resource_gain",
+        "on_damage_trigger",
+    ],
+    "effect_application": [
+        "buff_application",
+        "debuff_application",
+        "dot_application",
+        "hot_application",
+        "proc_grant",
+        "proc_consume",
+        "summon_application",
+        "pet_command_application",
+        "dispel_application",
+        "effect_refresh",
+        "effect_removal",
+    ],
+    "end_of_turn": [
+        "dot_tick",
+        "hot_tick",
+        "resource_tick",
+        "pet_phase",
+        "duration_decrement",
+        "expiry_cleanup",
+        "pet_cleanup",
+        "winner_check",
+    ],
+}
+
+ENGINE_RESOLUTION_ORDER: List[str] = [
+    "pre_action_state",
+    "action_selection_modifiers",
+    "action_denial",
+    "pre_resolution_protection",
+    "target_resolution",
+    "hit_resolution",
+    "damage_modification",
+    "damage_application",
+    "post_damage_reactions",
+    "effect_application",
+    "end_of_turn",
+]
+
 EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
     "hot_streak": {
         "type": "status",
@@ -16,6 +117,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 3,
         "flags": {"hot_streak": True},
         "tags": ["proc"],
+        "resolution_layer": "action_selection_modifiers",
     },
     "die_by_sword": {
         "type": "status",
@@ -30,6 +132,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 2,
         "value": 0.3,
         "tags": ["damage_reduction"],
+        "resolution_layer": "damage_modification",
     },
     "iceblock": {
         "type": "status",
@@ -47,6 +150,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
             "priority": 90,
         },
         "regen": {"hp": 10, "mp": 25},
+        "resolution_layer": "pre_resolution_protection",
     },
     "cloak_of_shadows": {
         "type": "status",
@@ -54,6 +158,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 2,
         "flags": {"immune_magic": True},
         "tags": ["immune_part"],
+        "resolution_layer": "pre_resolution_protection",
     },
     "item_passive_template": {
         "type": "item_passive",
@@ -69,6 +174,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "dispellable": True,
         "tick_damage": 1,
         "tags": ["dot"],
+        "resolution_layer": "end_of_turn",
     },
     "agony": {
         "type": "dot",
@@ -81,6 +187,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "tick_damage": 1,
         "dot_mode": "ramp",
         "tags": ["dot"],
+        "resolution_layer": "end_of_turn",
     },
     "corruption": {
         "type": "dot",
@@ -92,6 +199,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "dispellable": True,
         "tick_damage": 1,
         "tags": ["dot"],
+        "resolution_layer": "end_of_turn",
     },
     "unstable_affliction": {
         "type": "dot",
@@ -103,12 +211,14 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "dispellable": True,
         "tick_damage": 1,
         "tags": ["dot"],
+        "resolution_layer": "end_of_turn",
     },
     "demonic_circle": {
         "type": "status",
         "name": "Demonic Circle",
         "duration": 999,
         "flags": {"demonic_circle": True},
+        "resolution_layer": "pre_action_state",
     },
     "stunned": {
         "type": "status",
@@ -123,6 +233,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
             "color": "#cc3333",
             "priority": 85,
         },
+        "resolution_layer": "action_denial",
     },
     "feared": {
         "type": "status",
@@ -141,6 +252,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
             "color": "#9B59B6",
             "priority": 83,
         },
+        "resolution_layer": "action_denial",
     },
     "ring_of_ice_freeze": {
         "type": "status",
@@ -159,6 +271,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
             "color": "#79C7FF",
             "priority": 84,
         },
+        "resolution_layer": "action_denial",
     },
     "stealth": {
         "type": "stealth",
@@ -175,6 +288,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
             "color": "#FFF468",
             "priority": 80,
         },
+        "resolution_layer": "pre_resolution_protection",
     },
     "blink": {
         "type": "status",
@@ -182,6 +296,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 2,
         "flags": {"blinked": True, "untargetable": True},
         "tags": ["blink_like"],
+        "resolution_layer": "hit_resolution",
     },
     "demonic_gateway": {
         "type": "status",
@@ -190,6 +305,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "flags": {"blinked": True, "untargetable": True},
         "miss_log": "Target fled through the portal — Miss.",
         "tags": ["blink_like"],
+        "resolution_layer": "hit_resolution",
     },
     "teleport": {
         "type": "status",
@@ -198,6 +314,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "flags": {"blinked": True, "untargetable": True},
         "miss_log": "Target returned to their dark ward — Miss.",
         "tags": ["blink_like"],
+        "resolution_layer": "hit_resolution",
     },
     "disengage": {
         "type": "status",
@@ -212,12 +329,14 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
             "color": "#AAD372",
             "priority": 78,
         },
+        "resolution_layer": "hit_resolution",
     },
     "evasion": {
         "type": "status",
         "name": "Evasion",
         "duration": 2,
         "flags": {"evade_all": True},
+        "resolution_layer": "hit_resolution",
     },
     "ambush": {
         "type": "status",
@@ -225,6 +344,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 2,
         "flags": {"ambush_ready": True},
         "tags": ["proc"],
+        "resolution_layer": "action_selection_modifiers",
     },
     "thistle_tea": {
         "type": "status",
@@ -239,6 +359,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "damage_mult": 1.2,
         "flags": {"empower_next_offense": True},
         "tags": ["proc"],
+        "resolution_layer": "action_selection_modifiers",
     },
     "paladin_final_verdict_empowered": {
         "type": "status",
@@ -246,6 +367,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 999,
         "flags": {"paladin_final_verdict_empowered": True},
         "tags": ["proc"],
+        "resolution_layer": "action_selection_modifiers",
     },
     "dark_pact": {
         "type": "status",
@@ -256,6 +378,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "dispel_kind": "magical",
         "school": "magical",
         "tags": ["absorb"],
+        "resolution_layer": "damage_application",
     },
     "unending_resolve": {
         "type": "status",
@@ -271,6 +394,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
             "color": "#7A5AF8",
             "priority": 90,
         },
+        "resolution_layer": "pre_resolution_protection",
     },
     "divine_shield": {
         "type": "status",
@@ -287,6 +411,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
             "color": "#F48CBA",
             "priority": 90,
         },
+        "resolution_layer": "pre_resolution_protection",
     },
     "shield_of_vengeance": {
         "type": "status",
@@ -299,6 +424,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "flags": {"shield_of_vengeance": True},
         "absorbed": 0,
         "tags": ["absorb"],
+        "resolution_layer": "damage_application",
     },
     "ignore_pain": {
         "type": "status",
@@ -306,6 +432,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 8,
         "category": "absorb",
         "tags": ["absorb"],
+        "resolution_layer": "damage_application",
     },
     "shielded": {
         "type": "status",
@@ -313,6 +440,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 2,
         "category": "absorb",
         "tags": ["absorb"],
+        "resolution_layer": "damage_application",
     },
     "power_word_shield": {
         "type": "status",
@@ -323,6 +451,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "school": "magical",
         "subschool": "holy",
         "tags": ["absorb"],
+        "resolution_layer": "damage_application",
     },
     "ice_barrier": {
         "type": "status",
@@ -333,6 +462,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "school": "magical",
         "subschool": "frost",
         "tags": ["absorb"],
+        "resolution_layer": "damage_application",
     },
     "mind_blast_empowered": {
         "type": "status",
@@ -340,6 +470,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 999,
         "flags": {"mind_blast_empowered": True},
         "tags": ["proc"],
+        "resolution_layer": "action_selection_modifiers",
     },
     "shadowy_insight": {
         "type": "status",
@@ -347,6 +478,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 999,
         "flags": {"shadowy_insight": True},
         "tags": ["proc"],
+        "resolution_layer": "action_selection_modifiers",
     },
     "vampiric_touch": {
         "type": "dot",
@@ -359,6 +491,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "tick_damage": 1,
         "lifesteal_pct": 0.4,
         "tags": ["dot"],
+        "resolution_layer": "end_of_turn",
     },
     "devouring_plague": {
         "type": "dot",
@@ -372,6 +505,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "lifesteal_pct": 1.0,
         "refresh_only": True,
         "tags": ["dot"],
+        "resolution_layer": "end_of_turn",
     },
     "pain_suppression": {
         "type": "mitigation",
@@ -382,6 +516,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "school": "magical",
         "subschool": "holy",
         "tags": ["damage_reduction"],
+        "resolution_layer": "damage_modification",
     },
     "mindgames": {
         "type": "status",
@@ -400,6 +535,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "school": "magical",
         "subschool": "shadow",
         "flags": {"shadowfiend": True},
+        "resolution_layer": "effect_application",
     },
     "dragon_roar_bleed": {
         "type": "dot",
@@ -410,6 +546,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "dispellable": False,
         "tick_damage": 1,
         "tags": ["dot"],
+        "resolution_layer": "end_of_turn",
     },
     "avenging_wrath": {
         "type": "status",
@@ -439,6 +576,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
             "color": "#FF7C0A",
             "priority": 75,
         },
+        "resolution_layer": "pre_action_state",
     },
     "bear_form_stats": {
         "type": "stat_mods",
@@ -458,6 +596,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
             "color": "#FF7C0A",
             "priority": 75,
         },
+        "resolution_layer": "pre_action_state",
     },
     "cat_form_stats": {
         "type": "stat_mods",
@@ -477,6 +616,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
             "color": "#FF7C0A",
             "priority": 75,
         },
+        "resolution_layer": "pre_action_state",
     },
     "moonkin_form_stats": {
         "type": "stat_mods",
@@ -496,6 +636,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
             "color": "#FF7C0A",
             "priority": 75,
         },
+        "resolution_layer": "pre_action_state",
     },
     "tree_form_stats": {
         "type": "stat_mods",
@@ -509,6 +650,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 999,
         "flags": {"rip_ready": True},
         "tags": ["proc"],
+        "resolution_layer": "action_selection_modifiers",
     },
     "starfire_ready": {
         "type": "status",
@@ -516,6 +658,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 999,
         "flags": {"starfire_ready": True},
         "tags": ["proc"],
+        "resolution_layer": "action_selection_modifiers",
     },
     "barkskin": {
         "type": "mitigation",
@@ -523,6 +666,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 3,
         "value": 0.35,
         "tags": ["damage_reduction"],
+        "resolution_layer": "damage_modification",
     },
     "ironfur": {
         "type": "stat_mods",
@@ -546,6 +690,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "subschool": "nature",
         "flags": {"cycloned": True, "stunned": True, "immune_all": True},
         "tags": ["incapacitating_cc"],
+        "resolution_layer": "action_denial",
     },
     "frenzied_regeneration": {
         "type": "status",
@@ -554,6 +699,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "dispellable": False,
         "regen": {"hp": 0},
         "tags": ["hot"],
+        "resolution_layer": "end_of_turn",
     },
     "regrowth": {
         "type": "status",
@@ -565,6 +711,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "subschool": "nature",
         "regen": {"hp": 0},
         "tags": ["hot"],
+        "resolution_layer": "end_of_turn",
     },
     "wildfire_burn": {
         "type": "dot",
@@ -576,6 +723,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "dispellable": True,
         "tick_damage": 1,
         "tags": ["dot"],
+        "resolution_layer": "end_of_turn",
     },
     "arcane_shot_proc": {
         "type": "status",
@@ -583,6 +731,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 2,
         "flags": {"arcane_shot_ready": True},
         "tags": ["proc"],
+        "resolution_layer": "action_selection_modifiers",
     },
     "raptor_strike_proc": {
         "type": "status",
@@ -590,6 +739,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 2,
         "flags": {"raptor_strike_ready": True},
         "tags": ["proc"],
+        "resolution_layer": "action_selection_modifiers",
     },
     "freezing_trap_freeze": {
         "type": "status",
@@ -608,6 +758,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
             "color": "#79C7FF",
             "priority": 84,
         },
+        "resolution_layer": "action_denial",
     },
     "aspect_of_turtle": {
         "type": "mitigation",
@@ -618,6 +769,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "flags": {"incoming_single_target_miss": True, "disable_attacks": True},
         "regen": {"mp": 10},
         "tags": ["damage_reduction"],
+        "resolution_layer": "pre_resolution_protection",
     },
     "blocking_defence": {
         "type": "status",
@@ -631,6 +783,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
             "color": "#B57A42",
             "priority": 72,
         },
+        "resolution_layer": "target_resolution",
     },
 }
 
@@ -808,6 +961,42 @@ def effect_tags(effect: Any) -> set[str]:
 
 def effect_has_tag(effect: Any, tag: str) -> bool:
     return tag in effect_tags(effect)
+
+
+def is_valid_resolution_layer(layer: str) -> bool:
+    return layer in RESOLUTION_LAYERS
+
+
+def effect_resolution_layer(effect: Any) -> Optional[str]:
+    if not isinstance(effect, dict):
+        return None
+
+    layer = effect.get("resolution_layer")
+    if isinstance(layer, str) and is_valid_resolution_layer(layer):
+        return layer
+
+    effect_id = effect.get("id")
+    if not effect_id:
+        return None
+    template = EFFECT_TEMPLATES.get(effect_id) or {}
+    template_layer = template.get("resolution_layer")
+    if isinstance(template_layer, str) and is_valid_resolution_layer(template_layer):
+        return template_layer
+    return None
+
+
+def target_effects_in_resolution_layer(target: Any, layer: str) -> list[dict]:
+    if not is_valid_resolution_layer(layer):
+        return []
+    return [
+        effect
+        for effect in list(getattr(target, "effects", []) or [])
+        if effect_resolution_layer(effect) == layer
+    ]
+
+
+def target_has_resolution_layer(target: Any, layer: str) -> bool:
+    return any(effect_resolution_layer(effect) == layer for effect in list(getattr(target, "effects", []) or []))
 
 
 def target_effects_with_tag(target: Any, tag: str) -> list[dict]:
