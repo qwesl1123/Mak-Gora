@@ -249,9 +249,14 @@ def resolve_turn(match: MatchState) -> None:
     r = rng_for(match.seed, match.turn)
     a1 = match.submitted.get(sids[0], {})
     a2 = match.submitted.get(sids[1], {})
-    stunned_at_start = {sid: is_stunned(match.state[sid]) for sid in sids}
-    stealth_start_at_turn_begin = {sid: is_stealthed(match.state[sid]) for sid in sids}
-    stealth_targeting = dict(stealth_start_at_turn_begin)
+
+    # Resolution layer: pre_action_state
+    def _capture_pre_action_state() -> tuple[Dict[str, bool], Dict[str, bool], Dict[str, bool]]:
+        stunned_snapshot = {sid: is_stunned(match.state[sid]) for sid in sids}
+        stealth_snapshot = {sid: is_stealthed(match.state[sid]) for sid in sids}
+        return stunned_snapshot, stealth_snapshot, dict(stealth_snapshot)
+
+    stunned_at_start, stealth_start_at_turn_begin, stealth_targeting = _capture_pre_action_state()
     match.log.append(f"Turn {match.turn + 1}")
 
     def can_pay_costs(ps: PlayerState, costs: Dict[str, int]) -> Tuple[bool, str]:
@@ -737,18 +742,18 @@ def resolve_turn(match: MatchState) -> None:
             return False
         return len(current) >= max_count
 
-
-    def resolve_action(actor_sid: str, target_sid: str, action: Dict[str, Any]) -> Dict[str, Any]:
+    # Resolution layer: action_selection_modifiers
+    def _resolve_action_selection_modifiers(actor_sid: str, target_sid: str, action: Dict[str, Any]) -> Dict[str, Any]:
         actor = match.state[actor_sid]
         target = match.state[target_sid]
         ability_id = action.get("ability_id")
         ability = ABILITIES.get(ability_id)
         if not ability:
-            return {"damage": 0, "healing": 0, "log": f"{actor_sid[:5]} fumbles (unknown ability)."}
+            return {"resolved": True, "damage": 0, "healing": 0, "log": f"{actor_sid[:5]} fumbles (unknown ability)."}
 
         allowed_classes = ability.get("classes")
         if allowed_classes and actor.build.class_id not in allowed_classes:
-            return {"damage": 0, "healing": 0, "log": f"{actor_sid[:5]} cannot use {ability['name']}."}
+            return {"resolved": True, "damage": 0, "healing": 0, "log": f"{actor_sid[:5]} cannot use {ability['name']}."}
 
         weapon_id = None
         if actor.build and actor.build.items:
@@ -756,6 +761,7 @@ def resolve_turn(match: MatchState) -> None:
 
         if is_on_cooldown(actor, ability_id, ability):
             return {
+                "resolved": True,
                 "damage": 0,
                 "healing": 0,
                 "log": f"{actor_sid[:5]} tried to use {ability['name']} but it is on cooldown.",
@@ -764,6 +770,7 @@ def resolve_turn(match: MatchState) -> None:
         required_form = ability.get("requires_form")
         if required_form and current_form_id(actor) != required_form:
             return {
+                "resolved": True,
                 "damage": 0,
                 "healing": 0,
                 "log": ability.get("requires_form_log", "Must be in the correct form."),
@@ -771,11 +778,17 @@ def resolve_turn(match: MatchState) -> None:
 
         required_effect = ability.get("requires_effect")
         if required_effect and not has_effect(actor, required_effect):
-            return {"damage": 0, "healing": 0, "log": f"{ability['name']} requires {effect_name(required_effect)}."}
+            return {
+                "resolved": True,
+                "damage": 0,
+                "healing": 0,
+                "log": f"{ability['name']} requires {effect_name(required_effect)}.",
+            }
 
         required_weapon = ability.get("requires_weapon")
         if required_weapon and weapon_id != required_weapon:
             return {
+                "resolved": True,
                 "damage": 0,
                 "healing": 0,
                 "log": ability.get("requires_weapon_log", "The required weapon is not equipped."),
@@ -784,44 +797,97 @@ def resolve_turn(match: MatchState) -> None:
         target_hp_threshold = ability.get("requires_target_hp_below")
         if target_hp_threshold is not None:
             if target.res.hp / max(1, target.res.hp_max) >= float(target_hp_threshold):
-                return {"damage": 0, "healing": 0, "log": f"{ability['name']} can only be used as an execute."}
+                return {
+                    "resolved": True,
+                    "damage": 0,
+                    "healing": 0,
+                    "log": f"{ability['name']} can only be used as an execute.",
+                }
 
         if ability.get("requires_circle") and not has_circle(actor):
-            return {"damage": 0, "healing": 0, "log": "Demonic Circle is required."}
+            return {"resolved": True, "damage": 0, "healing": 0, "log": "Demonic Circle is required."}
 
         if ability_id == "agony" and has_effect(target, "agony"):
-            return {"damage": 0, "healing": 0, "log": "Agony is not stackable."}
+            return {"resolved": True, "damage": 0, "healing": 0, "log": "Agony is not stackable."}
 
         summon_pet_id = ability.get("summon_pet_id")
         if summon_pet_id and summon_cap_reached(actor, summon_pet_id):
             template = PETS.get(summon_pet_id, {})
             max_count = int(template.get("max_count", 1) or 1)
-            return {"damage": 0, "healing": 0, "log": f"{max_count} {template.get('name', summon_pet_id)} Maximum"}
+            return {
+                "resolved": True,
+                "damage": 0,
+                "healing": 0,
+                "log": f"{max_count} {template.get('name', summon_pet_id)} Maximum",
+            }
 
         ok, fail_reason = can_pay_costs(actor, ability.get("cost", {}))
         if not ok:
             if fail_reason == "not enough rage":
-                return {"damage": 0, "healing": 0, "log": "not enough rage"}
+                return {"resolved": True, "damage": 0, "healing": 0, "log": "not enough rage"}
             return {
+                "resolved": True,
                 "damage": 0,
                 "healing": 0,
                 "log": f"{actor_sid[:5]} tried {ability['name']} but lacked resources.",
             }
 
+        return {
+            "resolved": False,
+            "actor": actor,
+            "target": target,
+            "ability_id": ability_id,
+            "ability": ability,
+            "weapon_id": weapon_id,
+        }
+
+    # Resolution layer: action_denial
+    def _resolve_action_denial(
+        actor_sid: str,
+        ability: Dict[str, Any],
+        *,
+        incoming_cc: bool,
+        start_locked: bool = False,
+        include_runtime_cant_act: bool = True,
+    ) -> Dict[str, Any] | None:
+        actor = match.state[actor_sid]
+        actor_cannot_act = start_locked or (include_runtime_cant_act and cannot_act(actor))
+        if not actor_cannot_act:
+            return None
+        reason = get_cant_act_reason(actor)
+        if can_cast_while_cc(ability, reason=reason, incoming_cc=incoming_cc):
+            return None
+        if reason:
+            reason_text = f"is {reason} and cannot act"
+        else:
+            reason_text = "cannot act"
+        return {
+            "damage": 0,
+            "healing": 0,
+            "log": f"{actor_sid[:5]} tries to use {ability['name']} but {reason_text}.",
+        }
+
+
+    def resolve_action(actor_sid: str, target_sid: str, action: Dict[str, Any]) -> Dict[str, Any]:
+        selection = _resolve_action_selection_modifiers(actor_sid, target_sid, action)
+        if selection.get("resolved"):
+            return {
+                "damage": int(selection.get("damage", 0) or 0),
+                "healing": int(selection.get("healing", 0) or 0),
+                "log": str(selection.get("log") or ""),
+            }
+
+        actor = selection["actor"]
+        target = selection["target"]
+        ability_id = selection["ability_id"]
+        ability = selection["ability"]
+        weapon_id = selection["weapon_id"]
+
         weapon_name = ITEMS.get(weapon_id, {}).get("name", "their bare hands")
 
-        if cannot_act(actor):
-            reason = get_cant_act_reason(actor)
-            if not can_cast_while_cc(ability, reason=reason, incoming_cc=False):
-                if reason:
-                    reason_text = f"is {reason} and cannot act"
-                else:
-                    reason_text = "cannot act"
-                return {
-                    "damage": 0,
-                    "healing": 0,
-                    "log": f"{actor_sid[:5]} tries to use {ability['name']} but {reason_text}.",
-                }
+        denial = _resolve_action_denial(actor_sid, ability, incoming_cc=False)
+        if denial:
+            return denial
 
         if has_flag(actor, "disable_attacks") and "attack" in (ability.get("tags") or []):
             return {
@@ -1593,91 +1659,30 @@ def resolve_turn(match: MatchState) -> None:
         }
 
     def build_immediate_resolution(actor_sid: str, target_sid: str, action: Dict[str, Any]) -> Dict[str, Any]:
-        actor = match.state[actor_sid]
-        target = match.state[target_sid]
         ability_id = action.get("ability_id")
         ability = ABILITIES.get(ability_id)
         if not ability:
             return {"damage": 0, "log": f"{actor_sid[:5]} fumbles (unknown ability).", "resolved": True}
 
-        if cannot_act(actor):
-            reason = get_cant_act_reason(actor)
-            if not can_cast_while_cc(ability, reason=reason, incoming_cc=False):
-                if reason:
-                    reason_text = f"is {reason} and cannot act"
-                else:
-                    reason_text = "cannot act"
-                return {
-                    "damage": 0,
-                    "log": f"{actor_sid[:5]} tries to use {ability['name']} but {reason_text}.",
-                    "resolved": True,
-                }
-
-        allowed_classes = ability.get("classes")
-        if allowed_classes and actor.build.class_id not in allowed_classes:
-            return {"damage": 0, "log": f"{actor_sid[:5]} cannot use {ability['name']}.", "resolved": True}
-
-        weapon_id = None
-        if actor.build and actor.build.items:
-            weapon_id = actor.build.items.get("weapon")
-
-        if is_on_cooldown(actor, ability_id, ability):
+        denial = _resolve_action_denial(actor_sid, ability, incoming_cc=False)
+        if denial:
             return {
-                "damage": 0,
-                "log": f"{actor_sid[:5]} tried to use {ability['name']} but it is on cooldown.",
+                "damage": int(denial.get("damage", 0) or 0),
+                "log": str(denial.get("log") or ""),
                 "resolved": True,
             }
 
-        required_form = ability.get("requires_form")
-        if required_form and current_form_id(actor) != required_form:
+        selection = _resolve_action_selection_modifiers(actor_sid, target_sid, action)
+        if selection.get("resolved"):
             return {
-                "damage": 0,
-                "log": ability.get("requires_form_log", "Must be in the correct form."),
+                "damage": int(selection.get("damage", 0) or 0),
+                "log": str(selection.get("log") or ""),
                 "resolved": True,
             }
 
-        required_effect = ability.get("requires_effect")
-        if required_effect and not has_effect(actor, required_effect):
-            return {
-                "damage": 0,
-                "log": f"{ability['name']} requires {effect_name(required_effect)}.",
-                "resolved": True,
-            }
-
-        required_weapon = ability.get("requires_weapon")
-        if required_weapon and weapon_id != required_weapon:
-            return {
-                "damage": 0,
-                "log": ability.get("requires_weapon_log", "The required weapon is not equipped."),
-                "resolved": True,
-            }
-
-        target_hp_threshold = ability.get("requires_target_hp_below")
-        if target_hp_threshold is not None:
-            if target.res.hp / max(1, target.res.hp_max) >= float(target_hp_threshold):
-                return {"damage": 0, "log": f"{ability['name']} can only be used as an execute.", "resolved": True}
-
-        if ability.get("requires_circle") and not has_circle(actor):
-            return {"damage": 0, "log": "Demonic Circle is required.", "resolved": True}
-
-        if ability_id == "agony" and has_effect(target, "agony"):
-            return {"damage": 0, "log": "Agony is not stackable.", "resolved": True}
-
-        summon_pet_id = ability.get("summon_pet_id")
-        if summon_pet_id and summon_cap_reached(actor, summon_pet_id):
-            template = PETS.get(summon_pet_id, {})
-            max_count = int(template.get("max_count", 1) or 1)
-            return {"damage": 0, "log": f"{max_count} {template.get('name', summon_pet_id)} Maximum", "resolved": True}
-
-        ok, fail_reason = can_pay_costs(actor, ability.get("cost", {}))
-        if not ok:
-            if fail_reason == "not enough rage":
-                return {"damage": 0, "log": "not enough rage", "resolved": True}
-            return {
-                "damage": 0,
-                "log": f"{actor_sid[:5]} tried {ability['name']} but lacked resources.",
-                "resolved": True,
-            }
+        actor = selection["actor"]
+        ability_id = selection["ability_id"]
+        ability = selection["ability"]
 
         has_damage = any(
             value
@@ -1801,18 +1806,18 @@ def resolve_turn(match: MatchState) -> None:
         extra_logs: list[Any] = []
 
         incoming_lock = incoming_immediate_stun.get(actor_sid, False) and not outgoing_immediate_stun.get(actor_sid, False)
-        actor_cannot_act = start_of_turn_cant_act.get(actor_sid, False) or incoming_lock
-        if actor_cannot_act:
-            reason = get_cant_act_reason(actor)
-            if not can_cast_while_cc(ability, reason=reason, incoming_cc=incoming_lock):
-                if reason:
-                    reason_text = f"is {reason} and cannot act"
-                else:
-                    reason_text = "cannot act"
-                ctx["damage"] = 0
-                ctx["log"] = f"{actor_sid[:5]} tries to use {ability['name']} but {reason_text}."
-                ctx["resolved"] = True
-                return
+        denial = _resolve_action_denial(
+            actor_sid,
+            ability,
+            incoming_cc=incoming_lock,
+            start_locked=start_of_turn_cant_act.get(actor_sid, False) or incoming_lock,
+            include_runtime_cant_act=False,
+        )
+        if denial:
+            ctx["damage"] = int(denial.get("damage", 0) or 0)
+            ctx["log"] = str(denial.get("log") or "")
+            ctx["resolved"] = True
+            return
 
         consume_costs(actor, ability.get("cost", {}))
 

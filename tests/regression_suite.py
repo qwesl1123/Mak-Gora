@@ -1814,6 +1814,78 @@ def scenario_mutual_stuns_count_current_turn_immediately() -> bool:
     return True
 
 
+def scenario_phase_c_pass1_early_resolution_stages_are_preserved() -> bool:
+    # pre_action_state: stealth-at-start still causes same-turn stun attempts to miss.
+    stealth_match = make_match("rogue", "paladin", seed=606)
+    submit_turn(stealth_match, "vanish", "hammer_of_justice")
+    rogue = stealth_match.state[stealth_match.players[0]]
+    assert _has_effect(rogue, "stealth"), "Vanish stealth should remain when same-turn stun targets stealth-at-start"
+    assert not _has_effect(rogue, "stunned"), "Stealth snapshot should keep same-turn stun from landing"
+
+    # action_selection_modifiers: cooldown / resource / proc / form / circle checks unchanged.
+    cooldown_match = make_match("paladin", "warrior", seed=607)
+    submit_turn(cooldown_match, "lay_on_hands", _DEF_PASS)
+    submit_turn(cooldown_match, "lay_on_hands", _DEF_PASS)
+    cooldown_turn = cooldown_match.log[cooldown_match.log.index("Turn 2") + 1:]
+    assert any("tried to use Lay on Hands but it is on cooldown." in line for line in cooldown_turn), "Cooldown-gated ability should fail with existing log"
+
+    resource_match = make_match("druid", "warrior", seed=608)
+    submit_turn(resource_match, "bear", _DEF_PASS)
+    submit_turn(resource_match, "frenzied_regeneration", _DEF_PASS)
+    resource_turn = resource_match.log[resource_match.log.index("Turn 2") + 1:]
+    assert any(line == "not enough rage" for line in resource_turn), "Resource-gated ability should preserve exact not enough rage log"
+
+    proc_match = make_match("mage", "warrior", seed=609)
+    submit_turn(proc_match, "pyroblast", _DEF_PASS)
+    proc_turn = proc_match.log[proc_match.log.index("Turn 1") + 1:]
+    assert any("Pyroblast requires Hot Streak." in line for line in proc_turn), "Proc-gated ability should preserve requires-effect log"
+
+    form_match = make_match("druid", "warrior", seed=610)
+    submit_turn(form_match, "maul", _DEF_PASS)
+    form_turn = form_match.log[form_match.log.index("Turn 1") + 1:]
+    assert any("Must be in Bear Form." in line for line in form_turn), "Form-gated ability should preserve requires-form behavior"
+
+    circle_match = make_match("warlock", "warrior", seed=611)
+    submit_turn(circle_match, "teleport", _DEF_PASS)
+    circle_turn = circle_match.log[circle_match.log.index("Turn 1") + 1:]
+    assert any("Demonic Circle is required." in line for line in circle_turn), "Circle-gated ability should preserve existing log"
+
+    # action_denial: feared actors still cannot act; same-turn mutual denial still allows both CC actions.
+    fear_match = make_match("warlock", "warrior", seed=612)
+    submit_turn(fear_match, "fear", _DEF_PASS)
+    submit_turn(fear_match, _DEF_PASS, "basic_attack")
+    fear_turn = fear_match.log[fear_match.log.index("Turn 2") + 1:]
+    assert any("tries to use Basic Attack but is feared and cannot act." in line for line in fear_turn), "Feared actor should still be denied with existing log"
+
+    mutual_match = make_match("paladin", "rogue", seed=789)
+    effects.remove_effect(mutual_match.state[mutual_match.players[1]], "stealth")
+    submit_turn(mutual_match, "hammer_of_justice", "kidney_shot")
+    paladin_stun = next((fx for fx in mutual_match.state[mutual_match.players[0]].effects if fx.get("id") == "stunned"), None)
+    rogue_stun = next((fx for fx in mutual_match.state[mutual_match.players[1]].effects if fx.get("id") == "stunned"), None)
+    assert paladin_stun is not None and rogue_stun is not None, "Mutual same-turn denial behavior should keep both stuns applying on that turn"
+
+    # no spillover: representative later-stage damage still applies.
+    combat_match = make_match("warrior", "mage", seed=614)
+    mage_hp_before = combat_match.state[combat_match.players[1]].res.hp
+    submit_turn(combat_match, "overpower", _DEF_PASS)
+    mage_hp_after = combat_match.state[combat_match.players[1]].res.hp
+    assert mage_hp_after < mage_hp_before, "Representative damage application should remain unchanged after early-stage structuring"
+    return True
+
+
+def scenario_immediate_path_denial_precedes_selection_failures() -> bool:
+    match = make_match("warlock", "warrior", seed=615)
+    warlock = match.state[match.players[0]]
+    effects.apply_effect_by_id(warlock, "feared", overrides={"duration": 2})
+
+    submit_turn(match, "teleport", _DEF_PASS)
+    latest_turn = match.log[match.log.index("Turn 1") + 1:]
+
+    assert any("tries to use Demonic Circle: Teleport but is feared and cannot act." in line for line in latest_turn), "Immediate-path denial should win over selection failures"
+    assert not any("Demonic Circle is required." in line for line in latest_turn), "Immediate-path selection checks should not pre-empt denial logs"
+    return True
+
+
 def scenario_mutual_freeze_duration_model_remains_unchanged() -> bool:
     ring_match = make_match("mage", "mage", seed=111)
     submit_turn(ring_match, "ring_of_ice", "ring_of_ice")
@@ -2363,6 +2435,8 @@ SCENARIOS = [
     scenario_ring_of_ice_freezes_and_breaks_on_damage,
     scenario_fear_applies_feared_and_breaks_on_damage,
     scenario_mutual_stuns_count_current_turn_immediately,
+    scenario_phase_c_pass1_early_resolution_stages_are_preserved,
+    scenario_immediate_path_denial_precedes_selection_failures,
     scenario_mutual_freeze_duration_model_remains_unchanged,
     scenario_break_on_damage_cc_no_damage_turn_preserves_lockout,
     scenario_break_on_damage_cc_dot_tick_breaks,
