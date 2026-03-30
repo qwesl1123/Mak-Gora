@@ -1056,6 +1056,79 @@ def scenario_hunter_boar_redirect_same_turn_brace() -> bool:
     return True
 
 
+def scenario_hunter_boar_forced_pre_action_redirect_is_consistent() -> bool:
+    match = make_match("warlock", "hunter", seed=123)
+    hunter_sid = match.players[1]
+    hunter = match.state[hunter_sid]
+
+    submit_turn(match, _DEF_PASS, "call_boar")
+    boar = _active_pet(hunter, "barrens_boar")
+    assert boar is not None, "Barrens Boar should be active"
+
+    hunter.pending_pet_command = "special"
+    hunter_hp_before = hunter.res.hp
+    boar_hp_before = boar.hp
+    submit_turn(match, "drain_life", _DEF_PASS)
+
+    latest_turn = _turn_lines(match, 2)
+    assert any("Barrens Boar braces to intercept attacks." in line for line in latest_turn), "Forced pre-action special should still log the brace"
+    assert any("Barrens Boar intercepts Drain Life" in line for line in latest_turn), "Forced pre-action special should redirect same-turn single-target spells"
+    assert hunter.res.hp == hunter_hp_before, "Forced pre-action brace should keep single-target damage off the Hunter"
+    assert boar.hp < boar_hp_before, "Redirected damage should be applied to the boar"
+    return True
+
+
+def scenario_hunter_boar_no_late_brace_without_redirect() -> bool:
+    match = make_match("warlock", "hunter", seed=1)
+    hunter_sid = match.players[1]
+    hunter = match.state[hunter_sid]
+
+    submit_turn(match, _DEF_PASS, "call_boar")
+
+    for turn in range(2, 10):
+        hp_before = hunter.res.hp
+        boar = _active_pet(hunter, "barrens_boar")
+        assert boar is not None and boar.hp > 0, "Barrens Boar should remain alive for the redirect consistency window"
+        submit_turn(match, "drain_life", _DEF_PASS)
+        latest_turn = _turn_lines(match, turn)
+        brace_logged = any("Barrens Boar braces to intercept attacks." in line for line in latest_turn)
+        intercept_logged = any("Barrens Boar intercepts Drain Life" in line for line in latest_turn)
+        damage_attempt_logged = any("cast Drain Life." in line and "Deals" in line for line in latest_turn)
+        if brace_logged:
+            if damage_attempt_logged:
+                assert intercept_logged, "Brace log should only appear on turns where redirect actually occurs for a same-turn single-target damage event"
+                assert hunter.res.hp == hp_before, "Hunter should not take single-target damage on brace turns"
+    return True
+
+
+def scenario_hunter_raptor_strike_forces_boar_redirect() -> bool:
+    match = make_match("hunter", "warlock", seed=1)
+    hunter_sid, warlock_sid = match.players
+    hunter = match.state[hunter_sid]
+    warlock = match.state[warlock_sid]
+    warlock.res.hp = warlock.res.hp_max = 999
+
+    submit_turn(match, "call_boar", _DEF_PASS)
+    boar = _active_pet(hunter, "barrens_boar")
+    assert boar is not None, "Barrens Boar should be active for forced-special coverage"
+
+    while not _has_effect(hunter, "raptor_strike_proc"):
+        submit_turn(match, "aimed_shot", _DEF_PASS)
+        assert match.turn < 10, "Aimed Shot should proc Raptor Strike within a few deterministic turns"
+
+    hunter_hp_before = hunter.res.hp
+    boar_hp_before = boar.hp
+    submit_turn(match, "raptor_strike", "drain_life")
+
+    latest_turn = _turn_lines(match, match.turn)
+    assert any("Barrens Boar braces to intercept attacks." in line for line in latest_turn), "Raptor Strike should force Barrens Boar's pre-action special"
+    assert any("Barrens Boar intercepts Drain Life" in line for line in latest_turn), "Forced Barrens Boar special should redirect same-turn single-target spells"
+    assert hunter.res.hp == hunter_hp_before, "Forced Barrens Boar special should keep same-turn single-target damage off the Hunter"
+    assert boar.hp < boar_hp_before, "Forced redirect should damage the boar instead"
+    assert not _has_effect(hunter, "raptor_strike_proc"), "Raptor Strike should consume its proc after use"
+    return True
+
+
 def scenario_hunter_freezing_trap_breaks_on_damage() -> bool:
     match = make_match("hunter", "warrior", seed=123)
     warrior = match.state[match.players[1]]
@@ -2428,6 +2501,9 @@ SCENARIOS = [
     scenario_hunter_aimed_shot_raptor_pet_special,
     scenario_hunter_boar_redirect,
     scenario_hunter_boar_redirect_same_turn_brace,
+    scenario_hunter_boar_forced_pre_action_redirect_is_consistent,
+    scenario_hunter_boar_no_late_brace_without_redirect,
+    scenario_hunter_raptor_strike_forces_boar_redirect,
     scenario_hunter_freezing_trap_breaks_on_damage,
     scenario_hunter_freezing_trap_respects_cloak_same_turn,
     scenario_hunter_freezing_trap_respects_active_cloak,

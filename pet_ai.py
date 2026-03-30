@@ -226,9 +226,13 @@ def _run_hunter_basic_plus_special(
 ):
     template = PETS.get(pet.template_id, {})
     forced_command = owner.pending_pet_command
-    use_special = forced_command == "special"
     special_id = template.get("special_id")
-    if not use_special and special_id:
+    special_data = ((template.get("specials") or {}).get(special_id) or {}) if special_id else {}
+    special_timing = str(special_data.get("timing") or "").strip().lower()
+    can_use_runtime_special = bool(special_id) and special_timing != "pre_action"
+
+    use_special = forced_command == "special" and can_use_runtime_special
+    if not use_special and can_use_runtime_special:
         use_special = rng.random() <= float(template.get("special_chance", 0) or 0)
 
     if use_special and special_id:
