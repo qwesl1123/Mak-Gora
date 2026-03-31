@@ -1954,6 +1954,91 @@ def scenario_phase_c_pass1_early_resolution_stages_are_preserved() -> bool:
     return True
 
 
+def scenario_phase_c_prompt1_middle_resolution_stages_are_preserved() -> bool:
+    # pre_resolution_protection: full and partial immunity behavior stays unchanged.
+    immunity_match = make_match("mage", "warrior", seed=620)
+    mage_sid, warrior_sid = immunity_match.players
+    submit_turn(immunity_match, "iceblock", "mortal_strike")
+    mage = immunity_match.state[mage_sid]
+    assert mage.res.hp == mage.res.hp_max, "Ice Block should still prevent incoming single-target damage during pre-resolution protection"
+
+    cloak_match = make_match("rogue", "mage", seed=621)
+    rogue_sid, mage_sid = cloak_match.players
+    effects.remove_effect(cloak_match.state[rogue_sid], "stealth")
+    cloak_match.state[mage_sid].stats["acc"] = 999
+    submit_turn(cloak_match, "cloak", "fireball")
+    rogue = cloak_match.state[rogue_sid]
+    assert rogue.res.hp == rogue.res.hp_max, "Cloak should still block magical damage in pre-resolution protection"
+
+    turtle_match = make_match("hunter", "rogue", seed=622)
+    hunter_sid, _ = turtle_match.players
+    submit_turn(turtle_match, "turtle", "eviscerate")
+    turtle_turn = _turn_lines(turtle_match, 1)
+    assert any("Target evades the attack — Miss!" in line for line in turtle_turn), "Turtle single-target miss behavior should remain unchanged"
+    hunter = turtle_match.state[hunter_sid]
+    assert hunter.res.hp == hunter.res.hp_max, "Turtle should still block same-turn single-target damage"
+
+    stealth_match = make_match("rogue", "warrior", seed=623)
+    submit_turn(stealth_match, "vanish", "basic_attack")
+    stealth_turn = _turn_lines(stealth_match, 1)
+    assert any("Target is stealthed — Miss!" in line for line in stealth_turn), "Stealth target invalidation should remain unchanged"
+
+    # target_resolution: redirects are preserved and AoE still bypasses redirect.
+    redirect_match = make_match("hunter", "warrior", seed=624)
+    hunter_sid, warrior_sid = redirect_match.players
+    submit_turn(redirect_match, "call_boar", _DEF_PASS)
+    hunter = redirect_match.state[hunter_sid]
+    boar = _active_pet(hunter, "barrens_boar")
+    assert boar is not None, "Barrens Boar should be active for redirect coverage"
+    effects.apply_effect_by_id(hunter, "blocking_defence", overrides={"duration": 1, "redirect_to_pet_id": boar.id})
+
+    hunter_hp_before = hunter.res.hp
+    boar_hp_before = boar.hp
+    submit_turn(redirect_match, _DEF_PASS, "basic_attack")
+    redirect_turn = _turn_lines(redirect_match, 2)
+    assert hunter.res.hp == hunter_hp_before, "Single-target damage should still redirect away from the hunter"
+    assert boar.hp < boar_hp_before, "Barrens Boar should still receive redirected single-target damage"
+    assert any("Barrens Boar intercepts Basic Attack" in line for line in redirect_turn), "Redirect intercept log should remain unchanged"
+
+    hunter_hp_before_aoe = hunter.res.hp
+    redirect_match.state[warrior_sid].res.rage = 10
+    submit_turn(redirect_match, _DEF_PASS, "dragon_roar")
+    assert hunter.res.hp < hunter_hp_before_aoe, "AoE damage should still bypass redirect and hit the champion"
+
+    # hit_resolution: blink-like misses, disengage custom miss wording, and evasion are unchanged.
+    blink_match = make_match("mage", "warrior", seed=625)
+    submit_turn(blink_match, "blink", "basic_attack")
+    blink_turn = _turn_lines(blink_match, 1)
+    assert any("Target blinks away — Miss." in line for line in blink_turn), "Blink-like miss wording should remain unchanged"
+
+    disengage_match = make_match("hunter", "warrior", seed=626)
+    submit_turn(disengage_match, "disengage", "basic_attack")
+    disengage_turn = _turn_lines(disengage_match, 1)
+    assert any("Target leaps away — Miss." in line for line in disengage_turn), "Disengage custom miss wording should remain unchanged"
+
+    evasion_match = make_match("rogue", "warrior", seed=627)
+    effects.remove_effect(evasion_match.state[evasion_match.players[0]], "stealth")
+    submit_turn(evasion_match, "evasion", "basic_attack")
+    evasion_turn = _turn_lines(evasion_match, 1)
+    assert any("Evaded!" in line for line in evasion_turn), "Evasion forced-miss behavior should remain unchanged"
+
+    aoe_blink_match = make_match("mage", "warrior", seed=628)
+    aoe_blink_match.state[aoe_blink_match.players[1]].res.rage = 10
+    submit_turn(aoe_blink_match, "blink", "dragon_roar")
+    mage = aoe_blink_match.state[aoe_blink_match.players[0]]
+    assert any("blinks away — Miss." in line for line in _turn_lines(aoe_blink_match, 1)), "AoE should preserve champion blink miss logging"
+    assert mage.res.hp == mage.res.hp_max, "AoE should still skip champion damage while blink-like untargetable is active"
+
+    # no spillover: representative later stage remains unchanged.
+    no_spill_match = make_match("warrior", "mage", seed=629)
+    no_spill_match.state[no_spill_match.players[0]].res.rage = 10
+    mage_hp_before = no_spill_match.state[no_spill_match.players[1]].res.hp
+    submit_turn(no_spill_match, "dragon_roar", _DEF_PASS)
+    mage_hp_after = no_spill_match.state[no_spill_match.players[1]].res.hp
+    assert mage_hp_after < mage_hp_before, "Damage application should remain unchanged by middle-stage restructuring"
+    return True
+
+
 def scenario_agony_ramp_progression_restored() -> bool:
     match = make_match("warlock", "warrior", seed=444)
     warlock_sid, warrior_sid = match.players
@@ -2613,6 +2698,7 @@ SCENARIOS = [
     scenario_fear_applies_feared_and_breaks_on_damage,
     scenario_mutual_stuns_count_current_turn_immediately,
     scenario_phase_c_pass1_early_resolution_stages_are_preserved,
+    scenario_phase_c_prompt1_middle_resolution_stages_are_preserved,
     scenario_agony_ramp_progression_restored,
     scenario_immediate_path_denial_precedes_selection_failures,
     scenario_mutual_freeze_duration_model_remains_unchanged,

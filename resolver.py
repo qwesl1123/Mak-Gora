@@ -869,6 +869,37 @@ def resolve_turn(match: MatchState) -> None:
             "log": f"{actor_sid[:5]} tries to use {ability['name']} but {reason_text}.",
         }
 
+    # Resolution layer: pre_resolution_protection
+    def _resolve_pre_resolution_protection(
+        attacker: PlayerState,
+        target: PlayerState | PetState,
+        ability: Dict[str, Any],
+        *,
+        stealth_snapshot: Dict[str, bool],
+    ) -> tuple[bool, str | None]:
+        if should_miss_due_to_stealth(attacker, target, ability, stealth_snapshot):
+            return True, "Target is stealthed — Miss!"
+        return False, None
+
+    # Resolution layer: hit_resolution
+    def _resolve_hit_resolution(
+        target: PlayerState | PetState,
+        ability: Dict[str, Any],
+        *,
+        has_damage: bool,
+        is_aoe: bool,
+    ) -> tuple[bool, str | None, bool, str | None]:
+        aoe_untargetable, aoe_untargetable_log = aoe_untargetable_resolution(target)
+        if aoe_untargetable:
+            if is_aoe:
+                return False, None, True, aoe_untargetable_log
+            return True, (aoe_untargetable_log or untargetable_miss_log(target)), False, None
+        if not is_aoe and single_target_miss_active(target, ability):
+            return True, single_target_miss_log(), False, None
+        if has_flag(target, "evade_all") and can_evasion_force_miss(ability, has_damage):
+            return True, "Evaded!", False, None
+        return False, None, False, None
+
 
     def resolve_action(actor_sid: str, target_sid: str, action: Dict[str, Any]) -> Dict[str, Any]:
         selection = _resolve_action_selection_modifiers(actor_sid, target_sid, action)
@@ -933,37 +964,31 @@ def resolve_turn(match: MatchState) -> None:
         aoe_champion_log_override: str | None = None
 
         if has_damage or has_target_effects:
-            if should_miss_due_to_stealth(actor, target, ability, stealth_targeting):
-                log_parts.append("Target is stealthed — Miss!")
+            blocked, protection_log = _resolve_pre_resolution_protection(
+                actor,
+                target,
+                ability,
+                stealth_snapshot=stealth_targeting,
+            )
+            if blocked:
+                log_parts.append(protection_log or "Target is stealthed — Miss!")
                 set_cooldown(actor, ability_id, ability)
                 if ability.get("consume_effect"):
                     remove_effect(actor, ability["consume_effect"])
                 if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
                     remove_stealth(actor)
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
-            aoe_untargetable, aoe_untargetable_log = aoe_untargetable_resolution(target)
-            if aoe_untargetable:
-                if is_aoe:
-                    aoe_skip_champion = True
-                    aoe_champion_log_override = " ".join([*log_parts, aoe_untargetable_log or untargetable_miss_log(target)])
-                else:
-                    log_parts.append(aoe_untargetable_log or untargetable_miss_log(target))
-                    set_cooldown(actor, ability_id, ability)
-                    if ability.get("consume_effect"):
-                        remove_effect(actor, ability["consume_effect"])
-                    if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
-                        remove_stealth(actor)
-                    return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
-            if not is_aoe and single_target_miss_active(target, ability):
-                log_parts.append(single_target_miss_log())
-                set_cooldown(actor, ability_id, ability)
-                if ability.get("consume_effect"):
-                    remove_effect(actor, ability["consume_effect"])
-                if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
-                    remove_stealth(actor)
-                return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
-            if has_flag(target, "evade_all") and can_evasion_force_miss(ability, has_damage):
-                log_parts.append("Evaded!")
+            missed, miss_log, skip_aoe_champion, aoe_immune_log = _resolve_hit_resolution(
+                target,
+                ability,
+                has_damage=has_damage,
+                is_aoe=is_aoe,
+            )
+            if skip_aoe_champion:
+                aoe_skip_champion = True
+                aoe_champion_log_override = " ".join([*log_parts, aoe_immune_log or untargetable_miss_log(target)])
+            if missed:
+                log_parts.append(miss_log or "Miss!")
                 set_cooldown(actor, ability_id, ability)
                 if ability.get("consume_effect"):
                     remove_effect(actor, ability["consume_effect"])
@@ -2024,29 +2049,53 @@ def resolve_turn(match: MatchState) -> None:
         subschool: str | None = None,
         allow_redirect: bool = True,
     ) -> Dict[str, Any]:
+        # Resolution layer: target_resolution
+        def _resolve_target_resolution(
+            target_entity: PlayerState | PetState,
+            target_label: str,
+        ) -> tuple[PlayerState | PetState, str, bool, str | None]:
+            is_player_entity = hasattr(target_entity, "res") and target_entity.res is not None
+            redirected_pet_name: str | None = None
+            if is_player_entity and allow_redirect and has_flag(target_entity, "redirect_single_target_to_pet"):
+                redirect_effect = next(
+                    (
+                        fx for fx in reversed(target_entity.effects)
+                        if (fx.get("flags", {}) or {}).get("redirect_single_target_to_pet")
+                    ),
+                    None,
+                )
+                pet_id = (redirect_effect or {}).get("redirect_to_pet_id")
+                pet = target_entity.pets.get(pet_id) if pet_id else None
+                if pet and pet.hp > 0:
+                    redirected_pet_name = pet.name
+                    match.log.append(f"{pet.name} intercepts {source_ability_name} for {target_label[:5]}.")
+                    return pet, pet.name, False, redirected_pet_name
+            return target_entity, target_label, is_player_entity, redirected_pet_name
+
+        # Resolution layer: pre_resolution_protection
+        def _resolve_pre_resolution_protection(
+            target_entity: PlayerState,
+            target_label: str,
+            damage_school: str,
+        ) -> tuple[bool, Dict[str, Any] | None]:
+            if is_immune_all(target_entity):
+                return True, None
+            if has_flag(target_entity, "cycloned"):
+                match.log.append(f"{target_label[:5]} is cycloned and takes no damage.")
+                return True, None
+            if damage_school == "magical" and has_effect(target_entity, "cloak_of_shadows"):
+                match.log.append(f"{target_label[:5]} is immune to magical harm under Cloak of Shadows.")
+                return True, None
+            return False, None
+
         normalized_school = normalize_school(school) or "physical"
         is_player_target = hasattr(target, "res") and target.res is not None
         if incoming <= 0:
             return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0, "school": normalized_school, "subschool": subschool}
-        redirected_to = None
-        if is_player_target and allow_redirect and has_flag(target, "redirect_single_target_to_pet"):
-            redirect_effect = next((fx for fx in reversed(target.effects) if (fx.get("flags", {}) or {}).get("redirect_single_target_to_pet")), None)
-            pet_id = (redirect_effect or {}).get("redirect_to_pet_id")
-            pet = target.pets.get(pet_id) if pet_id else None
-            if pet and pet.hp > 0:
-                redirected_to = pet.name
-                match.log.append(f"{pet.name} intercepts {source_ability_name} for {target_sid[:5]}.")
-                target = pet
-                target_sid = pet.name
-                is_player_target = False
+        target, target_sid, is_player_target, redirected_to = _resolve_target_resolution(target, target_sid)
         if is_player_target:
-            if is_immune_all(target):
-                return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0, "school": normalized_school, "subschool": subschool}
-            if has_flag(target, "cycloned"):
-                match.log.append(f"{target_sid[:5]} is cycloned and takes no damage.")
-                return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0, "school": normalized_school, "subschool": subschool}
-            if normalized_school == "magical" and has_effect(target, "cloak_of_shadows"):
-                match.log.append(f"{target_sid[:5]} is immune to magical harm under Cloak of Shadows.")
+            blocked, _ = _resolve_pre_resolution_protection(target, target_sid, normalized_school)
+            if blocked:
                 return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0, "school": normalized_school, "subschool": subschool}
         instance_values = [max(0, int(value or 0)) for value in (damage_instances or []) if int(value or 0) > 0]
         accounted = sum(instance_values)
