@@ -989,6 +989,38 @@ def scenario_hunter_proc_log_stays_at_top_of_turn() -> bool:
     return True
 
 
+def scenario_proc_and_can_use_reminders_stay_in_expected_order() -> bool:
+    match = make_match("hunter", "priest", seed=123)
+    hunter_sid, priest_sid = match.players
+    hunter = match.state[hunter_sid]
+    submit_turn(match, "call_boar", _DEF_PASS)
+    boar = _active_pet(hunter, "barrens_boar")
+    assert boar is not None, "Boar should be active for redirect ordering coverage"
+    hunter.pending_pet_command = "special"
+
+    submit_turn(match, "wildfire_bomb", _DEF_PASS)
+
+    latest_turn = _turn_lines(match, 2)
+    proc_idx = next((i for i, line in enumerate(latest_turn) if "can use Arcane Shot!" in line), -1)
+    brace_idx = next((i for i, line in enumerate(latest_turn) if "Barrens Boar braces to intercept attacks." in line), -1)
+    hunter_action_idx = next((i for i, line in enumerate(latest_turn) if "uses their bare hands to cast Wildfire Bomb." in line), -1)
+    assert proc_idx == 0, "Proc reminder should stay at the top of the turn"
+    assert brace_idx > proc_idx, "Pre-action pet brace log should remain below proc reminders"
+    assert hunter_action_idx > brace_idx, "Action logs should remain below pre-action reminder/proc logs"
+
+    execute_match = make_match("warrior", "priest", seed=123)
+    warrior_sid, priest_sid = execute_match.players
+    warrior = execute_match.state[warrior_sid]
+    priest = execute_match.state[priest_sid]
+    priest.res.hp = max(1, int(priest.res.hp_max * 0.15))
+    warrior.res.rage = warrior.res.rage_max
+
+    submit_turn(execute_match, _DEF_PASS, _DEF_PASS)
+    execute_turn = _turn_lines(execute_match, 1)
+    assert execute_turn[-1] == f"{warrior_sid[:5]} Can Use Execute!", "Can-use reminder should remain at the bottom of the turn"
+    return True
+
+
 def scenario_hunter_aimed_shot_raptor_pet_special() -> bool:
     match = make_match("hunter", "warrior", seed=1)
     hunter = match.state[match.players[0]]
@@ -1342,6 +1374,21 @@ def scenario_break_on_damage_logs_use_clean_wording_and_bottom_order() -> bool:
     submit_turn(match, "basic_attack", _DEF_PASS)
     latest_turn = _turn_lines(match, 2)
     assert latest_turn[-1] == f"Freezing Trap on {match.players[1][:5]} breaks on damage.", "Freezing Trap break log should use clean wording and appear at the bottom of the turn"
+    return True
+
+
+def scenario_break_on_damage_uses_source_ability_name_for_shared_fear_state() -> bool:
+    fear_match = make_match("warlock", "priest", seed=123)
+    submit_turn(fear_match, "fear", _DEF_PASS)
+    submit_turn(fear_match, "drain_life", _DEF_PASS)
+    fear_turn = _turn_lines(fear_match, 2)
+    assert fear_turn[-1] == f"Fear on {fear_match.players[1][:5]} breaks on damage.", "Fear-applied break should retain Fear naming"
+
+    scream_match = make_match("priest", "warlock", seed=123)
+    submit_turn(scream_match, "psychic_scream", _DEF_PASS)
+    submit_turn(scream_match, "mind_blast", _DEF_PASS)
+    scream_turn = _turn_lines(scream_match, 2)
+    assert scream_turn[-1] == f"Psychic Scream on {scream_match.players[1][:5]} breaks on damage.", "Psychic Scream-applied break should keep source ability naming"
     return True
 
 
@@ -1758,6 +1805,109 @@ def scenario_pet_action_text_persists_on_miss() -> bool:
     submit_turn(priest_miss_match, _DEF_PASS, _DEF_PASS)
     latest_priest_turn = priest_miss_match.log[priest_miss_match.log.index("Turn 2") + 1:]
     assert any("Shadowfiend melees the target. Target evades the attack — Miss!" in line for line in latest_priest_turn), "Shadowfiend evade logs should keep its melee action text"
+    return True
+
+
+def scenario_imp_firebolt_immunity_logs_under_cloak() -> bool:
+    match = make_match("warlock", "rogue", seed=123)
+    rogue = match.state[match.players[1]]
+    effects.remove_effect(rogue, "stealth")
+    submit_turn(match, "summon_imp", "cloak")
+    latest_turn = _turn_lines(match, 1)
+    assert any("Imp casts Firebolt. Immune!" in line for line in latest_turn), "Imp Firebolt should log immunity when Cloak blocks magical damage"
+    assert not any("Imp casts Firebolt for" in line for line in latest_turn), "Imp should not log damage when fully immune"
+    assert _has_effect(rogue, "cloak_of_shadows"), "Cloak should still be active"
+    return True
+
+
+def scenario_redirect_and_blink_like_coexist_without_cross_regression() -> bool:
+    redirect_match = make_match("hunter", "warrior", seed=123)
+    hunter_sid, warrior_sid = redirect_match.players
+    hunter = redirect_match.state[hunter_sid]
+    warrior = redirect_match.state[warrior_sid]
+    submit_turn(redirect_match, "call_boar", _DEF_PASS)
+    boar = _active_pet(hunter, "barrens_boar")
+    assert boar is not None, "Boar should summon for redirect coverage"
+    effects.apply_effect_by_id(hunter, "blocking_defence", overrides={"duration": 1, "redirect_to_pet_id": boar.id})
+    hunter_hp_before = hunter.res.hp
+    boar_hp_before = boar.hp
+    warrior.res.rage = warrior.res.rage_max
+    submit_turn(redirect_match, _DEF_PASS, "mortal_strike")
+    turn_two = _turn_lines(redirect_match, 2)
+    assert hunter.res.hp == hunter_hp_before, "Single-target hit should still redirect to boar"
+    assert boar.hp < boar_hp_before, "Redirected single-target hit should damage boar"
+    assert any("Barrens Boar intercepts Mortal Strike" in line for line in turn_two), "Redirect intercept log should remain present"
+
+    blink_match = make_match("mage", "warrior", seed=123)
+    submit_turn(blink_match, "blink", "basic_attack")
+    blink_turn = _turn_lines(blink_match, 1)
+    assert any("Target blinks away — Miss." in line for line in blink_turn), "Blink-like miss behavior should remain unchanged without redirect"
+
+    combined_match = make_match("hunter", "mage", seed=123)
+    submit_turn(combined_match, "call_boar", "blink")
+    combined_hunter_sid, combined_mage_sid = combined_match.players
+    combined_hunter = combined_match.state[combined_hunter_sid]
+    combined_mage = combined_match.state[combined_mage_sid]
+    combined_boar = _active_pet(combined_hunter, "barrens_boar")
+    assert combined_boar is not None, "Boar should exist for mixed redirect/blink turn flow"
+    effects.apply_effect_by_id(combined_hunter, "blocking_defence", overrides={"duration": 1, "redirect_to_pet_id": combined_boar.id})
+    combined_hunter_hp_before = combined_hunter.res.hp
+    combined_boar_hp_before = combined_boar.hp
+    submit_turn(combined_match, _DEF_PASS, "fireball")
+    mixed_turn = _turn_lines(combined_match, 2)
+    assert combined_hunter.res.hp == combined_hunter_hp_before, "Redirect should still intercept normal single-target spells in mixed flows"
+    assert combined_boar.hp < combined_boar_hp_before, "Boar should still absorb redirected mixed-flow damage"
+    assert not any("uses their bare hands to cast Fireball." in line and "blinks away — Miss." in line for line in mixed_turn), "Redirected spells should not be turned into blink-miss outcomes"
+
+    combined_mage_hp_before = combined_mage.res.hp
+    submit_turn(combined_match, "multi_shot", _DEF_PASS)
+    assert combined_mage.res.hp < combined_mage_hp_before, "AoE behavior should remain unchanged and bypass redirect"
+    return True
+
+
+def scenario_pet_specials_are_blocked_while_pet_is_ccd() -> bool:
+    boar_match = make_match("hunter", "warrior", seed=123)
+    hunter = boar_match.state[boar_match.players[0]]
+    submit_turn(boar_match, "call_boar", _DEF_PASS)
+    boar = _active_pet(hunter, "barrens_boar")
+    assert boar is not None, "Boar should be active for pet CC coverage"
+    effects.apply_effect_by_id(boar, "feared", overrides={"duration": 2})
+    effects.apply_effect_by_id(hunter, "raptor_strike_proc", overrides={"duration": 2})
+    submit_turn(boar_match, "raptor_strike", _DEF_PASS)
+    boar_turn = _turn_lines(boar_match, 2)
+    assert any("Barrens Boar is feared and cannot act." in line for line in boar_turn), "Feared boar should report cannot-act"
+    assert not any("Barrens Boar braces to intercept attacks." in line for line in boar_turn), "Feared boar should not execute its pre-action special"
+
+    saber_match = make_match("hunter", "warrior", seed=123)
+    saber_hunter = saber_match.state[saber_match.players[0]]
+    submit_turn(saber_match, "call_saber", _DEF_PASS)
+    saber = _active_pet(saber_hunter, "frostsaber")
+    assert saber is not None, "Frostsaber should be active for forced-special CC coverage"
+    effects.apply_effect_by_id(saber, "feared", overrides={"duration": 2})
+    effects.apply_effect_by_id(saber_hunter, "raptor_strike_proc", overrides={"duration": 2})
+    submit_turn(saber_match, "raptor_strike", _DEF_PASS)
+    saber_turn = _turn_lines(saber_match, 2)
+    assert any("Frostsaber is feared and cannot act." in line for line in saber_turn), "Feared companion should report cannot-act on forced special turns"
+    assert not any("Frostsaber bites the target" in line for line in saber_turn), "Forced special path should not bypass pet CC"
+
+    imp_match = make_match("warlock", "warrior", seed=123)
+    submit_turn(imp_match, "summon_imp", _DEF_PASS)
+    warlock = imp_match.state[imp_match.players[0]]
+    imp = _active_pet(warlock, "imp")
+    assert imp is not None, "Imp should be active for pet CC parity coverage"
+    effects.apply_effect_by_id(imp, "feared", overrides={"duration": 2})
+    submit_turn(imp_match, _DEF_PASS, _DEF_PASS)
+    imp_turn = _turn_lines(imp_match, 2)
+    assert any("Imp is feared and cannot act." in line for line in imp_turn), "Feared imp should not act"
+    assert not any("Imp casts Firebolt" in line for line in imp_turn), "Feared imp should not cast Firebolt"
+
+    control_match = make_match("hunter", "warrior", seed=123)
+    control_hunter = control_match.state[control_match.players[0]]
+    submit_turn(control_match, "call_saber", _DEF_PASS)
+    effects.apply_effect_by_id(control_hunter, "raptor_strike_proc", overrides={"duration": 2})
+    submit_turn(control_match, "raptor_strike", _DEF_PASS)
+    control_turn = _turn_lines(control_match, 2)
+    assert any("Frostsaber bites the target" in line for line in control_turn), "Non-CC pets should still execute valid specials"
     return True
 
 
@@ -2684,6 +2834,7 @@ SCENARIOS = [
     scenario_hunter_wildfire_dot_log_order,
     scenario_mass_dispel_removes_same_turn_wildfire_burn,
     scenario_hunter_proc_log_stays_at_top_of_turn,
+    scenario_proc_and_can_use_reminders_stay_in_expected_order,
     scenario_hunter_aimed_shot_raptor_pet_special,
     scenario_hunter_boar_redirect,
     scenario_hunter_boar_redirect_same_turn_brace,
@@ -2711,6 +2862,7 @@ SCENARIOS = [
     scenario_break_on_damage_cc_persists_after_same_turn_mutual_freeze,
     scenario_break_on_damage_cc_persists_after_same_turn_fear_vs_freeze,
     scenario_break_on_damage_logs_use_clean_wording_and_bottom_order,
+    scenario_break_on_damage_uses_source_ability_name_for_shared_fear_state,
     scenario_stealth_break_log_order_after_actions,
     scenario_shield_of_vengeance_explosion_flushes_stealth_break_log,
     scenario_redirected_damage_does_not_break_frozen,
@@ -2733,6 +2885,9 @@ SCENARIOS = [
     scenario_negative_non_damage_effect_does_not_break_feared,
     scenario_hunter_serpent_special_respects_stealth,
     scenario_pet_action_text_persists_on_miss,
+    scenario_imp_firebolt_immunity_logs_under_cloak,
+    scenario_redirect_and_blink_like_coexist_without_cross_regression,
+    scenario_pet_specials_are_blocked_while_pet_is_ccd,
     scenario_shadowfiend_pet_box_hides_turn_counter_badge,
     scenario_mindgames_still_allows_direct_damage_dots,
     scenario_devouring_plague_heals_for_full_tick_damage,

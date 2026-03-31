@@ -7,6 +7,7 @@ from .effects import (
     mitigate_damage,
     modify_stat,
     has_flag,
+    has_effect,
     get_cant_act_reason,
     is_immune_all,
     is_damage_immune,
@@ -55,7 +56,14 @@ def _resolve_special_overrides(pet, overrides: dict | None) -> dict:
     return resolved
 
 
-def _apply_effect_special(owner, pet, owner_sid, match, special_id: str) -> bool:
+def _append_pet_log(match, line: str, deferred_logs: list[str] | None = None) -> None:
+    if deferred_logs is not None:
+        deferred_logs.append(line)
+    else:
+        match.log.append(line)
+
+
+def _apply_effect_special(owner, pet, owner_sid, match, special_id: str, *, deferred_logs: list[str] | None = None) -> bool:
     template = PETS.get(pet.template_id, {})
     special_data = ((template.get("specials") or {}).get(special_id) or {})
     effect_id = special_data.get("effect_id")
@@ -63,15 +71,17 @@ def _apply_effect_special(owner, pet, owner_sid, match, special_id: str) -> bool
         return False
     overrides = _resolve_special_overrides(pet, special_data.get("effect_overrides"))
     apply_effect_by_id(owner, effect_id, overrides=overrides or None)
-    match.log.append(_pet_log(owner_sid, pet, _template_action_text(pet, special_id=special_id, fallback="acts")))
+    _append_pet_log(match, _pet_log(owner_sid, pet, _template_action_text(pet, special_id=special_id, fallback="acts")), deferred_logs)
     return True
 
 
-def trigger_pre_action_special(owner, pet, owner_sid, match, rng, *, consume_action: bool = True) -> bool:
+def trigger_pre_action_special(owner, pet, owner_sid, match, rng, *, consume_action: bool = True, deferred_logs: list[str] | None = None) -> bool:
     template = PETS.get(pet.template_id, {})
     special_id = template.get("special_id")
     special_data = ((template.get("specials") or {}).get(special_id) or {})
     if special_data.get("timing") != "pre_action":
+        return False
+    if get_cant_act_reason(pet):
         return False
 
     forced_command = owner.pending_pet_command
@@ -81,7 +91,7 @@ def trigger_pre_action_special(owner, pet, owner_sid, match, rng, *, consume_act
     if not use_special:
         return False
 
-    if not _apply_effect_special(owner, pet, owner_sid, match, str(special_id)):
+    if not _apply_effect_special(owner, pet, owner_sid, match, str(special_id), deferred_logs=deferred_logs):
         return False
 
     if consume_action:
@@ -108,6 +118,9 @@ def _run_imp_firebolt(
 ):
     action_text = _template_action_text(pet, fallback="casts Firebolt")
     if is_immune_all(enemy):
+        match.log.append(_pet_log(owner_sid, pet, action_text, "Immune!"))
+        return
+    if is_damage_immune(enemy, "magic") or has_effect(enemy, "cloak_of_shadows"):
         match.log.append(_pet_log(owner_sid, pet, action_text, "Immune!"))
         return
     if should_miss_due_to_stealth(owner, enemy, {"requires_target": True}, stealth_targeting):
@@ -504,7 +517,8 @@ def run_pet_phase(
         owner.pending_pet_command = None
 
 
-def prepare_pet_pre_action_effects(match, rng):
+def prepare_pet_pre_action_effects(match, rng) -> list[str]:
+    deferred_logs: list[str] = []
     sids = list(match.players)
     for owner_sid in sids:
         owner = match.state[owner_sid]
@@ -519,7 +533,8 @@ def prepare_pet_pre_action_effects(match, rng):
             if not pet or pet.hp <= 0:
                 continue
 
-            trigger_pre_action_special(owner, pet, owner_sid, match, rng, consume_action=True)
+            trigger_pre_action_special(owner, pet, owner_sid, match, rng, consume_action=True, deferred_logs=deferred_logs)
+    return deferred_logs
 
 
 def cleanup_pets(match):

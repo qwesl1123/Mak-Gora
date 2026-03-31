@@ -63,9 +63,9 @@ from .effects import (
     outgoing_damage_multiplier,
     is_dispellable_by,
     effect_template,
+    effect_has_tag,
     is_magical_harmful_effect,
     normalize_school,
-    break_effects_on_damage,
 )
 
 def cooldown_slots(ps: PlayerState, ability_id: str) -> list:
@@ -277,6 +277,9 @@ def resolve_turn(match: MatchState) -> None:
         return effect_id.replace("_", " ").title()
 
     def break_on_damage_effect_name(effect: Dict[str, Any]) -> str:
+        source_ability_name = effect.get("source_ability_name")
+        if source_ability_name:
+            return str(source_ability_name)
         effect_id = effect.get("id")
         template = effect_template(effect_id) if effect_id else {}
         return str(effect.get("name") or template.get("name") or effect_name(effect_id or "effect"))
@@ -448,6 +451,8 @@ def resolve_turn(match: MatchState) -> None:
             overrides = dict(entry.get("overrides", {}) or {})
             if entry.get("duration"):
                 overrides["duration"] = int(entry.get("duration"))
+            if "source_ability_name" not in overrides:
+                overrides["source_ability_name"] = ability.get("name") or effect_name(entry["id"])
             if "school" not in overrides and ability.get("school"):
                 overrides["school"] = ability.get("school")
             if "subschool" not in overrides and ability.get("subschool"):
@@ -489,6 +494,8 @@ def resolve_turn(match: MatchState) -> None:
             overrides = dict(entry.get("overrides", {}) or {})
             if entry.get("duration"):
                 overrides["duration"] = int(entry.get("duration"))
+            if "source_ability_name" not in overrides:
+                overrides["source_ability_name"] = ability.get("name") or effect_name(entry["id"])
             if "school" not in overrides and ability.get("school"):
                 overrides["school"] = ability.get("school")
             if "subschool" not in overrides and ability.get("subschool"):
@@ -1777,7 +1784,7 @@ def resolve_turn(match: MatchState) -> None:
         pet_command = (ctx.get("ability") or {}).get("pet_command")
         if pet_command:
             match.state[sid].pending_pet_command = pet_command
-    prepare_pet_pre_action_effects(match, r)
+    deferred_pet_pre_action_logs = prepare_pet_pre_action_effects(match, r)
     stealth_targeting = {sid: is_stealthed(match.state[sid]) for sid in sids}
 
     def immediate_action_can_stun(actor_sid: str, target_sid: str, ctx: Dict[str, Any]) -> bool:
@@ -2037,6 +2044,19 @@ def resolve_turn(match: MatchState) -> None:
         match.log.extend(deferred_stealth_break_logs)
         deferred_stealth_break_logs.clear()
 
+    def break_effects_and_collect_labels(target_entity: PlayerState | PetState) -> list[str]:
+        removed_labels: list[str] = []
+        for effect in list(getattr(target_entity, "effects", []) or []):
+            has_legacy_flag = (effect.get("flags", {}) or {}).get("break_on_damage")
+            if not (effect_has_tag(effect, "break_on_damage") or has_legacy_flag):
+                continue
+            effect_id = effect.get("id")
+            if not effect_id:
+                continue
+            removed_labels.append(break_on_damage_effect_name(effect))
+            remove_effect(target_entity, effect_id)
+        return removed_labels
+
     def apply_damage(
         source: PlayerState,
         target: PlayerState | PetState,
@@ -2137,23 +2157,21 @@ def resolve_turn(match: MatchState) -> None:
                 target.res.hp -= total_remaining
                 was_stealthed = is_stealthed(target)
                 break_stealth_on_damage(target, total_remaining)
-                broken_effects = break_effects_on_damage(target)
+                broken_effects = break_effects_and_collect_labels(target)
                 if was_stealthed and not is_stealthed(target):
                     deferred_stealth_break_logs.append(f"{target_sid[:5]} stealth broken by {source_ability_name}.")
-                for effect_id in broken_effects:
-                    effect = build_effect(effect_id)
+                for effect_name in broken_effects:
                     deferred_break_on_damage_logs.append(
-                        f"{break_on_damage_effect_name(effect)} on {target_sid[:5]} breaks on damage."
+                        f"{effect_name} on {target_sid[:5]} breaks on damage."
                     )
                 if current_form_id(target) == "bear_form":
                     grant_resource(target, "rage", total_remaining)
             else:
                 target.hp -= total_remaining
-                broken_effects = break_effects_on_damage(target)
-                for effect_id in broken_effects:
-                    effect = build_effect(effect_id)
+                broken_effects = break_effects_and_collect_labels(target)
+                for effect_name in broken_effects:
                     deferred_break_on_damage_logs.append(
-                        f"{break_on_damage_effect_name(effect)} on {target.name} breaks on damage."
+                        f"{effect_name} on {target.name} breaks on damage."
                     )
         return {
             "hp_damage": max(0, total_remaining),
@@ -2475,6 +2493,7 @@ def resolve_turn(match: MatchState) -> None:
 
     match.log.extend(result1.get("pre_logs", []))
     match.log.extend(result2.get("pre_logs", []))
+    match.log.extend(deferred_pet_pre_action_logs)
     result1_log = format_damage_log(result1["log"], dealt1_data)
     if int(dealt1_data.get("mindgames_healing", 0) or 0) > 0:
         result1_log = (
