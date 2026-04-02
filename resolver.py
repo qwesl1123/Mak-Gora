@@ -1402,6 +1402,26 @@ def resolve_turn(match: MatchState) -> None:
                 remove_stealth(actor)
             return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "extra_logs": extra_logs}
 
+        def _resolve_damage_modification(raw_damage: int) -> int:
+            reduced_damage = mitigate_damage(
+                raw_damage,
+                target,
+                ability_school,
+                ignore_armor=bool(ability.get("ignore_armor") or ability.get("ignore_physical_reduction")),
+                ignore_magic_resist=bool(ability.get("ignore_magic_resist")),
+            )
+            modified_damage = reduced_damage
+            multiplier = damage_multiplier_from_passives(actor)
+            if multiplier != 1.0:
+                modified_damage = int(modified_damage * multiplier)
+            if empower_multiplier != 1.0:
+                modified_damage = int(modified_damage * empower_multiplier)
+            if outgoing_mult != 1.0:
+                modified_damage = int(modified_damage * outgoing_mult)
+            if death_doubled and modified_damage > 0:
+                modified_damage *= 2
+            return modified_damage
+
         # Calculate base damage using appropriate stat
         ability_school = normalize_school(ability.get("school") or ability.get("damage_type") or "physical") or "physical"
         ability_subschool = ability.get("subschool") if ability_school == "magical" else None
@@ -1482,25 +1502,8 @@ def resolve_turn(match: MatchState) -> None:
                 raw = int(raw * 1.5)
                 log_parts.append(f"{prefix}Critical hit!")
 
-            # Apply stat-based mitigation (DEF + Armor for physical, DEF + Magic Resist for magical).
-            reduced = mitigate_damage(
-                raw,
-                target,
-                ability_school,
-                ignore_armor=bool(ability.get("ignore_armor") or ability.get("ignore_physical_reduction")),
-                ignore_magic_resist=bool(ability.get("ignore_magic_resist")),
-            )
-
-            incoming_for_hit = reduced
-            multiplier = damage_multiplier_from_passives(actor)
-            if multiplier != 1.0:
-                incoming_for_hit = int(incoming_for_hit * multiplier)
-            if empower_multiplier != 1.0:
-                incoming_for_hit = int(incoming_for_hit * empower_multiplier)
-            if outgoing_mult != 1.0:
-                incoming_for_hit = int(incoming_for_hit * outgoing_mult)
-            if death_doubled and incoming_for_hit > 0:
-                incoming_for_hit *= 2
+            # Resolution layer: damage_modification
+            incoming_for_hit = _resolve_damage_modification(raw)
 
             if ability_target_mode(ability) == "aoe_enemy" and incoming_for_hit > 0:
                 aoe_incoming_damage += incoming_for_hit
@@ -2138,41 +2141,66 @@ def resolve_turn(match: MatchState) -> None:
                 "subschool": subschool,
             }
 
-        instance_results: list[Dict[str, Any]] = []
-        total_absorbed = 0
-        total_remaining = 0
-        total_breakdown: list[Dict[str, Any]] = []
-        for value in instance_values:
-            if is_player_target:
-                remaining, absorbed, breakdown = consume_absorbs(target, value)
-            else:
-                remaining, absorbed, breakdown = value, 0, []
-            total_absorbed += absorbed
-            total_remaining += remaining
-            instance_results.append({"absorbed": absorbed, "hp_damage": remaining, "absorbed_breakdown": breakdown})
-            total_breakdown.extend(breakdown)
+        # Resolution layer: damage_application
+        def _resolve_damage_application(
+            target_entity: PlayerState | PetState,
+            instance_damage: list[int],
+            is_player_entity: bool,
+        ) -> tuple[list[Dict[str, Any]], int, int, list[Dict[str, Any]]]:
+            instance_results_local: list[Dict[str, Any]] = []
+            total_absorbed_local = 0
+            total_remaining_local = 0
+            total_breakdown_local: list[Dict[str, Any]] = []
+            for value in instance_damage:
+                if is_player_entity:
+                    remaining, absorbed, breakdown = consume_absorbs(target_entity, value)
+                else:
+                    remaining, absorbed, breakdown = value, 0, []
+                total_absorbed_local += absorbed
+                total_remaining_local += remaining
+                instance_results_local.append({"absorbed": absorbed, "hp_damage": remaining, "absorbed_breakdown": breakdown})
+                total_breakdown_local.extend(breakdown)
+            if total_remaining_local > 0:
+                if is_player_entity:
+                    target_entity.res.hp -= total_remaining_local
+                else:
+                    target_entity.hp -= total_remaining_local
+            return instance_results_local, total_absorbed_local, total_remaining_local, total_breakdown_local
 
-        if total_remaining > 0:
-            if is_player_target:
-                target.res.hp -= total_remaining
-                was_stealthed = is_stealthed(target)
-                break_stealth_on_damage(target, total_remaining)
-                broken_effects = break_effects_and_collect_labels(target)
-                if was_stealthed and not is_stealthed(target):
-                    deferred_stealth_break_logs.append(f"{target_sid[:5]} stealth broken by {source_ability_name}.")
+        # Resolution layer: post_damage_reactions
+        def _resolve_target_post_damage_reactions(
+            target_entity: PlayerState | PetState,
+            target_label: str,
+            hp_damage: int,
+            is_player_entity: bool,
+        ) -> None:
+            if hp_damage <= 0:
+                return
+            if is_player_entity:
+                was_stealthed = is_stealthed(target_entity)
+                break_stealth_on_damage(target_entity, hp_damage)
+                broken_effects = break_effects_and_collect_labels(target_entity)
+                if was_stealthed and not is_stealthed(target_entity):
+                    deferred_stealth_break_logs.append(f"{target_label[:5]} stealth broken by {source_ability_name}.")
                 for effect_name in broken_effects:
                     deferred_break_on_damage_logs.append(
-                        f"{effect_name} on {target_sid[:5]} breaks on damage."
+                        f"{effect_name} on {target_label[:5]} breaks on damage."
                     )
-                if current_form_id(target) == "bear_form":
-                    grant_resource(target, "rage", total_remaining)
-            else:
-                target.hp -= total_remaining
-                broken_effects = break_effects_and_collect_labels(target)
-                for effect_name in broken_effects:
-                    deferred_break_on_damage_logs.append(
-                        f"{effect_name} on {target.name} breaks on damage."
-                    )
+                if current_form_id(target_entity) == "bear_form":
+                    grant_resource(target_entity, "rage", hp_damage)
+                return
+            broken_effects = break_effects_and_collect_labels(target_entity)
+            for effect_name in broken_effects:
+                deferred_break_on_damage_logs.append(
+                    f"{effect_name} on {target_entity.name} breaks on damage."
+                )
+
+        instance_results, total_absorbed, total_remaining, total_breakdown = _resolve_damage_application(
+            target,
+            instance_values,
+            is_player_target,
+        )
+        _resolve_target_post_damage_reactions(target, target_sid, total_remaining, is_player_target)
         return {
             "hp_damage": max(0, total_remaining),
             "absorbed": total_absorbed,
@@ -2570,44 +2598,44 @@ def resolve_turn(match: MatchState) -> None:
                     target_label=pet_label,
                 )
 
-    for actor_sid, dealt, result in ((sids[0], dealt1, result1), (sids[1], dealt2, result2)):
+    def _resolve_actor_post_damage_reactions(
+        actor_sid: str,
+        target_sid: str,
+        dealt: int,
+        result: Dict[str, Any],
+    ) -> None:
         ability = ABILITIES.get(result.get("ability_id", ""), {})
-        if dealt > 0 and ability.get("heal_from_dealt_damage"):
-            actor = match.state[actor_sid]
-            if actor.res:
-                before_hp = actor.res.hp
-                actor.res.hp = min(actor.res.hp + dealt, actor.res.hp_max)
-                gained = actor.res.hp - before_hp
-                if gained > 0:
-                    match.log.append(f"{actor_sid[:5]} heals {gained} HP from {ability.get('name', 'their attack')}.")
-                    totals = match.combat_totals.setdefault(actor_sid, {"damage": 0, "healing": 0})
-                    totals["healing"] += gained
-
-    for actor_sid, target_sid, dealt, result in ((sids[0], sids[1], dealt1, result1), (sids[1], sids[0], dealt2, result2)):
-        if result.get("ability_id") != "death":
-            continue
-        target = match.state[target_sid]
         actor = match.state[actor_sid]
-        if target.res.hp > 0 and dealt > 0:
+        target = match.state[target_sid]
+
+        if dealt > 0 and ability.get("heal_from_dealt_damage") and actor.res:
+            before_hp = actor.res.hp
+            actor.res.hp = min(actor.res.hp + dealt, actor.res.hp_max)
+            gained = actor.res.hp - before_hp
+            if gained > 0:
+                match.log.append(f"{actor_sid[:5]} heals {gained} HP from {ability.get('name', 'their attack')}.")
+                totals = match.combat_totals.setdefault(actor_sid, {"damage": 0, "healing": 0})
+                totals["healing"] += gained
+
+        if result.get("ability_id") == "death" and target.res.hp > 0 and dealt > 0:
             backlash = int(dealt * 1.0)
             if backlash > 0:
                 apply_damage(actor, actor, backlash, actor_sid, "Shadow Word: Death backlash", school="magical", subschool="shadow", allow_redirect=False)
                 match.log.append(f"{actor_sid[:5]} suffers {backlash} backlash from Shadow Word: Death.")
 
-    for actor_sid, dealt, result in ((sids[0], dealt1, result1), (sids[1], dealt2, result2)):
-        ability = ABILITIES.get(result.get("ability_id", ""), {})
         lifesteal = float(ability.get("heal_from_damage", 0) or 0)
-        if dealt > 0 and lifesteal > 0:
-            actor = match.state[actor_sid]
-            if actor.res:
-                heal_value = int(dealt * lifesteal)
-                before_hp = actor.res.hp
-                actor.res.hp = min(actor.res.hp + heal_value, actor.res.hp_max)
-                gained = actor.res.hp - before_hp
-                if gained > 0:
-                    match.log.append(f"{actor_sid[:5]} drains {gained} life.")
-                    totals = match.combat_totals.setdefault(actor_sid, {"damage": 0, "healing": 0})
-                    totals["healing"] += gained
+        if dealt > 0 and lifesteal > 0 and actor.res:
+            heal_value = int(dealt * lifesteal)
+            before_hp = actor.res.hp
+            actor.res.hp = min(actor.res.hp + heal_value, actor.res.hp_max)
+            gained = actor.res.hp - before_hp
+            if gained > 0:
+                match.log.append(f"{actor_sid[:5]} drains {gained} life.")
+                totals = match.combat_totals.setdefault(actor_sid, {"damage": 0, "healing": 0})
+                totals["healing"] += gained
+
+    _resolve_actor_post_damage_reactions(sids[0], sids[1], dealt1, result1)
+    _resolve_actor_post_damage_reactions(sids[1], sids[0], dealt2, result2)
 
     run_pet_phase(
         match,

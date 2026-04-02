@@ -2595,6 +2595,23 @@ def scenario_break_on_damage_and_lifesteal_use_post_mitigation_damage() -> bool:
     return True
 
 
+def scenario_phase_c_prompt2_no_spillover_to_effect_application_or_end_of_turn() -> bool:
+    match = make_match("hunter", "warrior", seed=4007)
+    hunter_sid, warrior_sid = match.players
+    warrior = match.state[warrior_sid]
+
+    submit_turn(match, "wildfire_bomb", _DEF_PASS)
+    burn = next((fx for fx in warrior.effects if fx.get("id") == "wildfire_burn"), None)
+    assert burn is not None, "Wildfire Bomb should still apply Wildfire Burn during effect application"
+
+    summary = effects.end_of_turn(warrior, [], warrior_sid[:5])
+    assert any(
+        source.get("effect_id") == "wildfire_burn"
+        for source in summary.get("damage_sources", [])
+    ), "end_of_turn should still emit wildfire_burn as a damage source"
+    return True
+
+
 def scenario_subschool_metadata_and_templates() -> bool:
     direct_expectations = {
         "fireball": "fire",
@@ -2904,6 +2921,7 @@ SCENARIOS = [
     scenario_ignore_armor_bypasses_only_armor_component,
     scenario_pet_attacks_use_shared_mitigation_stats,
     scenario_break_on_damage_and_lifesteal_use_post_mitigation_damage,
+    scenario_phase_c_prompt2_no_spillover_to_effect_application_or_end_of_turn,
     scenario_subschool_metadata_and_templates,
     scenario_subschool_event_plumbing_for_dots_and_passives,
     scenario_direct_damage_dot_inherits_ability_subschool,
