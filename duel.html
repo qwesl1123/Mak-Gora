@@ -2066,7 +2066,7 @@
             <h4>Mass Dispel</h4>
             <p><span class="stat">Cost: 12 Mana</span> | <span class="stat">Cooldown: 20</span></p>
             <p><span class="stat">Command: <span class="kbd">mass_dispel</span></span></p>
-            <p>Dispels all magical DoTs on self, dispels enemy HoTs (Regrowth), and removes enemy Stealth, Ice Block, and Divine Shield.</p>
+            <p>Dispels all negetive magical effetcs on self, dispels all beneficial magical effects on the enemy.</p>
           </div>
           <div class="doc-item">
             <h4>Shadow Word: Death</h4>
@@ -3115,15 +3115,15 @@
           return applyFxTokensToHtml(`<span class="log-class-paladin logLinePaladinProc">${renderTextWithFxTags(textWithoutFx)}</span>`, fxTokens);
         }
         if (
-          textWithoutFx.includes("can use Arcane Shot!")
-          || textWithoutFx.includes("can use Raptor Strike!")
+          textWithoutFx.includes("has Arcane Shot!")
+          || textWithoutFx.includes("has Raptor Strike!")
         ) {
           return applyFxTokensToHtml(`<span class="log-class-hunter logLineHunterProc">${renderTextWithFxTags(textWithoutFx)}</span>`, fxTokens);
         }
         if (
           textWithoutFx.includes("Has Shadowy Insight!")
           || textWithoutFx.includes("Mind Blast is empowered!")
-          || textWithoutFx.includes("Shadow Word: Death Damage Doubled!")
+          || textWithoutFx.includes("Shadow Word: Death Damage will be Doubled!")
         ) {
           return applyFxTokensToHtml(`<span class="logLinePriestGlow">${renderTextWithFxTags(textWithoutFx)}</span>`, fxTokens);
         }
@@ -3231,8 +3231,8 @@
           classes.push("logLinePaladinProc");
         }
         if (
-          msg.includes("can use Arcane Shot!")
-          || msg.includes("can use Raptor Strike!")
+          msg.includes("has Arcane Shot!")
+          || msg.includes("has Raptor Strike!")
         ) {
           classes.push("logLineHunterProc");
         }
@@ -3242,7 +3242,7 @@
         if (
           msg.includes("Has Shadowy Insight!")
           || msg.includes("Mind Blast is empowered!")
-          || msg.includes("Shadow Word: Death Damage Doubled!")
+          || msg.includes("Shadow Word: Death Damage will be Doubled!")
         ) {
           classes.push("logLinePriestGlow");
         }

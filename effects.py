@@ -1786,9 +1786,21 @@ def trigger_end_of_turn_effects(ps: PlayerState, log: List[str], label: str) -> 
             ps.res.energy = min(ps.res.energy + energy_gain, ps.res.energy_max)
         should_log_recovery = ((hp_gain > 0 and not twisted_by_mindgames) or mp_gain > 0 or energy_gain > 0)
         if should_log_recovery and log is not None:
-            log.append(
-                f"{label} recovers {hp_gain} HP, {mp_gain} MP, and {energy_gain} Energy from {effect_name}."
-            )
+            recovered_parts: list[str] = []
+            if hp_gain > 0 and not twisted_by_mindgames:
+                recovered_parts.append(f"{hp_gain} HP")
+            if mp_gain > 0:
+                recovered_parts.append(f"{mp_gain} Mana")
+            if energy_gain > 0:
+                recovered_parts.append(f"{energy_gain} Energy")
+            if recovered_parts:
+                if len(recovered_parts) == 1:
+                    recovered_text = recovered_parts[0]
+                elif len(recovered_parts) == 2:
+                    recovered_text = " and ".join(recovered_parts)
+                else:
+                    recovered_text = f"{', '.join(recovered_parts[:-1])}, and {recovered_parts[-1]}"
+                log.append(f"{label} recovers {recovered_text} from {effect_name}.")
     return total_healing, pending_mindgames_damage
 
 

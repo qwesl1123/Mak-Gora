@@ -2076,9 +2076,10 @@ def resolve_turn(match: MatchState) -> None:
         def _resolve_target_resolution(
             target_entity: PlayerState | PetState,
             target_label: str,
-        ) -> tuple[PlayerState | PetState, str, bool, str | None]:
+        ) -> tuple[PlayerState | PetState, str, bool, str | None, str | None]:
             is_player_entity = hasattr(target_entity, "res") and target_entity.res is not None
             redirected_pet_name: str | None = None
+            redirect_log: str | None = None
             if is_player_entity and allow_redirect and has_flag(target_entity, "redirect_single_target_to_pet"):
                 redirect_effect = next(
                     (
@@ -2091,9 +2092,9 @@ def resolve_turn(match: MatchState) -> None:
                 pet = target_entity.pets.get(pet_id) if pet_id else None
                 if pet and pet.hp > 0:
                     redirected_pet_name = pet.name
-                    match.log.append(f"{pet.name} intercepts {source_ability_name} for {target_label[:5]}.")
-                    return pet, pet.name, False, redirected_pet_name
-            return target_entity, target_label, is_player_entity, redirected_pet_name
+                    redirect_log = f"{pet.name} intercepts {source_ability_name} for {target_label[:5]}."
+                    return pet, pet.name, False, redirected_pet_name, redirect_log
+            return target_entity, target_label, is_player_entity, redirected_pet_name, redirect_log
 
         # Resolution layer: pre_resolution_protection
         def _resolve_pre_resolution_protection(
@@ -2114,12 +2115,12 @@ def resolve_turn(match: MatchState) -> None:
         normalized_school = normalize_school(school) or "physical"
         is_player_target = hasattr(target, "res") and target.res is not None
         if incoming <= 0:
-            return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0, "school": normalized_school, "subschool": subschool}
-        target, target_sid, is_player_target, redirected_to = _resolve_target_resolution(target, target_sid)
+            return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0, "school": normalized_school, "subschool": subschool, "redirect_log": None}
+        target, target_sid, is_player_target, redirected_to, redirect_log = _resolve_target_resolution(target, target_sid)
         if is_player_target:
             blocked, _ = _resolve_pre_resolution_protection(target, target_sid, normalized_school)
             if blocked:
-                return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0, "school": normalized_school, "subschool": subschool}
+                return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0, "school": normalized_school, "subschool": subschool, "redirect_log": redirect_log}
         instance_values = [max(0, int(value or 0)) for value in (damage_instances or []) if int(value or 0) > 0]
         accounted = sum(instance_values)
         if incoming > accounted:
@@ -2139,6 +2140,7 @@ def resolve_turn(match: MatchState) -> None:
                 "mindgames_healing": incoming,
                 "school": normalized_school,
                 "subschool": subschool,
+                "redirect_log": redirect_log,
             }
 
         # Resolution layer: damage_application
@@ -2208,6 +2210,7 @@ def resolve_turn(match: MatchState) -> None:
             "instances": instance_results,
             "mindgames_healing": 0,
             "redirected_to": redirected_to,
+            "redirect_log": redirect_log,
             "school": normalized_school,
             "subschool": subschool,
         }
@@ -2364,6 +2367,9 @@ def resolve_turn(match: MatchState) -> None:
 
     source_name_1 = ABILITIES.get(result1.get("ability_id", ""), {}).get("name", "attack")
     source_name_2 = ABILITIES.get(result2.get("ability_id", ""), {}).get("name", "attack")
+    match.log.extend(result1.get("pre_logs", []))
+    match.log.extend(result2.get("pre_logs", []))
+    match.log.extend(deferred_pet_pre_action_logs)
     dealt1_data = (
         {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0}
         if result1.get("skip_direct_target_damage")
@@ -2519,9 +2525,6 @@ def resolve_turn(match: MatchState) -> None:
             if formatted:
                 match.log.append(formatted)
 
-    match.log.extend(result1.get("pre_logs", []))
-    match.log.extend(result2.get("pre_logs", []))
-    match.log.extend(deferred_pet_pre_action_logs)
     result1_log = format_damage_log(result1["log"], dealt1_data)
     if int(dealt1_data.get("mindgames_healing", 0) or 0) > 0:
         result1_log = (
@@ -2529,6 +2532,8 @@ def resolve_turn(match: MatchState) -> None:
             f"{int(dealt1_data.get('mindgames_healing', 0) or 0)} healing for the target."
     )
     match.log.append(result1_log)
+    if dealt1_data.get("redirect_log"):
+        match.log.append(str(dealt1_data.get("redirect_log")))
     append_extra_logs(sids[0], sids[1], result1)
     apply_direct_damage_dot(
         sids[0],
@@ -2544,6 +2549,8 @@ def resolve_turn(match: MatchState) -> None:
             f"{int(dealt2_data.get('mindgames_healing', 0) or 0)} healing for the target."
     )
     match.log.append(result2_log)
+    if dealt2_data.get("redirect_log"):
+        match.log.append(str(dealt2_data.get("redirect_log")))
     append_extra_logs(sids[1], sids[0], result2)
     apply_direct_damage_dot(
         sids[1],
@@ -2745,28 +2752,13 @@ def resolve_turn(match: MatchState) -> None:
 
     cleanup_pets(match)
 
-    # Check for winners
     p1_alive = match.state[sids[0]].res.hp > 0
     p2_alive = match.state[sids[1]].res.hp > 0
-    if not p1_alive or not p2_alive:
-        match.phase = "ended"
-        match.log.append(
-            "Post-Combat Summary|FD:{friendly_damage}|FH:{friendly_healing}|"
-            "ED:{enemy_damage}|EH:{enemy_healing}"
-        )
-        if p1_alive and not p2_alive:
-            match.winner = sids[0]
-            match.log.append(f"{sids[0][:5]} wins the duel.")
-        elif p2_alive and not p1_alive:
-            match.winner = sids[1]
-            match.log.append(f"{sids[1][:5]} wins the duel.")
-        else:
-            match.winner = None
-            match.log.append("Double KO. No winner.")
+    both_alive = p1_alive and p2_alive
 
     execute_ability = ABILITIES.get("execute", {})
     execute_threshold = execute_ability.get("requires_target_hp_below")
-    if execute_threshold is not None and match.phase != "ended":
+    if execute_threshold is not None and both_alive:
         for sid in sids:
             ps = match.state[sid]
             opponent_sid = sids[1] if sid == sids[0] else sids[0]
@@ -2785,7 +2777,7 @@ def resolve_turn(match: MatchState) -> None:
 
     death_ability = ABILITIES.get("death", {})
     death_threshold = 0.2
-    if death_ability and match.phase != "ended":
+    if death_ability and both_alive:
         for sid in sids:
             ps = match.state[sid]
             opponent_sid = sids[1] if sid == sids[0] else sids[0]
@@ -2800,9 +2792,26 @@ def resolve_turn(match: MatchState) -> None:
                 continue
             ok, _ = can_pay_costs(ps, death_ability.get("cost", {}))
             if ok:
-                match.log.append(f"{sid[:5]} Shadow Word: Death Damage Doubled!")
+                match.log.append(f"{sid[:5]} Shadow Word: Death Damage will be Doubled!")
 
     match.log.extend(deferred_break_on_damage_logs)
+
+    # Check for winners after all turn resolution (pet phase, end-of-turn, and deferred logs)
+    if not both_alive:
+        match.phase = "ended"
+        match.log.append(
+            "Post-Combat Summary|FD:{friendly_damage}|FH:{friendly_healing}|"
+            "ED:{enemy_damage}|EH:{enemy_healing}"
+        )
+        if p1_alive and not p2_alive:
+            match.winner = sids[0]
+            match.log.append(f"{sids[0][:5]} wins the duel.")
+        elif p2_alive and not p1_alive:
+            match.winner = sids[1]
+            match.log.append(f"{sids[1][:5]} wins the duel.")
+        else:
+            match.winner = None
+            match.log.append("Double KO. No winner.")
 
     match.submitted.clear()
     match.turn += 1

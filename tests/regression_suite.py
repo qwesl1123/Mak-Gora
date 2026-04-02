@@ -932,9 +932,9 @@ def scenario_hunter_wildfire_arcane_proc() -> bool:
     arcane_proc = next((fx for fx in hunter.effects if fx.get("id") == "arcane_shot_proc"), None)
     assert arcane_proc is not None, "Wildfire Bomb should grant Arcane Shot proc"
     assert int(arcane_proc.get("duration", 0) or 0) == 1, "Arcane Shot proc should be available for the next turn only after the proc turn resolves"
-    proc_line = f"{match.players[0][:5]} can use Arcane Shot!"
+    proc_line = f"{match.players[0][:5]} has Arcane Shot!"
     assert proc_line in match.log, "Wildfire Bomb proc log should use the actor sid token so snapshots can render Hunter(you)"
-    assert not any("Wildfire Bomb. can use Arcane Shot!" in line or "Wildfire Bomb. Hunter can use Arcane Shot!" in line for line in match.log), "Wildfire Bomb action line should not embed the proc sentence"
+    assert not any("Wildfire Bomb. has Arcane Shot!" in line or "Wildfire Bomb. Hunter has Arcane Shot!" in line for line in match.log), "Wildfire Bomb action line should not embed the proc sentence"
 
     submit_turn(match, "arcane_shot", _DEF_PASS)
     assert not _has_effect(hunter, "arcane_shot_proc"), "Arcane Shot should consume its proc"
@@ -982,14 +982,14 @@ def scenario_hunter_proc_log_stays_at_top_of_turn() -> bool:
     submit_turn(match, _DEF_PASS, "wildfire_bomb")
 
     latest_turn = match.log[match.log.index("Turn 1") + 1:]
-    assert latest_turn[0] == f"{match.players[1][:5]} can use Arcane Shot!", "Hunter proc reminder should be the first line of the turn even when the Hunter acts second"
+    assert latest_turn[0] == f"{match.players[1][:5]} has Arcane Shot!", "Hunter proc reminder should be the first line of the turn even when the Hunter acts second"
     warrior_action_idx = next(i for i, line in enumerate(latest_turn) if "uses their bare hands to cast Pass Turn" in line)
     hunter_action_idx = next(i for i, line in enumerate(latest_turn) if "uses their bare hands to cast Wildfire Bomb" in line)
     assert 0 < warrior_action_idx < hunter_action_idx, "Proc reminder should appear before both players' action lines"
     return True
 
 
-def scenario_proc_and_can_use_reminders_stay_in_expected_order() -> bool:
+def scenario_proc_and_has_reminders_stay_in_expected_order() -> bool:
     match = make_match("hunter", "priest", seed=123)
     hunter_sid, priest_sid = match.players
     hunter = match.state[hunter_sid]
@@ -1001,7 +1001,7 @@ def scenario_proc_and_can_use_reminders_stay_in_expected_order() -> bool:
     submit_turn(match, "wildfire_bomb", _DEF_PASS)
 
     latest_turn = _turn_lines(match, 2)
-    proc_idx = next((i for i, line in enumerate(latest_turn) if "can use Arcane Shot!" in line), -1)
+    proc_idx = next((i for i, line in enumerate(latest_turn) if "has Arcane Shot!" in line), -1)
     brace_idx = next((i for i, line in enumerate(latest_turn) if "Barrens Boar braces to intercept attacks." in line), -1)
     hunter_action_idx = next((i for i, line in enumerate(latest_turn) if "uses their bare hands to cast Wildfire Bomb." in line), -1)
     assert proc_idx == 0, "Proc reminder should stay at the top of the turn"
@@ -1021,6 +1021,23 @@ def scenario_proc_and_can_use_reminders_stay_in_expected_order() -> bool:
     return True
 
 
+def scenario_recover_log_shows_only_nonzero_resources_and_uses_mana_wording() -> bool:
+    match = make_match("hunter", "warrior", seed=123)
+    hunter_sid = match.players[0]
+    hunter = match.state[hunter_sid]
+
+    hunter.res.mp = 0
+    hunter.res.energy = max(0, hunter.res.energy - 30)
+    submit_turn(match, "turtle", _DEF_PASS)
+
+    latest_turn = _turn_lines(match, 1)
+    expected = f"{hunter_sid[:5]} recovers 10 Mana from Aspect of the Turtle."
+    assert expected in latest_turn, "Recovery log should only include nonzero recovered resources"
+    assert not any(" MP" in line for line in latest_turn), "Recovery log should use Mana instead of MP"
+    assert not any("0 HP" in line or "0 Energy" in line for line in latest_turn), "Recovery log should omit zero-value recoveries"
+    return True
+
+
 def scenario_hunter_aimed_shot_raptor_pet_special() -> bool:
     match = make_match("hunter", "warrior", seed=1)
     hunter = match.state[match.players[0]]
@@ -1034,7 +1051,7 @@ def scenario_hunter_aimed_shot_raptor_pet_special() -> bool:
 
     submit_turn(match, "raptor_strike", _DEF_PASS)
     assert not _has_effect(hunter, "raptor_strike_proc"), "Raptor Strike should consume its proc"
-    assert f"{match.players[0][:5]} can use Raptor Strike!" in match.log, "Aimed Shot proc log should use the actor sid token so snapshots can render Hunter(you)"
+    assert f"{match.players[0][:5]} has Raptor Strike!" in match.log, "Aimed Shot proc log should use the actor sid token so snapshots can render Hunter(you)"
     assert hunter.pending_pet_command is None, "Pet command should be consumed after the pet phase"
     latest_turn = match.log[match.log.index("Turn 3") + 1:]
     assert any("Frostsaber bites the target" in line for line in latest_turn), "Raptor Strike should force the pet special attack, not the basic melee"
@@ -1083,8 +1100,51 @@ def scenario_hunter_boar_redirect_same_turn_brace() -> bool:
     latest_turn = _turn_lines(match, 1)
     assert any("Barrens Boar braces to intercept attacks." in line for line in latest_turn), "Boar should brace on its summon turn when the pre-action special fires"
     assert any("Barrens Boar intercepts Drain Life" in line for line in latest_turn), "Intercept log should reference the redirected Drain Life"
+    brace_idx = next((i for i, line in enumerate(latest_turn) if "Barrens Boar braces to intercept attacks." in line), -1)
+    action_idx = next((i for i, line in enumerate(latest_turn) if "uses their bare hands to cast Drain Life." in line), -1)
+    intercept_idx = next((i for i, line in enumerate(latest_turn) if "Barrens Boar intercepts Drain Life" in line), -1)
+    assert brace_idx != -1 and action_idx != -1 and intercept_idx != -1, "Brace, incoming action, and intercept logs should all be present"
+    assert brace_idx < action_idx < intercept_idx, "Brace log should appear before actions; intercept log should appear at the redirect point"
     assert hunter.res.hp == hunter_hp_before, "Same-turn Blocking Defence should keep Drain Life off the Hunter"
     assert boar.hp < boar.hp_max, "Same-turn Blocking Defence should route Drain Life damage into the boar"
+    return True
+
+
+def scenario_winner_summary_logs_after_pet_phase_and_end_of_turn_resolution() -> bool:
+    match = make_match("hunter", "warlock", seed=123)
+    hunter_sid, warlock_sid = match.players
+    hunter = match.state[hunter_sid]
+    warlock = match.state[warlock_sid]
+
+    submit_turn(match, "call_serpent", _DEF_PASS)
+    hunter_pet_turn = _turn_lines(match, 1)
+    assert any("Emerald Serpent" in line for line in hunter_pet_turn), "Setup turn should summon a hunter pet"
+    assert match.phase != "ended", "Setup turn should keep the duel active for ordering coverage"
+    warlock.res.hp = warlock.res.hp_max
+
+    warlock.res.hp = 5
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+
+    latest_turn = _turn_lines(match, 2)
+    pet_attack_idx = next((i for i, line in enumerate(latest_turn) if "Emerald Serpent" in line and ("melees the target" in line or "breathes lightning" in line)), -1)
+    summary_idx = next((i for i, line in enumerate(latest_turn) if line.startswith("Post-Combat Summary|")), -1)
+    winner_idx = next((i for i, line in enumerate(latest_turn) if "wins the duel." in line), -1)
+    assert pet_attack_idx != -1, "Pet phase should execute before the duel concludes"
+    assert summary_idx != -1 and winner_idx != -1, "Summary and winner logs should be present on lethal turns"
+    assert pet_attack_idx < summary_idx < winner_idx, "Pet phase should complete before summary/winner output"
+    return True
+
+
+def scenario_shadow_word_death_double_damage_reminder_wording() -> bool:
+    match = make_match("priest", "warrior", seed=123)
+    priest_sid, warrior_sid = match.players
+    warrior = match.state[warrior_sid]
+
+    warrior.res.hp = max(1, int(warrior.res.hp_max * 0.15))
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+    latest_turn = _turn_lines(match, 1)
+    assert f"{priest_sid[:5]} Shadow Word: Death Damage will be Doubled!" in latest_turn, "Shadow Word: Death reminder should use updated wording"
+    assert not any("Shadow Word: Death Damage Doubled!" in line for line in latest_turn), "Legacy Shadow Word: Death reminder wording should not appear"
     return True
 
 
@@ -2851,10 +2911,13 @@ SCENARIOS = [
     scenario_hunter_wildfire_dot_log_order,
     scenario_mass_dispel_removes_same_turn_wildfire_burn,
     scenario_hunter_proc_log_stays_at_top_of_turn,
-    scenario_proc_and_can_use_reminders_stay_in_expected_order,
+    scenario_proc_and_has_reminders_stay_in_expected_order,
+    scenario_recover_log_shows_only_nonzero_resources_and_uses_mana_wording,
     scenario_hunter_aimed_shot_raptor_pet_special,
     scenario_hunter_boar_redirect,
     scenario_hunter_boar_redirect_same_turn_brace,
+    scenario_winner_summary_logs_after_pet_phase_and_end_of_turn_resolution,
+    scenario_shadow_word_death_double_damage_reminder_wording,
     scenario_hunter_boar_forced_pre_action_redirect_is_consistent,
     scenario_hunter_boar_no_late_brace_without_redirect,
     scenario_hunter_raptor_strike_forces_boar_redirect,

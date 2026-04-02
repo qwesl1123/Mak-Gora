@@ -1114,7 +1114,7 @@ ABILITIES = {
         "cooldown": 13,
         "classes": ["hunter"],
         "self_effects": [
-            {"id": "arcane_shot_proc", "duration": 2, "log": "{actor} can use Arcane Shot!", "separate_log": True}
+            {"id": "arcane_shot_proc", "duration": 2, "log": "{actor} has Arcane Shot!", "separate_log": True}
         ],
         "dot": {"id": "wildfire_burn", "duration": 2, "school": "magical", "subschool": "fire", "scaling": {"atk": 0.5}, "dice": {"type": "d4", "power_on": "roll"}},
     },
@@ -1197,7 +1197,7 @@ ABILITIES = {
         "cooldown": 0,
         "classes": ["hunter"],
         "on_hit_effects": [
-            {"id": "raptor_strike_proc", "chance": 0.5, "log": "{actor} can use Raptor Strike!", "separate_log": True}
+            {"id": "raptor_strike_proc", "chance": 0.5, "log": "{actor} has Raptor Strike!", "separate_log": True}
         ],
         "on_hit_resource_gains": [
             {"resource": "mp", "amount": 5, "chance": 0.5, "log": "restores 5 mana."}
