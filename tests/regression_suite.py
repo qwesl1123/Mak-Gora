@@ -2672,6 +2672,94 @@ def scenario_phase_c_prompt2_no_spillover_to_effect_application_or_end_of_turn()
     return True
 
 
+def scenario_phase_c_prompt3_effect_application_stage_preserved() -> bool:
+    # buff_application + hot_application
+    druid_match = make_match("druid", "warrior", seed=4010)
+    druid_sid, warrior_sid = druid_match.players
+    druid = druid_match.state[druid_sid]
+    submit_turn(druid_match, "tree", _DEF_PASS)
+    submit_turn(druid_match, "regrowth", _DEF_PASS)
+    assert _has_effect(druid, "regrowth"), "Self HoT/buff application should remain unchanged"
+
+    # debuff_application + dot_application + effect_refresh
+    refresh_ability_id = "test_effect_application_refresh_dot"
+    refresh_effect_id = "test_effect_application_refresh_dot_effect"
+    ABILITIES[refresh_ability_id] = {
+        "name": "Refresh DoT Test",
+        "requires_target": True,
+        "cannot_miss": True,
+        "flat_damage": 7,
+        "damage_type": "magic",
+        "school": "magical",
+        "subschool": "shadow",
+        "dot": {"id": refresh_effect_id, "duration": 2, "from_dealt_damage": True},
+        "tags": ["attack", "spell"],
+    }
+    EFFECT_TEMPLATES[refresh_effect_id] = {
+        "type": "dot",
+        "name": "Refresh DoT Test Effect",
+        "duration": 2,
+        "category": "dot",
+        "school": "magical",
+        "subschool": "shadow",
+        "tick_damage": 1,
+    }
+    try:
+        warlock_match = make_match("warlock", "warrior", seed=4011)
+        submit_turn(warlock_match, refresh_ability_id, _DEF_PASS)
+        first_target = warlock_match.state[warlock_match.players[1]]
+        first_dot = next((fx for fx in first_target.effects if fx.get("id") == refresh_effect_id), None)
+        assert first_dot is not None, "Enemy DoT/debuff application should remain unchanged"
+        submit_turn(warlock_match, refresh_ability_id, _DEF_PASS)
+        refreshed_dot = next((fx for fx in first_target.effects if fx.get("id") == refresh_effect_id), None)
+        assert refreshed_dot is not None, "DoT should still exist after refresh"
+        assert any("refreshes Test Effect Application Refresh Dot Effect" in line for line in _turn_lines(warlock_match, 2)), "DoT refresh timing/log should remain unchanged"
+    finally:
+        ABILITIES.pop(refresh_ability_id, None)
+        EFFECT_TEMPLATES.pop(refresh_effect_id, None)
+
+    # proc_grant + proc_consume
+    hunter_proc_match = make_match("hunter", "warrior", seed=4012)
+    hunter_sid, _ = hunter_proc_match.players
+    hunter = hunter_proc_match.state[hunter_sid]
+    submit_turn(hunter_proc_match, "wildfire_bomb", _DEF_PASS)
+    assert _has_effect(hunter, "arcane_shot_proc"), "Proc grant should remain unchanged"
+    submit_turn(hunter_proc_match, "arcane_shot", _DEF_PASS)
+    assert not _has_effect(hunter, "arcane_shot_proc"), "Proc consume timing should remain unchanged"
+
+    # summon_application + pet_command_application
+    hunter_pet_match = make_match("hunter", "warrior", seed=4013)
+    submit_turn(hunter_pet_match, "call_boar", _DEF_PASS)
+    assert _active_pet(hunter_pet_match.state[hunter_pet_match.players[0]], "barrens_boar") is not None, "Summon application should remain unchanged"
+    assert any("calls for Barrens Boar." in line for line in _turn_lines(hunter_pet_match, 1)), "Summon logging should remain unchanged"
+
+    # dispel_application + effect_removal (including stealth reveal path)
+    dispel_match = make_match("priest", "hunter", seed=4014)
+    submit_turn(dispel_match, "mass_dispel", "wildfire_bomb")
+    assert not _has_effect(dispel_match.state[dispel_match.players[0]], "wildfire_burn"), "Mass Dispel removal behavior should remain unchanged"
+
+    reveal_match = make_match("hunter", "rogue", seed=4015)
+    submit_turn(reveal_match, "flare", _DEF_PASS)
+    assert not _has_effect(reveal_match.state[reveal_match.players[1]], "stealth"), "Stealth removal/reveal behavior should remain unchanged"
+    reveal_turn = _turn_lines(reveal_match, 1)
+    assert reveal_turn[0] == "p1_si uses their bare hands to cast Flare. Flare reveals the target.", "Immediate-path effect log should remain unchanged"
+    assert reveal_turn[1] == "p2_si's stealth broken by Flare.", "Immediate-path reveal break log should remain unchanged"
+
+    summon_turn = _turn_lines(hunter_pet_match, 1)
+    assert summon_turn[0] == "p1_si uses their bare hands to cast Call Barrens Boar. calls for Barrens Boar.", "Immediate summon action log should remain unchanged"
+
+    # no spillover to damage/post-damage and end_of_turn
+    damage_match = make_match("warrior", "warrior", seed=4016)
+    p1_sid, p2_sid = damage_match.players
+    enemy_before = damage_match.state[p2_sid].res.hp
+    submit_turn(damage_match, "overpower", _DEF_PASS)
+    assert damage_match.state[p2_sid].res.hp < enemy_before, "Damage/post-damage stages should remain unchanged"
+
+    eot_summary = effects.end_of_turn(first_target, [], warrior_sid[:5])
+    assert any(src.get("effect_id") == refresh_effect_id for src in eot_summary.get("damage_sources", [])), "end_of_turn behavior should remain unchanged"
+    return True
+
+
 def scenario_subschool_metadata_and_templates() -> bool:
     direct_expectations = {
         "fireball": "fire",
@@ -2985,6 +3073,7 @@ SCENARIOS = [
     scenario_pet_attacks_use_shared_mitigation_stats,
     scenario_break_on_damage_and_lifesteal_use_post_mitigation_damage,
     scenario_phase_c_prompt2_no_spillover_to_effect_application_or_end_of_turn,
+    scenario_phase_c_prompt3_effect_application_stage_preserved,
     scenario_subschool_metadata_and_templates,
     scenario_subschool_event_plumbing_for_dots_and_passives,
     scenario_direct_damage_dot_inherits_ability_subschool,

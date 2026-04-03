@@ -523,6 +523,98 @@ def resolve_turn(match: MatchState) -> None:
             if applied_any and entry.get("log"):
                 log_parts.append(entry["log"])
 
+    def _resolve_effect_application(
+        actor_sid: str,
+        actor: PlayerState,
+        target: PlayerState | PetState,
+        ability_id: str,
+        ability: Dict[str, Any],
+        log_parts: list[str],
+        *,
+        pre_log_parts: list[str] | None = None,
+        extra_log_parts: list[str] | None = None,
+        skip_self_effect_ids: set[str] | None = None,
+        skip_primary_target: bool = False,
+        apply_entries: bool = True,
+        apply_defensive_effect_template: bool = False,
+        has_damage: bool = False,
+        has_target_effects: bool = False,
+        include_non_damaging_summon: bool = False,
+        allow_summon_with_target_effects: bool = False,
+        set_cooldown_on_summon: bool = True,
+        return_on_summon_error: bool = True,
+    ) -> Dict[str, Any] | None:
+        # effect_application: buff_application / debuff_application / dot_application /
+        # hot_application / proc_grant / dispel_application / effect_refresh / effect_removal
+        if apply_defensive_effect_template and ability.get("effect"):
+            effect = dict(ability["effect"])
+            effect["duration"] = int(effect.get("duration", 1))
+            apply_effect_by_id(
+                actor,
+                "item_passive_template",
+                overrides={"type": effect.get("type", "status"), **effect},
+            )
+            log_parts.append("Defensive stance raised.")
+        else:
+            has_self_effects = bool(ability.get("self_effects"))
+            if apply_entries and (has_self_effects or has_target_effects):
+                apply_effect_entries(
+                    actor,
+                    target,
+                    ability,
+                    log_parts,
+                    pre_log_parts=pre_log_parts,
+                    extra_log_parts=extra_log_parts,
+                    skip_self_effect_ids=skip_self_effect_ids,
+                    skip_primary_target=skip_primary_target,
+                )
+
+        summon_pet_id = ability.get("summon_pet_id")
+        allow_summon = (
+            include_non_damaging_summon
+            and summon_pet_id
+            and (
+                allow_summon_with_target_effects
+                or (not has_damage and not has_target_effects)
+            )
+        )
+        if allow_summon:
+            summoned_pet, refreshed, summon_error = summon_pet_from_template(actor, summon_pet_id)
+            template = PETS.get(summon_pet_id, {})
+            if summon_error:
+                if return_on_summon_error:
+                    return {"damage": 0, "healing": 0, "log": summon_error, "ability_id": ability_id}
+                log_parts.append(summon_error)
+                return None
+            max_count = int(template.get("max_count", 1) or 1)
+            current = len([p for p in actor.pets.values() if p.template_id == summon_pet_id])
+            summon_log = ability.get("summon_log")
+            force_call_wording = summon_pet_id in {"barrens_boar", "frostsaber", "emerald_serpent"} and bool(summon_log)
+            if refreshed:
+                if force_call_wording:
+                    log_parts.append(str(summon_log))
+                else:
+                    log_parts.append(f"refreshes {template.get('name', summon_pet_id.title())}.")
+            elif max_count > 1:
+                log_parts.append(f"summons a {template.get('name', summon_pet_id.title())} ({current}/{max_count}).")
+            elif summoned_pet is not None:
+                if summon_log:
+                    log_parts.append(str(summon_log))
+                else:
+                    remembered = actor.hunter_pet_memory.get(summon_pet_id)
+                    if remembered is not None:
+                        log_parts.append(f"summons {template.get('name', summon_pet_id.title())} with {summoned_pet.hp}/{summoned_pet.hp_max} HP.")
+                    else:
+                        log_parts.append(f"summons {template.get('name', summon_pet_id.title())}.")
+            if summoned_pet is not None and not refreshed:
+                trigger_pre_action_special(actor, summoned_pet, actor_sid, match, r, consume_action=True)
+            remove_effect(actor, summon_pet_id)
+            if set_cooldown_on_summon:
+                set_cooldown(actor, ability_id, ability)
+                return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
+
+        return None
+
     def apply_hp_sacrifice_absorb(
         actor: PlayerState,
         ability: Dict[str, Any],
@@ -1003,16 +1095,22 @@ def resolve_turn(match: MatchState) -> None:
                     remove_stealth(actor)
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
 
-        if has_self_effects or has_target_effects:
-            apply_effect_entries(
-                actor,
-                target,
-                ability,
-                log_parts,
-                pre_log_parts=pre_log_parts,
-                extra_log_parts=extra_logs,
-                skip_primary_target=aoe_skip_champion,
-            )
+        effect_application_result = _resolve_effect_application(
+            actor_sid,
+            actor,
+            target,
+            ability_id,
+            ability,
+            log_parts,
+            pre_log_parts=pre_log_parts,
+            extra_log_parts=extra_logs,
+            skip_primary_target=aoe_skip_champion,
+            has_damage=has_damage,
+            has_target_effects=has_target_effects,
+            include_non_damaging_summon=True,
+        )
+        if effect_application_result is not None:
+            return effect_application_result
 
         if ability_id == "healthstone":
             heal_value = max(1, int(actor.res.hp_max * 0.25))
@@ -1027,38 +1125,6 @@ def resolve_turn(match: MatchState) -> None:
             log_parts.append(f"Healthstone restores {healed} HP.")
             set_cooldown(actor, ability_id, ability)
             return {"damage": 0, "healing": healed, "log": " ".join(log_parts), "ability_id": ability_id}
-
-        summon_pet_id = ability.get("summon_pet_id")
-        if summon_pet_id and not has_damage and not has_target_effects:
-            summoned_pet, refreshed, summon_error = summon_pet_from_template(actor, summon_pet_id)
-            template = PETS.get(summon_pet_id, {})
-            if summon_error:
-                return {"damage": 0, "healing": 0, "log": summon_error, "ability_id": ability_id}
-            max_count = int(template.get("max_count", 1) or 1)
-            current = len([p for p in actor.pets.values() if p.template_id == summon_pet_id])
-            summon_log = ability.get("summon_log")
-            force_call_wording = summon_pet_id in {"barrens_boar", "frostsaber", "emerald_serpent"} and bool(summon_log)
-            if refreshed:
-                if force_call_wording:
-                    log_parts.append(str(summon_log))
-                else:
-                    log_parts.append(f"refreshes {template.get('name', summon_pet_id.title())}.")
-            elif max_count > 1:
-                log_parts.append(f"summons a {template.get('name', summon_pet_id.title())} ({current}/{max_count}).")
-            elif summoned_pet is not None:
-                if summon_log:
-                    log_parts.append(str(summon_log))
-                else:
-                    remembered = actor.hunter_pet_memory.get(summon_pet_id)
-                    if remembered is not None:
-                        log_parts.append(f"summons {template.get('name', summon_pet_id.title())} with {summoned_pet.hp}/{summoned_pet.hp_max} HP.")
-                    else:
-                        log_parts.append(f"summons {template.get('name', summon_pet_id.title())}.")
-            if summoned_pet is not None and not refreshed:
-                trigger_pre_action_special(actor, summoned_pet, actor_sid, match, r, consume_action=True)
-            set_cooldown(actor, ability_id, ability)
-            remove_effect(actor, summon_pet_id)
-            return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
 
         if ability_id in ("corruption", "unstable_affliction"):
             if is_immune_all(target):
@@ -1889,43 +1955,22 @@ def resolve_turn(match: MatchState) -> None:
                 remove_stealth(actor)
             return
 
-        if ability.get("effect"):
-            effect = dict(ability["effect"])
-            effect["duration"] = int(effect.get("duration", 1))
-            apply_effect_by_id(
-                actor,
-                "item_passive_template",
-                overrides={"type": effect.get("type", "status"), **effect},
-            )
-            log_parts.append("Defensive stance raised.")
-        else:
-            apply_effect_entries(
-                actor,
-                target,
-                ability,
-                log_parts,
-                extra_log_parts=extra_logs,
-                skip_self_effect_ids=skip_self_effect_ids,
-            )
-
-        summon_pet_id = ability.get("summon_pet_id")
-        if summon_pet_id:
-            summoned_pet, refreshed, summon_error = summon_pet_from_template(actor, summon_pet_id)
-            template = PETS.get(summon_pet_id, {})
-            summon_log = ability.get("summon_log")
-            force_call_wording = summon_pet_id in {"barrens_boar", "frostsaber", "emerald_serpent"} and bool(summon_log)
-            if summon_error:
-                log_parts.append(summon_error)
-            elif refreshed:
-                if force_call_wording:
-                    log_parts.append(str(summon_log))
-                else:
-                    log_parts.append(f"refreshes {template.get('name', summon_pet_id.title())}.")
-            elif summon_log:
-                log_parts.append(str(summon_log))
-            if summoned_pet is not None and not refreshed:
-                trigger_pre_action_special(actor, summoned_pet, actor_sid, match, r, consume_action=True)
-            remove_effect(actor, summon_pet_id)
+        _resolve_effect_application(
+            actor_sid,
+            actor,
+            target,
+            ability_id,
+            ability,
+            log_parts,
+            extra_log_parts=extra_logs,
+            skip_self_effect_ids=skip_self_effect_ids,
+            apply_defensive_effect_template=True,
+            has_target_effects=bool(ability.get("target_effects")),
+            include_non_damaging_summon=True,
+            allow_summon_with_target_effects=True,
+            set_cooldown_on_summon=False,
+            return_on_summon_error=False,
+        )
 
         apply_hp_sacrifice_absorb(actor, ability, log_parts)
 
