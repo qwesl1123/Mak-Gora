@@ -2689,117 +2689,122 @@ def resolve_turn(match: MatchState) -> None:
     _resolve_actor_post_damage_reactions(sids[0], sids[1], dealt1, result1)
     _resolve_actor_post_damage_reactions(sids[1], sids[0], dealt2, result2)
 
-    run_pet_phase(
-        match,
-        r,
-        apply_damage,
-        absorb_suffix,
-        stealth_targeting,
-        should_miss_due_to_stealth,
-        untargetable_miss_log,
-        can_evasion_force_miss,
-    )
+    def _resolve_end_of_turn() -> tuple[bool, bool, bool]:
+        # end_of_turn: pet_phase
+        run_pet_phase(
+            match,
+            r,
+            apply_damage,
+            absorb_suffix,
+            stealth_targeting,
+            should_miss_due_to_stealth,
+            untargetable_miss_log,
+            can_evasion_force_miss,
+        )
+        flush_deferred_stealth_break_logs()
 
-    flush_deferred_stealth_break_logs()
-
-    # End of turn processing for both players (DoTs, passives, duration ticks, regen)
-    for sid in sids:
-        ps = match.state[sid]
-        opponent_sid = sids[1] if sid == sids[0] else sids[0]
-        opponent = match.state[opponent_sid]
-        end_summary = end_of_turn(ps, match.log, sid[:5])
-        for source in end_summary.get("damage_sources", []):
-            source_sid = source.get("source_sid")
-            if not source_sid:
-                continue
-            damage = resolve_dot_tick(source_sid, sid, source)
-            if damage <= 0:
-                continue
-            totals = match.combat_totals.setdefault(source_sid, {"damage": 0, "healing": 0})
-            totals["damage"] += damage
-            lifesteal_pct = float(source.get("lifesteal_pct", 0) or 0)
-            if lifesteal_pct > 0 and source_sid in match.state:
-                healer = match.state[source_sid]
-                heal_value = int(damage * lifesteal_pct)
-                before_hp = healer.res.hp
-                healer.res.hp = min(healer.res.hp + heal_value, healer.res.hp_max)
-                gained = healer.res.hp - before_hp
-                if gained > 0:
-                    effect_id = source.get("effect_id")
-                    source_name = effect_name(effect_id) if effect_id else "DoT"
-                    match.log.append(f"{source_sid[:5]} heals {gained} HP from {source_name}.")
-                    totals["healing"] += gained
-
-        for source in end_summary.get("self_damage_sources", []):
-            source_sid = source.get("source_sid")
-            if not source_sid:
-                continue
-            damage = resolve_dot_tick(source_sid, sid, source)
-            if damage <= 0:
-                continue
-            totals = match.combat_totals.setdefault(source_sid, {"damage": 0, "healing": 0})
-            totals["damage"] += damage
-
-        totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
-        totals["healing"] += int(end_summary.get("healing_done", 0) or 0)
-
-    for sid in sids:
-        owner = match.state[sid]
-        for pet_id in sorted(list((owner.pets or {}).keys())):
-            pet = owner.pets.get(pet_id)
-            if not pet or pet.hp <= 0:
-                continue
-            pet_summary = end_of_turn_pet(pet, match.log, pet.name)
-            for source in pet_summary.get("damage_sources", []):
+        # end_of_turn: dot_tick / hot_tick / resource_tick
+        for sid in sids:
+            ps = match.state[sid]
+            end_summary = end_of_turn(ps, match.log, sid[:5])
+            for source in end_summary.get("damage_sources", []):
                 source_sid = source.get("source_sid")
-                source_ps = match.state.get(source_sid)
-                if not source_sid or not source_ps:
+                if not source_sid:
                     continue
-                dealt = apply_damage(
-                    source_ps,
-                    pet,
-                    int(source.get("incoming", 0) or 0),
-                    pet.name,
-                    source.get("effect_name") or "DoT",
-                    False,
-                    [int(source.get("incoming", 0) or 0)],
-                    school=source.get("school") or "magical",
-                    subschool=source.get("subschool"),
-                    allow_redirect=False,
-                )
-                damage = int(dealt.get("hp_damage", 0) or 0)
-                if damage > 0:
-                    match.log.append(f"{pet.name} suffers {damage} damage from {source.get('effect_name') or 'DoT'}.")
-                    totals = match.combat_totals.setdefault(source_sid, {"damage": 0, "healing": 0})
-                    totals["damage"] += damage
-            if pet.hp > 0:
-                next_effects = []
-                for effect in pet.effects:
-                    duration = effect.get("duration")
-                    if duration is None:
-                        next_effects.append(effect)
+                damage = resolve_dot_tick(source_sid, sid, source)
+                if damage <= 0:
+                    continue
+                totals = match.combat_totals.setdefault(source_sid, {"damage": 0, "healing": 0})
+                totals["damage"] += damage
+                lifesteal_pct = float(source.get("lifesteal_pct", 0) or 0)
+                if lifesteal_pct > 0 and source_sid in match.state:
+                    healer = match.state[source_sid]
+                    heal_value = int(damage * lifesteal_pct)
+                    before_hp = healer.res.hp
+                    healer.res.hp = min(healer.res.hp + heal_value, healer.res.hp_max)
+                    gained = healer.res.hp - before_hp
+                    if gained > 0:
+                        effect_id = source.get("effect_id")
+                        source_name = effect_name(effect_id) if effect_id else "DoT"
+                        match.log.append(f"{source_sid[:5]} heals {gained} HP from {source_name}.")
+                        totals["healing"] += gained
+
+            for source in end_summary.get("self_damage_sources", []):
+                source_sid = source.get("source_sid")
+                if not source_sid:
+                    continue
+                damage = resolve_dot_tick(source_sid, sid, source)
+                if damage <= 0:
+                    continue
+                totals = match.combat_totals.setdefault(source_sid, {"damage": 0, "healing": 0})
+                totals["damage"] += damage
+
+            totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
+            totals["healing"] += int(end_summary.get("healing_done", 0) or 0)
+
+        # end_of_turn: pet_phase
+        for sid in sids:
+            owner = match.state[sid]
+            for pet_id in sorted(list((owner.pets or {}).keys())):
+                pet = owner.pets.get(pet_id)
+                if not pet or pet.hp <= 0:
+                    continue
+                pet_summary = end_of_turn_pet(pet, match.log, pet.name)
+                for source in pet_summary.get("damage_sources", []):
+                    source_sid = source.get("source_sid")
+                    source_ps = match.state.get(source_sid)
+                    if not source_sid or not source_ps:
                         continue
-                    next_duration = int(duration) - 1
-                    if next_duration > 0:
-                        updated = dict(effect)
-                        updated["duration"] = next_duration
-                        next_effects.append(updated)
-                pet.effects = next_effects
+                    dealt = apply_damage(
+                        source_ps,
+                        pet,
+                        int(source.get("incoming", 0) or 0),
+                        pet.name,
+                        source.get("effect_name") or "DoT",
+                        False,
+                        [int(source.get("incoming", 0) or 0)],
+                        school=source.get("school") or "magical",
+                        subschool=source.get("subschool"),
+                        allow_redirect=False,
+                    )
+                    damage = int(dealt.get("hp_damage", 0) or 0)
+                    if damage > 0:
+                        match.log.append(f"{pet.name} suffers {damage} damage from {source.get('effect_name') or 'DoT'}.")
+                        totals = match.combat_totals.setdefault(source_sid, {"damage": 0, "healing": 0})
+                        totals["damage"] += damage
+                if pet.hp > 0:
+                    next_effects = []
+                    for effect in pet.effects:
+                        duration = effect.get("duration")
+                        if duration is None:
+                            next_effects.append(effect)
+                            continue
+                        next_duration = int(duration) - 1
+                        if next_duration > 0:
+                            updated = dict(effect)
+                            updated["duration"] = next_duration
+                            next_effects.append(updated)
+                    pet.effects = next_effects
 
-    trigger_shield_of_vengeance_explosion(sids[0], sids[1])
-    trigger_shield_of_vengeance_explosion(sids[1], sids[0])
-    flush_deferred_stealth_break_logs()
+        trigger_shield_of_vengeance_explosion(sids[0], sids[1])
+        trigger_shield_of_vengeance_explosion(sids[1], sids[0])
+        flush_deferred_stealth_break_logs()
 
-    for sid in sids:
-        ps = match.state[sid]
-        tick_player_effects(ps)
-        tick_cooldowns(ps)
+        # end_of_turn: duration_decrement / expiry_cleanup
+        for sid in sids:
+            ps = match.state[sid]
+            tick_player_effects(ps)
+            tick_cooldowns(ps)
 
-    cleanup_pets(match)
+        # end_of_turn: pet_cleanup
+        cleanup_pets(match)
 
-    p1_alive = match.state[sids[0]].res.hp > 0
-    p2_alive = match.state[sids[1]].res.hp > 0
-    both_alive = p1_alive and p2_alive
+        # end_of_turn: winner_check
+        p1_alive = match.state[sids[0]].res.hp > 0
+        p2_alive = match.state[sids[1]].res.hp > 0
+        return p1_alive, p2_alive, (p1_alive and p2_alive)
+
+    p1_alive, p2_alive, both_alive = _resolve_end_of_turn()
 
     execute_ability = ABILITIES.get("execute", {})
     execute_threshold = execute_ability.get("requires_target_hp_below")

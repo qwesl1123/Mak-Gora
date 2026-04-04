@@ -2760,6 +2760,24 @@ def scenario_phase_c_prompt3_effect_application_stage_preserved() -> bool:
     return True
 
 
+def scenario_phase_d_end_of_turn_stage_preserved() -> bool:
+    # dot_tick (including Agony ramp behavior)
+    assert scenario_agony_ramp_progression_restored(), "Agony end-of-turn behavior should remain unchanged"
+    # hot_tick + resource_tick logging behavior
+    assert scenario_recover_log_shows_only_nonzero_resources_and_uses_mana_wording(), "Resource recovery logs should remain unchanged"
+    assert scenario_phase_c_prompt3_effect_application_stage_preserved(), "Effect application behavior should not spill into end-of-turn"
+    # pet_phase + pet_cleanup + redirect timing behavior
+    assert scenario_hunter_boar_redirect_same_turn_brace(), "Boar redirect timing should remain unchanged"
+    assert scenario_pet_specials_are_blocked_while_pet_is_ccd(), "CC-disabled pet behavior should remain unchanged"
+    # end-of-turn damage / stealth / SoV ordering behavior
+    assert scenario_shield_of_vengeance_explosion_flushes_stealth_break_log(), "Shield of Vengeance / stealth-break timing should remain unchanged"
+    # winner_check timing behavior
+    assert scenario_winner_summary_logs_after_pet_phase_and_end_of_turn_resolution(), "Winner summary timing should remain unchanged"
+    # no spillover guard
+    assert scenario_phase_c_prompt2_no_spillover_to_effect_application_or_end_of_turn(), "Earlier migrated stages and end_of_turn contracts should remain unchanged"
+    return True
+
+
 def scenario_subschool_metadata_and_templates() -> bool:
     direct_expectations = {
         "fireball": "fire",
@@ -3074,6 +3092,7 @@ SCENARIOS = [
     scenario_break_on_damage_and_lifesteal_use_post_mitigation_damage,
     scenario_phase_c_prompt2_no_spillover_to_effect_application_or_end_of_turn,
     scenario_phase_c_prompt3_effect_application_stage_preserved,
+    scenario_phase_d_end_of_turn_stage_preserved,
     scenario_subschool_metadata_and_templates,
     scenario_subschool_event_plumbing_for_dots_and_passives,
     scenario_direct_damage_dot_inherits_ability_subschool,
