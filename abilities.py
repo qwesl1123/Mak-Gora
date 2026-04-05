@@ -103,8 +103,8 @@ ABILITIES = {
         "cooldown": 10,
         "classes": ["warrior"],
         "self_effects": [
-            {"id": "die_by_sword", "duration": 2, "log": "becomes immune to physical damage."},
-            {"id": "die_by_sword_mitigation", "duration": 2, "log": "reduces incoming damage by 30%."},
+            {"id": "die_by_sword", "duration": 2, "log": "Becomes immune to physical damage, reduces all incoming damage by 30%."},
+            {"id": "die_by_sword_mitigation", "duration": 2},
         ],
     },
     "execute": {
@@ -277,7 +277,7 @@ ABILITIES = {
         "cooldown": 20,
         "classes": ["rogue"],
         "self_effects": [
-            {"id": "cloak_of_shadows", "duration": 2, "log": "is shrouded from magic."},
+            {"id": "cloak_of_shadows", "duration": 2, "log": "Becomes shrouded from magic."},
             {"type": "dispel", "category": "dot", "school": "magical"},
         ],
     },
@@ -563,7 +563,7 @@ ABILITIES = {
         "requires_form": "moonkin_form",
         "requires_form_log": "Must be in Moonkin Form.",
         "target_effects": [
-            {"id": "cyclone", "duration": 2, "log": "Trapps enemy in a cyclone."}
+            {"id": "cyclone", "duration": 3, "log": "Trapps enemy in a cyclone."}
         ],
     },
     "typhoon": {
@@ -853,7 +853,7 @@ ABILITIES = {
         "cooldown": 25,
         "classes": ["paladin"],
         "self_effects": [
-            {"id": "divine_shield", "duration": 2, "log": "is protected by Divine Shield."},
+            {"id": "divine_shield", "duration": 3, "log": "is protected by Divine Shield."},
             {"type": "dispel", "category": "dot", "school": "magical"},
         ],
     },
@@ -1144,7 +1144,7 @@ ABILITIES = {
         "cooldown": 20,
         "classes": ["hunter"],
         "self_effects": [
-            {"id": "aspect_of_turtle", "duration": 2, "log": "Causes all single-target spells and attacks to miss."}
+            {"id": "aspect_of_turtle", "duration": 2, "log": "Causes all single-target spells and attacks to miss, reduces all incoming damage by 30%."}
         ],
     },
     "flare": {

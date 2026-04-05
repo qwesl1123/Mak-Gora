@@ -425,6 +425,33 @@ def resolve_turn(match: MatchState) -> None:
             target_entries.append(target)
         if ability_target_mode(ability) == "aoe_enemy" and isinstance(target, PlayerState):
             target_entries.extend(target.pets[pet_id] for pet_id in sorted((target.pets or {}).keys()))
+        
+        def maybe_redirect_target_effect(
+            entry_target: PlayerState | PetState,
+            entry: Dict[str, Any],
+        ) -> tuple[PlayerState | PetState, str | None]:
+            if ability_target_mode(ability) == "aoe_enemy":
+                return entry_target, None
+            if not isinstance(entry_target, PlayerState):
+                return entry_target, None
+            if entry_target is actor:
+                return entry_target, None
+            if not is_harmful_target_effect_entry(entry):
+                return entry_target, None
+            if not has_flag(entry_target, "redirect_single_target_to_pet"):
+                return entry_target, None
+            redirect_effect = next(
+                (
+                    fx for fx in reversed(entry_target.effects)
+                    if (fx.get("flags", {}) or {}).get("redirect_single_target_to_pet")
+                ),
+                None,
+            )
+            pet_id = (redirect_effect or {}).get("redirect_to_pet_id")
+            pet = entry_target.pets.get(pet_id) if pet_id else None
+            if not pet or pet.hp <= 0:
+                return entry_target, None
+            return pet, f"{pet.name} intercepts {ability.get('name', 'the effect')} for {entry_target.sid[:5]}."
         for entry in ability.get("self_effects", []) or []:
             if entry.get("type") == "dispel":
                 removed = dispel_effects(
@@ -503,22 +530,25 @@ def resolve_turn(match: MatchState) -> None:
             effect = build_effect(entry["id"], overrides=overrides or None)
             applied_any = False
             for entry_target in target_entries:
+                resolved_target, redirect_log = maybe_redirect_target_effect(entry_target, entry)
+                if redirect_log:
+                    extra_log_parts.append(redirect_log)
                 if single_target_miss_active(entry_target, ability) and is_harmful_target_effect_entry(entry):
                     log_parts.append(single_target_miss_log())
                     continue
-                if is_immune_all(entry_target):
+                if is_immune_all(resolved_target):
                     target_immune_log(log_parts)
                     continue
-                if target_effect_requires_visible_target(ability, entry) and is_stealthed(entry_target):
+                if target_effect_requires_visible_target(ability, entry) and is_stealthed(resolved_target):
                     log_parts.append("Target is stealthed — no valid target. Miss!")
                     continue
-                if has_effect(entry_target, "cloak_of_shadows") and is_magical_harmful_effect(effect):
+                if has_effect(resolved_target, "cloak_of_shadows") and is_magical_harmful_effect(effect):
                     log_parts.append("Immune!")
                     continue
                 if entry["id"] in FORM_EFFECT_IDS:
-                    apply_form(entry_target, entry["id"], overrides=overrides or None)
+                    apply_form(resolved_target, entry["id"], overrides=overrides or None)
                 else:
-                    apply_effect_by_id(entry_target, entry["id"], overrides=overrides or None)
+                    apply_effect_by_id(resolved_target, entry["id"], overrides=overrides or None)
                 applied_any = True
             if applied_any and entry.get("log"):
                 log_parts.append(entry["log"])
@@ -872,11 +902,12 @@ def resolve_turn(match: MatchState) -> None:
 
         required_form = ability.get("requires_form")
         if required_form and current_form_id(actor) != required_form:
+            required_form_name = effect_name(required_form)
             return {
                 "resolved": True,
                 "damage": 0,
                 "healing": 0,
-                "log": ability.get("requires_form_log", "Must be in the correct form."),
+                "log": f"{actor.build.class_id.capitalize()} tried to use {ability['name']} but wasn't in {required_form_name}.",
             }
 
         required_effect = ability.get("requires_effect")
@@ -958,7 +989,9 @@ def resolve_turn(match: MatchState) -> None:
         reason = get_cant_act_reason(actor)
         if can_cast_while_cc(ability, reason=reason, incoming_cc=incoming_cc):
             return None
-        if reason:
+        if has_flag(actor, "cycloned"):
+            reason_text = "is Cycloned and cannot act"
+        elif reason:
             reason_text = f"is {reason} and cannot act"
         else:
             reason_text = "cannot act"
@@ -1191,7 +1224,7 @@ def resolve_turn(match: MatchState) -> None:
             apply_effect_by_id(
                 target,
                 "agony",
-                overrides={"duration": 15, "tick_damage": 1, "source_sid": actor.sid, "dot_mode": "ramp", "skip_first_tick": True},
+                overrides={"duration": 11, "tick_damage": 1, "source_sid": actor.sid, "dot_mode": "ramp", "skip_first_tick": True},
             )
             log_parts.append("inflicts Agony.")
             set_cooldown(actor, ability_id, ability)

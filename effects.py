@@ -399,7 +399,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
     "divine_shield": {
         "type": "status",
         "name": "Divine Shield",
-        "duration": 2,
+        "duration": 3,
         "dispellable": True,
         "school": "magical",
         "subschool": "holy",
@@ -685,11 +685,17 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
     "cyclone": {
         "type": "status",
         "name": "Cyclone",
-        "duration": 2,
+        "duration": 3,
         "school": "magical",
         "subschool": "nature",
         "flags": {"cycloned": True, "stunned": True, "immune_all": True},
         "tags": ["incapacitating_cc"],
+        "display": {
+            "war_council": True,
+            "label": "CYCLONED",
+            "color": "#FFB347",
+            "priority": 95,
+        },
         "resolution_layer": "action_denial",
     },
     "frenzied_regeneration": {
@@ -1683,7 +1689,7 @@ def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[dict[str, Any
 
         if effect_id == "agony":
             raw_damage = max(0, int(effect.get("tick_damage", 1) or 1))
-            effect["tick_damage"] = min(15, raw_damage + 1)
+            effect["tick_damage"] = min(10, raw_damage + 1)
         else:
             raw_damage = max(0, int(effect.get("tick_damage", effect.get("value", 0)) or 0))
 

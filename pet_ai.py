@@ -117,17 +117,17 @@ def _run_imp_firebolt(
     can_evasion_force_miss,
 ):
     action_text = _template_action_text(pet, fallback="casts Firebolt")
-    if is_immune_all(enemy):
-        match.log.append(_pet_log(owner_sid, pet, action_text, "Immune!"))
-        return
-    if is_damage_immune(enemy, "magic") or has_effect(enemy, "cloak_of_shadows"):
-        match.log.append(_pet_log(owner_sid, pet, action_text, "Immune!"))
-        return
     if should_miss_due_to_stealth(owner, enemy, {"requires_target": True}, stealth_targeting):
         match.log.append(_pet_log(owner_sid, pet, action_text, "Target is stealthed — Miss!"))
         return
     if has_flag(enemy, "untargetable"):
         match.log.append(_pet_log(owner_sid, pet, action_text, untargetable_miss_log(enemy)))
+        return
+    if is_immune_all(enemy):
+        match.log.append(_pet_log(owner_sid, pet, action_text, "Immune!"))
+        return
+    if is_damage_immune(enemy, "magic") or has_effect(enemy, "cloak_of_shadows"):
+        match.log.append(_pet_log(owner_sid, pet, action_text, "Immune!"))
         return
 
     fire_roll = roll("d4", rng)

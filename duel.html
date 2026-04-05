@@ -1849,7 +1849,7 @@
             <p>Shift into Moonkin Form to access Mana-based spells.</p>
             <p><span class="stat">Wrath:</span> <span class="kbd">wrath</span> — Cost: 15 Mana | Cooldown: 0 | Effect: Intellect (1.0x) + d6. 25% chance to enable Starfire.</p>
             <p><span class="stat">Starfire:</span> <span class="kbd">starfire</span> — Cost: 20 Mana | Cooldown: 0 | Requirement: Starfire proc | Effect: Intellect (2.0x) + d6.</p>
-            <p><span class="stat">Cyclone:</span> <span class="kbd">cyclone</span> — Cost: 0 Mana | Cooldown: 20 | Effect: Traps enemy in a cyclone for 2 turns. Enemy cannot act, and cannot take damage or healing while affected.</p>
+            <p><span class="stat">Cyclone:</span> <span class="kbd">cyclone</span> — Cost: 0 Mana | Cooldown: 20 | Effect: Traps enemy in a cyclone for 3 turns. Enemy cannot act, and cannot take damage or healing while affected.</p>
             <p><span class="stat">Typhoon:</span> <span class="kbd">typhoon</span> — Cost: 0 Mana | Cooldown: 5 | Effect: Blasts enemy away and causes their attacks to miss this turn and next turn.</p>
           </div>
 
@@ -1978,7 +1978,7 @@
             <h4>Divine Shield</h4>
             <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 25</span></p>
             <p><span class="stat">Command: <span class="kbd">divine_shield</span></span></p>
-            <p>Become immune to incoming damage and debuffs for 2 turns, can still act, and dispels magical DoTs on cast.</p>
+            <p>Become immune to incoming damage and debuffs for 3 turns, can still act, and dispels magical DoTs on cast.</p>
           </div>
           <div class="doc-item">
             <h4>Shield of Vengeance</h4>
@@ -2163,7 +2163,7 @@
             <p><span class="stat">Command: <span class="kbd">call_boar</span></span></p>
             <p><span class="stat">HP: 30</span> | <span class="stat">Attack: 4</span> | <span class="stat">Intellect: 0</span></p>
             <p><span class="stat">Basic Attack:</span> [Pet Attack (1.0x) + d6] physical damage.</p>
-            <p><span class="stat">Special — Blocking Defence:</span> 30% chance each pet phase, or forced by <span class="stat">Raptor Strike</span>, to redirect incoming single-target attacks and spells from the Hunter to the boar for the current turn.</p>
+            <p><span class="stat">Special — Blocking Defence:</span> 30% chance each pet phase, or forced by <span class="stat">Raptor Strike</span>, to redirect incoming single-target attacks, spells, and crowd control from the Hunter to the boar for the current turn.</p>
           </div>
         </div>
 
@@ -3123,9 +3123,11 @@
         if (
           textWithoutFx.includes("Has Shadowy Insight!")
           || textWithoutFx.includes("Mind Blast is empowered!")
-          || textWithoutFx.includes("Shadow Word: Death Damage will be Doubled!")
         ) {
           return applyFxTokensToHtml(`<span class="logLinePriestGlow">${renderTextWithFxTags(textWithoutFx)}</span>`, fxTokens);
+        }
+        if (textWithoutFx.includes("Shadow Word: Death Damage will be Doubled!")) {
+          return applyFxTokensToHtml(`<span class="logLineExecute">${renderTextWithFxTags(textWithoutFx)}</span>`, fxTokens);
         }
 
         let output = escapeHtml(textWithoutFx);
@@ -3242,9 +3244,11 @@
         if (
           msg.includes("Has Shadowy Insight!")
           || msg.includes("Mind Blast is empowered!")
-          || msg.includes("Shadow Word: Death Damage will be Doubled!")
         ) {
           classes.push("logLinePriestGlow");
+        }
+        if (msg.includes("Shadow Word: Death Damage will be Doubled!")) {
+          classes.push("logLineExecute");
         }
         if (msg.startsWith("Turn ")) {
           classes.push("logLineTurnHeader");

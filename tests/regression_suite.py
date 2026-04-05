@@ -907,7 +907,7 @@ def scenario_hunter_turtle_priority() -> bool:
     assert _has_effect(hunter, "aspect_of_turtle"), "Aspect of the Turtle should apply immediately"
     assert not any((fx.get("display") or {}).get("war_council") for fx in hunter.effects if fx.get("id") == "aspect_of_turtle"), "Aspect of the Turtle should not create a War Council status badge"
     assert any("uses their bare hands to cast Kidney Shot. Target evades the attack — Miss!" in line for line in match.log), "Single-target attacks into Turtle should use the evasion-style miss wording"
-    assert any("uses their bare hands to cast Aspect of the Turtle. Causes all single-target spells and attacks to miss." in line for line in match.log), "Aspect of the Turtle should log its miss-causing effect text"
+    assert any("uses their bare hands to cast Aspect of the Turtle. Causes all single-target spells and attacks to miss, reduces all incoming damage by 30%." in line for line in match.log), "Aspect of the Turtle should log both miss and mitigation text"
     _assert_no_stun_effect(hunter)
 
     submit_turn(match, "aimed_shot", "eviscerate")
@@ -1089,6 +1089,27 @@ def scenario_hunter_boar_redirect() -> bool:
     return True
 
 
+def scenario_hunter_boar_redirects_single_target_cc() -> bool:
+    match = make_match("hunter", "rogue", seed=123)
+    hunter_sid, _ = match.players
+    hunter = match.state[hunter_sid]
+    run_turns(match, [("call_boar", _DEF_PASS)])
+    boar = _active_pet(hunter, "barrens_boar")
+    assert boar is not None, "Boar should be active for CC redirect coverage"
+
+    effects.apply_effect_by_id(hunter, "blocking_defence", overrides={"duration": 1, "redirect_to_pet_id": boar.id})
+    submit_turn(match, _DEF_PASS, "kidney_shot")
+    assert not _has_effect(hunter, "stunned"), "Single-target CC should be redirected off the Hunter"
+    assert _has_effect(boar, "stunned"), "Single-target CC should land on the boar"
+    assert any("Barrens Boar intercepts Kidney Shot" in line for line in _turn_lines(match, 2)), "Redirected CC should emit the intercept log"
+
+    effects.remove_effect(boar, "stunned")
+    effects.apply_effect_by_id(hunter, "blocking_defence", overrides={"duration": 1, "redirect_to_pet_id": boar.id})
+    submit_turn(match, _DEF_PASS, "fan_of_knives")
+    assert not _has_effect(boar, "stunned"), "AoE CC should not redirect to the boar"
+    return True
+
+
 def scenario_hunter_boar_redirect_same_turn_brace() -> bool:
     match = make_match("warlock", "hunter", seed=3)
     hunter = match.state[match.players[1]]
@@ -1241,7 +1262,7 @@ def scenario_hunter_freezing_trap_respects_cloak_same_turn() -> bool:
     assert _has_effect(rogue, "cloak_of_shadows"), "Cloak should be active on the same turn"
     assert not _has_effect(rogue, "freezing_trap_freeze"), "Freezing Trap should not apply through same-turn Cloak"
     latest_turn = match.log[match.log.index("Turn 1") + 1:]
-    assert any("uses their bare hands to cast Cloak of Shadows" in line for line in latest_turn), "Cloak action should resolve"
+    assert any("uses their bare hands to cast Cloak of Shadows. Becomes shrouded from magic." in line for line in latest_turn), "Cloak action should use updated shrouded wording"
     assert any("uses their bare hands to cast Freezing Trap. Immune!" in line for line in latest_turn), "Freezing Trap should log immunity on same-turn Cloak"
     return True
 
@@ -1256,6 +1277,60 @@ def scenario_hunter_freezing_trap_respects_active_cloak() -> bool:
     assert not _has_effect(rogue, "freezing_trap_freeze"), "Freezing Trap should not apply while Cloak is already active"
     latest_turn = match.log[match.log.index("Turn 2") + 1:]
     assert any("uses their bare hands to cast Freezing Trap. Immune!" in line for line in latest_turn), "Active Cloak should still produce the immunity log"
+    return True
+
+
+def scenario_die_by_the_sword_log_wording() -> bool:
+    match = make_match("warrior", "warrior", p1_items={"weapon": "twin_blades_azzinoth"}, seed=123)
+    submit_turn(match, "die_by_sword", _DEF_PASS)
+    latest_turn = _turn_lines(match, 1)
+    assert any("uses Twin Blades of Azzinoth to cast Die by the Sword. Becomes immune to physical damage, reduces all incoming damage by 30%." in line for line in latest_turn), "Die by the Sword should log as one sentence with updated wording"
+    return True
+
+
+def scenario_druid_form_requirement_log_wording() -> bool:
+    match = make_match("druid", "warrior", seed=123)
+    submit_turn(match, "maul", _DEF_PASS)
+    assert "Druid tried to use Maul but wasn't in Bear Form." in _turn_lines(match, 1), "Bear-form requirement log should include class, ability, and required form"
+    submit_turn(match, "rip", _DEF_PASS)
+    assert "Druid tried to use Rip but wasn't in Cat Form." in _turn_lines(match, 2), "Cat-form requirement log should include class, ability, and required form"
+    submit_turn(match, "wrath", _DEF_PASS)
+    assert "Druid tried to use Wrath but wasn't in Moonkin Form." in _turn_lines(match, 3), "Moonkin-form requirement log should include class, ability, and required form"
+    return True
+
+
+def scenario_divine_shield_lasts_three_turns() -> bool:
+    match = make_match("paladin", "warrior", seed=123)
+    paladin = match.state[match.players[0]]
+    submit_turn(match, "divine_shield", _DEF_PASS)
+    divine_shield = next((fx for fx in paladin.effects if fx.get("id") == "divine_shield"), None)
+    assert divine_shield is not None, "Divine Shield should apply on cast"
+    assert int(divine_shield.get("duration", 0) or 0) == 2, "Divine Shield should leave two turns after cast turn"
+    return True
+
+
+def scenario_cyclone_lasts_three_turns_and_has_status_metadata() -> bool:
+    match = make_match("druid", "warrior", seed=123)
+    druid, warrior = _player_states(match)
+    effects.apply_effect_by_id(druid, "moonkin_form", overrides={"duration": 999})
+    submit_turn(match, "cyclone", _DEF_PASS)
+    cyclone = next((fx for fx in warrior.effects if fx.get("id") == "cyclone"), None)
+    assert cyclone is not None, "Cyclone should apply on hit"
+    assert int(cyclone.get("duration", 0) or 0) == 2, "Cyclone should leave two turns after the application turn"
+    cyclone_display = effects.effect_template("cyclone").get("display", {})
+    assert cyclone_display.get("war_council") is True, "Cyclone should expose status metadata for UI"
+    assert cyclone_display.get("label") == "CYCLONED", "Cyclone UI status label should be CYCLONED"
+    return True
+
+
+def scenario_cyclone_denial_log_uses_cycloned_wording() -> bool:
+    match = make_match("druid", "warrior", seed=123)
+    druid, _ = _player_states(match)
+    effects.apply_effect_by_id(druid, "moonkin_form", overrides={"duration": 999})
+    submit_turn(match, "cyclone", _DEF_PASS)
+    submit_turn(match, _DEF_PASS, "basic_attack")
+    latest_turn = _turn_lines(match, 2)
+    assert any("tries to use Basic Attack but is Cycloned and cannot act." in line for line in latest_turn), "Cyclone denial log should say Cycloned, not stunned"
     return True
 
 
@@ -1880,6 +1955,28 @@ def scenario_imp_firebolt_immunity_logs_under_cloak() -> bool:
     return True
 
 
+def scenario_imp_firebolt_target_check_ordering() -> bool:
+    stealth_then_immunity = make_match("warlock", "rogue", seed=123)
+    submit_turn(stealth_then_immunity, "summon_imp", "cloak")
+    stealth_turn = _turn_lines(stealth_then_immunity, 1)
+    assert any("Imp casts Firebolt. Target is stealthed — Miss!" in line for line in stealth_turn), "Stealth should be checked before immunity for Imp Firebolt"
+    assert not any("Imp casts Firebolt. Immune!" in line for line in stealth_turn), "Stealth+immunity overlap should not log immunity first"
+
+    blink_then_immunity = make_match("warlock", "mage", seed=123)
+    mage = blink_then_immunity.state[blink_then_immunity.players[1]]
+    effects.apply_effect_by_id(mage, "divine_shield", overrides={"duration": 2})
+    submit_turn(blink_then_immunity, "summon_imp", "blink")
+    blink_turn = _turn_lines(blink_then_immunity, 1)
+    assert any("Imp casts Firebolt. Target blinks away — Miss." in line for line in blink_turn), "Blink-like untargetable should be checked before immunity for Imp Firebolt"
+    assert not any("Imp casts Firebolt. Immune!" in line for line in blink_turn), "Blink+immunity overlap should not log immunity first"
+
+    pure_immunity = make_match("warlock", "paladin", seed=123)
+    submit_turn(pure_immunity, "summon_imp", "divine_shield")
+    immune_turn = _turn_lines(pure_immunity, 1)
+    assert any("Imp casts Firebolt. Immune!" in line for line in immune_turn), "Pure immunity should still log Immune for Imp Firebolt"
+    return True
+
+
 def scenario_redirect_and_blink_like_coexist_without_cross_regression() -> bool:
     redirect_match = make_match("hunter", "warrior", seed=123)
     hunter_sid, warrior_sid = redirect_match.players
@@ -2127,7 +2224,7 @@ def scenario_phase_c_pass1_early_resolution_stages_are_preserved() -> bool:
     form_match = make_match("druid", "warrior", seed=610)
     submit_turn(form_match, "maul", _DEF_PASS)
     form_turn = form_match.log[form_match.log.index("Turn 1") + 1:]
-    assert any("Must be in Bear Form." in line for line in form_turn), "Form-gated ability should preserve requires-form behavior"
+    assert any("Druid tried to use Maul but wasn't in Bear Form." in line for line in form_turn), "Form-gated ability should preserve requires-form behavior with updated wording"
 
     circle_match = make_match("warlock", "warrior", seed=611)
     submit_turn(circle_match, "teleport", _DEF_PASS)
@@ -2267,6 +2364,16 @@ def scenario_agony_ramp_progression_restored() -> bool:
         observed_ticks.append(int(parsed.group(1)))
 
     assert observed_ticks[:10] == list(range(1, 11)), "Agony visible ticks should ramp exactly 1..10 across the first 10 ticks"
+    assert max(observed_ticks) == 10, "Agony visible ticks should not exceed 10 damage"
+
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+    turn_after_last_tick = _turn_lines(match, match.turn)
+    assert not any(warrior_sid[:5] in line and "suffers" in line and "Agony" in line for line in turn_after_last_tick), "Agony should expire immediately after its 10-damage tick"
+
+    submit_turn(match, "agony", _DEF_PASS)
+    recast_turn = _turn_lines(match, match.turn)
+    assert any("uses their bare hands to cast Agony." in line for line in recast_turn), "Warlock should be able to recast Agony once the prior effect expires"
+    assert not any("Agony is not stackable." in line for line in recast_turn), "Expired Agony should not block recast"
     return True
 
 
@@ -3021,6 +3128,7 @@ SCENARIOS = [
     scenario_recover_log_shows_only_nonzero_resources_and_uses_mana_wording,
     scenario_hunter_aimed_shot_raptor_pet_special,
     scenario_hunter_boar_redirect,
+    scenario_hunter_boar_redirects_single_target_cc,
     scenario_hunter_boar_redirect_same_turn_brace,
     scenario_winner_summary_logs_after_pet_phase_and_end_of_turn_resolution,
     scenario_shadow_word_death_double_damage_reminder_wording,
@@ -3030,6 +3138,11 @@ SCENARIOS = [
     scenario_hunter_freezing_trap_breaks_on_damage,
     scenario_hunter_freezing_trap_respects_cloak_same_turn,
     scenario_hunter_freezing_trap_respects_active_cloak,
+    scenario_die_by_the_sword_log_wording,
+    scenario_druid_form_requirement_log_wording,
+    scenario_divine_shield_lasts_three_turns,
+    scenario_cyclone_lasts_three_turns_and_has_status_metadata,
+    scenario_cyclone_denial_log_uses_cycloned_wording,
     scenario_mage_hot_streak_lasts_three_turns,
     scenario_ring_of_ice_freezes_and_breaks_on_damage,
     scenario_fear_applies_feared_and_breaks_on_damage,
@@ -3072,6 +3185,7 @@ SCENARIOS = [
     scenario_hunter_serpent_special_respects_stealth,
     scenario_pet_action_text_persists_on_miss,
     scenario_imp_firebolt_immunity_logs_under_cloak,
+    scenario_imp_firebolt_target_check_ordering,
     scenario_redirect_and_blink_like_coexist_without_cross_regression,
     scenario_pet_specials_are_blocked_while_pet_is_ccd,
     scenario_shadowfiend_pet_box_hides_turn_counter_badge,
