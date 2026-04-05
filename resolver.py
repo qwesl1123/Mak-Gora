@@ -271,7 +271,10 @@ def resolve_turn(match: MatchState) -> None:
         resource_name = str(resource_key or "resource").replace("_", " ").lower()
         if resource_name == "mp":
             resource_name = "mana"
-        return f"{actor_sid[:5]} tried to use {ability_name} but didn't have enough {resource_name}"
+        return f"{sid_token(actor_sid)} tried to use {ability_name} but didn't have enough {resource_name}"
+
+    def sid_token(sid: str) -> str:
+        return sid[:5]
 
     def effect_name(effect_id: str) -> str:
         return effect_id.replace("_", " ").title()
@@ -359,7 +362,7 @@ def resolve_turn(match: MatchState) -> None:
 
     def entity_log_label(target: PlayerState | PetState) -> str:
         if isinstance(target, PlayerState):
-            return f"{target.sid[:5]}"
+            return sid_token(target.sid)
         return getattr(target, "name", "Target")
 
     def flag_source_name(target: PlayerState | PetState, flag: str, fallback: str = "that effect") -> str:
@@ -395,7 +398,7 @@ def resolve_turn(match: MatchState) -> None:
         was_stealthed = is_stealthed(ps)
         break_stealth_on_damage(ps, remaining)
         if was_stealthed and not is_stealthed(ps):
-            match.log.append(f"{ps.sid[:5]} stealth broken by Mindgames.")
+            match.log.append(f"{sid_token(ps.sid)} stealth broken by Mindgames.")
         if current_form_id(ps) == "bear_form":
             grant_resource(ps, "rage", remaining)
         return remaining
@@ -413,7 +416,7 @@ def resolve_turn(match: MatchState) -> None:
         def format_entry_log(message: str | None) -> str | None:
             if not isinstance(message, str):
                 return message
-            return message.replace("{actor}", actor.sid[:5])
+            return message.replace("{actor}", sid_token(actor.sid))
 
         if pre_log_parts is None:
             pre_log_parts = []
@@ -451,7 +454,7 @@ def resolve_turn(match: MatchState) -> None:
             pet = entry_target.pets.get(pet_id) if pet_id else None
             if not pet or pet.hp <= 0:
                 return entry_target, None
-            return pet, f"{pet.name} intercepts {ability.get('name', 'the effect')} for {entry_target.sid[:5]}."
+            return pet, f"{pet.name} intercepts {ability.get('name', 'the effect')} for {sid_token(entry_target.sid)}."
         for entry in ability.get("self_effects", []) or []:
             if entry.get("type") == "dispel":
                 removed = dispel_effects(
@@ -462,7 +465,7 @@ def resolve_turn(match: MatchState) -> None:
                 if removed > 0:
                     school = entry.get("school")
                     school_text = f" {school}" if school else ""
-                    log_parts.append(f"{actor.sid[:5]} dispels {removed}{school_text} effects.")
+                    log_parts.append(f"{sid_token(actor.sid)} dispels {removed}{school_text} effects.")
                 continue
             effect_id = entry.get("id")
             if not effect_id:
@@ -882,11 +885,11 @@ def resolve_turn(match: MatchState) -> None:
         ability_id = action.get("ability_id")
         ability = ABILITIES.get(ability_id)
         if not ability:
-            return {"resolved": True, "damage": 0, "healing": 0, "log": f"{actor_sid[:5]} fumbles (unknown ability)."}
+            return {"resolved": True, "damage": 0, "healing": 0, "log": f"{sid_token(actor_sid)} fumbles (unknown ability)."}
 
         allowed_classes = ability.get("classes")
         if allowed_classes and actor.build.class_id not in allowed_classes:
-            return {"resolved": True, "damage": 0, "healing": 0, "log": f"{actor_sid[:5]} cannot use {ability['name']}."}
+            return {"resolved": True, "damage": 0, "healing": 0, "log": f"{sid_token(actor_sid)} cannot use {ability['name']}."}
 
         weapon_id = None
         if actor.build and actor.build.items:
@@ -897,7 +900,7 @@ def resolve_turn(match: MatchState) -> None:
                 "resolved": True,
                 "damage": 0,
                 "healing": 0,
-                "log": f"{actor_sid[:5]} tried to use {ability['name']} but it is on cooldown.",
+                "log": f"{sid_token(actor_sid)} tried to use {ability['name']} but it is on cooldown.",
             }
 
         required_form = ability.get("requires_form")
@@ -907,7 +910,7 @@ def resolve_turn(match: MatchState) -> None:
                 "resolved": True,
                 "damage": 0,
                 "healing": 0,
-                "log": f"{actor.build.class_id.capitalize()} tried to use {ability['name']} but wasn't in {required_form_name}.",
+                "log": f"{class_display_name(actor.build.class_id)} tried to use {ability['name']} but wasn't in {required_form_name}.",
             }
 
         required_effect = ability.get("requires_effect")
@@ -998,7 +1001,7 @@ def resolve_turn(match: MatchState) -> None:
         return {
             "damage": 0,
             "healing": 0,
-            "log": f"{actor_sid[:5]} tries to use {ability['name']} but {reason_text}.",
+            "log": f"{sid_token(actor_sid)} tries to use {ability['name']} but {reason_text}.",
         }
 
     # Resolution layer: pre_resolution_protection
@@ -1058,10 +1061,10 @@ def resolve_turn(match: MatchState) -> None:
             return {
                 "damage": 0,
                 "healing": 0,
-                "log": f"{actor_sid[:5]} cannot attack while {flag_source_name(actor, 'disable_attacks')} is active.",
+                "log": f"{sid_token(actor_sid)} cannot attack while {flag_source_name(actor, 'disable_attacks')} is active.",
             }
 
-        log_parts = [f"{actor_sid[:5]} uses {weapon_name} to cast {ability['name']}."]
+        log_parts = [f"{sid_token(actor_sid)} uses {weapon_name} to cast {ability['name']}."]
         extra_logs: list[Any] = []
         pre_log_parts: list[str] = []
 
@@ -1640,14 +1643,14 @@ def resolve_turn(match: MatchState) -> None:
                             if effect.get("separate_log"):
                                 apply_effect_by_id(actor, effect["id"])
                                 if effect.get("log"):
-                                    pre_log_parts.append(str(effect["log"]).replace("{actor}", actor_sid[:5]))
+                                    pre_log_parts.append(str(effect["log"]).replace("{actor}", sid_token(actor_sid)))
                             else:
                                 apply_effect_by_id(
                                     actor,
                                     effect["id"],
                                     log=match.log,
-                                    label=actor_sid[:5],
-                                    log_message=str(effect.get("log")).replace("{actor}", actor_sid[:5]) if effect.get("log") else None,
+                                    label=sid_token(actor_sid),
+                                    log_message=str(effect.get("log")).replace("{actor}", sid_token(actor_sid)) if effect.get("log") else None,
                                 )
                 for gain in ability.get("on_hit_resource_gains", []) or []:
                     chance = float(gain.get("chance", 1.0) or 1.0)
@@ -1802,7 +1805,7 @@ def resolve_turn(match: MatchState) -> None:
         ability_id = action.get("ability_id")
         ability = ABILITIES.get(ability_id)
         if not ability:
-            return {"damage": 0, "log": f"{actor_sid[:5]} fumbles (unknown ability).", "resolved": True}
+            return {"damage": 0, "log": f"{sid_token(actor_sid)} fumbles (unknown ability).", "resolved": True}
 
         denial = _resolve_action_denial(actor_sid, ability, incoming_cc=False)
         if denial:
@@ -1942,7 +1945,7 @@ def resolve_turn(match: MatchState) -> None:
         if actor.build and actor.build.items:
             weapon_id = actor.build.items.get("weapon")
         weapon_name = ITEMS.get(weapon_id, {}).get("name", "their bare hands")
-        log_parts = [f"{actor_sid[:5]} uses {weapon_name} to cast {ability['name']}."]
+        log_parts = [f"{sid_token(actor_sid)} uses {weapon_name} to cast {ability['name']}."]
         extra_logs: list[Any] = []
 
         incoming_lock = incoming_immediate_stun.get(actor_sid, False) and not outgoing_immediate_stun.get(actor_sid, False)
@@ -2170,7 +2173,7 @@ def resolve_turn(match: MatchState) -> None:
                 pet = target_entity.pets.get(pet_id) if pet_id else None
                 if pet and pet.hp > 0:
                     redirected_pet_name = pet.name
-                    redirect_log = f"{pet.name} intercepts {source_ability_name} for {target_label[:5]}."
+                    redirect_log = f"{pet.name} intercepts {source_ability_name} for {sid_token(target_label)}."
                     return pet, pet.name, False, redirected_pet_name, redirect_log
             return target_entity, target_label, is_player_entity, redirected_pet_name, redirect_log
 
@@ -2183,10 +2186,10 @@ def resolve_turn(match: MatchState) -> None:
             if is_immune_all(target_entity):
                 return True, None
             if has_flag(target_entity, "cycloned"):
-                match.log.append(f"{target_label[:5]} is cycloned and takes no damage.")
+                match.log.append(f"{sid_token(target_label)} is cycloned and takes no damage.")
                 return True, None
             if damage_school == "magical" and has_effect(target_entity, "cloak_of_shadows"):
-                match.log.append(f"{target_label[:5]} is immune to magical harm under Cloak of Shadows.")
+                match.log.append(f"{sid_token(target_label)} is immune to magical harm under Cloak of Shadows.")
                 return True, None
             return False, None
 
@@ -2261,10 +2264,10 @@ def resolve_turn(match: MatchState) -> None:
                 break_stealth_on_damage(target_entity, hp_damage)
                 broken_effects = break_effects_and_collect_labels(target_entity)
                 if was_stealthed and not is_stealthed(target_entity):
-                    deferred_stealth_break_logs.append(f"{target_label[:5]} stealth broken by {source_ability_name}.")
+                    deferred_stealth_break_logs.append(f"{sid_token(target_label)} stealth broken by {source_ability_name}.")
                 for effect_name in broken_effects:
                     deferred_break_on_damage_logs.append(
-                        f"{effect_name} on {target_label[:5]} breaks on damage."
+                        f"{effect_name} on {sid_token(target_label)} breaks on damage."
                     )
                 if current_form_id(target_entity) == "bear_form":
                     grant_resource(target_entity, "rage", hp_damage)
@@ -2346,7 +2349,7 @@ def resolve_turn(match: MatchState) -> None:
         pet_targets = [target.pets[pid] for pid in sorted(target.pets.keys())]
         alive_imp_ids = [pet.id for pet in pet_targets if pet and pet.hp > 0 and pet.template_id == "imp"]
         imp_ordinal_by_id = {pid: idx + 1 for idx, pid in enumerate(alive_imp_ids)}
-        target_owner_name = target_sid[:5]
+        target_owner_name = sid_token(target_sid)
         for pet in pet_targets:
             if not pet or pet.hp <= 0:
                 continue
@@ -2395,7 +2398,7 @@ def resolve_turn(match: MatchState) -> None:
         enemy = match.state[enemy_sid]
         skip_champion, untargetable_log = aoe_untargetable_resolution(enemy)
         if untargetable_log and untargetable_log.startswith("Target "):
-            untargetable_log = f"{enemy_sid[:5]} {untargetable_log[len('Target '):] }"
+            untargetable_log = f"{sid_token(enemy_sid)} {untargetable_log[len('Target '):] }"
         aoe_result = resolve_aoe_enemy_attack(
             owner_sid,
             enemy_sid,
@@ -2403,8 +2406,8 @@ def resolve_turn(match: MatchState) -> None:
             "Shield of Vengeance",
             "magical",
             "holy",
-            champion_log_template=f"Shield of Vengeance hits {enemy_sid[:5]} for __DMG_0__ damage.",
-            champion_immune_log=untargetable_log or f"{enemy_sid[:5]} is immune to Shield of Vengeance explosion.",
+            champion_log_template=f"Shield of Vengeance hits {sid_token(enemy_sid)} for __DMG_0__ damage.",
+            champion_immune_log=untargetable_log or f"{sid_token(enemy_sid)} is immune to Shield of Vengeance explosion.",
             skip_champion=skip_champion,
         )
         champion_hp_damage = int(aoe_result.get("champion", {}).get("hp_damage", 0) or 0)
@@ -2433,7 +2436,7 @@ def resolve_turn(match: MatchState) -> None:
             allow_redirect=False,
         )
         formatted = format_damage_log(
-            f"{target_sid[:5]} suffers __DMG_0__ damage from {dot_name}.",
+            f"{sid_token(target_sid)} suffers __DMG_0__ damage from {dot_name}.",
             dealt_data,
         )
         flipped_heal = int(dealt_data.get("mindgames_healing", 0) or 0)
@@ -2486,7 +2489,7 @@ def resolve_turn(match: MatchState) -> None:
     def combatant_label(sid: str) -> str:
         ps = match.state[sid]
         class_id = (ps.build.class_id or "").strip().lower()
-        return class_display_name(class_id) if class_id else sid[:5]
+        return class_display_name(class_id) if class_id else sid_token(sid)
 
     def apply_direct_damage_dot(
         actor_sid: str,
@@ -2555,7 +2558,7 @@ def resolve_turn(match: MatchState) -> None:
             )
         if not dot_id:
             return
-        resolved_target_label = target_label or target_sid[:5]
+        resolved_target_label = target_label or sid_token(target_sid)
         if dot_id == "dragon_roar_bleed":
             match.log.append(f"Dragon Roar applies bleed on {resolved_target_label}.")
         elif dot_id == "wildfire_burn":
@@ -2563,7 +2566,7 @@ def resolve_turn(match: MatchState) -> None:
             match.log.append(f"Wildfire Bomb {verb} Wildfire Burn on {resolved_target_label}.")
         else:
             verb = "refreshes" if refreshed else "applies"
-            match.log.append(f"{actor_sid[:5]} {verb} {effect_name(dot_id)} for {tick_damage} per turn.")
+            match.log.append(f"{sid_token(actor_sid)} {verb} {effect_name(dot_id)} for {tick_damage} per turn.")
 
     def append_extra_logs(actor_sid: str, target_sid: str, result: Dict[str, Any]) -> None:
         for entry in result.get("extra_logs", []) or []:
@@ -2698,7 +2701,7 @@ def resolve_turn(match: MatchState) -> None:
             actor.res.hp = min(actor.res.hp + dealt, actor.res.hp_max)
             gained = actor.res.hp - before_hp
             if gained > 0:
-                match.log.append(f"{actor_sid[:5]} heals {gained} HP from {ability.get('name', 'their attack')}.")
+                match.log.append(f"{sid_token(actor_sid)} heals {gained} HP from {ability.get('name', 'their attack')}.")
                 totals = match.combat_totals.setdefault(actor_sid, {"damage": 0, "healing": 0})
                 totals["healing"] += gained
 
@@ -2706,7 +2709,7 @@ def resolve_turn(match: MatchState) -> None:
             backlash = int(dealt * 1.0)
             if backlash > 0:
                 apply_damage(actor, actor, backlash, actor_sid, "Shadow Word: Death backlash", school="magical", subschool="shadow", allow_redirect=False)
-                match.log.append(f"{actor_sid[:5]} suffers {backlash} backlash from Shadow Word: Death.")
+                match.log.append(f"{sid_token(actor_sid)} suffers {backlash} backlash from Shadow Word: Death.")
 
         lifesteal = float(ability.get("heal_from_damage", 0) or 0)
         if dealt > 0 and lifesteal > 0 and actor.res:
@@ -2715,7 +2718,7 @@ def resolve_turn(match: MatchState) -> None:
             actor.res.hp = min(actor.res.hp + heal_value, actor.res.hp_max)
             gained = actor.res.hp - before_hp
             if gained > 0:
-                match.log.append(f"{actor_sid[:5]} drains {gained} life.")
+                match.log.append(f"{sid_token(actor_sid)} drains {gained} life.")
                 totals = match.combat_totals.setdefault(actor_sid, {"damage": 0, "healing": 0})
                 totals["healing"] += gained
 
@@ -2739,7 +2742,7 @@ def resolve_turn(match: MatchState) -> None:
         # end_of_turn: dot_tick / hot_tick / resource_tick
         for sid in sids:
             ps = match.state[sid]
-            end_summary = end_of_turn(ps, match.log, sid[:5])
+            end_summary = end_of_turn(ps, match.log, sid_token(sid))
             for source in end_summary.get("damage_sources", []):
                 source_sid = source.get("source_sid")
                 if not source_sid:
@@ -2759,7 +2762,7 @@ def resolve_turn(match: MatchState) -> None:
                     if gained > 0:
                         effect_id = source.get("effect_id")
                         source_name = effect_name(effect_id) if effect_id else "DoT"
-                        match.log.append(f"{source_sid[:5]} heals {gained} HP from {source_name}.")
+                        match.log.append(f"{sid_token(source_sid)} heals {gained} HP from {source_name}.")
                         totals["healing"] += gained
 
             for source in end_summary.get("self_damage_sources", []):
@@ -2856,7 +2859,7 @@ def resolve_turn(match: MatchState) -> None:
                 continue
             ok, _ = can_pay_costs(ps, execute_ability.get("cost", {}))
             if ok:
-                match.log.append(f"{sid[:5]} Can Use Execute!")
+                match.log.append(f"{sid_token(sid)} Can Use Execute!")
 
     death_ability = ABILITIES.get("death", {})
     death_threshold = 0.2
@@ -2875,7 +2878,7 @@ def resolve_turn(match: MatchState) -> None:
                 continue
             ok, _ = can_pay_costs(ps, death_ability.get("cost", {}))
             if ok:
-                match.log.append(f"{sid[:5]} Shadow Word: Death Damage will be Doubled!")
+                match.log.append(f"{sid_token(sid)} Shadow Word: Death Damage will be Doubled!")
 
     match.log.extend(deferred_break_on_damage_logs)
 
@@ -2888,10 +2891,10 @@ def resolve_turn(match: MatchState) -> None:
         )
         if p1_alive and not p2_alive:
             match.winner = sids[0]
-            match.log.append(f"{sids[0][:5]} wins the duel.")
+            match.log.append(f"{sid_token(sids[0])} wins the duel.")
         elif p2_alive and not p1_alive:
             match.winner = sids[1]
-            match.log.append(f"{sids[1][:5]} wins the duel.")
+            match.log.append(f"{sid_token(sids[1])} wins the duel.")
         else:
             match.winner = None
             match.log.append("Double KO. No winner.")

@@ -1700,6 +1700,21 @@ def scenario_cc_status_display_metadata_is_exposed() -> bool:
     return True
 
 
+def scenario_key_buff_debuff_metadata_is_consistent() -> bool:
+    mindgames = effects.effect_template("mindgames")
+    avenging_wrath = effects.effect_template("avenging_wrath")
+    die_by_sword = effects.effect_template("die_by_sword")
+
+    assert mindgames.get("resolution_layer") == "damage_modification", "Mindgames should declare damage_modification resolution metadata"
+    mindgames_display = mindgames.get("display", {})
+    assert mindgames_display.get("war_council") is True and mindgames_display.get("label") == "Mindgames", "Mindgames should expose consistent status metadata"
+
+    assert avenging_wrath.get("resolution_layer") == "damage_modification", "Avenging Wrath should declare damage_modification resolution metadata"
+
+    assert die_by_sword.get("resolution_layer") == "pre_resolution_protection", "Die by the Sword should declare pre-resolution protection metadata"
+    return True
+
+
 def scenario_hunter_disengage_uses_custom_miss_text() -> bool:
     match = make_match("warrior", "hunter", seed=123)
     submit_turn(match, "basic_attack", "disengage")
@@ -3171,6 +3186,7 @@ SCENARIOS = [
     scenario_proc_raptor_strike_expires_correctly,
     scenario_proc_pyroblast_window_correct,
     scenario_cc_status_display_metadata_is_exposed,
+    scenario_key_buff_debuff_metadata_is_consistent,
     scenario_hunter_disengage_uses_custom_miss_text,
     scenario_hunter_flare_logs_stealth_breaks,
     scenario_hunter_pet_permanent_death,

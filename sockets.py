@@ -235,10 +235,13 @@ def snapshot_for(match, viewer_sid):
             return f"{class_name}(you)"
         return class_name
 
+    def sid_token(sid):
+        return sid[:5]
+
     def format_log_line(line):
         formatted = line
         for sid in match.players:
-            formatted = formatted.replace(sid[:5], display_name_for(sid))
+            formatted = formatted.replace(sid_token(sid), display_name_for(sid))
         if "{friendly_damage}" in formatted:
             formatted = formatted.format(
                 friendly_damage=friendly_totals.get("damage", 0),

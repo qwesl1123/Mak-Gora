@@ -29,7 +29,7 @@ def _damage_after_reduction(raw: int, enemy, school: str) -> int:
 
 
 def _pet_log(owner_sid, pet, action_text: str, result_text: str | None = None) -> str:
-    base = f"{owner_sid[:5]}'s {pet.name} {action_text}"
+    base = f"{_owner_label(owner_sid)}'s {pet.name} {action_text}"
     if not result_text:
         return f"{base}."
     if result_text.startswith("for "):
@@ -46,6 +46,10 @@ def _template_action_text(pet, *, action_key: str | None = None, special_id: str
         action_data = (template.get(action_key) or {})
         return str(action_data.get("action_text") or fallback)
     return str(template.get("action_text") or fallback)
+
+
+def _owner_label(owner_sid: str) -> str:
+    return owner_sid[:5]
 
 
 def _resolve_special_overrides(pet, overrides: dict | None) -> dict:
@@ -215,7 +219,7 @@ def _run_shadowfiend_melee_mana(
         match.log.append(line)
     if total_incoming > 0:
         owner.res.mp = min(owner.res.mp + 13, owner.res.mp_max)
-        match.log.append(f"Shadowfiend restores 13 mana for {owner_sid[:5]}.")
+        match.log.append(f"Shadowfiend restores 13 mana for {_owner_label(owner_sid)}.")
     if remaining > 0:
         totals = match.combat_totals.setdefault(owner_sid, {"damage": 0, "healing": 0})
         totals["damage"] += remaining
@@ -442,7 +446,7 @@ def _run_pet_special(
             before_owner = owner.res.hp
             owner.res.hp = min(owner.res.hp + heal_value, owner.res.hp_max)
             match.log.append(
-                f"{pet.name} restores {pet.hp - before_pet} HP to itself and {owner.res.hp - before_owner} HP to {owner_sid[:5]}."
+                f"{pet.name} restores {pet.hp - before_pet} HP to itself and {owner.res.hp - before_owner} HP to {_owner_label(owner_sid)}."
             )
             totals = match.combat_totals.setdefault(owner_sid, {"damage": 0, "healing": 0})
             totals["damage"] += remaining
@@ -490,7 +494,7 @@ def run_pet_phase(
                 continue
             reason = get_cant_act_reason(pet)
             if reason:
-                match.log.append(f"{owner_sid[:5]}'s {pet.name} is {reason} and cannot act.")
+                match.log.append(f"{_owner_label(owner_sid)}'s {pet.name} is {reason} and cannot act.")
                 continue
 
             template = PETS.get(pet.template_id, {})

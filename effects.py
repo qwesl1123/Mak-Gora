@@ -125,6 +125,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 2,
         "flags": {"immune_physical": True},
         "tags": ["immune_part"],
+        "resolution_layer": "pre_resolution_protection",
     },
     "die_by_sword_mitigation": {
         "type": "mitigation",
@@ -527,6 +528,13 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "subschool": "shadow",
         "harmful": True,
         "flags": {"mindgames": True},
+        "display": {
+            "war_council": True,
+            "label": "Mindgames",
+            "color": "#A084E8",
+            "priority": 83,
+        },
+        "resolution_layer": "damage_modification",
     },
     "shadowfiend": {
         "type": "status",
@@ -563,6 +571,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
             "color": "#F48CBA",
             "priority": 70,
         },
+        "resolution_layer": "damage_modification",
     },
     "bear_form": {
         "type": "form",
