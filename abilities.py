@@ -1144,7 +1144,7 @@ ABILITIES = {
         "cooldown": 20,
         "classes": ["hunter"],
         "self_effects": [
-            {"id": "aspect_of_turtle", "duration": 2, "log": "Causes all single-target spells and attacks to miss, reduces all incoming damage by 30%."}
+            {"id": "aspect_of_turtle", "duration": 2, "log": "Causes incoming crowd control, single-target attacks and spells to miss, reduces all incoming damage by 30%."}
         ],
     },
     "flare": {

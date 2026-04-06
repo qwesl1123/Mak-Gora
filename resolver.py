@@ -536,6 +536,9 @@ def resolve_turn(match: MatchState) -> None:
                 resolved_target, redirect_log = maybe_redirect_target_effect(entry_target, entry)
                 if redirect_log:
                     extra_log_parts.append(redirect_log)
+                if crowd_control_miss_active(entry_target, entry):
+                    log_parts.append(single_target_miss_log())
+                    continue
                 if single_target_miss_active(entry_target, ability) and is_harmful_target_effect_entry(entry):
                     log_parts.append(single_target_miss_log())
                     continue
@@ -775,11 +778,33 @@ def resolve_turn(match: MatchState) -> None:
         flags = effect.get("flags", {}) or {}
         return bool(is_magical_harmful_effect(effect) or effect.get("harmful") or flags.get("stunned") or effect.get("cant_act_reason"))
 
+    def is_crowd_control_effect_entry(entry: Dict[str, Any]) -> bool:
+        effect_id = entry.get("id")
+        if not effect_id:
+            return False
+        effect = build_effect(effect_id, overrides=entry.get("overrides"))
+        if not effect:
+            return False
+        flags = effect.get("flags", {}) or {}
+        return bool(flags.get("stunned") or effect.get("cant_act_reason"))
+
+    def crowd_control_miss_active(target: PlayerState | PetState, entry: Dict[str, Any]) -> bool:
+        return has_flag(target, "incoming_cc_miss") and is_crowd_control_effect_entry(entry)
+
     def is_harmful_single_target_action(ability: Dict[str, Any]) -> bool:
         if not is_single_target_ability(ability):
             return False
         if any(value for value in (ability.get("dice"), ability.get("scaling"), ability.get("flat_damage"))):
             return True
+        dot_id = (ability.get("dot") or {}).get("id")
+        if dot_id:
+            dot_effect = build_effect(dot_id)
+            if dot_effect and (
+                is_magical_harmful_effect(dot_effect)
+                or dot_effect.get("harmful")
+                or dot_effect.get("type") == "dot"
+            ):
+                return True
         return any(is_harmful_target_effect_entry(entry) for entry in (ability.get("target_effects") or []))
 
     def single_target_miss_active(target: PlayerState, ability: Dict[str, Any]) -> bool:
@@ -1211,6 +1236,12 @@ def resolve_turn(match: MatchState) -> None:
         if ability_id == "agony":
             if should_miss_due_to_stealth(actor, target, ability, stealth_targeting):
                 log_parts.append("Target is stealthed — Miss!")
+                set_cooldown(actor, ability_id, ability)
+                if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
+                    remove_stealth(actor)
+                return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
+            if single_target_miss_active(target, ability):
+                log_parts.append(single_target_miss_log())
                 set_cooldown(actor, ability_id, ability)
                 if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
                     remove_stealth(actor)
@@ -1861,6 +1892,8 @@ def resolve_turn(match: MatchState) -> None:
         ability = ctx.get("ability")
         if not ability or not ability.get("priority_defensive"):
             return
+        if start_of_turn_cant_act.get(actor_sid, False):
+            return
         actor = match.state[actor_sid]
         pre_applied: set[str] = set()
         for entry in ability.get("self_effects", []) or []:
@@ -1910,6 +1943,8 @@ def resolve_turn(match: MatchState) -> None:
         if is_immune_all(target):
             return False
         for entry in target_effects:
+            if crowd_control_miss_active(target, entry):
+                continue
             effect_id = entry.get("id")
             if not effect_id:
                 continue
@@ -1957,6 +1992,8 @@ def resolve_turn(match: MatchState) -> None:
             include_runtime_cant_act=False,
         )
         if denial:
+            for effect_id in skip_self_effect_ids:
+                remove_effect(actor, effect_id)
             ctx["damage"] = int(denial.get("damage", 0) or 0)
             ctx["log"] = str(denial.get("log") or "")
             ctx["resolved"] = True
@@ -2736,6 +2773,8 @@ def resolve_turn(match: MatchState) -> None:
             should_miss_due_to_stealth,
             untargetable_miss_log,
             can_evasion_force_miss,
+            single_target_miss_active,
+            single_target_miss_log,
         )
         flush_deferred_stealth_break_logs()
 

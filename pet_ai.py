@@ -119,6 +119,8 @@ def _run_imp_firebolt(
     should_miss_due_to_stealth,
     untargetable_miss_log,
     can_evasion_force_miss,
+    single_target_miss_active,
+    single_target_miss_log,
 ):
     action_text = _template_action_text(pet, fallback="casts Firebolt")
     if should_miss_due_to_stealth(owner, enemy, {"requires_target": True}, stealth_targeting):
@@ -126,6 +128,9 @@ def _run_imp_firebolt(
         return
     if has_flag(enemy, "untargetable"):
         match.log.append(_pet_log(owner_sid, pet, action_text, untargetable_miss_log(enemy)))
+        return
+    if single_target_miss_active(enemy, {"requires_target": True, "tags": ["spell", "attack", "magic"], "flat_damage": 1}):
+        match.log.append(_pet_log(owner_sid, pet, action_text, single_target_miss_log()))
         return
     if is_immune_all(enemy):
         match.log.append(_pet_log(owner_sid, pet, action_text, "Immune!"))
@@ -175,11 +180,14 @@ def _run_shadowfiend_melee_mana(
     should_miss_due_to_stealth,
     untargetable_miss_log,
     can_evasion_force_miss,
+    single_target_miss_active,
+    single_target_miss_log,
 ):
     ability = {
         "requires_target": True,
         "damage_type": "physical",
         "tags": ["attack", "physical"],
+        "flat_damage": 1,
     }
     action_text = _template_action_text(pet, fallback="melees the target")
     misses = False
@@ -188,6 +196,9 @@ def _run_shadowfiend_melee_mana(
         misses = True
     elif has_flag(enemy, "untargetable"):
         match.log.append(_pet_log(owner_sid, pet, action_text, untargetable_miss_log(enemy)))
+        misses = True
+    elif single_target_miss_active(enemy, ability):
+        match.log.append(_pet_log(owner_sid, pet, action_text, single_target_miss_log()))
         misses = True
     elif has_flag(enemy, "evade_all") and can_evasion_force_miss(ability, True):
         match.log.append(_pet_log(owner_sid, pet, action_text, "Target evades the attack — Miss!"))
@@ -240,6 +251,8 @@ def _run_hunter_basic_plus_special(
     should_miss_due_to_stealth,
     untargetable_miss_log,
     can_evasion_force_miss,
+    single_target_miss_active,
+    single_target_miss_log,
 ):
     template = PETS.get(pet.template_id, {})
     forced_command = owner.pending_pet_command
@@ -268,6 +281,8 @@ def _run_hunter_basic_plus_special(
             should_miss_due_to_stealth,
             untargetable_miss_log,
             can_evasion_force_miss,
+            single_target_miss_active,
+            single_target_miss_log,
         )
         return
 
@@ -286,6 +301,8 @@ def _run_hunter_basic_plus_special(
         should_miss_due_to_stealth,
         untargetable_miss_log,
         can_evasion_force_miss,
+        single_target_miss_active,
+        single_target_miss_log,
         stat_key=profile.get("stat", "atk"),
         scaling=float(profile.get("scaling", 1.0) or 1.0),
         dice=profile.get("dice", "d4"),
@@ -311,6 +328,8 @@ def _run_pet_attack(
     should_miss_due_to_stealth,
     untargetable_miss_log,
     can_evasion_force_miss,
+    single_target_miss_active,
+    single_target_miss_log,
     *,
     stat_key: str,
     scaling: float,
@@ -324,12 +343,16 @@ def _run_pet_attack(
         "requires_target": True,
         "damage_type": school,
         "tags": ["attack", school],
+        "flat_damage": 1,
     }
     if should_miss_due_to_stealth(owner, enemy, ability, stealth_targeting):
         match.log.append(_pet_log(owner_sid, pet, action_text, "Target is stealthed — Miss!"))
         return
     if has_flag(enemy, "untargetable"):
         match.log.append(_pet_log(owner_sid, pet, action_text, untargetable_miss_log(enemy)))
+        return
+    if single_target_miss_active(enemy, ability):
+        match.log.append(_pet_log(owner_sid, pet, action_text, single_target_miss_log()))
         return
     if has_flag(enemy, "evade_all") and can_evasion_force_miss(ability, True):
         match.log.append(_pet_log(owner_sid, pet, action_text, "Target evades the attack — Miss!"))
@@ -378,6 +401,8 @@ def _run_pet_special(
     should_miss_due_to_stealth,
     untargetable_miss_log,
     can_evasion_force_miss,
+    single_target_miss_active,
+    single_target_miss_log,
 ):
     if special_id == "bite":
         return _run_pet_attack(
@@ -394,6 +419,8 @@ def _run_pet_special(
             should_miss_due_to_stealth,
             untargetable_miss_log,
             can_evasion_force_miss,
+            single_target_miss_active,
+            single_target_miss_log,
             stat_key="atk",
             scaling=2.0,
             dice="d6",
@@ -408,6 +435,7 @@ def _run_pet_special(
             "requires_target": True,
             "damage_type": "magic",
             "tags": ["attack", "magic"],
+            "flat_damage": 1,
         }
         action_text = _template_action_text(pet, special_id=special_id, fallback="breathes lightning")
         if should_miss_due_to_stealth(owner, enemy, ability, stealth_targeting):
@@ -415,6 +443,9 @@ def _run_pet_special(
             return
         if has_flag(enemy, "untargetable"):
             match.log.append(_pet_log(owner_sid, pet, action_text, untargetable_miss_log(enemy)))
+            return
+        if single_target_miss_active(enemy, ability):
+            match.log.append(_pet_log(owner_sid, pet, action_text, single_target_miss_log()))
             return
         if is_immune_all(enemy):
             match.log.append(_pet_log(owner_sid, pet, action_text, "Immune!"))
@@ -474,6 +505,8 @@ def run_pet_phase(
     should_miss_due_to_stealth,
     untargetable_miss_log,
     can_evasion_force_miss,
+    single_target_miss_active,
+    single_target_miss_log,
 ):
     sids = list(match.players)
     for owner_sid in sids:
@@ -517,6 +550,8 @@ def run_pet_phase(
                 should_miss_due_to_stealth,
                 untargetable_miss_log,
                 can_evasion_force_miss,
+                single_target_miss_active,
+                single_target_miss_log,
             )
         owner.pending_pet_command = None
 

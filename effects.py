@@ -781,7 +781,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 2,
         "value": 0.3,
         "school": "magical",
-        "flags": {"incoming_single_target_miss": True, "disable_attacks": True},
+        "flags": {"incoming_single_target_miss": True, "incoming_cc_miss": True, "disable_attacks": True},
         "regen": {"mp": 10},
         "tags": ["damage_reduction"],
         "resolution_layer": "pre_resolution_protection",

@@ -907,7 +907,7 @@ def scenario_hunter_turtle_priority() -> bool:
     assert _has_effect(hunter, "aspect_of_turtle"), "Aspect of the Turtle should apply immediately"
     assert not any((fx.get("display") or {}).get("war_council") for fx in hunter.effects if fx.get("id") == "aspect_of_turtle"), "Aspect of the Turtle should not create a War Council status badge"
     assert any("uses their bare hands to cast Kidney Shot. Target evades the attack — Miss!" in line for line in match.log), "Single-target attacks into Turtle should use the evasion-style miss wording"
-    assert any("uses their bare hands to cast Aspect of the Turtle. Causes all single-target spells and attacks to miss, reduces all incoming damage by 30%." in line for line in match.log), "Aspect of the Turtle should log both miss and mitigation text"
+    assert any("uses their bare hands to cast Aspect of the Turtle. Causes incoming crowd control, single-target attacks and spells to miss, reduces all incoming damage by 30%." in line for line in match.log), "Aspect of the Turtle should log both miss and mitigation text"
     _assert_no_stun_effect(hunter)
 
     submit_turn(match, "aimed_shot", "eviscerate")
@@ -921,6 +921,66 @@ def scenario_hunter_turtle_priority() -> bool:
     warrior_match.state[warrior_match.players[1]].res.rage = warrior_match.state[warrior_match.players[1]].res.rage_max
     submit_turn(warrior_match, "turtle", "dragon_roar")
     assert hunter2.res.hp < hp_before_aoe, "AoE should still damage the Hunter through Turtle"
+    return True
+
+
+def scenario_hunter_turtle_blocks_pet_spell_debuff_and_failed_cast_state() -> bool:
+    # Pet melee (hunter companion) should miss into Turtle.
+    hunter_pet_match = make_match("hunter", "hunter", seed=321)
+    hunter_def = hunter_pet_match.state[hunter_pet_match.players[0]]
+    submit_turn(hunter_pet_match, "turtle", "call_saber")
+    assert any("Frostsaber" in line and "Target evades the attack — Miss!" in line for line in _turn_lines(hunter_pet_match, 1)), "Single-target hunter pet attacks should miss into Turtle"
+    assert hunter_def.res.hp == hunter_def.res.hp_max, "Hunter pet attacks should not damage through Turtle"
+
+    # Imp Firebolt and Agony application should miss into Turtle.
+    imp_match = make_match("hunter", "warlock", seed=322)
+    hunter_sid, warlock_sid = imp_match.players
+    hunter = imp_match.state[hunter_sid]
+    submit_turn(imp_match, "turtle", "summon_imp")
+    turn1 = _turn_lines(imp_match, 1)
+    assert any("Imp casts Firebolt" in line and "Target evades the attack — Miss!" in line for line in turn1), "Imp Firebolt should miss into Turtle"
+    hp_after_turn1 = hunter.res.hp
+    submit_turn(imp_match, _DEF_PASS, "agony")
+    turn2 = _turn_lines(imp_match, 2)
+    assert any("cast Agony. Target evades the attack — Miss!" in line for line in turn2), "Agony application should miss into Turtle"
+    assert not _has_effect(hunter, "agony"), "Agony should not apply into Turtle"
+    assert hunter.res.hp == hp_after_turn1, "Blocked Agony should not deal damage"
+
+    # Shadowfiend melee should miss into Turtle.
+    fiend_match = make_match("hunter", "priest", seed=323)
+    fiend_hunter = fiend_match.state[fiend_match.players[0]]
+    submit_turn(fiend_match, "turtle", "shadowfiend")
+    turn_fiend = _turn_lines(fiend_match, 1)
+    assert any("Shadowfiend melees the target" in line and "Target evades the attack — Miss!" in line for line in turn_fiend), "Shadowfiend melee should miss into Turtle"
+    assert fiend_hunter.res.hp == fiend_hunter.res.hp_max, "Shadowfiend should not damage through Turtle"
+    assert not any("Shadowfiend restores 13 mana" in line for line in turn_fiend), "Shadowfiend should not restore mana on a miss"
+
+    # Failed Turtle cast while unable to act must not leave Turtle state/recovery active.
+    denied_match = make_match("hunter", "priest", seed=324)
+    denied_hunter_sid, denied_priest_sid = denied_match.players
+    denied_hunter = denied_match.state[denied_hunter_sid]
+    effects.apply_effect_by_id(denied_hunter, "feared", overrides={"duration": 1})
+    submit_turn(denied_match, "turtle", _DEF_PASS)
+    denied_turn = _turn_lines(denied_match, 1)
+    assert any("tries to use Aspect of the Turtle but is feared and cannot act." in line for line in denied_turn), "Denied Turtle cast should log inability to act"
+    assert not _has_effect(denied_hunter, "aspect_of_turtle"), "Denied Turtle cast must not apply Turtle"
+    assert not any("recovers 10 Mana from Aspect of the Turtle." in line for line in denied_turn), "Denied Turtle cast must not produce Turtle mana recovery"
+
+    submit_turn(denied_match, _DEF_PASS, _DEF_PASS)
+    turn2 = _turn_lines(denied_match, 2)
+    assert not any("recovers 10 Mana from Aspect of the Turtle." in line for line in turn2), "No stale Turtle recovery should persist after denied cast"
+    return True
+
+
+def scenario_hunter_turtle_same_turn_psychic_scream_consistency() -> bool:
+    match = make_match("hunter", "priest", seed=325)
+    hunter = match.state[match.players[0]]
+
+    submit_turn(match, "turtle", "psychic_scream")
+    turn1 = _turn_lines(match, 1)
+    assert _has_effect(hunter, "aspect_of_turtle"), "Turtle should still resolve on the same turn against Psychic Scream"
+    assert not _has_effect(hunter, "feared"), "Psychic Scream should miss into active Turtle protection on the same turn"
+    assert any("uses their bare hands to cast Psychic Scream. Target evades the attack — Miss!" in line for line in turn1), "Psychic Scream should use the miss wording into Turtle"
     return True
 
 
@@ -3135,6 +3195,8 @@ SCENARIOS = [
     scenario_dragon_roar_bleed_applies_to_pets_with_independent_rolls,
     scenario_dragon_roar_dead_pets_do_not_log_bleed_application,
     scenario_hunter_turtle_priority,
+    scenario_hunter_turtle_blocks_pet_spell_debuff_and_failed_cast_state,
+    scenario_hunter_turtle_same_turn_psychic_scream_consistency,
     scenario_hunter_wildfire_arcane_proc,
     scenario_hunter_wildfire_dot_log_order,
     scenario_mass_dispel_removes_same_turn_wildfire_burn,
