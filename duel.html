@@ -1684,6 +1684,13 @@
             <p>Roar ferociously to damage all enemies for [Attack (0.8x) + d6] damage. Always critically strikes, cannot miss, ignores Armor, and applies a 4-turn physical bleed on hit, dealing [Attack (0.4x) + d2] damage each turn. It still respects blink-like untargetability. As AoE, it can reveal stealth and destroys Imps when it deals damage.</p>
           </div>
 
+
+          <div class="doc-item">
+            <h4>Cleave</h4>
+            <p><span class="stat">Cost: 0 Rage</span> | <span class="stat">Type: Physical (AoE)</span> | <span class="stat">Cooldown: 6</span></p>
+            <p><span class="stat">Command: <span class="kbd">cleave</span></span></p>
+            <p>A cleaving strike that deals [Attack (0.8x) + d4] damage aiming to hit all enemies within range. Generate the same amount of rage as total damage dealt.</p>
+          </div>
           <div class="doc-item">
             <h4>Ignore Pain</h4>
             <p><span class="stat">Cost: 5 Rage</span> | <span class="stat">Cooldown: 6</span></p>
@@ -1772,7 +1779,7 @@
             <h4>Vanish</h4>
             <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 15</span></p>
             <p><span class="stat">Command: <span class="kbd">vanish</span></span></p>
-            <p>Enter Stealth for 3 turns, restoring 15 HP and 5 Energy each turn. Stealth breaks if you take more than 5 damage.</p>
+            <p>Enter Stealth for 3 turns, restoring 15 HP and 5 Energy each turn. Stealth breaks if total damage taken in a turn exceeds 5.</p>
           </div>
 
           <div class="doc-item">
@@ -1804,9 +1811,9 @@
           </div>
 
           <div class="doc-item">
-            <h4>Shadow Blade</h4>
+            <h4>Shadowstrike</h4>
             <p><span class="stat">Cost: 15 Energy</span> | <span class="stat">Type: Physical</span></p>
-            <p><span class="stat">Command: <span class="kbd">shadow_blade</span></span></p>
+            <p><span class="stat">Command: <span class="kbd">shadowstrike</span></span></p>
             <p>Quick strike that scales with Attack (0.5x) and d6 power. While stealthed, it scales with Attack (1.3x) and d8 power. 20% chance to proc Ambush when not stealthed, and 100% chance when stealthed.</p>
           </div>
 
@@ -1870,21 +1877,21 @@
         <div class="doc-grid">
           <div class="doc-item">
             <h4>Agony</h4>
-            <p><span class="stat">Cost: 20 Mana</span> | <span class="stat">Cooldown: 10</span></p>
+            <p><span class="stat">Cost: 20 Mana</span> | <span class="stat">Cooldown: 20</span></p>
             <p><span class="stat">Command: <span class="kbd">agony</span></span></p>
-            <p>Inflicts Agony for 10 turns. Deals increasing magical DoT damage from 1 up to 10. Not dispellable and not stackable.</p>
+            <p>Inflicts Agony for 10 turns. Deals increasing magical DoT damage from 1 up to 10. Not dispellable and not stackable. Agony ignores Magic Resist and Damage Reductions.</p>
           </div>
           <div class="doc-item">
             <h4>Corruption</h4>
             <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Cooldown: 8</span></p>
             <p><span class="stat">Command: <span class="kbd">corruption</span></span></p>
-            <p>Magical DoT over 8 turns. Damage uses Intellect (3.0x) + d4 and refreshes (no stacking).</p>
+            <p>Magical DoT over 8 turns. Deals [Intellect (0.4x) + d4] damage per turn and refreshes (no stacking).</p>
           </div>
           <div class="doc-item">
             <h4>Unstable Affliction</h4>
             <p><span class="stat">Cost: 20 Mana</span> | <span class="stat">Cooldown: 10</span></p>
             <p><span class="stat">Command: <span class="kbd">unstable_affliction</span></span></p>
-            <p>Magical DoT over 10 turns. Damage uses Intellect (3.5x) + d4 and refreshes (no stacking).</p>
+            <p>Magical DoT over 10 turns. Deals [Intellect (0.3x) + d6] damage per turn and refreshes (no stacking).</p>
           </div>
           <div class="doc-item">
             <h4>Drain Life</h4>
@@ -1918,7 +1925,7 @@
           </div>
           <div class="doc-item">
             <h4>Summon Imp</h4>
-            <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Cooldown: 0</span></p>
+            <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Cooldown: 3</span></p>
             <p><span class="stat">Command: <span class="kbd">summon_imp</span></span></p>
             <p>Summons an Imp (max 3). Each Imp casts Firebolt at the enemy, at the end of your turn.</p>
           </div>
@@ -1982,7 +1989,7 @@
           </div>
           <div class="doc-item">
             <h4>Shield of Vengeance</h4>
-            <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Cooldown: 25</span></p>
+            <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Cooldown: 15</span></p>
             <p><span class="stat">Command: <span class="kbd">shield_of_vengeance</span></span></p>
             <p>Gain an absorb shield for 3 turns (Attack 0.8x + d6). On expiry or full consume, explodes for absorbed total as AoE magic damage.</p>
           </div>
@@ -2024,13 +2031,13 @@
             <h4>Vampiric Touch</h4>
             <p><span class="stat">Cost: 12 Mana</span> | <span class="stat">Cooldown: 8</span></p>
             <p><span class="stat">Command: <span class="kbd">vampiric_touch</span></span></p>
-            <p>Applies a 6-turn magical DoT from [Intellect (3.0x) + d6] total damage. Priest heals for 40% of tick damage dealt.</p>
+            <p>Applies a 6-turn magical DoT for [Intellect (0.3x) + d6] damage per turn. Priest heals for 40% of tick damage dealt.</p>
           </div>
           <div class="doc-item">
             <h4>Devouring Plague</h4>
             <p><span class="stat">Cost: 25 Mana</span> | <span class="stat">Cooldown: 0</span></p>
             <p><span class="stat">Command: <span class="kbd">devouring_plague</span></span></p>
-            <p>Requires Shadowy Insight. Applies a 4-turn magical DoT from [Intellect (2.0x) + d4] total damage and heals for 100% of tick damage dealt.</p>
+            <p>Requires Shadowy Insight. Applies a 7-turn magical DoT for [Intellect (0.4x) + d4] damage per turn and heals for 100% of tick damage dealt.</p>
           </div>
           <div class="doc-item">
             <h4>Penance</h4>
@@ -2058,13 +2065,13 @@
           </div>
           <div class="doc-item">
             <h4>Psychic Scream</h4>
-            <p><span class="stat">Cost: 20 Mana</span> | <span class="stat">Type: Magical AoE</span> | <span class="stat">Cooldown: 15</span></p>
+            <p><span class="stat">Cost: 6 Mana</span> | <span class="stat">Type: Magical AoE</span> | <span class="stat">Cooldown: 15</span></p>
             <p><span class="stat">Command: <span class="kbd">psychic_scream</span></span></p>
             <p>Lets out a terrifying scream fearing all enemies away for 2 turns. Fear will break on damage.</p>
           </div>
           <div class="doc-item">
             <h4>Mass Dispel</h4>
-            <p><span class="stat">Cost: 12 Mana</span> | <span class="stat">Cooldown: 20</span></p>
+            <p><span class="stat">Cost: 8 Mana</span> | <span class="stat">Cooldown: 20</span></p>
             <p><span class="stat">Command: <span class="kbd">mass_dispel</span></span></p>
             <p>Dispels all negative magical effects on self, and dispels all beneficial magical effects on the enemy.</p>
           </div>
@@ -2268,6 +2275,7 @@
         "Execute",
         "Die by the Sword",
         "Dragon Roar",
+        "Cleave",
         "Ignore Pain",
       ];
       const mageAbilities = [
@@ -2287,7 +2295,7 @@
         "Cloak of Shadows",
         "Eviscerate",
         "Evasion",
-        "Shadow Blade",
+        "Shadowstrike",
         "Ambush",
         "Thistle Tea",
         "Fury of Azzinoth",

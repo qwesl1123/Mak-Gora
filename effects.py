@@ -497,7 +497,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
     "devouring_plague": {
         "type": "dot",
         "name": "Devouring Plague",
-        "duration": 4,
+        "duration": 7,
         "category": "dot",
         "school": "magical",
         "subschool": "shadow",

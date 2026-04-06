@@ -574,7 +574,12 @@ def _pet_took_damage_or_died(owner, pet_id: str, hp_before: int) -> bool:
 def _setup_imps(match, owner_idx: int = 0):
     owner_sid = match.players[owner_idx]
     other_sid = match.players[1 - owner_idx]
-    run_turns(match, [("summon_imp", _DEF_PASS), ("summon_imp", _DEF_PASS), ("summon_imp", _DEF_PASS)])
+    for _ in range(3):
+        match.state[owner_sid].cooldowns["summon_imp"] = []
+        if owner_idx == 0:
+            submit_turn(match, "summon_imp", _DEF_PASS)
+        else:
+            submit_turn(match, _DEF_PASS, "summon_imp")
     return owner_sid, other_sid
 
 
@@ -684,7 +689,9 @@ def scenario_absorb_layering() -> bool:
 
 def scenario_pet_summon_data_driven() -> bool:
     warlock_match = make_match("warlock", "priest", seed=123)
-    run_turns(warlock_match, [("summon_imp", _DEF_PASS), ("summon_imp", _DEF_PASS), ("summon_imp", _DEF_PASS), ("summon_imp", _DEF_PASS)])
+    for _ in range(4):
+        warlock_match.state[warlock_match.players[0]].cooldowns["summon_imp"] = []
+        submit_turn(warlock_match, "summon_imp", _DEF_PASS)
     warlock = warlock_match.state[warlock_match.players[0]]
     imp_ids = sorted(pid for pid, pet in warlock.pets.items() if pet.template_id == "imp")
     assert len(imp_ids) == 3, "Imps should obey max_count"
@@ -770,7 +777,9 @@ def scenario_hunter_multi_shot_aoe() -> bool:
     match = make_match("hunter", "warlock", seed=123)
     hunter_sid, warlock_sid = match.players
     warlock = match.state[warlock_sid]
-    run_turns(match, [(_DEF_PASS, "summon_imp"), (_DEF_PASS, "summon_imp"), (_DEF_PASS, "summon_imp")])
+    for _ in range(3):
+        warlock.cooldowns["summon_imp"] = []
+        submit_turn(match, _DEF_PASS, "summon_imp")
     imp_ids = sorted(warlock.pets.keys())
     champion_hp_before = warlock.res.hp
     imp_hp_before = {pid: warlock.pets[pid].hp for pid in imp_ids}
@@ -818,7 +827,9 @@ def scenario_dragon_roar_bleed_applies_to_pets_with_independent_rolls() -> bool:
     warrior = match.state[warrior_sid]
     warlock = match.state[warlock_sid]
 
+    warlock.cooldowns["summon_imp"] = []
     submit_turn(match, _DEF_PASS, "summon_imp")
+    warlock.cooldowns["summon_imp"] = []
     submit_turn(match, _DEF_PASS, "summon_imp")
     assert len(warlock.pets) == 2, "Warlock should have two imps before Dragon Roar"
 
@@ -877,9 +888,9 @@ def scenario_dragon_roar_dead_pets_do_not_log_bleed_application() -> bool:
     warrior = match.state[warrior_sid]
     warlock = match.state[warlock_sid]
 
-    submit_turn(match, _DEF_PASS, "summon_imp")
-    submit_turn(match, _DEF_PASS, "summon_imp")
-    submit_turn(match, _DEF_PASS, "summon_imp")
+    for _ in range(3):
+        warlock.cooldowns["summon_imp"] = []
+        submit_turn(match, _DEF_PASS, "summon_imp")
     assert len(warlock.pets) == 3, "Expected three imps before Dragon Roar"
 
     # Force all imps to die from the AoE hit so only champion should receive bleed logs.
@@ -1390,7 +1401,7 @@ def scenario_cyclone_denial_log_uses_cycloned_wording() -> bool:
     submit_turn(match, "cyclone", _DEF_PASS)
     submit_turn(match, _DEF_PASS, "basic_attack")
     latest_turn = _turn_lines(match, 2)
-    assert any("tries to use Basic Attack but is Cycloned and cannot act." in line for line in latest_turn), "Cyclone denial log should say Cycloned, not stunned"
+    assert any("tries to use Basic Attack but is cycloned and cannot act." in line for line in latest_turn), "Cyclone denial log should use lower-case cycloned wording"
     return True
 
 
@@ -2445,6 +2456,8 @@ def scenario_agony_ramp_progression_restored() -> bool:
     turn_after_last_tick = _turn_lines(match, match.turn)
     assert not any(warrior_sid[:5] in line and "suffers" in line and "Agony" in line for line in turn_after_last_tick), "Agony should expire immediately after its 10-damage tick"
 
+    match.state[warlock_sid].cooldowns["agony"] = []
+    match.state[warlock_sid].res.mp = match.state[warlock_sid].res.mp_max
     submit_turn(match, "agony", _DEF_PASS)
     recast_turn = _turn_lines(match, match.turn)
     assert any("uses their bare hands to cast Agony." in line for line in recast_turn), "Warlock should be able to recast Agony once the prior effect expires"
@@ -3168,6 +3181,110 @@ def scenario_true_aoe_school_subschool_propagation() -> bool:
         EFFECT_TEMPLATES.pop(magical_effect_id, None)
 
 
+def scenario_dot_balance_per_turn_values_and_durations() -> bool:
+    checks = [
+        ("priest", "vampiric_touch", "vampiric_touch", 0.3, 6, 6),
+        ("priest", "devouring_plague", "devouring_plague", 0.4, 4, 7),
+        ("warlock", "corruption", "corruption", 0.4, 4, 8),
+        ("warlock", "unstable_affliction", "unstable_affliction", 0.3, 6, 10),
+    ]
+    for caster_class, ability_id, effect_id, scale, die_max, expected_duration in checks:
+        match = make_match(caster_class, "warrior", seed=6101)
+        caster, target = _player_states(match)
+        caster.stats["int"] = 20
+        if ability_id == "devouring_plague":
+            effects.apply_effect_by_id(caster, "shadowy_insight", overrides={"duration": 2})
+        submit_turn(match, ability_id, _DEF_PASS)
+        fx = next((effect for effect in target.effects if effect.get("id") == effect_id), None)
+        assert fx is not None, f"{ability_id} should apply {effect_id}"
+        assert int(ABILITIES[ability_id]["dot"]["duration"]) == expected_duration, f"{ability_id} duration should be {expected_duration}"
+        tick_damage = int(fx.get("tick_damage", 0) or 0)
+        expected_base = int(caster.stats["int"] * scale)
+        roll_component = tick_damage - expected_base
+        assert 1 <= roll_component <= die_max, f"{ability_id} tick damage should be Int({scale}x)+d{die_max} per turn"
+    return True
+
+
+def scenario_cleave_hits_all_targets_and_grants_rage_from_total_dealt() -> bool:
+    match = make_match("warrior", "warlock", seed=6102)
+    warrior_sid, warlock_sid = match.players
+    warrior = match.state[warrior_sid]
+    warlock = match.state[warlock_sid]
+    warrior.res.rage = 0
+    warrior.stats["atk"] = 20
+    warrior.stats["acc"] = 999
+    warlock.pets["p2_imp_1"] = PetState(id="p2_imp_1", template_id="imp", name="Imp", owner_sid=warlock_sid, hp=40, hp_max=40)
+    warlock.pets["p2_imp_2"] = PetState(id="p2_imp_2", template_id="imp", name="Imp", owner_sid=warlock_sid, hp=40, hp_max=40)
+
+    champion_hp_before = warlock.res.hp
+    imp1_hp_before = warlock.pets["p2_imp_1"].hp
+    imp2_hp_before = warlock.pets["p2_imp_2"].hp
+
+    submit_turn(match, "cleave", _DEF_PASS)
+
+    dealt_total = (champion_hp_before - warlock.res.hp) + (imp1_hp_before - warlock.pets["p2_imp_1"].hp) + (imp2_hp_before - warlock.pets["p2_imp_2"].hp)
+    assert dealt_total > 0, "Cleave should deal damage to at least one valid AoE target"
+    assert warlock.res.hp < champion_hp_before, "Cleave should hit the champion target"
+    assert warlock.pets["p2_imp_1"].hp < imp1_hp_before and warlock.pets["p2_imp_2"].hp < imp2_hp_before, "Cleave should fan out to valid enemy pets"
+    assert warrior.res.rage == dealt_total, "Cleave should grant rage equal to total damage dealt across all valid targets"
+    return True
+
+
+def scenario_stealth_breaks_on_total_turn_damage_threshold() -> bool:
+    match = make_match("rogue", "warlock", seed=6103)
+    rogue_sid, warlock_sid = match.players
+    rogue = match.state[rogue_sid]
+    effects.apply_effect_by_id(rogue, "stealth", overrides={"duration": 3})
+    effects.apply_effect_by_id(rogue, "corruption", overrides={"duration": 1, "tick_damage": 4, "source_sid": warlock_sid})
+    effects.apply_effect_by_id(rogue, "agony", overrides={"duration": 1, "tick_damage": 4, "source_sid": warlock_sid, "dot_mode": "fixed"})
+
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+    assert not _has_effect(rogue, "stealth"), "Stealth should break when cumulative damage in a turn exceeds 5"
+    return True
+
+
+def scenario_mind_blast_empowered_log_wording() -> bool:
+    match = make_match("priest", "warrior", seed=6104)
+    priest = match.state[match.players[0]]
+    effects.apply_effect_by_id(priest, "mind_blast_empowered", overrides={"duration": 2})
+    submit_turn(match, "mind_blast", _DEF_PASS)
+    latest_turn = _turn_lines(match, 1)
+    assert any("Roll d8 =" in line and "Empowered by Mind Flay!" in line for line in latest_turn), "Empowered Mind Blast log should use the new wording"
+    assert not any("Empowered Roll d8" in line for line in latest_turn), "Legacy empowered roll wording should not appear"
+    return True
+
+
+def scenario_shadowfiend_summon_log_deduped() -> bool:
+    match = make_match("priest", "warrior", seed=6105)
+    submit_turn(match, "shadowfiend", _DEF_PASS)
+    latest_turn = _turn_lines(match, 1)
+    cast_line = next((line for line in latest_turn if "cast Shadowfiend." in line), "")
+    assert cast_line.count("summons a Shadowfiend.") == 1, "Shadowfiend cast should log a single summon sentence"
+    assert "summons Shadowfiend." not in cast_line, "Legacy duplicate summon wording should not appear"
+    return True
+
+
+def scenario_balance_metadata_updates_and_shadowstrike_rename() -> bool:
+    assert ABILITIES["shield_of_vengeance"]["cooldown"] == 15, "Shield of Vengeance cooldown should be 15"
+    assert ABILITIES["psychic_scream"]["cost"]["mp"] == 6, "Psychic Scream mana cost should be 6"
+    assert ABILITIES["mass_dispel"]["cost"]["mp"] == 8, "Mass Dispel mana cost should be 8"
+    assert ABILITIES["agony"]["cooldown"] == 20, "Agony cooldown should be 20"
+    assert ABILITIES["summon_imp"]["cooldown"] == 3, "Summon Imp cooldown should be 3"
+    assert "shadowstrike" in ABILITIES, "Shadowstrike command should exist"
+    assert ABILITIES["shadowstrike"]["name"] == "Shadowstrike", "Shadowstrike displayed name should be updated"
+    assert "shadow_blade" not in ABILITIES, "Legacy shadow_blade command should be removed after rename"
+    return True
+
+
+def scenario_duel_html_agony_docs_updated() -> bool:
+    duel_html_text = _detect_duel_html_path().read_text(encoding="utf-8")
+    assert "<h4>Agony</h4>" in duel_html_text, "Agony docs header should be present"
+    assert '<p><span class="stat">Cost: 20 Mana</span> | <span class="stat">Cooldown: 20</span></p>' in duel_html_text, "Agony docs cost/cooldown should be updated"
+    assert '<p><span class="stat">Command: <span class="kbd">agony</span></span></p>' in duel_html_text, "Agony docs command should be present"
+    assert "Inflicts Agony for 10 turns. Deals increasing magical DoT damage from 1 up to 10. Not dispellable and not stackable. Agony ignores Magic Resist and Damage Reductions." in duel_html_text, "Agony docs description should match the requested wording exactly"
+    return True
+
+
 SCENARIOS = [
     scenario_mindgames_lay_on_hands,
     scenario_mass_dispel_selective_removal,
@@ -3289,6 +3406,13 @@ SCENARIOS = [
     scenario_subschool_event_plumbing_for_dots_and_passives,
     scenario_direct_damage_dot_inherits_ability_subschool,
     scenario_true_aoe_school_subschool_propagation,
+    scenario_dot_balance_per_turn_values_and_durations,
+    scenario_cleave_hits_all_targets_and_grants_rage_from_total_dealt,
+    scenario_stealth_breaks_on_total_turn_damage_threshold,
+    scenario_mind_blast_empowered_log_wording,
+    scenario_shadowfiend_summon_log_deduped,
+    scenario_balance_metadata_updates_and_shadowstrike_rename,
+    scenario_duel_html_agony_docs_updated,
     scenario_invalid_class_rejected,
     scenario_valid_class_id_is_normalized_before_build,
     scenario_prep_selection_name_uses_current_submission,

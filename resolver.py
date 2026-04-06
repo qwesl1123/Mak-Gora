@@ -1018,7 +1018,7 @@ def resolve_turn(match: MatchState) -> None:
         if can_cast_while_cc(ability, reason=reason, incoming_cc=incoming_cc):
             return None
         if has_flag(actor, "cycloned"):
-            reason_text = "is Cycloned and cannot act"
+            reason_text = "is cycloned and cannot act"
         elif reason:
             reason_text = f"is {reason} and cannot act"
         else:
@@ -1198,12 +1198,12 @@ def resolve_turn(match: MatchState) -> None:
                 set_cooldown(actor, ability_id, ability)
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
             intellect = modify_stat(actor, "int", actor.stats.get("int", 0))
-            roll_power = roll("d4", r)
+            dice_type = str((ability.get("dice") or {}).get("type") or "d4")
+            roll_power = roll(dice_type, r)
             scale = float((ability.get("scaling") or {}).get("int", 0.0) or 0.0)
-            total_dot = int(intellect * scale) + int(roll_power)
             dot_data = ability.get("dot", {})
             duration = int(dot_data.get("duration", 1) or 1)
-            tick_damage = max(1, total_dot // max(1, duration))
+            tick_damage = max(1, int(intellect * scale) + int(roll_power))
             dot_id = dot_data.get("id")
             dot_school = normalize_school(dot_data.get("school") or ability.get("school") or "magical") or "magical"
             dot_subschool = (dot_data.get("subschool") or ability.get("subschool")) if dot_school == "magical" else None
@@ -1428,13 +1428,12 @@ def resolve_turn(match: MatchState) -> None:
                 set_cooldown(actor, ability_id, ability)
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
             intellect = modify_stat(actor, "int", actor.stats.get("int", 0))
-            dice_type = "d6" if ability_id == "vampiric_touch" else "d4"
+            dice_type = str((ability.get("dice") or {}).get("type") or "d4")
             roll_power = roll(dice_type, r)
             scale = float((ability.get("scaling") or {}).get("int", 0.0) or 0.0)
-            total_dot = int(intellect * scale) + int(roll_power)
             dot_data = ability.get("dot", {})
             duration = int(dot_data.get("duration", 1) or 1)
-            tick_damage = max(1, total_dot // max(1, duration))
+            tick_damage = max(1, int(intellect * scale) + int(roll_power))
             dot_id = dot_data.get("id")
             dot_template = effect_template(dot_id) if dot_id else {}
             lifesteal_pct = float(dot_template.get("lifesteal_pct", 0) or 0)
@@ -1617,10 +1616,14 @@ def resolve_turn(match: MatchState) -> None:
             elif ability_id == "judgment" and has_effect(actor, "avenging_wrath"):
                 local_scaling = {"atk": 1.4}
 
-            if ability_id == "mind_blast" and has_effect(actor, "mind_blast_empowered"):
+            is_empowered_mind_blast = ability_id == "mind_blast" and has_effect(actor, "mind_blast_empowered")
+            if is_empowered_mind_blast:
                 local_scaling = {"int": 1.3}
                 roll_power = roll("d8", r)
-                log_parts.append(f"{prefix}Empowered Roll d8 = {roll_power}.")
+                if dice_data:
+                    log_parts.pop()
+                log_parts.append(f"{prefix}Roll d8 = {roll_power}.")
+                log_parts.append(f"{prefix}Empowered by Mind Flay!")
             if flat_damage is not None:
                 raw = int(flat_damage)
             elif "atk" in local_scaling:
@@ -2158,6 +2161,7 @@ def resolve_turn(match: MatchState) -> None:
     # Apply damage
     deferred_break_on_damage_logs: list[str] = []
     deferred_stealth_break_logs: list[str] = []
+    stealth_damage_taken_by_sid: Dict[str, int] = {}
 
     def flush_deferred_stealth_break_logs() -> None:
         if not deferred_stealth_break_logs:
@@ -2298,7 +2302,12 @@ def resolve_turn(match: MatchState) -> None:
                 return
             if is_player_entity:
                 was_stealthed = is_stealthed(target_entity)
-                break_stealth_on_damage(target_entity, hp_damage)
+                sid = str(getattr(target_entity, "sid", "") or "")
+                cumulative_damage = hp_damage
+                if sid:
+                    cumulative_damage = int(stealth_damage_taken_by_sid.get(sid, 0) or 0) + hp_damage
+                    stealth_damage_taken_by_sid[sid] = cumulative_damage
+                break_stealth_on_damage(target_entity, cumulative_damage)
                 broken_effects = break_effects_and_collect_labels(target_entity)
                 if was_stealthed and not is_stealthed(target_entity):
                     deferred_stealth_break_logs.append(f"{sid_token(target_label)} stealth broken by {source_ability_name}.")
@@ -2522,6 +2531,7 @@ def resolve_turn(match: MatchState) -> None:
     )
     dealt1 = int(dealt1_data.get("hp_damage", 0) or 0)
     dealt2 = int(dealt2_data.get("hp_damage", 0) or 0)
+    total_dealt_by_actor = {sids[0]: dealt1, sids[1]: dealt2}
 
     def combatant_label(sid: str) -> str:
         ps = match.state[sid]
@@ -2707,6 +2717,7 @@ def resolve_turn(match: MatchState) -> None:
         if pet_damage > 0:
             totals = match.combat_totals.setdefault(actor_sid, {"damage": 0, "healing": 0})
             totals["damage"] += pet_damage
+            total_dealt_by_actor[actor_sid] = int(total_dealt_by_actor.get(actor_sid, 0) or 0) + pet_damage
         if ability.get("dot"):
             enemy_label = combatant_label(target_sid)
             for pet_hit in aoe_result.get("pet_hits", []):
@@ -2759,8 +2770,20 @@ def resolve_turn(match: MatchState) -> None:
                 totals = match.combat_totals.setdefault(actor_sid, {"damage": 0, "healing": 0})
                 totals["healing"] += gained
 
-    _resolve_actor_post_damage_reactions(sids[0], sids[1], dealt1, result1)
-    _resolve_actor_post_damage_reactions(sids[1], sids[0], dealt2, result2)
+        dealt_resource_gain = ability.get("resource_gain_on_dealt", {})
+        if dealt > 0 and dealt_resource_gain and actor.res:
+            for resource, gain in dealt_resource_gain.items():
+                if gain == "damage":
+                    gain_value = dealt
+                elif gain == "damage_x3":
+                    gain_value = dealt * 3
+                else:
+                    gain_value = int(gain or 0)
+                if gain_value > 0 and hasattr(actor.res, resource):
+                    grant_resource(actor, resource, gain_value)
+
+    _resolve_actor_post_damage_reactions(sids[0], sids[1], int(total_dealt_by_actor.get(sids[0], 0) or 0), result1)
+    _resolve_actor_post_damage_reactions(sids[1], sids[0], int(total_dealt_by_actor.get(sids[1], 0) or 0), result2)
 
     def _resolve_end_of_turn() -> tuple[bool, bool, bool]:
         # end_of_turn: pet_phase
