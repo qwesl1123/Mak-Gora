@@ -124,6 +124,7 @@ resolver = _MODS["resolver"]
 effects = _MODS["effects"]
 PET_AI = sys.modules["games.duel.engine.pet_ai"]
 PETS = sys.modules["games.duel.content.pets"].PETS
+CLASSES = sys.modules["games.duel.content.classes"].CLASSES
 ABILITIES = sys.modules["games.duel.content.abilities"].ABILITIES
 EFFECT_TEMPLATES = effects.EFFECT_TEMPLATES
 SOCKETS = _bootstrap_socket_module()
@@ -3075,13 +3076,16 @@ def scenario_subschool_metadata_and_templates() -> bool:
     return True
 
 
-def scenario_entity_type_phase1_metadata() -> bool:
+def scenario_entity_type_phase3_validation_suite() -> bool:
+    for class_id in CLASSES.keys():
+        mirror_match = make_match(class_id, class_id, seed=7000 + len(class_id))
+        for sid in mirror_match.players:
+            assert mirror_match.state[sid].entity_type == "humanoid", f"{class_id} should initialize as humanoid"
+
     match = make_match("warlock", "hunter", seed=7001)
     p1_sid, p2_sid = match.players
     p1 = match.state[p1_sid]
     p2 = match.state[p2_sid]
-    assert p1.entity_type == "humanoid" and p2.entity_type == "humanoid", "Prepared champions should default to humanoid"
-
     expected_pet_types = {
         "imp": "demon",
         "shadowfiend": "demon",
@@ -3095,6 +3099,8 @@ def scenario_entity_type_phase1_metadata() -> bool:
     submit_turn(match, "summon_imp", _DEF_PASS)
     imp = next(iter(p1.pets.values()))
     assert imp.entity_type == "demon", "Summoned Imp runtime state should preserve demon entity_type"
+    assert resolver.entity_type_of(imp) == "demon", "entity_type_of should normalize summoned pet runtime entity type"
+    assert resolver.is_entity_type(imp, "Demon"), "is_entity_type should support normalized comparisons"
 
     priest_match = make_match("priest", "warrior", seed=7002)
     priest_sid = priest_match.players[0]
@@ -3107,6 +3113,14 @@ def scenario_entity_type_phase1_metadata() -> bool:
     submit_turn(hunter_match, "call_saber", _DEF_PASS)
     frostsaber = next(iter(hunter_match.state[hunter_sid].pets.values()))
     assert frostsaber.entity_type == "beast", "Summoned Frostsaber runtime state should preserve beast entity_type"
+    assert resolver.entity_type_of(hunter_match.state[hunter_sid]) == "humanoid", "Champions should expose entity_type helper data"
+
+    submit_turn(hunter_match, "call_boar", _DEF_PASS)
+    boar = next((pet for pet in hunter_match.state[hunter_sid].pets.values() if pet.template_id == "barrens_boar"), None)
+    assert boar is not None and boar.entity_type == "beast", "Summoned Barrens Boar runtime state should preserve beast entity_type"
+    submit_turn(hunter_match, "call_serpent", _DEF_PASS)
+    serpent = next((pet for pet in hunter_match.state[hunter_sid].pets.values() if pet.template_id == "emerald_serpent"), None)
+    assert serpent is not None and serpent.entity_type == "beast", "Summoned Emerald Serpent runtime state should preserve beast entity_type"
 
     control_match = make_match("warrior", "warrior", seed=7004)
     mutated_match = make_match("warrior", "warrior", seed=7004)
@@ -3117,24 +3131,47 @@ def scenario_entity_type_phase1_metadata() -> bool:
     mutated_match.state[mutated_match.players[1]].entity_type = "beast"
     submit_turn(mutated_match, "overpower", _DEF_PASS)
     assert control_target.res.hp == mutated_target.res.hp, "Entity type metadata should not alter gameplay in Phase 1"
-    return True
 
-
-def scenario_entity_type_phase2_snapshot_exposure() -> bool:
-    match = make_match("warlock", "hunter", seed=7005)
-    p1_sid, p2_sid = match.players
-    submit_turn(match, "summon_imp", "call_saber")
-
-    p1_snapshot = SOCKETS.snapshot_for(match, p1_sid)
-    p2_snapshot = SOCKETS.snapshot_for(match, p2_sid)
-    assert p1_snapshot.get("you_entity_type") == "humanoid", "Friendly champion snapshot should expose humanoid entity_type"
-    assert p1_snapshot.get("enemy_entity_type") == "humanoid", "Enemy champion snapshot should expose humanoid entity_type"
-    assert p2_snapshot.get("you_entity_type") == "humanoid", "Viewer-relative champion entity_type should stay humanoid"
+    snap_match = make_match("warlock", "hunter", seed=7005)
+    submit_turn(snap_match, "summon_imp", "call_saber")
+    p1_snapshot = SOCKETS.snapshot_for(snap_match, p1_sid)
+    p2_snapshot = SOCKETS.snapshot_for(snap_match, p2_sid)
+    for snapshot in (p1_snapshot, p2_snapshot):
+        assert isinstance(snapshot.get("you_entity_type"), str) and snapshot["you_entity_type"], "Friendly champion snapshot entity_type must be present"
+        assert isinstance(snapshot.get("enemy_entity_type"), str) and snapshot["enemy_entity_type"], "Enemy champion snapshot entity_type must be present"
+        for pet in snapshot.get("you_pets", []) + snapshot.get("enemy_pets", []):
+            assert isinstance(pet.get("entity_type"), str) and pet["entity_type"], f"Pet snapshot entity_type missing for {pet.get('name')}"
+            assert pet["entity_type"] == pet["entity_type"].strip().lower(), f"Pet snapshot entity_type should be normalized for {pet.get('name')}"
 
     p1_imp = next((pet for pet in p1_snapshot.get("you_pets", []) if pet.get("name") == "Imp"), None)
     p1_enemy_saber = next((pet for pet in p1_snapshot.get("enemy_pets", []) if pet.get("name") == "Frostsaber"), None)
+    assert p1_snapshot.get("you_entity_type") == "humanoid", "Friendly champion snapshot should expose humanoid entity_type"
+    assert p1_snapshot.get("enemy_entity_type") == "humanoid", "Enemy champion snapshot should expose humanoid entity_type"
+    assert p2_snapshot.get("you_entity_type") == "humanoid", "Viewer-relative champion entity_type should stay humanoid"
     assert p1_imp is not None and p1_imp.get("entity_type") == "demon", "Friendly pet snapshot should expose Imp as demon"
     assert p1_enemy_saber is not None and p1_enemy_saber.get("entity_type") == "beast", "Enemy pet snapshot should expose Frostsaber as beast"
+    return True
+
+
+def scenario_entity_type_phase3_completeness_audit() -> bool:
+    audit_match = make_match("hunter", "priest", seed=7006)
+    hunter_sid, priest_sid = audit_match.players
+    hunter = audit_match.state[hunter_sid]
+    priest = audit_match.state[priest_sid]
+    assert hunter.entity_type and priest.entity_type, "Every champion runtime should have entity_type"
+    assert all(ps.entity_type == "humanoid" for ps in audit_match.state.values()), "Current champion roster should be humanoid"
+
+    submit_turn(audit_match, "call_saber", "shadowfiend")
+    runtime_pets = list(hunter.pets.values()) + list(priest.pets.values())
+    assert runtime_pets, "Audit should have runtime pets available"
+    assert all(pet.entity_type for pet in runtime_pets), "Every summoned runtime pet should have entity_type"
+    assert all(resolver.entity_type_of(pet) in {"demon", "beast"} for pet in runtime_pets), "Helper access should cover current runtime pet roster"
+
+    viewer_snapshot = SOCKETS.snapshot_for(audit_match, hunter_sid)
+    assert viewer_snapshot.get("you_entity_type") == "humanoid", "Snapshot/debug surface should expose champion entity_type"
+    assert viewer_snapshot.get("enemy_entity_type") == "humanoid", "Snapshot/debug surface should expose enemy entity_type"
+    for pet in viewer_snapshot.get("you_pets", []) + viewer_snapshot.get("enemy_pets", []):
+        assert pet.get("entity_type") in {"demon", "beast"}, "Snapshot/debug surface should expose runtime pet entity_type"
     return True
 
 
@@ -3534,8 +3571,8 @@ SCENARIOS = [
     scenario_phase_c_prompt2_no_spillover_to_effect_application_or_end_of_turn,
     scenario_phase_c_prompt3_effect_application_stage_preserved,
     scenario_phase_d_end_of_turn_stage_preserved,
-    scenario_entity_type_phase1_metadata,
-    scenario_entity_type_phase2_snapshot_exposure,
+    scenario_entity_type_phase3_validation_suite,
+    scenario_entity_type_phase3_completeness_audit,
     scenario_subschool_metadata_and_templates,
     scenario_subschool_event_plumbing_for_dots_and_passives,
     scenario_direct_damage_dot_inherits_ability_subschool,

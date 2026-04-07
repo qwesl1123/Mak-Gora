@@ -26,6 +26,26 @@ def normalize_player_action(action: Dict[str, Any]) -> Dict[str, Any]:
     if "ability_id" in normalized:
         normalized["ability_id"] = normalize_command_input(normalized.get("ability_id"))
     return normalized
+
+
+def entity_type_of(target: PlayerState | PetState | None, default: str | None = None) -> str | None:
+    """Return normalized entity_type for a runtime entity, if available."""
+    if target is None:
+        return default
+    entity_type = getattr(target, "entity_type", None)
+    if entity_type is None:
+        return default
+    normalized = str(entity_type).strip().lower()
+    return normalized or default
+
+
+def is_entity_type(target: PlayerState | PetState | None, entity_type: str) -> bool:
+    """Convenience helper for future mechanics checks against runtime entities."""
+    expected = str(entity_type or "").strip().lower()
+    if not expected:
+        return False
+    return entity_type_of(target) == expected
+
 from .pet_ai import run_pet_phase, cleanup_pets, prepare_pet_pre_action_effects, trigger_pre_action_special
 
 # Centralized mechanics (passives/DoTs/mitigation/regen) live here.
