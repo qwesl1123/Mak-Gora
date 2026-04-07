@@ -165,6 +165,7 @@ def state_extract(match) -> Dict[str, Any]:
             pet_id: {
                 "template_id": pet.template_id,
                 "name": pet.name,
+                "entity_type": pet.entity_type,
                 "hp": pet.hp,
                 "hp_max": pet.hp_max,
                 "duration": pet.duration,
@@ -177,6 +178,7 @@ def state_extract(match) -> Dict[str, Any]:
         }
         state["players"][sid] = {
             "class_id": ps.build.class_id,
+            "entity_type": ps.entity_type,
             "hp": ps.res.hp,
             "hp_max": ps.res.hp_max,
             "mp": ps.res.mp,
@@ -3073,6 +3075,51 @@ def scenario_subschool_metadata_and_templates() -> bool:
     return True
 
 
+def scenario_entity_type_phase1_metadata() -> bool:
+    match = make_match("warlock", "hunter", seed=7001)
+    p1_sid, p2_sid = match.players
+    p1 = match.state[p1_sid]
+    p2 = match.state[p2_sid]
+    assert p1.entity_type == "humanoid" and p2.entity_type == "humanoid", "Prepared champions should default to humanoid"
+
+    expected_pet_types = {
+        "imp": "demon",
+        "shadowfiend": "demon",
+        "frostsaber": "beast",
+        "barrens_boar": "beast",
+        "emerald_serpent": "beast",
+    }
+    for pet_id, entity_type in expected_pet_types.items():
+        assert PETS[pet_id].get("entity_type") == entity_type, f"{pet_id} should declare entity_type={entity_type}"
+
+    submit_turn(match, "summon_imp", _DEF_PASS)
+    imp = next(iter(p1.pets.values()))
+    assert imp.entity_type == "demon", "Summoned Imp runtime state should preserve demon entity_type"
+
+    priest_match = make_match("priest", "warrior", seed=7002)
+    priest_sid = priest_match.players[0]
+    submit_turn(priest_match, "shadowfiend", _DEF_PASS)
+    shadowfiend = next(iter(priest_match.state[priest_sid].pets.values()))
+    assert shadowfiend.entity_type == "demon", "Summoned Shadowfiend runtime state should preserve demon entity_type"
+
+    hunter_match = make_match("hunter", "warrior", seed=7003)
+    hunter_sid = hunter_match.players[0]
+    submit_turn(hunter_match, "call_saber", _DEF_PASS)
+    frostsaber = next(iter(hunter_match.state[hunter_sid].pets.values()))
+    assert frostsaber.entity_type == "beast", "Summoned Frostsaber runtime state should preserve beast entity_type"
+
+    control_match = make_match("warrior", "warrior", seed=7004)
+    mutated_match = make_match("warrior", "warrior", seed=7004)
+    control_target = control_match.state[control_match.players[1]]
+    mutated_target = mutated_match.state[mutated_match.players[1]]
+    submit_turn(control_match, "overpower", _DEF_PASS)
+    mutated_match.state[mutated_match.players[0]].entity_type = "demon"
+    mutated_match.state[mutated_match.players[1]].entity_type = "beast"
+    submit_turn(mutated_match, "overpower", _DEF_PASS)
+    assert control_target.res.hp == mutated_target.res.hp, "Entity type metadata should not alter gameplay in Phase 1"
+    return True
+
+
 def scenario_subschool_event_plumbing_for_dots_and_passives() -> bool:
     match = make_match("hunter", "warrior", p1_items={"weapon": "thunderfury"}, seed=5001)
     hunter_sid, warrior_sid = match.players
@@ -3469,6 +3516,7 @@ SCENARIOS = [
     scenario_phase_c_prompt2_no_spillover_to_effect_application_or_end_of_turn,
     scenario_phase_c_prompt3_effect_application_stage_preserved,
     scenario_phase_d_end_of_turn_stage_preserved,
+    scenario_entity_type_phase1_metadata,
     scenario_subschool_metadata_and_templates,
     scenario_subschool_event_plumbing_for_dots_and_passives,
     scenario_direct_damage_dot_inherits_ability_subschool,

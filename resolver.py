@@ -183,7 +183,7 @@ def apply_prep_build(match: MatchState) -> None:
             absorbs={},
         )
         
-        ps = PlayerState(sid=sid, build=build, res=res, stats=stats, pets={})
+        ps = PlayerState(sid=sid, entity_type="humanoid", build=build, res=res, stats=stats, pets={})
 
         if build.class_id == "rogue":
             apply_effect_by_id(ps, "stealth")
@@ -845,6 +845,7 @@ def resolve_turn(match: MatchState) -> None:
             duration = template.get("duration")
             existing.duration = int(duration) if duration is not None else None
             existing.name = template.get("name", existing.name)
+            existing.entity_type = template.get("entity_type", existing.entity_type)
             actor.active_pet_id = existing.id
             return existing, True, None
 
@@ -889,6 +890,7 @@ def resolve_turn(match: MatchState) -> None:
             hp_max=hp_max,
             effects=[],
             duration=int(duration) if duration is not None else None,
+            entity_type=template.get("entity_type"),
         )
         actor.pets[summoned.id] = summoned
         if summon_group:

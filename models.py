@@ -35,10 +35,12 @@ class PetState:
     effects: List[Dict[str, Any]] = field(default_factory=list)
     duration: Optional[int] = None
     action_consumed: bool = False
+    entity_type: Optional[str] = None
 
 @dataclass
 class PlayerState:
     sid: str
+    entity_type: str = "humanoid"
     build: PlayerBuild = field(default_factory=PlayerBuild)
     res: Optional[Resources] = None
     stats: Dict[str, int] = field(default_factory=dict)     # atk/def/spd/crit/acc/eva...
