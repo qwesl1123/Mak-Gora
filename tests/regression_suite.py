@@ -3120,6 +3120,24 @@ def scenario_entity_type_phase1_metadata() -> bool:
     return True
 
 
+def scenario_entity_type_phase2_snapshot_exposure() -> bool:
+    match = make_match("warlock", "hunter", seed=7005)
+    p1_sid, p2_sid = match.players
+    submit_turn(match, "summon_imp", "call_saber")
+
+    p1_snapshot = SOCKETS.snapshot_for(match, p1_sid)
+    p2_snapshot = SOCKETS.snapshot_for(match, p2_sid)
+    assert p1_snapshot.get("you_entity_type") == "humanoid", "Friendly champion snapshot should expose humanoid entity_type"
+    assert p1_snapshot.get("enemy_entity_type") == "humanoid", "Enemy champion snapshot should expose humanoid entity_type"
+    assert p2_snapshot.get("you_entity_type") == "humanoid", "Viewer-relative champion entity_type should stay humanoid"
+
+    p1_imp = next((pet for pet in p1_snapshot.get("you_pets", []) if pet.get("name") == "Imp"), None)
+    p1_enemy_saber = next((pet for pet in p1_snapshot.get("enemy_pets", []) if pet.get("name") == "Frostsaber"), None)
+    assert p1_imp is not None and p1_imp.get("entity_type") == "demon", "Friendly pet snapshot should expose Imp as demon"
+    assert p1_enemy_saber is not None and p1_enemy_saber.get("entity_type") == "beast", "Enemy pet snapshot should expose Frostsaber as beast"
+    return True
+
+
 def scenario_subschool_event_plumbing_for_dots_and_passives() -> bool:
     match = make_match("hunter", "warrior", p1_items={"weapon": "thunderfury"}, seed=5001)
     hunter_sid, warrior_sid = match.players
@@ -3517,6 +3535,7 @@ SCENARIOS = [
     scenario_phase_c_prompt3_effect_application_stage_preserved,
     scenario_phase_d_end_of_turn_stage_preserved,
     scenario_entity_type_phase1_metadata,
+    scenario_entity_type_phase2_snapshot_exposure,
     scenario_subschool_metadata_and_templates,
     scenario_subschool_event_plumbing_for_dots_and_passives,
     scenario_direct_damage_dot_inherits_ability_subschool,

@@ -165,6 +165,13 @@ def snapshot_for(match, viewer_sid):
         if not ps:
             return None
         return current_form_id(ps)
+
+    def entity_type_for(sid):
+        ps = match.state.get(sid)
+        if not ps:
+            return None
+        return ps.entity_type
+
     def effects_for(sid):
         ps = match.state.get(sid)
         if not ps:
@@ -225,6 +232,7 @@ def snapshot_for(match, viewer_sid):
                 "name": pet.name,
                 "hp": int(pet.hp),
                 "hp_max": int(pet.hp_max),
+                "entity_type": pet.entity_type,
                 "statuses": pet_statuses_for(pet),
             })
         return packed
@@ -298,6 +306,8 @@ def snapshot_for(match, viewer_sid):
         "enemy_stealthed": stealthed_for(enemy),
         "you_form": form_for(you),
         "enemy_form": form_for(enemy),
+        "you_entity_type": entity_type_for(you),
+        "enemy_entity_type": entity_type_for(enemy),
         "you_effects": effects_for(you),
         "enemy_effects": effects_for(enemy),
         "you_pets": pets_for(you),

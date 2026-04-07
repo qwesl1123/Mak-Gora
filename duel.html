@@ -201,6 +201,12 @@
         color: var(--text-dark);
       }
 
+      .pet-type-line {
+        margin-bottom: 4px;
+        font-size: 0.78rem;
+        color: var(--text-dark);
+      }
+
       .pet-hpbar {
         height: 14px;
         margin-bottom: 4px;
@@ -279,6 +285,18 @@
         letter-spacing: 0.08em;
         border-bottom: 1px solid rgba(212, 175, 55, 0.3);
         padding-bottom: 8px;
+        position: relative;
+      }
+
+      .champion-entity-type {
+        position: absolute;
+        right: 0;
+        top: 2px;
+        font-size: 0.58em;
+        letter-spacing: 0.08em;
+        color: #b08a4a;
+        text-transform: uppercase;
+        font-weight: 600;
       }
 
       .champion-name-class.warrior {
@@ -2495,10 +2513,21 @@
         return suffix ? "Adventurer(you)" : "Adventurer";
       }
 
-      function setChampionLabel(element, label) {
+      function formatEntityType(entityType) {
+        return String(entityType || "")
+          .trim()
+          .toLowerCase()
+          .split(/[_\s-]+/)
+          .filter(Boolean)
+          .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+          .join(" ");
+      }
+
+      function setChampionLabel(element, label, entityType) {
         if (!element) {
           return;
         }
+        const typeText = formatEntityType(entityType);
         if (!label) {
           element.textContent = "--";
           return;
@@ -2508,11 +2537,13 @@
         const classKey = classKeyFromLabel(displayLabel);
         const safeClassName = escapeHtml(className);
         const safeSuffix = escapeHtml(suffix);
+        const safeType = escapeHtml(typeText);
+        const typeMarkup = safeType ? `<span class="champion-entity-type">${safeType}</span>` : "";
         if (!isStyledChampionClass(classKey)) {
-          element.textContent = displayLabel;
+          element.innerHTML = `${escapeHtml(displayLabel)}${typeMarkup}`;
           return;
         }
-        element.innerHTML = `<span class="champion-name-class ${classKey}">${safeClassName}</span>${safeSuffix}`;
+        element.innerHTML = `<span class="champion-name-class ${classKey}">${safeClassName}</span>${safeSuffix}${typeMarkup}`;
       }
 
       function applyDocumentationItemRarityColors(root = document) {
@@ -3537,6 +3568,11 @@
 
           row.appendChild(nameLine);
 
+          const typeLine = document.createElement("div");
+          typeLine.className = "pet-type-line";
+          typeLine.textContent = `Type: ${formatEntityType(pet?.entity_type) || "Unknown"}`;
+          row.appendChild(typeLine);
+
           const hasHp = Number.isFinite(Number(pet?.hp_max)) && Number(pet.hp_max) > 0;
           if (hasHp) {
             const hpWrap = document.createElement("div");
@@ -3579,10 +3615,10 @@
       socket.on("duel_snapshot", (data) => {
         // Update class names
         if (data.you_class) {
-          setChampionLabel(friendlyLabel, data.you_class);
+          setChampionLabel(friendlyLabel, data.you_class, data.you_entity_type);
         }
         if (data.enemy_class) {
-          setChampionLabel(enemyLabel, data.enemy_class);
+          setChampionLabel(enemyLabel, data.enemy_class, data.enemy_entity_type);
         }
         
         // Update equipped items
