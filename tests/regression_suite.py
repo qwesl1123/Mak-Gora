@@ -2651,6 +2651,70 @@ def scenario_dragonwrath_multihit_duplicate_logs_as_single_line() -> bool:
     raise AssertionError("Could not find deterministic Dragonwrath Arcane Barrage duplicate proc seed in range")
 
 
+def scenario_dragonwrath_duplicate_drain_life_heals_from_total_landed_damage() -> bool:
+    for seed in range(1, 1000):
+        match = make_match("warlock", "warrior", p1_items={"weapon": "dragonwrath"}, seed=seed)
+        warlock_sid, warrior_sid = match.players
+        warlock = match.state[warlock_sid]
+        warrior = match.state[warrior_sid]
+        warlock.res.hp = max(1, warlock.res.hp - 80)
+        warlock_before = warlock.res.hp
+        warrior_before = warrior.res.hp
+        submit_turn(match, "drain_life", _DEF_PASS)
+        duplicate_line = next((line for line in match.log if "duplicates Drain Life!" in line), None)
+        if not duplicate_line:
+            continue
+        healed = warlock.res.hp - warlock_before
+        dealt = warrior_before - warrior.res.hp
+        assert dealt > 0, "sanity check requires Dragonwrath duplicate to deal landed damage"
+        assert healed == dealt, "Drain Life heal-from-damage should include landed Dragonwrath duplicate damage"
+        return True
+    raise AssertionError("Could not find deterministic Dragonwrath Drain Life duplicate proc seed in range")
+
+
+def scenario_dragonwrath_duplicate_drain_life_does_not_heal_from_fully_absorbed_damage() -> bool:
+    for seed in range(1, 1000):
+        match = make_match("warlock", "warrior", p1_items={"weapon": "dragonwrath"}, seed=seed)
+        warlock_sid, warrior_sid = match.players
+        warlock = match.state[warlock_sid]
+        warrior = match.state[warrior_sid]
+        warlock.res.hp = max(1, warlock.res.hp - 80)
+        effects.add_absorb(warrior, 999, source_name="Power Word: Shield", effect_id="power_word_shield")
+        warlock_before = warlock.res.hp
+        warrior_before = warrior.res.hp
+        submit_turn(match, "drain_life", _DEF_PASS)
+        duplicate_line = next((line for line in match.log if "duplicates Drain Life!" in line), None)
+        if not duplicate_line:
+            continue
+        healed = warlock.res.hp - warlock_before
+        dealt = warrior_before - warrior.res.hp
+        assert dealt == 0, "fully absorbed base+duplicate damage should deal zero HP damage"
+        assert healed == 0, "heal-from-damage should not overcount absorbed duplicate damage"
+        return True
+    raise AssertionError("Could not find deterministic fully-absorbed Dragonwrath Drain Life duplicate proc seed in range")
+
+
+def scenario_fury_of_azzinoth_heal_from_dealt_includes_strike_again_damage() -> bool:
+    for seed in range(1, 1000):
+        match = make_match("rogue", "warrior", p1_items={"weapon": "twin_blades_azzinoth"}, seed=seed)
+        rogue_sid, warrior_sid = match.players
+        rogue = match.state[rogue_sid]
+        warrior = match.state[warrior_sid]
+        rogue.res.hp = max(1, rogue.res.hp - 80)
+        rogue_before = rogue.res.hp
+        warrior_before = warrior.res.hp
+        submit_turn(match, "fury_of_azzinoth", _DEF_PASS)
+        strike_again_line = next((line for line in match.log if "strikes again with Twin Blades of Azzinoth" in line), None)
+        if not strike_again_line:
+            continue
+        healed = rogue.res.hp - rogue_before
+        dealt = warrior_before - warrior.res.hp
+        assert dealt > 0, "sanity check requires Fury of Azzinoth to deal landed damage"
+        assert healed == dealt, "heal_from_dealt_damage should include landed strike-again damage events"
+        return True
+    raise AssertionError("Could not find deterministic Fury of Azzinoth strike-again proc seed in range")
+
+
 def scenario_thunderfury_lightning_uses_damage_pipeline() -> bool:
     for seed in range(1, 600):
         match = make_match("warrior", "priest", p1_items={"weapon": "thunderfury"}, seed=seed)
@@ -3390,9 +3454,12 @@ SCENARIOS = [
     scenario_dragonwrath_duplicate_spell_deals_real_damage,
     scenario_dragonwrath_duplicate_log_includes_class_owner_prefix,
     scenario_dragonwrath_multihit_duplicate_logs_as_single_line,
+    scenario_dragonwrath_duplicate_drain_life_heals_from_total_landed_damage,
+    scenario_dragonwrath_duplicate_drain_life_does_not_heal_from_fully_absorbed_damage,
     scenario_thunderfury_lightning_uses_damage_pipeline,
     scenario_thunderfury_heal_proc_restores_expected_amount,
     scenario_azzinoth_strike_again_deals_secondary_damage,
+    scenario_fury_of_azzinoth_heal_from_dealt_includes_strike_again_damage,
     scenario_fury_of_azzinoth_cannot_miss_and_ignores_armor,
     scenario_mitigation_physical_uses_def_plus_armor,
     scenario_mitigation_magic_uses_def_plus_magic_resist,

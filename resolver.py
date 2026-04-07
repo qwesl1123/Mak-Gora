@@ -2646,6 +2646,7 @@ def resolve_turn(match: MatchState) -> None:
             if dealt_amount > 0:
                 totals = match.combat_totals.setdefault(actor_sid, {"damage": 0, "healing": 0})
                 totals["damage"] += dealt_amount
+                total_dealt_by_actor[actor_sid] = int(total_dealt_by_actor.get(actor_sid, 0) or 0) + dealt_amount
             formatted = format_damage_log(str(entry.get("log_template") or ""), dealt_data)
             flipped_heal = int(dealt_data.get("mindgames_healing", 0) or 0)
             if flipped_heal > 0:
