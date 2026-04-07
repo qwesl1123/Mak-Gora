@@ -142,14 +142,44 @@
 
       .left-column {
         position: relative;
+        overflow: visible;
       }
 
-      #petHud {
+      .pet-clip {
         position: absolute;
-        top: var(--pet-top-offset);
-        left: calc(-1 * (var(--pet-col) + var(--left-gap)));
-        width: var(--pet-col);
+        right: calc(100% + var(--left-gap));
+        top: 0;
+        width: 0;
+        overflow: hidden;
+        pointer-events: none;
         z-index: 20;
+        transition: width 0.38s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+      }
+
+      .pet-clip.has-pets {
+        width: var(--pet-col);
+        pointer-events: auto;
+      }
+
+      .pet-panel {
+        width: var(--pet-col);
+        transform: translateX(100%);
+        transition: transform 0.38s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+      }
+
+      .pet-clip.has-pets .pet-panel {
+        transform: translateX(0);
+      }
+
+      .pet-panel-inner {
+        border: 2px solid var(--border-gold);
+        border-radius: 6px;
+        background: linear-gradient(170deg, rgba(20, 15, 10, 0.92) 0%, rgba(10, 8, 6, 0.96) 100%);
+        box-shadow:
+          0 6px 18px rgba(0, 0, 0, 0.75),
+          inset 0 1px 0 rgba(255, 215, 0, 0.12),
+          -4px 0 16px rgba(0, 0, 0, 0.5);
+        overflow: hidden;
       }
 
       #warCouncilPanel {
@@ -157,87 +187,138 @@
         width: var(--war-col);
       }
 
-      .pet-box {
-        border: 2px solid var(--border-gold);
-        border-radius: 6px;
-        background: linear-gradient(135deg, rgba(0, 0, 0, 0.4) 0%, rgba(0, 0, 0, 0.6) 100%);
-        box-shadow: inset 0 2px 5px rgba(0, 0, 0, 0.5);
-        min-width: 0;
-        width: 100%;
-        padding: 8px;
-      }
-
-      .panel-title {
+      .pet-panel-header {
+        background: linear-gradient(180deg, rgba(74, 66, 58, 0.9) 0%, rgba(45, 38, 32, 0.9) 100%);
+        border-bottom: 1px solid var(--border-gold);
+        padding: 6px 10px;
         font-family: 'Cinzel', serif;
-        font-size: 0.85rem;
-        letter-spacing: 0.05em;
+        font-size: 0.75rem;
+        letter-spacing: 0.06em;
         color: var(--gold-dark);
-        margin-bottom: 6px;
+        text-transform: uppercase;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 6px;
       }
 
-      .pet-empty {
+      .pet-panel-count {
+        font-family: 'Crimson Text', serif;
+        font-size: 0.8rem;
         color: var(--text-dark);
-        font-size: 0.95rem;
         font-style: italic;
+        text-transform: none;
+        letter-spacing: 0;
+      }
+
+      .pet-panel-scroll {
+        max-height: 220px;
+        overflow-y: auto;
+        padding: 6px;
+      }
+
+      .pet-panel-scroll::-webkit-scrollbar {
+        width: 6px;
+      }
+
+      .pet-panel-scroll::-webkit-scrollbar-track {
+        background: rgba(0, 0, 0, 0.4);
+        border-radius: 3px;
+      }
+
+      .pet-panel-scroll::-webkit-scrollbar-thumb {
+        background: var(--border-gold);
+        border-radius: 3px;
       }
 
       .pet-row {
-        border: 1px solid var(--border-gold);
+        border: 1px solid rgba(139, 115, 85, 0.6);
         border-radius: 4px;
         background: rgba(0, 0, 0, 0.45);
-        padding: 6px;
-        margin-bottom: 6px;
+        padding: 6px 7px;
+        margin-bottom: 5px;
+        transition: border-color 0.2s;
+      }
+
+      .pet-row:last-child {
+        margin-bottom: 0;
+      }
+
+      .pet-row:hover {
+        border-color: var(--border-gold);
       }
 
       .pet-name-line {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        font-size: 0.9rem;
-        margin-bottom: 4px;
+        font-size: 0.88rem;
+        margin-bottom: 3px;
       }
 
       .pet-count {
         color: var(--text-dark);
+        font-size: 0.82rem;
       }
 
       .pet-type-line {
         margin-bottom: 4px;
-        font-size: 0.78rem;
+        font-size: 0.76rem;
         color: var(--text-dark);
       }
 
       .pet-hpbar {
-        height: 14px;
+        height: 12px;
         margin-bottom: 4px;
+        display: flex;
       }
 
       .pet-hpbar .bar-text {
-        font-size: 0.7rem;
+        font-size: 0.68rem;
       }
 
-      .pet-badges {
+      .pet-status-line {
         display: flex;
-        gap: 4px;
-        flex-wrap: wrap;
+        justify-content: space-between;
+        font-size: 0.76rem;
+        color: var(--text-dark);
+        padding-top: 2px;
       }
 
-      .pet-badge {
-        display: inline-flex;
-        align-items: center;
-        border: 1px solid var(--border-gold);
-        border-radius: 4px;
-        padding: 1px 5px;
-        font-size: 0.72rem;
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.03em;
-        color: #fff;
-        text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.8);
+      .pet-status-val {
+        color: var(--text-light);
+        font-weight: 600;
+        font-size: 0.76rem;
+      }
+
+      .pet-clip.friendly .pet-panel-header {
+        border-bottom-color: rgba(170, 211, 114, 0.4);
+        color: #c8e08a;
+      }
+
+      .pet-clip.enemy .pet-panel-header {
+        border-bottom-color: rgba(204, 51, 51, 0.4);
+        color: #e08080;
       }
 
       @media (max-width: 1100px) {
-        #petHud { position: static; width: auto; }
+        .pet-clip {
+          position: static;
+          width: auto;
+          overflow: visible;
+          pointer-events: auto;
+          right: auto;
+          margin-bottom: 12px;
+          transition: none;
+        }
+        .pet-clip:not(.has-pets) {
+          display: none;
+        }
+        .pet-panel {
+          width: auto;
+          transform: none;
+          transition: none;
+        }
         #warCouncilPanel { margin-left: 0; width: auto; }
         .main-grid { grid-template-columns: 1fr; }
       }
@@ -1290,14 +1371,26 @@
 
       <div class="grid main-grid">
         <div class="left-column">
-          <div id="petHud">
-            <div class="panel pet-box">
-              <div class="panel-title">FRIENDLY PETS</div>
-              <div id="friendlyPets" class="pet-side-list"></div>
+          <div id="friendlyPetClip" class="pet-clip friendly">
+            <div class="pet-panel">
+              <div class="pet-panel-inner">
+                <div class="pet-panel-header">
+                  Friendly Pets
+                  <span id="friendlyPetCount" class="pet-panel-count"></span>
+                </div>
+                <div id="friendlyPets" class="pet-panel-scroll"></div>
+              </div>
             </div>
-            <div class="panel pet-box" style="margin-top:260px;">
-              <div class="panel-title">ENEMY PETS</div>
-              <div id="enemyPets" class="pet-side-list"></div>
+          </div>
+          <div id="enemyPetClip" class="pet-clip enemy">
+            <div class="pet-panel">
+              <div class="pet-panel-inner">
+                <div class="pet-panel-header">
+                  Enemy Pets
+                  <span id="enemyPetCount" class="pet-panel-count"></span>
+                </div>
+                <div id="enemyPets" class="pet-panel-scroll"></div>
+              </div>
             </div>
           </div>
 
@@ -1306,7 +1399,7 @@
             <div class="panel-header">War Council</div>
             <div class="panel-body">
             <!-- Friendly Stats -->
-            <div class="stat-card">
+            <div id="friendlyCard" class="stat-card">
               <h3 class="stat-title" id="friendlyLabel">Friendly Champion</h3>
               <div class="stat-row"><span>Weapon:</span><strong id="friendlyWeapon">--</strong></div>
               <div class="stat-row"><span>Armor:</span><strong id="friendlyArmor">--</strong></div>
@@ -1333,7 +1426,7 @@
             </div>
 
             <!-- Enemy Stats -->
-            <div class="stat-card">
+            <div id="enemyCard" class="stat-card">
               <h3 class="stat-title" id="enemyLabel">Enemy Champion</h3>
               <div class="stat-row"><span>Weapon:</span><strong id="enemyWeapon">--</strong></div>
               <div class="stat-row"><span>Armor:</span><strong id="enemyArmor">--</strong></div>
@@ -2264,8 +2357,15 @@
       const enemyArmor = document.getElementById("enemyArmor");
       const enemyTrinket = document.getElementById("enemyTrinket");
       const enemyStatus = document.getElementById("enemyStatus");
+      const leftColumn = document.querySelector(".left-column");
+      const friendlyCard = document.getElementById("friendlyCard");
+      const enemyCard = document.getElementById("enemyCard");
+      const friendlyPetClip = document.getElementById("friendlyPetClip");
+      const enemyPetClip = document.getElementById("enemyPetClip");
       const friendlyPets = document.getElementById("friendlyPets");
       const enemyPets = document.getElementById("enemyPets");
+      const friendlyPetCount = document.getElementById("friendlyPetCount");
+      const enemyPetCount = document.getElementById("enemyPetCount");
       const lockBtn = document.getElementById("lockBtn");
       const passBtn = document.getElementById("passBtn");
 
@@ -3532,19 +3632,31 @@
         });
       }
 
+      function alignPetPanels() {
+        if (!leftColumn || !friendlyCard || !enemyCard || !friendlyPetClip || !enemyPetClip) {
+          return;
+        }
+        if (window.matchMedia("(max-width: 1100px)").matches) {
+          friendlyPetClip.style.top = "";
+          enemyPetClip.style.top = "";
+          return;
+        }
+        const colRect = leftColumn.getBoundingClientRect();
+        const friendlyRect = friendlyCard.getBoundingClientRect();
+        const enemyRect = enemyCard.getBoundingClientRect();
+        friendlyPetClip.style.top = `${friendlyRect.top - colRect.top + leftColumn.scrollTop}px`;
+        enemyPetClip.style.top = `${enemyRect.top - colRect.top + leftColumn.scrollTop}px`;
+      }
+
       function renderPetList(container, pets) {
         if (!container) {
-          return;
+          return 0;
         }
         container.innerHTML = "";
         const list = Array.isArray(pets) ? pets : [];
 
         if (!list.length) {
-          const empty = document.createElement("div");
-          empty.className = "pet-empty";
-          empty.textContent = "None";
-          container.appendChild(empty);
-          return;
+          return 0;
         }
 
         list.forEach((pet) => {
@@ -3593,14 +3705,14 @@
 
           const badges = normalizePetBadges(pet?.statuses || pet?.effects, pet?.name || pet?.id);
           const statusLine = document.createElement("div");
-          statusLine.className = "stat-row";
+          statusLine.className = "pet-status-line";
 
           const statusLabel = document.createElement("span");
           statusLabel.textContent = "Status:";
           statusLine.appendChild(statusLabel);
 
           const statusValue = document.createElement("strong");
-          statusValue.className = "status-text";
+          statusValue.className = "pet-status-val";
           statusValue.textContent = badges.length > 0
             ? badges.map((badge) => badge.label).join(", ")
             : "—";
@@ -3610,6 +3722,16 @@
 
           container.appendChild(row);
         });
+        return list.length;
+      }
+
+      function updatePetPanel(clip, countEl, petCount) {
+        if (!clip || !countEl) {
+          return;
+        }
+        const hasPets = petCount > 0;
+        clip.classList.toggle("has-pets", hasPets);
+        countEl.textContent = hasPets ? `${petCount} active` : "";
       }
 
       socket.on("duel_snapshot", (data) => {
@@ -3665,8 +3787,11 @@
           enemyStatus
         );
 
-        renderPetList(friendlyPets, data.you_pets);
-        renderPetList(enemyPets, data.enemy_pets);
+        const friendlyPetTotal = renderPetList(friendlyPets, data.you_pets);
+        const enemyPetTotal = renderPetList(enemyPets, data.enemy_pets);
+        updatePetPanel(friendlyPetClip, friendlyPetCount, friendlyPetTotal);
+        updatePetPanel(enemyPetClip, enemyPetCount, enemyPetTotal);
+        alignPetPanels();
 
         renderFriendlyCooldowns(data.friendly_cooldowns, data.ability_meta);
         
@@ -3684,6 +3809,12 @@
 
         lockBtn.disabled = data.phase !== "prep";
       });
+
+      window.addEventListener("resize", alignPetPanels);
+      if (document.fonts?.ready) {
+        document.fonts.ready.then(alignPetPanels);
+      }
+      setTimeout(alignPetPanels, 100);
 
       function normalizeCommandInput(text) {
         return (text || "")
