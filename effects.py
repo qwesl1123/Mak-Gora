@@ -817,6 +817,171 @@ FORM_STAT_MAP = {
 }
 FORM_CLEAR_EFFECT_IDS = ("stealth", "rip_ready", "starfire_ready")
 
+EFFECT_PANEL_BUCKET_ORDER: tuple[str, ...] = (
+    "buffs_physical",
+    "buffs_magical",
+    "debuffs_physical",
+    "debuffs_magical",
+)
+
+_EFFECT_PANEL_PHYSICAL_BUFF_NAMES = {
+    "Die by the Sword",
+    "Ignore Pain",
+    "Stealth",
+    "Evasion",
+    "Frenzied Regeneration",
+    "Barkskin",
+    "Aspect of the Turtle",
+    "Raptor Strike proc",
+}
+_EFFECT_PANEL_MAGICAL_BUFF_NAMES = {
+    "Hot Streak",
+    "Ice Block",
+    "Ice Barrier",
+    "Cloak of Shadows",
+    "Thistle Tea",
+    "Wild Growth",
+    "Regrowth",
+    "Dark Pact",
+    "Unending Resolve",
+    "Divine Shield",
+    "Shield of Vengeance",
+    "Avenging Wrath",
+    "Power Word: Shield",
+    "Mind Blast empowerment",
+    "Final Verdict empowerment",
+    "Shadowy Insight",
+    "Pain Suppression",
+    "Arcane Shot proc",
+    "Starfire proc",
+}
+_EFFECT_PANEL_PHYSICAL_DEBUFF_NAMES = {
+    "Dragon Roar",
+    "Cheap Shot",
+    "Kidney Shot",
+    "Typhoon",
+}
+_EFFECT_PANEL_MAGICAL_DEBUFF_NAMES = {
+    "Ring of Ice",
+    "Cyclone",
+    "Agony",
+    "Corruption",
+    "Unstable Affliction",
+    "Fear",
+    "Hammer of Justice",
+    "Vampiric Touch",
+    "Devouring Plague",
+    "Mindgames",
+    "Psychic Scream",
+    "Wildfire Burn",
+    "Freezing Trap",
+}
+
+
+def _effect_panel_name_key(name: Any) -> str:
+    return str(name or "").strip().lower().replace("_", " ")
+
+
+_EFFECT_PANEL_BUCKET_BY_NAME_KEY: Dict[str, str] = {}
+for _name in _EFFECT_PANEL_PHYSICAL_BUFF_NAMES:
+    _EFFECT_PANEL_BUCKET_BY_NAME_KEY[_effect_panel_name_key(_name)] = "buffs_physical"
+for _name in _EFFECT_PANEL_MAGICAL_BUFF_NAMES:
+    _EFFECT_PANEL_BUCKET_BY_NAME_KEY[_effect_panel_name_key(_name)] = "buffs_magical"
+for _name in _EFFECT_PANEL_PHYSICAL_DEBUFF_NAMES:
+    _EFFECT_PANEL_BUCKET_BY_NAME_KEY[_effect_panel_name_key(_name)] = "debuffs_physical"
+for _name in _EFFECT_PANEL_MAGICAL_DEBUFF_NAMES:
+    _EFFECT_PANEL_BUCKET_BY_NAME_KEY[_effect_panel_name_key(_name)] = "debuffs_magical"
+_EFFECT_PANEL_BUCKET_BY_NAME_KEY[_effect_panel_name_key("Dragon Roar Bleed")] = "debuffs_physical"
+
+_EFFECT_PANEL_RAW_NAME_BY_ID: Dict[str, str] = {
+    "dragon_roar_bleed": "dragon roar bleed",
+    "arcane_shot_proc": "Arcane Shot proc",
+    "raptor_strike_proc": "Raptor Strike proc",
+    "starfire_ready": "Starfire proc",
+    "mind_blast_empowered": "Mind Blast empowerment",
+    "paladin_final_verdict_empowered": "Final Verdict empowerment",
+}
+
+_EFFECT_PANEL_DISPLAY_NAMES: Dict[str, str] = {
+    _effect_panel_name_key("dragon roar bleed"): "Rending Roar",
+    _effect_panel_name_key("Starfire proc"): "Astral Surge",
+    _effect_panel_name_key("Final Verdict empowerment"): "Divine Reckoning",
+    _effect_panel_name_key("Mind Blast empowerment"): "Mind Assault",
+    _effect_panel_name_key("arcaneshot proc"): "Charged Quiver",
+    _effect_panel_name_key("Arcane Shot proc"): "Charged Quiver",
+    _effect_panel_name_key("Raptor Strike proc"): "Killing Frenzy",
+}
+
+
+def _effect_panel_visible_name(effect: Dict[str, Any]) -> str:
+    effect_id = str(effect.get("id") or "")
+    if effect_id in _EFFECT_PANEL_RAW_NAME_BY_ID:
+        return _EFFECT_PANEL_RAW_NAME_BY_ID[effect_id]
+    if effect_id == "stunned":
+        return str(effect.get("source_ability_name") or "").strip()
+    if effect_id == "feared":
+        return str(effect.get("source_ability_name") or effect.get("name") or "Fear").strip()
+    return str(effect.get("name") or "").strip()
+
+
+def _effect_panel_fallback_bucket(effect: Dict[str, Any], visible_name: str) -> Optional[str]:
+    if not visible_name:
+        return None
+    if not str(effect.get("source_ability_name") or "").strip():
+        return None
+    if not is_harmful_effect(effect):
+        return None
+    school = normalize_school(effect.get("school"))
+    if school == "physical":
+        return "debuffs_physical"
+    if school == "magical":
+        return "debuffs_magical"
+    category = str(effect.get("category") or "").lower()
+    flags = effect.get("flags") or {}
+    if flags.get("stunned") or flags.get("break_on_damage") or category in {"cc", "dot", "debuff"}:
+        return "debuffs_magical"
+    return None
+
+
+def build_effect_panel_payload(ps: PlayerState) -> Dict[str, List[Dict[str, Any]]]:
+    panel: Dict[str, List[Dict[str, Any]]] = {bucket: [] for bucket in EFFECT_PANEL_BUCKET_ORDER}
+    merged: Dict[str, Dict[str, Dict[str, Any]]] = {
+        bucket: {} for bucket in EFFECT_PANEL_BUCKET_ORDER
+    }
+    for effect in list(getattr(ps, "effects", []) or []):
+        if effect_has_tag(effect, "blink_like"):
+            continue
+        visible_name = _effect_panel_visible_name(effect)
+        if not visible_name:
+            continue
+        bucket = _EFFECT_PANEL_BUCKET_BY_NAME_KEY.get(_effect_panel_name_key(visible_name))
+        if not bucket:
+            bucket = _effect_panel_fallback_bucket(effect, visible_name)
+        if not bucket:
+            continue
+        display_name = _EFFECT_PANEL_DISPLAY_NAMES.get(
+            _effect_panel_name_key(visible_name),
+            visible_name,
+        )
+        duration_raw = effect.get("duration")
+        duration = int(duration_raw) if duration_raw is not None else None
+        existing = merged[bucket].get(display_name)
+        if not existing:
+            merged[bucket][display_name] = {"name": display_name, "duration": duration}
+            continue
+        if duration is None:
+            continue
+        prior_duration = existing.get("duration")
+        if prior_duration is None or duration > int(prior_duration):
+            existing["duration"] = duration
+
+    for bucket in EFFECT_PANEL_BUCKET_ORDER:
+        panel[bucket] = [
+            merged[bucket][name_key]
+            for name_key in sorted(merged[bucket].keys())
+        ]
+    return panel
+
 
 def is_permanent(effect: Dict[str, Any]) -> bool:
     """Effects we do not tick down with durations (until you add cleanse/removal)."""

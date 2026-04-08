@@ -3451,6 +3451,55 @@ def scenario_duel_html_agony_docs_updated() -> bool:
     return True
 
 
+def scenario_effect_panel_payload_normalization() -> bool:
+    match = make_match("warrior", "warlock", seed=6106)
+    warrior_sid, warlock_sid = match.players
+    warrior = match.state[warrior_sid]
+
+    effects.apply_effect_by_id(warrior, "die_by_sword", overrides={"duration": 2})
+    effects.apply_effect_by_id(warrior, "die_by_sword_mitigation", overrides={"duration": 2})
+    effects.apply_effect_by_id(warrior, "hot_streak", overrides={"duration": 3})
+    effects.apply_effect_by_id(warrior, "agony", overrides={"duration": 4, "source_sid": warlock_sid})
+    effects.apply_effect_by_id(warrior, "dragon_roar_bleed", overrides={"duration": 3, "source_sid": warlock_sid})
+    effects.apply_effect_by_id(warrior, "raptor_strike_proc", overrides={"duration": 2})
+    effects.apply_effect_by_id(warrior, "arcane_shot_proc", overrides={"duration": 2})
+    effects.apply_effect_by_id(warrior, "starfire_ready", overrides={"duration": 2})
+    effects.apply_effect_by_id(warrior, "mind_blast_empowered", overrides={"duration": 2})
+    effects.apply_effect_by_id(warrior, "blocking_defence", overrides={"duration": 1})
+    effects.apply_effect_by_id(
+        warrior,
+        "stunned",
+        overrides={"duration": 1, "source_ability_name": "Hammer of Justice", "school": "magical"},
+    )
+
+    before = state_extract(match)
+    panel = effects.build_effect_panel_payload(warrior)
+    after = state_extract(match)
+    assert before == after, "Effect-panel payload helper should be read-only and must not mutate gameplay state"
+
+    assert list(panel.keys()) == ["buffs_physical", "buffs_magical", "debuffs_physical", "debuffs_magical"], "Effect panel payload should expose exactly four ordered buckets"
+    physical_buffs = [entry.get("name") for entry in panel["buffs_physical"]]
+    magical_buffs = [entry.get("name") for entry in panel["buffs_magical"]]
+    physical_debuffs = [entry.get("name") for entry in panel["debuffs_physical"]]
+    magical_debuffs = [entry.get("name") for entry in panel["debuffs_magical"]]
+
+    assert physical_buffs.count("Die by the Sword") == 1, "Die by the Sword should appear exactly once as a physical buff"
+    assert "Killing Frenzy" in physical_buffs, "Raptor Strike proc should render as Killing Frenzy in physical buffs"
+    assert "Hot Streak" in magical_buffs, "Hot Streak should appear in magical buffs"
+    assert "Charged Quiver" in magical_buffs, "Arcane Shot proc should render as Charged Quiver in magical buffs"
+    assert "Astral Surge" in magical_buffs, "Starfire proc should render as Astral Surge in magical buffs"
+    assert "Mind Assault" in magical_buffs, "Mind Blast empowerment should render as Mind Assault in magical buffs"
+    assert "Rending Roar" in physical_debuffs, "Dragon Roar bleed should render as Rending Roar in physical debuffs"
+    assert "Agony" in magical_debuffs, "Agony should appear in magical debuffs"
+    assert "Hammer of Justice" in magical_debuffs, "Shared stunned runtime effects should safely fallback into debuff buckets"
+
+    snapshot = SOCKETS.snapshot_for(match, warrior_sid)
+    assert snapshot.get("you_effect_panel") == panel, "Snapshot should expose viewer effect panel payload as normalized backend data"
+    enemy_panel = snapshot.get("enemy_effect_panel")
+    assert isinstance(enemy_panel, dict) and list(enemy_panel.keys()) == ["buffs_physical", "buffs_magical", "debuffs_physical", "debuffs_magical"], "Enemy snapshot should also expose all four effect panel buckets"
+    return True
+
+
 SCENARIOS = [
     scenario_mindgames_lay_on_hands,
     scenario_mass_dispel_selective_removal,
@@ -3584,6 +3633,7 @@ SCENARIOS = [
     scenario_shadowfiend_summon_log_deduped,
     scenario_balance_metadata_updates_and_shadowstrike_rename,
     scenario_duel_html_agony_docs_updated,
+    scenario_effect_panel_payload_normalization,
     scenario_invalid_class_rejected,
     scenario_valid_class_id_is_normalized_before_build,
     scenario_prep_selection_name_uses_current_submission,

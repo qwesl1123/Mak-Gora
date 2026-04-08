@@ -5,7 +5,12 @@ import time
 
 from . import state
 from .engine import resolver
-from .engine.effects import current_form_id, effect_template, is_stealthed
+from .engine.effects import (
+    build_effect_panel_payload,
+    current_form_id,
+    effect_template,
+    is_stealthed,
+)
 from .content.pets import PETS
 from .content.classes import CLASSES, class_display_name, normalize_class_id
 from .content.items import ITEMS
@@ -195,6 +200,17 @@ def snapshot_for(match, viewer_sid):
             })
         return packed_effects
 
+    def effect_panel_for(sid):
+        ps = match.state.get(sid)
+        if not ps:
+            return {
+                "buffs_physical": [],
+                "buffs_magical": [],
+                "debuffs_physical": [],
+                "debuffs_magical": [],
+            }
+        return build_effect_panel_payload(ps)
+
     def pet_statuses_for(pet):
         statuses = []
         template = PETS.get(pet.template_id, {})
@@ -310,6 +326,8 @@ def snapshot_for(match, viewer_sid):
         "enemy_entity_type": entity_type_for(enemy),
         "you_effects": effects_for(you),
         "enemy_effects": effects_for(enemy),
+        "you_effect_panel": effect_panel_for(you),
+        "enemy_effect_panel": effect_panel_for(enemy),
         "you_pets": pets_for(you),
         "enemy_pets": pets_for(enemy),
         "log": [format_log_line(line) for line in match.log[-30:]],
