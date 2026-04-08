@@ -40,6 +40,8 @@
         --item-blue: #0070dd;
         --item-purple: #a335ee;
         --item-orange: #ff8000;
+        --buff-green: #44dd66;
+        --debuff-red: #ff4444;
       }
 
       * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -372,13 +374,237 @@
 
       .champion-entity-type {
         position: absolute;
-        right: 0;
+        right: 36px;
         top: 2px;
         font-size: 0.58em;
         letter-spacing: 0.08em;
         color: #b08a4a;
         text-transform: uppercase;
         font-weight: 600;
+      }
+
+      .champion-flipper {
+        perspective: 1200px;
+        margin-bottom: 15px;
+      }
+
+      .card-inner {
+        position: relative;
+        transform-style: preserve-3d;
+        transition: transform 0.65s cubic-bezier(0.4, 0.2, 0.2, 1);
+      }
+
+      .card-inner.flipped {
+        transform: rotateY(180deg);
+      }
+
+      .card-face,
+      .card-face * {
+        backface-visibility: hidden;
+        -webkit-backface-visibility: hidden;
+      }
+
+      .card-front.stat-card {
+        position: relative;
+        margin-bottom: 0;
+      }
+
+      .card-back {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        transform: rotateY(180deg);
+        padding: 0 !important;
+        margin-bottom: 0 !important;
+        overflow: hidden;
+        background: linear-gradient(135deg, #0d0b08 0%, #1c1710 100%) !important;
+      }
+
+      .card-inner.flipped .card-front .flip-corner,
+      .card-inner.is-animating .card-front .flip-corner {
+        display: none;
+      }
+
+      .flip-corner {
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 34px;
+        height: 34px;
+        cursor: pointer;
+        border: 0;
+        background: transparent;
+        padding: 0;
+        z-index: 10;
+      }
+
+      .flip-corner::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 0;
+        height: 0;
+        border-style: solid;
+        border-width: 0 34px 34px 0;
+        border-color: transparent rgba(205, 127, 50, 0.85) transparent transparent;
+        transition: border-color 0.18s ease, border-width 0.18s ease;
+      }
+
+      .flip-corner:hover::before,
+      .flip-corner:focus-visible::before {
+        border-color: transparent var(--gold) transparent transparent;
+        border-width: 0 40px 40px 0;
+      }
+
+      .corner-icon {
+        position: absolute;
+        top: 4px;
+        right: 6px;
+        font-size: 9px;
+        color: var(--stone-dark);
+        pointer-events: none;
+        z-index: 2;
+        font-weight: 900;
+        opacity: 0.85;
+        user-select: none;
+        font-family: sans-serif;
+      }
+
+      .card-front .stat-title {
+        padding-right: 68px;
+      }
+
+      .effects-scroll {
+        height: 100%;
+        overflow-y: auto;
+        padding: 10px 12px 12px;
+        scrollbar-width: thin;
+        scrollbar-color: var(--bronze) rgba(0, 0, 0, 0.3);
+      }
+
+      .effects-scroll::-webkit-scrollbar {
+        width: 6px;
+      }
+
+      .effects-scroll::-webkit-scrollbar-track {
+        background: rgba(0, 0, 0, 0.4);
+        border-radius: 3px;
+      }
+
+      .effects-scroll::-webkit-scrollbar-thumb {
+        background: var(--bronze);
+        border-radius: 3px;
+      }
+
+      .effects-header {
+        font-family: "Cinzel", serif;
+        font-size: 0.8rem;
+        color: var(--gold-dark);
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        text-align: center;
+        padding-bottom: 5px;
+        border-bottom: 1px solid rgba(212, 175, 55, 0.3);
+        margin-bottom: 8px;
+      }
+
+      .effect-section-label {
+        font-family: "Cinzel", serif;
+        font-size: 0.62rem;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        margin: 7px 0 4px;
+      }
+
+      .effect-section-label.buffs {
+        color: var(--buff-green);
+      }
+
+      .effect-section-label.debuffs {
+        color: var(--debuff-red);
+      }
+
+      .effect-list {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .effect-row {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 4px 7px;
+        border-radius: 4px;
+        border: 1px solid;
+      }
+
+      .effect-row.buff {
+        border-color: rgba(68, 221, 102, 0.28);
+        background: rgba(20, 55, 28, 0.45);
+      }
+
+      .effect-row.buff-magic {
+        border-color: rgba(0, 112, 221, 0.3);
+        background: rgba(10, 30, 60, 0.45);
+      }
+
+      .effect-row.debuff {
+        border-color: rgba(255, 68, 68, 0.28);
+        background: rgba(55, 15, 15, 0.45);
+      }
+
+      .effect-row.debuff-magic {
+        border-color: rgba(163, 53, 238, 0.3);
+        background: rgba(38, 10, 55, 0.45);
+      }
+
+      .effect-dot {
+        width: 7px;
+        height: 7px;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+
+      .effect-dot.buff {
+        background: var(--buff-green);
+      }
+
+      .effect-dot.buff-magic {
+        background: var(--item-blue);
+      }
+
+      .effect-dot.debuff {
+        background: var(--debuff-red);
+      }
+
+      .effect-dot.debuff-magic {
+        background: var(--item-purple);
+      }
+
+      .effect-name {
+        flex: 1;
+        font-size: 0.95rem;
+        font-weight: 600;
+        color: var(--text-light);
+      }
+
+      .effect-duration {
+        font-size: 0.72rem;
+        font-family: "Cinzel", serif;
+        color: var(--text-dark);
+        white-space: nowrap;
+      }
+
+      .effects-empty {
+        color: var(--text-dark);
+        font-size: 0.9rem;
+        text-align: center;
+        font-style: italic;
+        padding: 14px 0;
       }
 
       .champion-name-class.warrior {
@@ -1500,57 +1726,83 @@
             <div class="panel-header">War Council</div>
             <div class="panel-body">
             <!-- Friendly Stats -->
-            <div id="friendlyCard" class="stat-card">
-              <h3 class="stat-title" id="friendlyLabel">Friendly Champion</h3>
-              <div class="stat-row"><span>Weapon:</span><strong id="friendlyWeapon">--</strong></div>
-              <div class="stat-row"><span>Armor:</span><strong id="friendlyArmor">--</strong></div>
-              <div class="stat-row"><span>Trinket:</span><strong id="friendlyTrinket">--</strong></div>
-              <div class="stat-row"><span>Status:</span><strong id="friendlyStatus" class="status-text">--</strong></div>
-              
-              <div class="resource-bar">
-                <span style="width: 60px; color: var(--health-red); font-weight: bold;">HP</span>
-                <div class="bar-container">
-                  <div class="bar-text" id="friendlyHpText">--</div>
-                  <div class="bar-fill health" id="friendlyHpBar" style="width: 100%;"></div>
-                  <div class="bar-fill absorb" id="friendlyAbsorbBar" style="width: 0%;"></div>
+            <div id="friendlyCard" class="champion-flipper">
+              <div id="friendlyCardInner" class="card-inner">
+                <div class="card-face card-front stat-card">
+                  <button class="flip-corner" type="button" data-card-target="friendlyCardInner" data-flip-to="back" aria-label="Show friendly effects">
+                    <span class="corner-icon">✦</span>
+                  </button>
+                  <h3 class="stat-title" id="friendlyLabel">Friendly Champion</h3>
+                  <div class="stat-row"><span>Weapon:</span><strong id="friendlyWeapon">--</strong></div>
+                  <div class="stat-row"><span>Armor:</span><strong id="friendlyArmor">--</strong></div>
+                  <div class="stat-row"><span>Trinket:</span><strong id="friendlyTrinket">--</strong></div>
+                  <div class="stat-row"><span>Status:</span><strong id="friendlyStatus" class="status-text">--</strong></div>
+                  <div class="resource-bar">
+                    <span style="width: 60px; color: var(--health-red); font-weight: bold;">HP</span>
+                    <div class="bar-container">
+                      <div class="bar-text" id="friendlyHpText">--</div>
+                      <div class="bar-fill health" id="friendlyHpBar" style="width: 100%;"></div>
+                      <div class="bar-fill absorb" id="friendlyAbsorbBar" style="width: 0%;"></div>
+                    </div>
+                  </div>
+                  <div class="resource-bar">
+                    <span id="friendlyPrimaryLabel" style="width: 60px; color: var(--mana-blue); font-weight: bold;">Mana</span>
+                    <div class="bar-container">
+                      <div class="bar-text" id="friendlyPrimaryText">--</div>
+                      <div class="bar-fill" id="friendlyPrimaryBar" style="width: 100%;"></div>
+                    </div>
+                  </div>
+                </div>
+                <div class="card-face card-back stat-card">
+                  <button class="flip-corner" type="button" data-card-target="friendlyCardInner" data-flip-to="front" aria-label="Show friendly champion details">
+                    <span class="corner-icon">✕</span>
+                  </button>
+                  <div class="effects-scroll">
+                    <div class="effects-header">Active Effects</div>
+                    <div id="friendlyEffectsPanel"></div>
+                  </div>
                 </div>
               </div>
-              
-              <div class="resource-bar">
-                <span id="friendlyPrimaryLabel" style="width: 60px; color: var(--mana-blue); font-weight: bold;">Mana</span>
-                <div class="bar-container">
-                  <div class="bar-text" id="friendlyPrimaryText">--</div>
-                  <div class="bar-fill" id="friendlyPrimaryBar" style="width: 100%;"></div>
-                </div>
-              </div>
-              
             </div>
 
             <!-- Enemy Stats -->
-            <div id="enemyCard" class="stat-card">
-              <h3 class="stat-title" id="enemyLabel">Enemy Champion</h3>
-              <div class="stat-row"><span>Weapon:</span><strong id="enemyWeapon">--</strong></div>
-              <div class="stat-row"><span>Armor:</span><strong id="enemyArmor">--</strong></div>
-              <div class="stat-row"><span>Trinket:</span><strong id="enemyTrinket">--</strong></div>
-              <div class="stat-row"><span>Status:</span><strong id="enemyStatus" class="status-text">--</strong></div>
-              
-              <div class="resource-bar">
-                <span style="width: 60px; color: var(--health-red); font-weight: bold;">HP</span>
-                <div class="bar-container">
-                  <div class="bar-text" id="enemyHpText">--</div>
-                  <div class="bar-fill health" id="enemyHpBar" style="width: 100%;"></div>
-                  <div class="bar-fill absorb" id="enemyAbsorbBar" style="width: 0%;"></div>
+            <div id="enemyCard" class="champion-flipper">
+              <div id="enemyCardInner" class="card-inner">
+                <div class="card-face card-front stat-card">
+                  <button class="flip-corner" type="button" data-card-target="enemyCardInner" data-flip-to="back" aria-label="Show enemy effects">
+                    <span class="corner-icon">✦</span>
+                  </button>
+                  <h3 class="stat-title" id="enemyLabel">Enemy Champion</h3>
+                  <div class="stat-row"><span>Weapon:</span><strong id="enemyWeapon">--</strong></div>
+                  <div class="stat-row"><span>Armor:</span><strong id="enemyArmor">--</strong></div>
+                  <div class="stat-row"><span>Trinket:</span><strong id="enemyTrinket">--</strong></div>
+                  <div class="stat-row"><span>Status:</span><strong id="enemyStatus" class="status-text">--</strong></div>
+                  <div class="resource-bar">
+                    <span style="width: 60px; color: var(--health-red); font-weight: bold;">HP</span>
+                    <div class="bar-container">
+                      <div class="bar-text" id="enemyHpText">--</div>
+                      <div class="bar-fill health" id="enemyHpBar" style="width: 100%;"></div>
+                      <div class="bar-fill absorb" id="enemyAbsorbBar" style="width: 0%;"></div>
+                    </div>
+                  </div>
+                  <div class="resource-bar">
+                    <span id="enemyPrimaryLabel" style="width: 60px; color: var(--mana-blue); font-weight: bold;">Mana</span>
+                    <div class="bar-container">
+                      <div class="bar-text" id="enemyPrimaryText">--</div>
+                      <div class="bar-fill" id="enemyPrimaryBar" style="width: 100%;"></div>
+                    </div>
+                  </div>
+                </div>
+                <div class="card-face card-back stat-card">
+                  <button class="flip-corner" type="button" data-card-target="enemyCardInner" data-flip-to="front" aria-label="Show enemy champion details">
+                    <span class="corner-icon">✕</span>
+                  </button>
+                  <div class="effects-scroll">
+                    <div class="effects-header">Active Effects</div>
+                    <div id="enemyEffectsPanel"></div>
+                  </div>
                 </div>
               </div>
-              
-              <div class="resource-bar">
-                <span id="enemyPrimaryLabel" style="width: 60px; color: var(--mana-blue); font-weight: bold;">Mana</span>
-                <div class="bar-container">
-                  <div class="bar-text" id="enemyPrimaryText">--</div>
-                  <div class="bar-fill" id="enemyPrimaryBar" style="width: 100%;"></div>
-                </div>
-              </div>
-              
             </div>
 
             <div class="controls">
@@ -2560,6 +2812,14 @@
       const enemyPetCount = document.getElementById("enemyPetCount");
       const lockBtn = document.getElementById("lockBtn");
       const passBtn = document.getElementById("passBtn");
+      const friendlyEffectsPanel = document.getElementById("friendlyEffectsPanel");
+      const enemyEffectsPanel = document.getElementById("enemyEffectsPanel");
+      const effectSectionConfig = [
+        { key: "buffs_physical", title: "Physical Buffs", labelClass: "buffs", rowClass: "buff" },
+        { key: "buffs_magical", title: "Magical Buffs", labelClass: "buffs", rowClass: "buff-magic" },
+        { key: "debuffs_physical", title: "Physical Debuffs", labelClass: "debuffs", rowClass: "debuff" },
+        { key: "debuffs_magical", title: "Magical Debuffs", labelClass: "debuffs", rowClass: "debuff-magic" },
+      ];
 
       const socket = io();
       let myRole = null;
@@ -3786,6 +4046,82 @@
         return (clamped / max) * 100;
       }
 
+      function flipCard(cardInnerId, toBack) {
+        const inner = document.getElementById(cardInnerId);
+        if (!inner || inner.classList.contains("is-animating")) {
+          return;
+        }
+        inner.classList.toggle("flipped", toBack);
+        inner.classList.add("is-animating");
+        inner.addEventListener("transitionend", () => {
+          inner.classList.remove("is-animating");
+        }, { once: true });
+      }
+
+      function formatEffectDuration(duration) {
+        if (duration === null || duration === undefined) {
+          return "Passive";
+        }
+        const turns = Number(duration);
+        if (!Number.isFinite(turns)) {
+          return `${duration}`;
+        }
+        return `${turns} ${turns === 1 ? "turn" : "turns"}`;
+      }
+
+      function renderEffectPanel(container, panelPayload) {
+        if (!container) {
+          return;
+        }
+        container.innerHTML = "";
+        const panel = panelPayload && typeof panelPayload === "object" ? panelPayload : {};
+        let sectionCount = 0;
+
+        effectSectionConfig.forEach((section) => {
+          const rows = Array.isArray(panel[section.key]) ? panel[section.key] : [];
+          if (!rows.length) {
+            return;
+          }
+          sectionCount += 1;
+          const label = document.createElement("div");
+          label.className = `effect-section-label ${section.labelClass}`;
+          label.textContent = section.title;
+          container.appendChild(label);
+
+          const list = document.createElement("div");
+          list.className = "effect-list";
+          rows.forEach((entry) => {
+            const row = document.createElement("div");
+            row.className = `effect-row ${section.rowClass}`;
+
+            const dot = document.createElement("div");
+            dot.className = `effect-dot ${section.rowClass}`;
+            row.appendChild(dot);
+
+            const name = document.createElement("span");
+            name.className = "effect-name";
+            name.textContent = entry?.name || "Unknown";
+            row.appendChild(name);
+
+            const duration = document.createElement("span");
+            duration.className = "effect-duration";
+            duration.textContent = formatEffectDuration(entry?.duration);
+            row.appendChild(duration);
+
+            list.appendChild(row);
+          });
+
+          container.appendChild(list);
+        });
+
+        if (!sectionCount) {
+          const empty = document.createElement("div");
+          empty.className = "effects-empty";
+          empty.textContent = "None";
+          container.appendChild(empty);
+        }
+      }
+
       function renderRes(res, elements, resource) {
         if (!res) {
           elements.hpText.textContent = "--";
@@ -4060,6 +4396,8 @@
           classKeyFromLabel(data.enemy_class),
           enemyStatus
         );
+        renderEffectPanel(friendlyEffectsPanel, data.you_effect_panel);
+        renderEffectPanel(enemyEffectsPanel, data.enemy_effect_panel);
 
         const friendlyPetTotal = renderPetList(friendlyPets, data.you_pets);
         const enemyPetTotal = renderPetList(enemyPets, data.enemy_pets);
@@ -4085,6 +4423,15 @@
       });
 
       window.addEventListener("resize", alignPetPanels);
+      document.addEventListener("click", (event) => {
+        const trigger = event.target.closest(".flip-corner[data-card-target][data-flip-to]");
+        if (!trigger) {
+          return;
+        }
+        const targetId = trigger.getAttribute("data-card-target");
+        const toBack = trigger.getAttribute("data-flip-to") === "back";
+        flipCard(targetId, toBack);
+      });
       if (document.fonts?.ready) {
         document.fonts.ready.then(alignPetPanels);
       }
