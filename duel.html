@@ -1019,10 +1019,62 @@
       }
 
       .doc-item {
+        position: relative;
         background: rgba(0, 0, 0, 0.4);
         border: 2px solid var(--border-gold);
         border-radius: 6px;
         padding: 15px;
+      }
+
+      .druid-lanes {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 20px;
+        margin-top: 15px;
+      }
+
+      .druid-lane {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      .druid-lane .doc-item:not(:last-child)::after {
+        content: "";
+        position: absolute;
+        left: 50%;
+        bottom: -13px;
+        transform: translateX(-50%);
+        width: 8px;
+        height: 12px;
+        border-radius: 2px;
+        background: #cd7f32;
+        box-shadow: 0 0 8px rgba(205, 127, 50, 0.45);
+      }
+
+      .druid-form-master {
+        border-color: #b8925a;
+        background: linear-gradient(180deg, rgba(44, 36, 28, 0.75) 0%, rgba(18, 14, 10, 0.78) 100%);
+        box-shadow:
+          0 0 0 1px rgba(255, 215, 0, 0.18) inset,
+          0 8px 20px rgba(0, 0, 0, 0.35);
+      }
+
+      .druid-form-master h4 {
+        letter-spacing: 0.02em;
+        text-shadow: 0 0 12px rgba(255, 215, 0, 0.2);
+      }
+
+      @media (max-width: 1200px) {
+        .druid-lanes {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 700px) {
+        .druid-lanes {
+          grid-template-columns: 1fr;
+        }
       }
 
       .doc-item h4 {
@@ -1057,6 +1109,54 @@
       .doc-item .stat {
         color: var(--text-light);
         font-weight: bold;
+      }
+
+      .doc-item.has-doc-icons h4 {
+        padding-right: 90px;
+      }
+
+      .doc-icon-cluster {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: flex-end;
+        gap: 4px;
+        max-width: 84px;
+      }
+
+      .doc-icon-tip {
+        position: relative;
+        display: inline-flex;
+      }
+
+      .doc-icon-svg {
+        display: block;
+      }
+
+      .doc-icon-tooltip {
+        display: none;
+        position: absolute;
+        bottom: calc(100% + 5px);
+        left: 50%;
+        transform: translateX(-50%);
+        background: #1a1410;
+        border: 1px solid var(--gold-dark);
+        border-radius: 4px;
+        padding: 4px 8px;
+        white-space: nowrap;
+        font-size: 0.72rem;
+        font-family: 'Cinzel', serif;
+        color: var(--gold);
+        letter-spacing: 0.04em;
+        pointer-events: none;
+        z-index: 25;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+      }
+
+      .doc-icon-tip:hover .doc-icon-tooltip {
+        display: block;
       }
 
 
@@ -1938,48 +2038,139 @@
         </div>
 
         <h4 class="doc-subtitle" style="color: var(--druid-color);">Druid</h4>
-        <div class="doc-grid">
-          <div class="doc-item">
-            <h4>Bear Form</h4>
-            <p><span class="stat">Command: <span class="kbd">bear</span></span></p>
-            <p>Shift into Bear Form to access Rage-based abilities.</p>
-            <p><span class="stat">Maul:</span> <span class="kbd">maul</span> — Cost: 0 Rage | Cooldown: 0 | Effect: Attack (0.3x) + d4. Generates Rage equal to 3x damage dealt.</p>
-            <p><span class="stat">Swipe:</span> <span class="kbd">swipe</span> — Cost: 5 Rage | Cooldown: 10 | Effect: AOE Attack (0.5x) + d8. Can hit stealthed targets.</p>
-            <p><span class="stat">Frenzied Regeneration:</span> <span class="kbd">frenzied_regeneration</span> — Cost: all current Rage | Cooldown: 30 | Effect: Heals over 4 turns based on consumed Rage.</p>
-            <p><span class="stat">Barkskin:</span> <span class="kbd">barkskin</span> — Cost: 0 Rage | Cooldown: 15 | Effect: Gain 35% damage reduction for 3 turns. Persists through form shifts.</p>
-            <p><span class="stat">Passive:</span> The Rage Within — Effect: Gain Rage equal to HP damage taken.</p>
+        <div class="druid-lanes">
+          <div class="druid-lane">
+            <div class="doc-item druid-form-master">
+              <h4>Bear Form</h4>
+              <p><span class="stat">Command: <span class="kbd">bear</span></span></p>
+              <p>Shift into Bear Form to access Rage-based abilities.</p>
+            </div>
+            <div class="doc-item">
+              <h4>Maul</h4>
+              <p><span class="stat">Form Required: Bear Form</span> | <span class="stat">Cost: 0 Rage</span> | <span class="stat">Cooldown: 0</span></p>
+              <p><span class="stat">Command: <span class="kbd">maul</span></span></p>
+              <p>Attack (0.3x) + d4. Generates Rage equal to 3x damage dealt.</p>
+            </div>
+            <div class="doc-item">
+              <h4>Swipe</h4>
+              <p><span class="stat">Form Required: Bear Form</span> | <span class="stat">Cost: 5 Rage</span> | <span class="stat">Cooldown: 10</span></p>
+              <p><span class="stat">Command: <span class="kbd">swipe</span></span></p>
+              <p>AOE Attack (0.5x) + d8. Can hit stealthed targets.</p>
+            </div>
+            <div class="doc-item">
+              <h4>Frenzied Regeneration</h4>
+              <p><span class="stat">Form Required: Bear Form</span> | <span class="stat">Cost: all current Rage</span> | <span class="stat">Cooldown: 30</span></p>
+              <p><span class="stat">Command: <span class="kbd">frenzied_regeneration</span></span></p>
+              <p>Heals over 4 turns based on consumed Rage.</p>
+            </div>
+            <div class="doc-item">
+              <h4>Barkskin</h4>
+              <p><span class="stat">Form Required: Bear Form</span> | <span class="stat">Cost: 0 Rage</span> | <span class="stat">Cooldown: 15</span></p>
+              <p><span class="stat">Command: <span class="kbd">barkskin</span></span></p>
+              <p>Gain 35% damage reduction for 3 turns. Persists through form shifts.</p>
+            </div>
+            <div class="doc-item">
+              <h4>The Rage Within</h4>
+              <p><span class="stat">Passive (Bear Form)</span></p>
+              <p>Gain Rage equal to HP damage taken.</p>
+            </div>
           </div>
 
-          <div class="doc-item">
-            <h4>Cat Form</h4>
-            <p><span class="stat">Command: <span class="kbd">cat</span></span></p>
-            <p>Shift into Cat Form to access Energy-based abilities.</p>
-            <p><span class="stat">Claw:</span> <span class="kbd">claw</span> — Cost: 10 Energy | Cooldown: 0 | Effect: Attack (1.0x) + d4. 25% chance to enable Rip.</p>
-            <p><span class="stat">Shred:</span> <span class="kbd">shred</span> — Cost: 15 Energy | Cooldown: 2 | Effect: Attack (1.5x) + d4.</p>
-            <p><span class="stat">Rip:</span> <span class="kbd">rip</span> — Cost: 0 Energy | Cooldown: 0 | Requirement: Rip proc | Effect: Attack (2.0x) + d8 and restores 5 Energy.</p>
-            <p><span class="stat">Maim:</span> <span class="kbd">maim</span> — Cost: 10 Energy | Cooldown: 15 | Effect: Stuns enemy for 3 turns.</p>
-            <p><span class="stat">Prowl:</span> <span class="kbd">prowl</span> — Cost: 0 Energy | Cooldown: 15 | Effect: Enter stealth for 3 turns and restore 15 Energy each turn.</p>
+          <div class="druid-lane">
+            <div class="doc-item druid-form-master">
+              <h4>Cat Form</h4>
+              <p><span class="stat">Command: <span class="kbd">cat</span></span></p>
+              <p>Shift into Cat Form to access Energy-based abilities.</p>
+            </div>
+            <div class="doc-item">
+              <h4>Claw</h4>
+              <p><span class="stat">Form Required: Cat Form</span> | <span class="stat">Cost: 10 Energy</span> | <span class="stat">Cooldown: 0</span></p>
+              <p><span class="stat">Command: <span class="kbd">claw</span></span></p>
+              <p>Attack (1.0x) + d4. 25% chance to enable Rip.</p>
+            </div>
+            <div class="doc-item">
+              <h4>Shred</h4>
+              <p><span class="stat">Form Required: Cat Form</span> | <span class="stat">Cost: 15 Energy</span> | <span class="stat">Cooldown: 2</span></p>
+              <p><span class="stat">Command: <span class="kbd">shred</span></span></p>
+              <p>Attack (1.5x) + d4.</p>
+            </div>
+            <div class="doc-item">
+              <h4>Rip</h4>
+              <p><span class="stat">Form Required: Cat Form</span> | <span class="stat">Cost: 0 Energy</span> | <span class="stat">Cooldown: 0</span></p>
+              <p><span class="stat">Command: <span class="kbd">rip</span></span></p>
+              <p>Requires Rip proc. Attack (2.0x) + d8 and restores 5 Energy.</p>
+            </div>
+            <div class="doc-item">
+              <h4>Maim</h4>
+              <p><span class="stat">Form Required: Cat Form</span> | <span class="stat">Cost: 10 Energy</span> | <span class="stat">Cooldown: 15</span></p>
+              <p><span class="stat">Command: <span class="kbd">maim</span></span></p>
+              <p>Stuns enemy for 3 turns.</p>
+            </div>
+            <div class="doc-item">
+              <h4>Prowl</h4>
+              <p><span class="stat">Form Required: Cat Form</span> | <span class="stat">Cost: 0 Energy</span> | <span class="stat">Cooldown: 15</span></p>
+              <p><span class="stat">Command: <span class="kbd">prowl</span></span></p>
+              <p>Enter stealth for 3 turns and restore 15 Energy each turn.</p>
+            </div>
           </div>
 
-          <div class="doc-item">
-            <h4>Moonkin Form</h4>
-            <p><span class="stat">Command: <span class="kbd">moonkin</span></span></p>
-            <p>Shift into Moonkin Form to access Mana-based spells.</p>
-            <p><span class="stat">Wrath:</span> <span class="kbd">wrath</span> — Cost: 15 Mana | Cooldown: 0 | Effect: Intellect (1.0x) + d6. 25% chance to enable Starfire.</p>
-            <p><span class="stat">Starfire:</span> <span class="kbd">starfire</span> — Cost: 20 Mana | Cooldown: 0 | Requirement: Starfire proc | Effect: Intellect (2.0x) + d6.</p>
-            <p><span class="stat">Cyclone:</span> <span class="kbd">cyclone</span> — Cost: 0 Mana | Cooldown: 20 | Effect: Traps enemy in a cyclone for 3 turns. Enemy cannot act, and cannot take damage or healing while affected.</p>
-            <p><span class="stat">Typhoon:</span> <span class="kbd">typhoon</span> — Cost: 0 Mana | Cooldown: 5 | Effect: Blasts enemy away and causes their attacks to miss this turn and next turn.</p>
+          <div class="druid-lane">
+            <div class="doc-item druid-form-master">
+              <h4>Moonkin Form</h4>
+              <p><span class="stat">Command: <span class="kbd">moonkin</span></span></p>
+              <p>Shift into Moonkin Form to access Mana-based spells.</p>
+            </div>
+            <div class="doc-item">
+              <h4>Wrath</h4>
+              <p><span class="stat">Form Required: Moonkin Form</span> | <span class="stat">Cost: 15 Mana</span> | <span class="stat">Cooldown: 0</span></p>
+              <p><span class="stat">Command: <span class="kbd">wrath</span></span></p>
+              <p>Intellect (1.0x) + d6. 25% chance to enable Starfire.</p>
+            </div>
+            <div class="doc-item">
+              <h4>Starfire</h4>
+              <p><span class="stat">Form Required: Moonkin Form</span> | <span class="stat">Cost: 20 Mana</span> | <span class="stat">Cooldown: 0</span></p>
+              <p><span class="stat">Command: <span class="kbd">starfire</span></span></p>
+              <p>Requires Starfire proc. Intellect (2.0x) + d6.</p>
+            </div>
+            <div class="doc-item">
+              <h4>Cyclone</h4>
+              <p><span class="stat">Form Required: Moonkin Form</span> | <span class="stat">Cost: 0 Mana</span> | <span class="stat">Cooldown: 20</span></p>
+              <p><span class="stat">Command: <span class="kbd">cyclone</span></span></p>
+              <p>Traps enemy in a cyclone for 3 turns. Enemy cannot act, and cannot take damage or healing while affected.</p>
+            </div>
+            <div class="doc-item">
+              <h4>Typhoon</h4>
+              <p><span class="stat">Form Required: Moonkin Form</span> | <span class="stat">Cost: 0 Mana</span> | <span class="stat">Cooldown: 5</span></p>
+              <p><span class="stat">Command: <span class="kbd">typhoon</span></span></p>
+              <p>Blasts enemy away and causes their attacks to miss this turn and next turn.</p>
+            </div>
           </div>
 
-          <div class="doc-item">
-            <h4>Tree Form</h4>
-            <p><span class="stat">Command: <span class="kbd">tree</span></span></p>
-            <p>Shift into Tree Form to access powerful healing. Grants 2 Magic Resist.</p>
-            <p><span class="stat">Wild Growth:</span> <span class="kbd">wild_growth</span> — Cost: 70 Mana | Cooldown: 0 | Effect: Heal for (Intellect + Attack) (1.6x) + d8.</p>
-            <p><span class="stat">Regrowth:</span> <span class="kbd">regrowth</span> — Cost: 15 Mana | Cooldown: 15 | Effect: Heal over time for 5 turns using (Intellect + Attack) (1.5x) + d4 total scaling.</p>
-            <p><span class="stat">Innervate:</span> <span class="kbd">innervate</span> — Cost: 0 Mana | Cooldown: 50 | Effect: Restore Mana to full.</p>
+          <div class="druid-lane">
+            <div class="doc-item druid-form-master">
+              <h4>Tree Form</h4>
+              <p><span class="stat">Command: <span class="kbd">tree</span></span></p>
+              <p>Shift into Tree Form to access powerful healing. Grants 2 Magic Resist.</p>
+            </div>
+            <div class="doc-item">
+              <h4>Wild Growth</h4>
+              <p><span class="stat">Form Required: Tree Form</span> | <span class="stat">Cost: 70 Mana</span> | <span class="stat">Cooldown: 0</span></p>
+              <p><span class="stat">Command: <span class="kbd">wild_growth</span></span></p>
+              <p>Heal for (Intellect + Attack) (1.6x) + d8.</p>
+            </div>
+            <div class="doc-item">
+              <h4>Regrowth</h4>
+              <p><span class="stat">Form Required: Tree Form</span> | <span class="stat">Cost: 15 Mana</span> | <span class="stat">Cooldown: 15</span></p>
+              <p><span class="stat">Command: <span class="kbd">regrowth</span></span></p>
+              <p>Heal over time for 5 turns using (Intellect + Attack) (1.5x) + d4 total scaling.</p>
+            </div>
+            <div class="doc-item">
+              <h4>Innervate</h4>
+              <p><span class="stat">Form Required: Tree Form</span> | <span class="stat">Cost: 0 Mana</span> | <span class="stat">Cooldown: 50</span></p>
+              <p><span class="stat">Command: <span class="kbd">innervate</span></span></p>
+              <p>Restore Mana to full.</p>
+            </div>
           </div>
-
         </div>
       </div>
 
@@ -2656,6 +2847,78 @@
         });
       }
 
+
+
+      const docIconSvgByCategory = {
+        "Physical Attack": `<svg class="doc-icon-svg" width="16" height="16" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg"><line x1="5" y1="5" x2="23" y2="23" stroke="#e8a030" stroke-width="2.5" stroke-linecap="round"/><line x1="23" y1="5" x2="5" y2="23" stroke="#e8a030" stroke-width="2.5" stroke-linecap="round"/><line x1="8" y1="8" x2="12" y2="4" stroke="#e8a030" stroke-width="1.8" stroke-linecap="round"/><line x1="8" y1="8" x2="4" y2="12" stroke="#e8a030" stroke-width="1.8" stroke-linecap="round"/><line x1="20" y1="20" x2="24" y2="16" stroke="#e8a030" stroke-width="1.8" stroke-linecap="round"/><line x1="20" y1="20" x2="16" y2="24" stroke="#e8a030" stroke-width="1.8" stroke-linecap="round"/><circle cx="5" cy="23" r="1.5" fill="#e8a030"/><circle cx="23" cy="5" r="1.5" fill="#e8a030"/></svg>`,
+        "Magical Attack": `<svg class="doc-icon-svg" width="16" height="16" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg"><polygon points="14,3 16.5,10.5 24,10.5 18,15.5 20.5,23 14,18.5 7.5,23 10,15.5 4,10.5 11.5,10.5" fill="none" stroke="#3FC7EB" stroke-width="1.6" stroke-linejoin="round"/><circle cx="14" cy="14" r="3" fill="#3FC7EB" opacity=".9"/><line x1="14" y1="1" x2="14" y2="4" stroke="#3FC7EB" stroke-width="1.2" stroke-linecap="round"/><line x1="14" y1="24" x2="14" y2="27" stroke="#3FC7EB" stroke-width="1.2" stroke-linecap="round"/><line x1="1" y1="14" x2="4" y2="14" stroke="#3FC7EB" stroke-width="1.2" stroke-linecap="round"/><line x1="24" y1="14" x2="27" y2="14" stroke="#3FC7EB" stroke-width="1.2" stroke-linecap="round"/></svg>`,
+        "Single Target": `<svg class="doc-icon-svg" width="16" height="16" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg"><circle cx="14" cy="14" r="8" fill="none" stroke="#f4e4c1" stroke-width="1.6"/><circle cx="14" cy="14" r="3" fill="none" stroke="#f4e4c1" stroke-width="1.4"/><circle cx="14" cy="14" r="1" fill="#f4e4c1"/><line x1="14" y1="2" x2="14" y2="9" stroke="#f4e4c1" stroke-width="1.4" stroke-linecap="round"/><line x1="14" y1="19" x2="14" y2="26" stroke="#f4e4c1" stroke-width="1.4" stroke-linecap="round"/><line x1="2" y1="14" x2="9" y2="14" stroke="#f4e4c1" stroke-width="1.4" stroke-linecap="round"/><line x1="19" y1="14" x2="26" y2="14" stroke="#f4e4c1" stroke-width="1.4" stroke-linecap="round"/></svg>`,
+        "AoE": `<svg class="doc-icon-svg" width="16" height="16" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg"><polygon points="14,2 15.9,9.4 22.5,5.5 18.6,12.1 26,14 18.6,15.9 22.5,22.5 15.9,18.6 14,26 12.1,18.6 5.5,22.5 9.4,15.9 2,14 9.4,12.1 5.5,5.5 12.1,9.4" fill="rgba(255,124,10,0.18)" stroke="#FF7C0A" stroke-width="1.5" stroke-linejoin="round"/><circle cx="14" cy="14" r="2.5" fill="#FF7C0A"/></svg>`,
+        "Crowd Control": `<svg class="doc-icon-svg" width="16" height="16" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg"><g stroke="#8788EE" stroke-width="1.7" stroke-linecap="round"><line x1="14" y1="3" x2="14" y2="25"/><line x1="3.5" y1="8.5" x2="24.5" y2="19.5"/><line x1="24.5" y1="8.5" x2="3.5" y2="19.5"/><line x1="11" y1="7" x2="14" y2="10"/><line x1="17" y1="7" x2="14" y2="10"/><line x1="11" y1="21" x2="14" y2="18"/><line x1="17" y1="21" x2="14" y2="18"/><line x1="6" y1="10" x2="8.5" y2="12.5"/><line x1="6" y1="14" x2="8.5" y2="12.5"/><line x1="22" y1="18" x2="19.5" y2="15.5"/><line x1="22" y1="14" x2="19.5" y2="15.5"/><line x1="22" y1="10" x2="19.5" y2="12.5"/><line x1="22" y1="14" x2="19.5" y2="12.5"/><line x1="6" y1="18" x2="8.5" y2="15.5"/><line x1="6" y1="14" x2="8.5" y2="15.5"/></g><circle cx="14" cy="14" r="2.2" fill="#8788EE"/></svg>`,
+        "Immunity": `<svg class="doc-icon-svg" width="16" height="16" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg"><path d="M14,3 L24,7 L24,16 Q24,22 14,26 Q4,22 4,16 L4,7 Z" fill="rgba(244,140,186,.12)" stroke="#F48CBA" stroke-width="1.8" stroke-linejoin="round"/><polyline points="9,13.5 12.5,17 19,10" fill="none" stroke="#F48CBA" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+        "Defensive": `<svg class="doc-icon-svg" width="16" height="16" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg"><path d="M6,4 L22,4 L22,17 Q22,23 14,26 Q6,23 6,17 Z" fill="rgba(205,127,50,0.15)" stroke="#cd7f32" stroke-width="1.8" stroke-linejoin="round"/><line x1="14" y1="6" x2="14" y2="23" stroke="#cd7f32" stroke-width="1.4" stroke-linecap="round" opacity=".7"/><line x1="8" y1="12" x2="20" y2="12" stroke="#cd7f32" stroke-width="1.4" stroke-linecap="round" opacity=".7"/></svg>`,
+        "Mobility": `<svg class="doc-icon-svg" width="16" height="16" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg"><line x1="5" y1="23" x2="22" y2="6" stroke="#FFF468" stroke-width="2.2" stroke-linecap="round"/><polyline points="13,5 22,6 21,15" fill="none" stroke="#FFF468" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>`,
+        "Healing": `<svg class="doc-icon-svg" width="16" height="16" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg"><circle cx="14" cy="14" r="9" fill="rgba(99,212,113,0.10)" stroke="#63d471" stroke-width="1.6"/><path d="M14 8 L14 20" stroke="#63d471" stroke-width="2.2" stroke-linecap="round"/><path d="M8 14 L20 14" stroke="#63d471" stroke-width="2.2" stroke-linecap="round"/><circle cx="14" cy="14" r="2" fill="#63d471" opacity=".9"/></svg>`,
+        "Utility": `<svg class="doc-icon-svg" width="16" height="16" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg"><circle cx="14" cy="14" r="8" fill="rgba(125,211,199,0.10)" stroke="#7dd3c7" stroke-width="1.6"/><path d="M14 7 L16 11 L21 12 L17.5 15.2 L18.4 20 L14 17.6 L9.6 20 L10.5 15.2 L7 12 L12 11 Z" fill="none" stroke="#7dd3c7" stroke-width="1.5" stroke-linejoin="round"/><circle cx="14" cy="14" r="1.6" fill="#7dd3c7"/></svg>`,
+        "Summon": `<svg class="doc-icon-svg" width="16" height="16" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg"><path d="M14 4 C18 6, 22 10, 22 14 C22 18, 18 22, 14 24 C10 22, 6 18, 6 14 C6 10, 10 6, 14 4 Z" fill="rgba(176,132,245,0.12)" stroke="#b084f5" stroke-width="1.6"/><circle cx="14" cy="14" r="3.2" fill="none" stroke="#b084f5" stroke-width="1.4"/><path d="M14 7.5 L15.4 10.6 L18.8 11 L16.2 13.2 L17 16.5 L14 14.8 L11 16.5 L11.8 13.2 L9.2 11 L12.6 10.6 Z" fill="#b084f5" opacity=".95"/></svg>`,
+        "Empowerment": `<svg class="doc-icon-svg" width="16" height="16" viewBox="0 0 28 28" xmlns="http://www.w3.org/2000/svg"><path d="M14 5 L18.5 10.5 L16.2 10.5 L16.2 17.2 L11.8 17.2 L11.8 10.5 L9.5 10.5 Z" fill="#ffcf5a" stroke="#ffcf5a" stroke-width="1" stroke-linejoin="round"/><path d="M8 19.5 Q14 23 20 19.5" fill="none" stroke="#ffcf5a" stroke-width="1.8" stroke-linecap="round"/><line x1="14" y1="3" x2="14" y2="6" stroke="#ffcf5a" stroke-width="1.5" stroke-linecap="round"/><line x1="8.2" y1="6.2" x2="10.4" y2="8.1" stroke="#ffcf5a" stroke-width="1.3" stroke-linecap="round"/><line x1="19.8" y1="6.2" x2="17.6" y2="8.1" stroke="#ffcf5a" stroke-width="1.3" stroke-linecap="round"/><circle cx="14" cy="19.5" r="6.2" fill="none" stroke="#ffcf5a" stroke-width="1.4" opacity=".55"/></svg>`,
+      };
+
+      const abilityIconCategories = {
+        "Physical Attack": ["Overpower", "Victory Rush", "Rampage", "Mortal Strike", "Execute", "Dragon Roar", "Cleave", "Eviscerate", "Shadowstrike", "Ambush", "Maul", "Swipe", "Claw", "Shred", "Rip", "Crusader Strike", "Final Verdict", "Aimed Shot", "Raptor Strike", "Multi-Shot"],
+        "Magical Attack": ["Fireball", "Fire Blast", "Arcane Barrage", "Pyroblast", "Wrath", "Starfire", "Agony", "Corruption", "Unstable Affliction", "Drain Life", "Judgment", "Shield of Vengeance", "Mind Flay", "Mind Blast", "Vampiric Touch", "Devouring Plague", "Penance", "Mindgames", "Shadow Word: Death", "Wildfire Bomb", "Arcane Shot"],
+        "Single Target": ["Overpower", "Victory Rush", "Rampage", "Mortal Strike", "Execute", "Fireball", "Fire Blast", "Arcane Barrage", "Pyroblast", "Ring of Ice", "Eviscerate", "Shadowstrike", "Ambush", "Maul", "Claw", "Shred", "Rip", "Cheap Shot", "Kidney Shot", "Maim", "Wrath", "Starfire", "Cyclone", "Typhoon", "Agony", "Corruption", "Unstable Affliction", "Drain Life", "Fear", "Crusader Strike", "Judgment", "Final Verdict", "Hammer of Justice", "Mind Flay", "Mind Blast", "Vampiric Touch", "Devouring Plague", "Penance", "Shadow Word: Death", "Wildfire Bomb", "Arcane Shot", "Freezing Trap", "Aimed Shot", "Raptor Strike"],
+        "AoE": ["Dragon Roar", "Cleave", "Swipe", "Shield of Vengeance", "Psychic Scream", "Multi-Shot"],
+        "Crowd Control": ["Ring of Ice", "Cheap Shot", "Kidney Shot", "Maim", "Cyclone", "Typhoon", "Fear", "Hammer of Justice", "Freezing Trap"],
+        "Immunity": ["Ice Block", "Unending Resolve", "Divine Shield"],
+        "Defensive": ["Die by the Sword", "Ignore Pain", "Ice Barrier", "Vanish", "Cloak of Shadows", "Evasion", "Frenzied Regeneration", "Barkskin", "Dark Pact", "Shield of Vengeance", "Power Word: Shield", "Pain Suppression", "Mindgames", "Psychic Scream", "Aspect of the Turtle"],
+        "Mobility": ["Blink", "Demonic Gateway", "Demonic Circle: Teleport", "Disengage"],
+        "Healing": ["Wild Growth", "Regrowth", "Victory Rush", "Healthstone", "Drain Life", "Holy Light", "Lay on Hands", "Vampiric Touch", "Devouring Plague", "Penance", "Flash Heal"],
+        "Utility": ["Thistle Tea", "Innervate", "Demonic Circle", "Mass Dispel", "Flare"],
+        "Summon": ["Summon Imp", "Shadowfiend", "Frostsaber", "Emerald Serpent", "Barrens Boar"],
+        "Empowerment": ["Avenging Wrath"],
+      };
+
+      const abilityIconMap = new Map();
+      Object.entries(abilityIconCategories).forEach(([category, abilityNames]) => {
+        abilityNames.forEach((abilityName) => {
+          if (!abilityIconMap.has(abilityName)) {
+            abilityIconMap.set(abilityName, []);
+          }
+          abilityIconMap.get(abilityName).push(category);
+        });
+      });
+
+      function createDocIconElement(category) {
+        const iconWrap = document.createElement("span");
+        iconWrap.className = "doc-icon-tip";
+        iconWrap.innerHTML = `${docIconSvgByCategory[category] || ""}<span class="doc-icon-tooltip">${escapeHtml(category)}</span>`;
+        return iconWrap;
+      }
+
+      function renderAbilityDocIcons(root = document) {
+        root.querySelectorAll(".documentation .doc-item").forEach((card) => {
+          const firstChild = card.firstElementChild;
+          if (!firstChild || firstChild.tagName !== "H4") {
+            return;
+          }
+
+          const abilityName = firstChild.textContent.trim();
+          const categories = abilityIconMap.get(abilityName);
+          if (!categories || categories.length === 0) {
+            return;
+          }
+
+          const cluster = document.createElement("div");
+          cluster.className = "doc-icon-cluster";
+          categories.forEach((category) => {
+            cluster.appendChild(createDocIconElement(category));
+          });
+
+          card.classList.add("has-doc-icons");
+          card.appendChild(cluster);
+        });
+      }
 
       function randomInRange(min, max) {
         return min + Math.random() * (max - min);
@@ -3422,6 +3685,7 @@
       }
 
       applyDocumentationItemRarityColors();
+      renderAbilityDocIcons();
 
       socket.on("connect", () => {
         lastLogLength = 0;
