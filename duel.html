@@ -265,6 +265,9 @@
         margin-bottom: 4px;
         font-size: 0.76rem;
         color: var(--text-dark);
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
       }
 
       .pet-hpbar {
@@ -293,12 +296,10 @@
 
       .pet-clip.friendly .pet-panel-header {
         border-bottom-color: rgba(170, 211, 114, 0.4);
-        color: #c8e08a;
       }
 
       .pet-clip.enemy .pet-panel-header {
         border-bottom-color: rgba(204, 51, 51, 0.4);
-        color: #e08080;
       }
 
       @media (max-width: 1100px) {
@@ -3946,7 +3947,16 @@
 
           const typeLine = document.createElement("div");
           typeLine.className = "pet-type-line";
-          typeLine.textContent = `Type: ${formatEntityType(pet?.entity_type) || "Unknown"}`;
+
+          const typeLabel = document.createElement("span");
+          typeLabel.textContent = "Type:";
+          typeLine.appendChild(typeLabel);
+
+          const typeValue = document.createElement("strong");
+          typeValue.className = "pet-status-val";
+          typeValue.textContent = formatEntityType(pet?.entity_type) || "Unknown";
+          typeLine.appendChild(typeValue);
+
           row.appendChild(typeLine);
 
           const hasHp = Number.isFinite(Number(pet?.hp_max)) && Number(pet.hp_max) > 0;
