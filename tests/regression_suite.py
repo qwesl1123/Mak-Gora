@@ -3465,7 +3465,9 @@ def scenario_effect_panel_payload_normalization() -> bool:
     effects.apply_effect_by_id(warrior, "arcane_shot_proc", overrides={"duration": 2})
     effects.apply_effect_by_id(warrior, "starfire_ready", overrides={"duration": 2})
     effects.apply_effect_by_id(warrior, "mind_blast_empowered", overrides={"duration": 2})
+    effects.apply_effect_by_id(warrior, "crusader_empower", overrides={"duration": 1})
     effects.apply_effect_by_id(warrior, "blocking_defence", overrides={"duration": 1})
+    effects.apply_effect_by_id(warrior, "bear_form_stats", overrides={"duration": 2})
     effects.apply_effect_by_id(
         warrior,
         "stunned",
@@ -3482,6 +3484,7 @@ def scenario_effect_panel_payload_normalization() -> bool:
     magical_buffs = [entry.get("name") for entry in panel["buffs_magical"]]
     physical_debuffs = [entry.get("name") for entry in panel["debuffs_physical"]]
     magical_debuffs = [entry.get("name") for entry in panel["debuffs_magical"]]
+    all_names = set(physical_buffs + magical_buffs + physical_debuffs + magical_debuffs)
 
     assert physical_buffs.count("Die by the Sword") == 1, "Die by the Sword should appear exactly once as a physical buff"
     assert "Killing Frenzy" in physical_buffs, "Raptor Strike proc should render as Killing Frenzy in physical buffs"
@@ -3492,6 +3495,9 @@ def scenario_effect_panel_payload_normalization() -> bool:
     assert "Rending Roar" in physical_debuffs, "Dragon Roar bleed should render as Rending Roar in physical debuffs"
     assert "Agony" in magical_debuffs, "Agony should appear in magical debuffs"
     assert "Hammer of Justice" in magical_debuffs, "Shared stunned runtime effects should safely fallback into debuff buckets"
+    assert "Blocking Defence" not in all_names and "Guarded" not in all_names, "Implementation-detail redirect helpers should not leak into the panel"
+    assert "Crusader Empower" not in all_names, "Internal helper proc states should not leak into the panel"
+    assert "bear_form_stats" not in all_names and "Bear Form Stats" not in all_names, "Companion stat effects should not leak into the panel"
 
     snapshot = SOCKETS.snapshot_for(match, warrior_sid)
     assert snapshot.get("you_effect_panel") == panel, "Snapshot should expose viewer effect panel payload as normalized backend data"

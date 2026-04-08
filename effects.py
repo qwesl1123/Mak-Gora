@@ -912,6 +912,21 @@ _EFFECT_PANEL_DISPLAY_NAMES: Dict[str, str] = {
     _effect_panel_name_key("Raptor Strike proc"): "Killing Frenzy",
 }
 
+_EFFECT_PANEL_INTERNAL_EFFECT_IDS = {
+    "die_by_sword_mitigation",
+    "bear_form_stats",
+    "cat_form_stats",
+    "moonkin_form_stats",
+    "tree_form_stats",
+}
+
+
+def _is_internal_panel_effect(effect: Dict[str, Any]) -> bool:
+    effect_id = str(effect.get("id") or "")
+    if effect_id in _EFFECT_PANEL_INTERNAL_EFFECT_IDS:
+        return True
+    return False
+
 
 def _effect_panel_visible_name(effect: Dict[str, Any]) -> str:
     effect_id = str(effect.get("id") or "")
@@ -949,6 +964,8 @@ def build_effect_panel_payload(ps: PlayerState) -> Dict[str, List[Dict[str, Any]
         bucket: {} for bucket in EFFECT_PANEL_BUCKET_ORDER
     }
     for effect in list(getattr(ps, "effects", []) or []):
+        if _is_internal_panel_effect(effect):
+            continue
         if effect_has_tag(effect, "blink_like"):
             continue
         visible_name = _effect_panel_visible_name(effect)
