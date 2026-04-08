@@ -404,6 +404,11 @@
         -webkit-backface-visibility: hidden;
       }
 
+      .card-face {
+        isolation: isolate;
+        contain: paint;
+      }
+
       .card-front.stat-card {
         position: relative;
         margin-bottom: 0;
@@ -1403,6 +1408,11 @@
         position: absolute;
         inset: 0;
         pointer-events: none;
+        overflow: hidden;
+        backface-visibility: hidden;
+        -webkit-backface-visibility: hidden;
+        transform: translateZ(0);
+        contain: paint;
       }
 
       .fx.fx_thunderfury .bolt-inner {
@@ -1412,6 +1422,9 @@
         pointer-events: none;
         opacity: 0;
         mix-blend-mode: screen;
+        backface-visibility: hidden;
+        -webkit-backface-visibility: hidden;
+        transform: translateZ(0);
       }
 
       .fx.fx_thunderfury.is-zapped .bolt-inner {
