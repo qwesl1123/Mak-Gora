@@ -475,6 +475,7 @@
 
       .card-front .stat-title {
         padding-right: 68px;
+        white-space: nowrap;
       }
 
       .effects-scroll {
@@ -2815,10 +2816,10 @@
       const friendlyEffectsPanel = document.getElementById("friendlyEffectsPanel");
       const enemyEffectsPanel = document.getElementById("enemyEffectsPanel");
       const effectSectionConfig = [
-        { key: "buffs_physical", title: "Physical Buffs", labelClass: "buffs", rowClass: "buff" },
-        { key: "buffs_magical", title: "Magical Buffs", labelClass: "buffs", rowClass: "buff-magic" },
-        { key: "debuffs_physical", title: "Physical Debuffs", labelClass: "debuffs", rowClass: "debuff" },
-        { key: "debuffs_magical", title: "Magical Debuffs", labelClass: "debuffs", rowClass: "debuff-magic" },
+        { key: "buffs_physical", title: "Buff", labelClass: "buffs", rowClass: "buff" },
+        { key: "buffs_magical", title: "Buff", labelClass: "buffs", rowClass: "buff-magic" },
+        { key: "debuffs_physical", title: "Debuff", labelClass: "debuffs", rowClass: "debuff" },
+        { key: "debuffs_magical", title: "Debuff", labelClass: "debuffs", rowClass: "debuff-magic" },
       ];
 
       const socket = io();
