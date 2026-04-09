@@ -686,7 +686,7 @@ def scenario_absorb_layering() -> bool:
     assert before_keys != after_keys, "Expected one absorb layer to be removed"
     assert "ice_barrier" not in priest.res.absorbs
     assert "power_word_shield" in priest.res.absorbs
-    assert effects.absorb_total(priest) == total_after_damage - 20
+    assert effects.absorb_total(priest) == total_after_damage - 10
     return True
 
 
@@ -3463,8 +3463,10 @@ def scenario_effect_panel_payload_normalization() -> bool:
     effects.apply_effect_by_id(warrior, "dragon_roar_bleed", overrides={"duration": 3, "source_sid": warlock_sid})
     effects.apply_effect_by_id(warrior, "raptor_strike_proc", overrides={"duration": 2})
     effects.apply_effect_by_id(warrior, "arcane_shot_proc", overrides={"duration": 2})
+    effects.apply_effect_by_id(warrior, "rip_ready", overrides={"duration": 2})
     effects.apply_effect_by_id(warrior, "starfire_ready", overrides={"duration": 2})
     effects.apply_effect_by_id(warrior, "mind_blast_empowered", overrides={"duration": 2})
+    effects.apply_effect_by_id(warrior, "burn", overrides={"duration": 3, "tick_damage": 2, "source_sid": warlock_sid})
     effects.apply_effect_by_id(warrior, "crusader_empower", overrides={"duration": 1})
     effects.apply_effect_by_id(warrior, "blocking_defence", overrides={"duration": 1})
     effects.apply_effect_by_id(warrior, "bear_form_stats", overrides={"duration": 2})
@@ -3492,17 +3494,108 @@ def scenario_effect_panel_payload_normalization() -> bool:
     assert "Charged Quiver" in magical_buffs, "Arcane Shot proc should render as Charged Quiver in magical buffs"
     assert "Astral Surge" in magical_buffs, "Starfire proc should render as Astral Surge in magical buffs"
     assert "Mind Assault" in magical_buffs, "Mind Blast empowerment should render as Mind Assault in magical buffs"
+    assert "Crusader's Might" in magical_buffs, "Crusader's Greatsword proc should render as Crusader's Might in magical buffs"
+    assert "Sharpened Claws" in physical_buffs, "Rip proc should render as Sharpened Claws in physical buffs"
     assert "Rending Roar" in physical_debuffs, "Dragon Roar bleed should render as Rending Roar in physical debuffs"
     assert "Agony" in magical_debuffs, "Agony should appear in magical debuffs"
+    assert "Fire Burn" in magical_debuffs, "Wand of Fire burn should render as Fire Burn in magical debuffs"
     assert "Hammer of Justice" in magical_debuffs, "Shared stunned runtime effects should safely fallback into debuff buckets"
     assert "Blocking Defence" not in all_names and "Guarded" not in all_names, "Implementation-detail redirect helpers should not leak into the panel"
-    assert "Crusader Empower" not in all_names, "Internal helper proc states should not leak into the panel"
     assert "bear_form_stats" not in all_names and "Bear Form Stats" not in all_names, "Companion stat effects should not leak into the panel"
 
     snapshot = SOCKETS.snapshot_for(match, warrior_sid)
     assert snapshot.get("you_effect_panel") == panel, "Snapshot should expose viewer effect panel payload as normalized backend data"
     enemy_panel = snapshot.get("enemy_effect_panel")
     assert isinstance(enemy_panel, dict) and list(enemy_panel.keys()) == ["buffs_physical", "buffs_magical", "debuffs_physical", "debuffs_magical"], "Enemy snapshot should also expose all four effect panel buckets"
+    return True
+
+
+def scenario_proc_and_burn_duration_cleanup_and_shield_panel_cleanup() -> bool:
+    assert int(effects.effect_template("mind_blast_empowered").get("duration", 0) or 0) == 5, "Mind Blast empowerment duration should be 5"
+    assert int(effects.effect_template("starfire_ready").get("duration", 0) or 0) == 5, "Starfire proc duration should be 5"
+    assert int(effects.effect_template("rip_ready").get("duration", 0) or 0) == 5, "Rip proc duration should be 5"
+    assert int(effects.effect_template("crusader_empower").get("duration", 0) or 0) == 5, "Crusader empowerment duration should be 5"
+    assert int(effects.effect_template("paladin_final_verdict_empowered").get("duration", 0) or 0) == 5, "Final Verdict empowerment duration should be 5"
+    assert int(effects.effect_template("shadowy_insight").get("duration", 0) or 0) == 5, "Shadowy Insight proc duration should be 5"
+    assert int(effects.effect_template("burn").get("duration", 0) or 0) == 3, "Wand of Fire burn duration should be 3"
+
+    for effect_id, template in effects.EFFECT_TEMPLATES.items():
+        tags = template.get("tags") or []
+        if int(template.get("duration", 0) or 0) != 999:
+            continue
+        if "proc" in tags or "empower" in effect_id or "empower" in str(template.get("name", "")).lower():
+            raise AssertionError(f"{effect_id} should not remain at 999-turn duration")
+
+    match = make_match("mage", "warrior", seed=777)
+    mage = match.state[match.players[0]]
+    warrior = match.state[match.players[1]]
+
+    mage.effects.append(
+        {
+            "id": "wand_of_fire_test",
+            "type": "item_passive",
+            "source_item": "Wand of Fire",
+            "passive": {"type": "burn", "value": 2, "trigger": "on_hit"},
+        }
+    )
+    _, wand_logs, _, _ = effects.trigger_on_hit_passives(mage, warrior, base_damage=5, damage_type="magic", rng=random.Random(1))
+    assert wand_logs == [f"{mage.sid[:5]} scorches the target with Wand of Fire."], "Wand of Fire log should omit damage-per-turn suffix"
+
+    burn = next((fx for fx in warrior.effects if fx.get("id") == "burn"), None)
+    assert burn is not None and int(burn.get("duration", 0) or 0) == 3, "Wand burn should apply as a 3-turn DoT"
+    burn_panel = effects.build_effect_panel_payload(warrior)
+    assert any(entry.get("name") == "Fire Burn" for entry in burn_panel["debuffs_magical"]), "Fire Burn should appear in magical debuffs"
+
+    effects.apply_effect_by_id(mage, "rip_ready", overrides={"duration": 5})
+    mage_panel = effects.build_effect_panel_payload(mage)
+    assert any(entry.get("name") == "Sharpened Claws" for entry in mage_panel["buffs_physical"]), "Sharpened Claws should appear in physical buffs"
+
+    absorb_match = make_match("mage", "warrior", seed=778)
+    shield_owner = absorb_match.state[absorb_match.players[0]]
+    effects.apply_effect_by_id(shield_owner, "ice_barrier", overrides={"duration": 8})
+    effects.add_absorb(shield_owner, 10, source_name="Ice Barrier", effect_id="ice_barrier")
+
+    panel_before = effects.build_effect_panel_payload(shield_owner)
+    assert any(entry.get("name") == "Ice Barrier" for entry in panel_before["buffs_magical"]), "Ice Barrier should appear while absorb remains"
+
+    remaining_partial, absorbed_partial, _ = effects.consume_absorbs(shield_owner, 4)
+    assert remaining_partial == 0 and absorbed_partial == 4, "Partial absorb consumption should be tracked"
+    assert _has_effect(shield_owner, "ice_barrier"), "Shield effect should remain while absorb is still available"
+    panel_partial = effects.build_effect_panel_payload(shield_owner)
+    assert any(entry.get("name") == "Ice Barrier" for entry in panel_partial["buffs_magical"]), "Ice Barrier should still appear while absorb remains"
+
+    remaining_full, absorbed_full, _ = effects.consume_absorbs(shield_owner, 6)
+    assert remaining_full == 0 and absorbed_full == 6, "Remaining absorb should fully consume matching incoming damage"
+    assert "ice_barrier" not in shield_owner.res.absorbs, "Ice Barrier absorb layer should be removed when depleted"
+    assert not _has_effect(shield_owner, "ice_barrier"), "Ice Barrier effect should be removed when absorb is depleted"
+    panel_after = effects.build_effect_panel_payload(shield_owner)
+    assert not any(entry.get("name") == "Ice Barrier" for entry in panel_after["buffs_magical"]), "Ice Barrier should disappear from panel when depleted"
+
+    layering_match = make_match("priest", "warrior", seed=779)
+    layered_owner = layering_match.state[layering_match.players[0]]
+    effects.apply_effect_by_id(layered_owner, "power_word_shield", overrides={"duration": 8})
+    effects.add_absorb(layered_owner, 30, source_name="Power Word: Shield", effect_id="power_word_shield")
+    effects.apply_effect_by_id(layered_owner, "ice_barrier", overrides={"duration": 8})
+    effects.add_absorb(layered_owner, 20, source_name="Ice Barrier", effect_id="ice_barrier")
+    effects.consume_absorbs(layered_owner, 10)
+    assert int(layered_owner.res.absorbs["ice_barrier"]["remaining"]) == 10, "Latest-cast absorb layer should be consumed first"
+    assert int(layered_owner.res.absorbs["power_word_shield"]["remaining"]) == 30, "Earlier absorb layer should remain untouched until latest layer is exhausted"
+
+    sov_match = make_match("paladin", "warrior", seed=780)
+    pal_sid, war_sid = sov_match.players
+    submit_turn(sov_match, "shield_of_vengeance", _DEF_PASS)
+    paladin = sov_match.state[pal_sid]
+    enemy = sov_match.state[war_sid]
+    sov_layer = int(paladin.res.absorbs.get("shield_of_vengeance", {}).get("remaining", 0) or 0)
+    assert sov_layer > 0, "Shield of Vengeance absorb layer should exist after cast"
+    effects.consume_absorbs(paladin, sov_layer)
+    assert "shield_of_vengeance" not in paladin.res.absorbs, "Shield of Vengeance absorb layer should be removed when fully consumed"
+    sov_panel = effects.build_effect_panel_payload(paladin)
+    assert not any(entry.get("name") == "Shield of Vengeance" for entry in sov_panel["buffs_magical"]), "Shield of Vengeance should disappear from panel once fully consumed"
+    hp_before = enemy.res.hp
+    submit_turn(sov_match, _DEF_PASS, _DEF_PASS)
+    assert any("Shield of Vengeance explodes!" in line for line in _turn_lines(sov_match, 2)), "Shield of Vengeance should still explode after full absorb consumption"
+    assert enemy.res.hp < hp_before, "Shield of Vengeance explosion should still deal damage after full absorb consumption"
     return True
 
 
@@ -3640,6 +3733,7 @@ SCENARIOS = [
     scenario_balance_metadata_updates_and_shadowstrike_rename,
     scenario_duel_html_agony_docs_updated,
     scenario_effect_panel_payload_normalization,
+    scenario_proc_and_burn_duration_cleanup_and_shield_panel_cleanup,
     scenario_invalid_class_rejected,
     scenario_valid_class_id_is_normalized_before_build,
     scenario_prep_selection_name_uses_current_submission,

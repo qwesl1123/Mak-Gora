@@ -169,7 +169,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
     "burn": {
         "type": "burn",
         "name": "Burn",
-        "duration": 999,
+        "duration": 3,
         "category": "dot",
         "school": "magical",
         "dispellable": True,
@@ -356,7 +356,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
     "crusader_empower": {
         "type": "status",
         "name": "Crusader's Might",
-        "duration": 999,
+        "duration": 5,
         "damage_mult": 1.2,
         "flags": {"empower_next_offense": True},
         "tags": ["proc"],
@@ -365,7 +365,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
     "paladin_final_verdict_empowered": {
         "type": "status",
         "name": "Final Verdict Empowered",
-        "duration": 999,
+        "duration": 5,
         "flags": {"paladin_final_verdict_empowered": True},
         "tags": ["proc"],
         "resolution_layer": "action_selection_modifiers",
@@ -468,7 +468,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
     "mind_blast_empowered": {
         "type": "status",
         "name": "Mind Blast Empowered",
-        "duration": 999,
+        "duration": 5,
         "flags": {"mind_blast_empowered": True},
         "tags": ["proc"],
         "resolution_layer": "action_selection_modifiers",
@@ -476,7 +476,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
     "shadowy_insight": {
         "type": "status",
         "name": "Shadowy Insight",
-        "duration": 999,
+        "duration": 5,
         "flags": {"shadowy_insight": True},
         "tags": ["proc"],
         "resolution_layer": "action_selection_modifiers",
@@ -656,7 +656,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
     "rip_ready": {
         "type": "status",
         "name": "Rip Ready",
-        "duration": 999,
+        "duration": 5,
         "flags": {"rip_ready": True},
         "tags": ["proc"],
         "resolution_layer": "action_selection_modifiers",
@@ -664,7 +664,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
     "starfire_ready": {
         "type": "status",
         "name": "Starfire Ready",
-        "duration": 999,
+        "duration": 5,
         "flags": {"starfire_ready": True},
         "tags": ["proc"],
         "resolution_layer": "action_selection_modifiers",
@@ -833,6 +833,7 @@ _EFFECT_PANEL_PHYSICAL_BUFF_NAMES = {
     "Barkskin",
     "Aspect of the Turtle",
     "Raptor Strike proc",
+    "Rip proc",
 }
 _EFFECT_PANEL_MAGICAL_BUFF_NAMES = {
     "Hot Streak",
@@ -854,6 +855,7 @@ _EFFECT_PANEL_MAGICAL_BUFF_NAMES = {
     "Pain Suppression",
     "Arcane Shot proc",
     "Starfire proc",
+    "Crusader's Might",
 }
 _EFFECT_PANEL_PHYSICAL_DEBUFF_NAMES = {
     "Dragon Roar",
@@ -874,6 +876,7 @@ _EFFECT_PANEL_MAGICAL_DEBUFF_NAMES = {
     "Mindgames",
     "Psychic Scream",
     "Wildfire Burn",
+    "Burn",
     "Freezing Trap",
 }
 
@@ -898,6 +901,7 @@ _EFFECT_PANEL_RAW_NAME_BY_ID: Dict[str, str] = {
     "arcane_shot_proc": "Arcane Shot proc",
     "raptor_strike_proc": "Raptor Strike proc",
     "starfire_ready": "Starfire proc",
+    "rip_ready": "Rip proc",
     "mind_blast_empowered": "Mind Blast empowerment",
     "paladin_final_verdict_empowered": "Final Verdict empowerment",
 }
@@ -905,8 +909,10 @@ _EFFECT_PANEL_RAW_NAME_BY_ID: Dict[str, str] = {
 _EFFECT_PANEL_DISPLAY_NAMES: Dict[str, str] = {
     _effect_panel_name_key("dragon roar bleed"): "Rending Roar",
     _effect_panel_name_key("Starfire proc"): "Astral Surge",
+    _effect_panel_name_key("Rip proc"): "Sharpened Claws",
     _effect_panel_name_key("Final Verdict empowerment"): "Divine Reckoning",
     _effect_panel_name_key("Mind Blast empowerment"): "Mind Assault",
+    _effect_panel_name_key("Burn"): "Fire Burn",
     _effect_panel_name_key("arcaneshot proc"): "Charged Quiver",
     _effect_panel_name_key("Arcane Shot proc"): "Charged Quiver",
     _effect_panel_name_key("Raptor Strike proc"): "Killing Frenzy",
@@ -968,6 +974,12 @@ def build_effect_panel_payload(ps: PlayerState) -> Dict[str, List[Dict[str, Any]
             continue
         if effect_has_tag(effect, "blink_like"):
             continue
+        if str(effect.get("category") or "").lower() == "absorb":
+            effect_id = str(effect.get("id") or "")
+            absorb_layer = (getattr(ps.res, "absorbs", {}) or {}).get(effect_id)
+            absorb_remaining = int((absorb_layer or {}).get("remaining", 0) or 0)
+            if absorb_remaining <= 0:
+                continue
         visible_name = _effect_panel_visible_name(effect)
         if not visible_name:
             continue
@@ -1002,7 +1014,7 @@ def build_effect_panel_payload(ps: PlayerState) -> Dict[str, List[Dict[str, Any]
 
 def is_permanent(effect: Dict[str, Any]) -> bool:
     """Effects we do not tick down with durations (until you add cleanse/removal)."""
-    return effect.get("type") in ("item_passive", "burn") or effect.get("id") == "demonic_circle"
+    return effect.get("type") == "item_passive" or effect.get("id") == "demonic_circle"
 
 
 def tick_durations(effects: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -1545,7 +1557,7 @@ def consume_absorbs(ps: PlayerState, incoming: int) -> tuple[int, int, List[Dict
     absorbed_total = 0
     breakdown: List[Dict[str, Any]] = []
 
-    for effect_id in list(ps.res.absorbs.keys()):
+    for effect_id in reversed(list(ps.res.absorbs.keys())):
         if remaining <= 0:
             break
         layer = ps.res.absorbs.get(effect_id)
@@ -1567,6 +1579,8 @@ def consume_absorbs(ps: PlayerState, incoming: int) -> tuple[int, int, List[Dict
                     shield_fx["absorbed"] = int(shield_fx.get("absorbed", 0) or 0) + int(absorbed)
         if int(layer.get("remaining", 0) or 0) <= 0:
             del ps.res.absorbs[effect_id]
+            if effect_id != "shield_of_vengeance":
+                remove_effect(ps, effect_id)
 
     return remaining, absorbed_total, breakdown
 
@@ -1604,11 +1618,11 @@ def trigger_on_hit_passives(
                     target,
                     value=burn_value,
                     source_item=str(effect.get("source_item", "Unknown")),
-                    duration=999,
+                    duration=3,
                     source_sid=attacker.sid,
                 )
                 log_lines.append(
-                    f"{attacker.sid[:5]} scorches the target with {effect.get('source_item', 'item')} ({burn_value} damage/turn)."
+                    f"{attacker.sid[:5]} scorches the target with {effect.get('source_item', 'item')}."
                 )
         elif passive_type == "strike_again":
             if not include_strike_again:
