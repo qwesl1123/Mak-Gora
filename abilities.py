@@ -1196,7 +1196,7 @@ ABILITIES = {
         "cooldown": 8,
         "classes": ["hunter"],
         "self_effects": [
-            {"id": "disengage", "duration": 1, "log": "disengages from danger."}
+            {"id": "disengage", "duration": 2, "log": "disengages from danger."}
         ],
     },
     "aimed_shot": {

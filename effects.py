@@ -297,6 +297,11 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "duration": 2,
         "flags": {"blinked": True, "untargetable": True},
         "tags": ["blink_like"],
+        "display": {
+            "war_council": True,
+            "label": "Blinked",
+            "priority": 78,
+        },
         "resolution_layer": "hit_resolution",
     },
     "demonic_gateway": {
@@ -306,6 +311,11 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "flags": {"blinked": True, "untargetable": True},
         "miss_log": "Target fled through the portal — Miss.",
         "tags": ["blink_like"],
+        "display": {
+            "war_council": True,
+            "label": "Teleported",
+            "priority": 78,
+        },
         "resolution_layer": "hit_resolution",
     },
     "teleport": {
@@ -315,19 +325,23 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "flags": {"blinked": True, "untargetable": True},
         "miss_log": "Target returned to their dark ward — Miss.",
         "tags": ["blink_like"],
+        "display": {
+            "war_council": True,
+            "label": "Teleported",
+            "priority": 78,
+        },
         "resolution_layer": "hit_resolution",
     },
     "disengage": {
         "type": "status",
         "name": "Disengage",
-        "duration": 1,
+        "duration": 2,
         "flags": {"blinked": True, "untargetable": True, "incoming_single_target_miss": True},
         "miss_log": "Target leaps away — Miss.",
         "tags": ["blink_like"],
         "display": {
             "war_council": True,
             "label": "Disengaged",
-            "color": "#AAD372",
             "priority": 78,
         },
         "resolution_layer": "hit_resolution",

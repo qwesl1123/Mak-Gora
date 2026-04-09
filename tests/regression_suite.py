@@ -1798,6 +1798,57 @@ def scenario_hunter_disengage_uses_custom_miss_text() -> bool:
     return True
 
 
+def scenario_blink_like_champion_status_and_disengage_duration() -> bool:
+    blink_display = effects.effect_template("blink").get("display", {})
+    gateway_display = effects.effect_template("demonic_gateway").get("display", {})
+    teleport_display = effects.effect_template("teleport").get("display", {})
+    disengage_display = effects.effect_template("disengage").get("display", {})
+    assert blink_display.get("war_council") is True and blink_display.get("label") == "Blinked", "Blink should expose Blinked champion status metadata"
+    assert gateway_display.get("war_council") is True and gateway_display.get("label") == "Teleported", "Demonic Gateway should expose Teleported champion status metadata"
+    assert teleport_display.get("war_council") is True and teleport_display.get("label") == "Teleported", "Demonic Circle: Teleport should expose Teleported champion status metadata"
+    assert disengage_display.get("war_council") is True and disengage_display.get("label") == "Disengaged", "Disengage should expose Disengaged champion status metadata"
+    assert int(effects.effect_template("disengage").get("duration", 0) or 0) == 2, "Disengage duration should be 2 turns"
+
+    match = make_match("mage", "warlock", seed=630)
+    mage_sid, warlock_sid = match.players
+    submit_turn(match, "blink", "demonic_gateway")
+    snapshot = SOCKETS.snapshot_for(match, mage_sid)
+    you_labels = [entry.get("display", {}).get("label") for entry in snapshot.get("you_effects", []) if isinstance(entry, dict)]
+    enemy_labels = [entry.get("display", {}).get("label") for entry in snapshot.get("enemy_effects", []) if isinstance(entry, dict)]
+    assert "Blinked" in you_labels, "Blink should render as Blinked in champion status snapshot data"
+    assert "Teleported" in enemy_labels, "Demonic Gateway should render as Teleported in champion status snapshot data"
+    assert all(name.get("name") != "Blink" for bucket in snapshot.get("you_effect_panel", {}).values() for name in (bucket or [])), "Blink-like effects should remain excluded from buff/debuff panel data"
+    assert all(name.get("name") != "Demonic Gateway" for bucket in snapshot.get("enemy_effect_panel", {}).values() for name in (bucket or [])), "Demonic Gateway should remain excluded from buff/debuff panel data"
+
+    teleport_match = make_match("warlock", "warrior", seed=631)
+    submit_turn(teleport_match, "demonic_circle", _DEF_PASS)
+    submit_turn(teleport_match, "teleport", _DEF_PASS)
+    tp_snapshot = SOCKETS.snapshot_for(teleport_match, teleport_match.players[0])
+    tp_labels = [entry.get("display", {}).get("label") for entry in tp_snapshot.get("you_effects", []) if isinstance(entry, dict)]
+    assert "Teleported" in tp_labels, "Demonic Circle: Teleport should render as Teleported in champion status snapshot data"
+    assert all(name.get("name") != "Demonic Circle: Teleport" for bucket in tp_snapshot.get("you_effect_panel", {}).values() for name in (bucket or [])), "Demonic Circle: Teleport should remain excluded from buff/debuff panel data"
+
+    disengage_match = make_match("hunter", "warrior", seed=632)
+    warrior = disengage_match.state[disengage_match.players[1]]
+    submit_turn(disengage_match, "disengage", "basic_attack")
+    hunter = disengage_match.state[disengage_match.players[0]]
+    active_disengage = next((fx for fx in hunter.effects if fx.get("id") == "disengage"), None)
+    assert active_disengage is not None and int(active_disengage.get("duration", 0) or 0) == 1, "Disengage should have one remaining turn after the cast turn"
+
+    submit_turn(disengage_match, _DEF_PASS, "basic_attack")
+    active_disengage = next((fx for fx in hunter.effects if fx.get("id") == "disengage"), None)
+    assert active_disengage is None, "Disengage should expire after protecting the following turn"
+    second_turn = _turn_lines(disengage_match, 2)
+    assert any("Target leaps away — Miss." in line for line in second_turn), "Disengage should still force miss on the following turn after cast"
+
+    hunter_hp_before = hunter.res.hp
+    submit_turn(disengage_match, _DEF_PASS, "basic_attack")
+    third_turn = _turn_lines(disengage_match, 3)
+    assert not any("Target leaps away — Miss." in line for line in third_turn), "Disengage miss behavior should end after two protected turns"
+    assert hunter.res.hp < hunter_hp_before, "Disengage should no longer protect beyond the intended two-turn window"
+    return True
+
+
 def scenario_hunter_flare_logs_stealth_breaks() -> bool:
     match = make_match("hunter", "hunter", seed=123)
     enemy = match.state[match.players[1]]
@@ -3681,6 +3732,7 @@ SCENARIOS = [
     scenario_cc_status_display_metadata_is_exposed,
     scenario_key_buff_debuff_metadata_is_consistent,
     scenario_hunter_disengage_uses_custom_miss_text,
+    scenario_blink_like_champion_status_and_disengage_duration,
     scenario_hunter_flare_logs_stealth_breaks,
     scenario_hunter_pet_permanent_death,
     scenario_hunter_pet_permanent_death_resummon_blocked,
