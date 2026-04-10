@@ -3650,6 +3650,257 @@ def scenario_proc_and_burn_duration_cleanup_and_shield_panel_cleanup() -> bool:
     return True
 
 
+def scenario_high_risk_shields_absorbs_regression_pack() -> bool:
+    layered_match = make_match("mage", "priest", seed=8101)
+    target = layered_match.state[layered_match.players[1]]
+    effects.apply_effect_by_id(target, "power_word_shield", overrides={"duration": 8})
+    effects.add_absorb(target, 9, source_name="Power Word: Shield", effect_id="power_word_shield")
+    effects.apply_effect_by_id(target, "ice_barrier", overrides={"duration": 8})
+    effects.add_absorb(target, 6, source_name="Ice Barrier", effect_id="ice_barrier")
+
+    panel_before = effects.build_effect_panel_payload(target)
+    assert any(entry.get("name") == "Ice Barrier" for entry in panel_before["buffs_magical"]), "Ice Barrier should be visible in panel before consume"
+    assert any(entry.get("name") == "Power Word: Shield" for entry in panel_before["buffs_magical"]), "Power Word: Shield should be visible in panel before consume"
+
+    spill_1, absorbed_1, _ = effects.consume_absorbs(target, 4)
+    assert spill_1 == 0 and absorbed_1 == 4, "Partial absorb should consume incoming damage"
+    assert int(target.res.absorbs["ice_barrier"]["remaining"]) == 2, "Latest-cast absorb should be consumed first"
+    panel_partial = effects.build_effect_panel_payload(target)
+    assert any(entry.get("name") == "Ice Barrier" for entry in panel_partial["buffs_magical"]), "Partially consumed shield should remain visible in panel"
+
+    spill_2, absorbed_2, _ = effects.consume_absorbs(target, 4)
+    assert spill_2 == 0 and absorbed_2 == 4, "Second consume should continue through stacked absorbs"
+    assert "ice_barrier" not in target.res.absorbs, "Fully consumed shield layer should be removed"
+    assert int(target.res.absorbs["power_word_shield"]["remaining"]) == 7, "Overflow absorb should continue into the next shield layer"
+    panel_after = effects.build_effect_panel_payload(target)
+    assert not any(entry.get("name") == "Ice Barrier" for entry in panel_after["buffs_magical"]), "Fully consumed shield should be removed from panel"
+    assert any(entry.get("name") == "Power Word: Shield" for entry in panel_after["buffs_magical"]), "Earlier stacked shield should remain visible while it still has absorb"
+
+    multihit_match = make_match("mage", "priest", seed=8102)
+    mage_sid, priest_sid = multihit_match.players
+    mage = multihit_match.state[mage_sid]
+    priest = multihit_match.state[priest_sid]
+    mage.stats["acc"] = 999
+    effects.apply_effect_by_id(priest, "power_word_shield", overrides={"duration": 8})
+    effects.add_absorb(priest, 2, source_name="Power Word: Shield", effect_id="power_word_shield")
+    effects.apply_effect_by_id(priest, "ice_barrier", overrides={"duration": 8})
+    effects.add_absorb(priest, 2, source_name="Ice Barrier", effect_id="ice_barrier")
+    submit_turn(multihit_match, "arcane_barrage", _DEF_PASS)
+    turn_lines = _turn_lines(multihit_match, 1)
+    assert any("Hit 1:" in line and "Hit 2:" in line and "Hit 3:" in line for line in turn_lines), "Arcane Barrage should remain a multi-hit damage path"
+    assert "ice_barrier" not in priest.res.absorbs and "power_word_shield" not in priest.res.absorbs, "Multi-hit damage should deplete small stacked absorbs across hits"
+
+    sov_match = make_match("paladin", "warrior", seed=8103)
+    pal_sid, war_sid = sov_match.players
+    submit_turn(sov_match, "shield_of_vengeance", _DEF_PASS)
+    paladin = sov_match.state[pal_sid]
+    enemy = sov_match.state[war_sid]
+    sov_absorb = int(paladin.res.absorbs.get("shield_of_vengeance", {}).get("remaining", 0) or 0)
+    assert sov_absorb > 0, "Shield of Vengeance absorb layer should exist after cast"
+    effects.consume_absorbs(paladin, sov_absorb)
+    assert "shield_of_vengeance" not in paladin.res.absorbs, "Shield of Vengeance absorb layer should clear when fully consumed"
+    assert not any(entry.get("name") == "Shield of Vengeance" for entry in effects.build_effect_panel_payload(paladin)["buffs_magical"]), "Shield of Vengeance should be removed from panel after full consume"
+    enemy_hp_before = enemy.res.hp
+    submit_turn(sov_match, _DEF_PASS, _DEF_PASS)
+    explosion_seen = any("Shield of Vengeance explodes!" in line for line in _turn_lines(sov_match, 2))
+    if not explosion_seen:
+        submit_turn(sov_match, _DEF_PASS, _DEF_PASS)
+        explosion_seen = any("Shield of Vengeance explodes!" in line for line in _turn_lines(sov_match, 3))
+    assert explosion_seen, "Shield of Vengeance explosion should still trigger after full absorb consumption"
+    assert enemy.res.hp < enemy_hp_before, "Shield of Vengeance explosion should still deal damage after shield fully absorbs"
+    return True
+
+
+def scenario_high_risk_end_of_turn_lethal_ordering_pack() -> bool:
+    dot_pet_match = make_match("hunter", "warlock", seed=8201)
+    hunter_sid, warlock_sid = dot_pet_match.players
+    hunter = dot_pet_match.state[hunter_sid]
+    warlock = dot_pet_match.state[warlock_sid]
+    submit_turn(dot_pet_match, "call_serpent", "agony")
+    hunter.res.hp = 1
+    warlock.res.hp = warlock.res.hp_max
+    submit_turn(dot_pet_match, _DEF_PASS, _DEF_PASS)
+    turn_lines = _turn_lines(dot_pet_match, 2)
+    pet_idx = next(i for i, line in enumerate(turn_lines) if "Emerald Serpent" in line and ("melees the target" in line or "breathes lightning" in line))
+    dot_idx = next(i for i, line in enumerate(turn_lines) if "suffers" in line and "Agony" in line)
+    assert pet_idx < dot_idx, "Pet phase should run before DoT ticks in end-of-turn ordering"
+
+    sov_match = make_match("paladin", "warrior", seed=8202)
+    pal_sid, war_sid = sov_match.players
+    submit_turn(sov_match, "shield_of_vengeance", _DEF_PASS)
+    sov_fx = next(fx for fx in sov_match.state[pal_sid].effects if fx.get("id") == "shield_of_vengeance")
+    sov_fx["absorbed"] = 20
+    sov_match.state[war_sid].res.hp = 20
+    submit_turn(sov_match, _DEF_PASS, _DEF_PASS)
+    submit_turn(sov_match, _DEF_PASS, _DEF_PASS)
+    sov_turn = _turn_lines(sov_match, 3)
+    explosion_idx = next(i for i, line in enumerate(sov_turn) if "Shield of Vengeance explodes!" in line)
+    summary_idx = next((i for i, line in enumerate(sov_turn) if line.startswith("Post-Combat Summary|")), -1)
+    if summary_idx != -1:
+        winner_idx = next(i for i, line in enumerate(sov_turn) if "wins the duel." in line)
+        assert explosion_idx < summary_idx < winner_idx, "Shield of Vengeance explosion lethal should resolve before summary/winner logs"
+
+    double_ko_match = make_match("priest", "warlock", seed=8203)
+    p1_sid, p2_sid = double_ko_match.players
+    p1 = double_ko_match.state[p1_sid]
+    p2 = double_ko_match.state[p2_sid]
+    p1.res.hp = 1
+    p2.res.hp = 1
+    effects.apply_effect_by_id(p1, "agony", overrides={"duration": 1, "tick_damage": 1, "source_sid": p2_sid, "dot_mode": "fixed"})
+    effects.apply_effect_by_id(p2, "agony", overrides={"duration": 1, "tick_damage": 1, "source_sid": p1_sid, "dot_mode": "fixed"})
+    submit_turn(double_ko_match, _DEF_PASS, _DEF_PASS)
+    assert double_ko_match.phase == "ended" and double_ko_match.winner is None, "Simultaneous end-of-turn lethals should remain a true double KO"
+    assert "Double KO. No winner." in _turn_lines(double_ko_match, 1), "Double KO message should appear only after end-of-turn systems complete"
+    return True
+
+
+def scenario_high_risk_same_turn_protection_and_denial_pack() -> bool:
+    turtle_cc_match = make_match("hunter", "rogue", seed=8301)
+    effects.remove_effect(turtle_cc_match.state[turtle_cc_match.players[1]], "stealth")
+    submit_turn(turtle_cc_match, "turtle", "kidney_shot")
+    turn_lines = _turn_lines(turtle_cc_match, 1)
+    assert any("Target evades the attack — Miss!" in line for line in turn_lines), "Aspect of the Turtle should deny same-turn single-target CC applications"
+    assert not _has_effect(turtle_cc_match.state[turtle_cc_match.players[0]], "stunned"), "Denied same-turn CC should not apply the stun state"
+
+    blink_match = make_match("mage", "warrior", seed=8302)
+    submit_turn(blink_match, "blink", "basic_attack")
+    assert any("Target blinks away — Miss." in line for line in _turn_lines(blink_match, 1)), "Blink-like state should deny single-target attacks in the same turn"
+    aoe_match = make_match("mage", "warrior", seed=8303)
+    aoe_match.state[aoe_match.players[1]].res.rage = 10
+    submit_turn(aoe_match, "blink", "dragon_roar")
+    assert any("Target blinks away — Miss." in line for line in _turn_lines(aoe_match, 1)), "Current behavior should preserve blink-like champion miss text versus AoE"
+
+    reveal_match = make_match("hunter", "rogue", seed=8304)
+    submit_turn(reveal_match, "flare", _DEF_PASS)
+    reveal_turn = _turn_lines(reveal_match, 1)
+    action_idx = next(i for i, line in enumerate(reveal_turn) if "cast Flare. Flare reveals the target." in line)
+    break_idx = next(i for i, line in enumerate(reveal_turn) if "stealth broken by Flare." in line)
+    assert action_idx < break_idx, "Stealth reveal logs should stay in same-turn action-then-break order"
+    assert not _has_effect(reveal_match.state[reveal_match.players[1]], "stealth"), "Flare should remove stealth on the same turn"
+
+    denied_effect_match = make_match("hunter", "warrior", seed=8305)
+    effects.apply_effect_by_id(denied_effect_match.state[denied_effect_match.players[0]], "feared", overrides={"duration": 1})
+    submit_turn(denied_effect_match, "turtle", _DEF_PASS)
+    assert not _has_effect(denied_effect_match.state[denied_effect_match.players[0]], "aspect_of_turtle"), "Denied actions should not apply their self-effects"
+
+    immediate_match = make_match("warlock", "warrior", seed=8306)
+    effects.apply_effect_by_id(immediate_match.state[immediate_match.players[0]], "feared", overrides={"duration": 1})
+    submit_turn(immediate_match, "totally_fake_ability", _DEF_PASS)
+    assert any("fumbles (unknown ability)." in line for line in _turn_lines(immediate_match, 1)), "Unknown ability immediate-path handling should remain first in precedence"
+    return True
+
+
+def scenario_high_risk_pet_legality_and_protection_pack() -> bool:
+    feared_pet_match = make_match("priest", "warrior", seed=8401)
+    submit_turn(feared_pet_match, "shadowfiend", _DEF_PASS)
+    shadowfiend = next(iter(feared_pet_match.state[feared_pet_match.players[0]].pets.values()))
+    effects.apply_effect_by_id(shadowfiend, "feared", overrides={"duration": 1})
+    warrior_hp_before = feared_pet_match.state[feared_pet_match.players[1]].res.hp
+    submit_turn(feared_pet_match, _DEF_PASS, _DEF_PASS)
+    feared_turn = _turn_lines(feared_pet_match, 2)
+    assert any("Shadowfiend is feared and cannot act." in line for line in feared_turn), "Feared pets should be denied from basic attacks"
+    assert feared_pet_match.state[feared_pet_match.players[1]].res.hp == warrior_hp_before, "Denied feared pet action should not deal damage"
+
+    feared_special_match = make_match("hunter", "warrior", seed=8402)
+    submit_turn(feared_special_match, "call_saber", _DEF_PASS)
+    hunter = feared_special_match.state[feared_special_match.players[0]]
+    saber = _active_pet(hunter, "frostsaber")
+    assert saber is not None, "Frostsaber should be active for forced special coverage"
+    hunter.pending_pet_command = "special"
+    effects.apply_effect_by_id(saber, "feared", overrides={"duration": 1})
+    submit_turn(feared_special_match, _DEF_PASS, _DEF_PASS)
+    assert any("Frostsaber is feared and cannot act." in line for line in _turn_lines(feared_special_match, 2)), "Feared pets should be denied from specials too"
+
+    frozen_pet_match = make_match("priest", "warrior", seed=8403)
+    submit_turn(frozen_pet_match, "shadowfiend", _DEF_PASS)
+    frozen_pet = next(iter(frozen_pet_match.state[frozen_pet_match.players[0]].pets.values()))
+    effects.apply_effect_by_id(frozen_pet, "ring_of_ice_freeze", overrides={"duration": 1, "source_ability_name": "Ring of Ice"})
+    submit_turn(frozen_pet_match, _DEF_PASS, _DEF_PASS)
+    assert any("Shadowfiend is frozen and cannot act." in line for line in _turn_lines(frozen_pet_match, 2)), "Frozen/stunned pets should not act"
+
+    for protection_ability, expected_fragment in (("divine_shield", None), ("vanish", "Target is stealthed — Miss!"), ("blink", "Target blinks away"), ("turtle", "Target evades the attack — Miss!")):
+        protection_match = make_match("priest", "paladin" if protection_ability == "divine_shield" else ("rogue" if protection_ability == "vanish" else ("mage" if protection_ability == "blink" else "hunter")), seed=8404)
+        submit_turn(protection_match, "shadowfiend", protection_ability)
+        enemy_hp_before = protection_match.state[protection_match.players[1]].res.hp
+        submit_turn(protection_match, _DEF_PASS, _DEF_PASS)
+        turn_two_lines = _turn_lines(protection_match, 2)
+        if expected_fragment is not None:
+            assert any(expected_fragment in line for line in turn_two_lines), f"Pet attacks should respect {protection_ability} target protection/miss rules"
+        assert protection_match.state[protection_match.players[1]].res.hp == enemy_hp_before, f"Pet attacks should not damage targets protected by {protection_ability}"
+    return True
+
+
+def scenario_high_risk_shared_effect_naming_and_panel_pack() -> bool:
+    fear_match = make_match("warlock", "warrior", seed=8501)
+    submit_turn(fear_match, "fear", _DEF_PASS)
+    fear_panel = effects.build_effect_panel_payload(fear_match.state[fear_match.players[1]])
+    assert any(entry.get("name") == "Fear" for entry in fear_panel["debuffs_magical"]), "Shared fear runtime should use Fear source name in panel"
+    submit_turn(fear_match, "basic_attack", _DEF_PASS)
+    assert any(line == f"Fear on {fear_match.players[1][:5]} breaks on damage." for line in _turn_lines(fear_match, 2)), "Break-on-damage naming should use Fear source ability name"
+
+    scream_match = make_match("priest", "warrior", seed=8502)
+    submit_turn(scream_match, "psychic_scream", _DEF_PASS)
+    scream_panel = effects.build_effect_panel_payload(scream_match.state[scream_match.players[1]])
+    assert any(entry.get("name") == "Psychic Scream" for entry in scream_panel["debuffs_magical"]), "Shared fear runtime should use Psychic Scream source name in panel"
+    submit_turn(scream_match, "mind_blast", _DEF_PASS)
+    assert any(line == f"Psychic Scream on {scream_match.players[1][:5]} breaks on damage." for line in _turn_lines(scream_match, 2)), "Break-on-damage naming should use Psychic Scream source ability name"
+
+    naming_match = make_match("hunter", "warrior", seed=8503)
+    hunter = naming_match.state[naming_match.players[0]]
+    warrior = naming_match.state[naming_match.players[1]]
+    effects.apply_effect_by_id(hunter, "arcane_shot_proc", overrides={"duration": 2})
+    effects.apply_effect_by_id(hunter, "raptor_strike_proc", overrides={"duration": 2})
+    effects.apply_effect_by_id(hunter, "starfire_ready", overrides={"duration": 2})
+    effects.apply_effect_by_id(hunter, "rip_ready", overrides={"duration": 2})
+    effects.apply_effect_by_id(hunter, "mind_blast_empowered", overrides={"duration": 2})
+    effects.apply_effect_by_id(warrior, "dragon_roar_bleed", overrides={"duration": 2, "source_sid": naming_match.players[0]})
+    effects.apply_effect_by_id(warrior, "burn", overrides={"duration": 2, "tick_damage": 2, "source_sid": naming_match.players[0]})
+    effects.apply_effect_by_id(hunter, "die_by_sword_mitigation", overrides={"duration": 2})
+    effects.apply_effect_by_id(hunter, "die_by_sword_mitigation", overrides={"duration": 2})
+    panel_hunter = effects.build_effect_panel_payload(hunter)
+    panel_warrior = effects.build_effect_panel_payload(warrior)
+    buff_names = [entry.get("name") for bucket in panel_hunter.values() for entry in bucket]
+    debuff_names = [entry.get("name") for bucket in panel_warrior.values() for entry in bucket]
+    for expected in ("Charged Quiver", "Killing Frenzy", "Astral Surge", "Sharpened Claws", "Mind Assault"):
+        assert expected in buff_names, f"{expected} renamed panel entry should remain stable"
+    for expected in ("Rending Roar", "Fire Burn"):
+        assert expected in debuff_names, f"{expected} renamed panel entry should remain stable"
+    assert "Die by the Sword Mitigation" not in buff_names and "die_by_sword_mitigation" not in buff_names, "Internal helper effects must not leak to the panel"
+    assert buff_names.count("Charged Quiver") == 1, "Merged visible buffs should only render once in panel payload"
+    return True
+
+
+def scenario_high_risk_snapshot_payload_stability_pack() -> bool:
+    match = make_match("warrior", "hunter", seed=8601)
+    p1_sid, p2_sid = match.players
+    submit_turn(match, _DEF_PASS, "call_saber")
+    submit_turn(match, _DEF_PASS, "turtle")
+    p1_snapshot = SOCKETS.snapshot_for(match, p1_sid)
+    p2_snapshot = SOCKETS.snapshot_for(match, p2_sid)
+    assert isinstance(p1_snapshot.get("you_effect_panel"), dict) and isinstance(p1_snapshot.get("enemy_effect_panel"), dict), "Viewer snapshot should expose both friendly/enemy effect panels"
+    assert isinstance(p2_snapshot.get("you_effect_panel"), dict) and isinstance(p2_snapshot.get("enemy_effect_panel"), dict), "Enemy-view snapshot should also expose both effect panels"
+    assert p1_snapshot.get("you_entity_type") == "humanoid" and p1_snapshot.get("enemy_entity_type") == "humanoid", "Champion entity types should be present in snapshots"
+    assert any(isinstance(pet.get("entity_type"), str) and pet.get("entity_type") for pet in p1_snapshot.get("you_pets", []) + p1_snapshot.get("enemy_pets", [])), "Pet entity types should be present in snapshot payload"
+
+    hunter = match.state[p2_sid]
+    saber = _active_pet(hunter, "frostsaber")
+    assert saber is not None, "Frostsaber should be present before pet removal check"
+    saber.hp = 1
+    match.state[p1_sid].res.rage = 10
+    submit_turn(match, "dragon_roar", _DEF_PASS)
+    post_death_snapshot = SOCKETS.snapshot_for(match, p2_sid)
+    assert not any(pet.get("name") == "Frostsaber" for pet in post_death_snapshot.get("you_pets", [])), "Pet panel state should clear after pet death/removal"
+
+    target = match.state[p1_sid]
+    effects.apply_effect_by_id(target, "ice_barrier", overrides={"duration": 8})
+    effects.add_absorb(target, 3, source_name="Ice Barrier", effect_id="ice_barrier")
+    assert any(entry.get("name") == "Ice Barrier" for entry in SOCKETS.snapshot_for(match, p1_sid)["you_effect_panel"]["buffs_magical"]), "Shield should appear in snapshot panel while active"
+    effects.consume_absorbs(target, 3)
+    after_consume_snapshot = SOCKETS.snapshot_for(match, p1_sid)
+    assert not any(entry.get("name") == "Ice Barrier" for entry in after_consume_snapshot["you_effect_panel"]["buffs_magical"]), "Consumed shield should be removed from snapshot panel payload"
+    return True
+
+
 SCENARIOS = [
     scenario_mindgames_lay_on_hands,
     scenario_mass_dispel_selective_removal,
@@ -3786,6 +4037,12 @@ SCENARIOS = [
     scenario_duel_html_agony_docs_updated,
     scenario_effect_panel_payload_normalization,
     scenario_proc_and_burn_duration_cleanup_and_shield_panel_cleanup,
+    scenario_high_risk_shields_absorbs_regression_pack,
+    scenario_high_risk_end_of_turn_lethal_ordering_pack,
+    scenario_high_risk_same_turn_protection_and_denial_pack,
+    scenario_high_risk_pet_legality_and_protection_pack,
+    scenario_high_risk_shared_effect_naming_and_panel_pack,
+    scenario_high_risk_snapshot_payload_stability_pack,
     scenario_invalid_class_rejected,
     scenario_valid_class_id_is_normalized_before_build,
     scenario_prep_selection_name_uses_current_submission,
