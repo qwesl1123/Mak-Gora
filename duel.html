@@ -1406,22 +1406,21 @@
        */
       .fx.fx_thunderfury .fx-thunderfury-overlay {
         position: absolute;
-        inset: 0;
+        /* Expand well beyond the text so bolts can streak past the letters */
+        inset: -22px -36px;
         pointer-events: none;
         overflow: hidden;
         backface-visibility: hidden;
         -webkit-backface-visibility: hidden;
         transform: translateZ(0);
-        contain: paint;
+        /* No contain:paint — that was clipping to the original text box */
       }
 
       .fx.fx_thunderfury .bolt-inner {
         position: absolute;
-        /* Align the lightning SVG to the exact text box; negative inset shifted it upward. */
         inset: 0;
         pointer-events: none;
         opacity: 0;
-        mix-blend-mode: screen;
         backface-visibility: hidden;
         -webkit-backface-visibility: hidden;
         transform: translateZ(0);
@@ -1620,10 +1619,128 @@
         73% { opacity: 0; }
         100% { opacity: 0; }
       }
+
+      /* ── Item Tooltip ───────────────────────────────── */
+      #mkgTooltip {
+        position: fixed;
+        z-index: 9999;
+        pointer-events: none;
+        opacity: 0;
+        transition: opacity 0.18s ease;
+        max-width: 248px;
+        padding: 0;
+        border-radius: 4px;
+        border: 1px solid #a07830;
+        box-shadow:
+          0 0 18px rgba(180,130,40,0.18),
+          0 12px 40px rgba(0,0,0,0.95),
+          0 4px 12px rgba(0,0,0,0.8),
+          inset 0 0 0 1px rgba(0,0,0,0.9),
+          inset 0 0 0 2px rgba(100,70,20,0.5);
+        background: linear-gradient(180deg, #1e1509 0%, #130e06 40%, #0e0a04 100%);
+        font-family: 'Crimson Text', serif;
+        font-size: 0.92rem;
+        color: var(--text-light);
+        line-height: 1.5;
+        overflow: hidden;
+      }
+      #mkgTooltip::before {
+        content: '';
+        display: block;
+        height: 2px;
+        background: linear-gradient(90deg,
+          #0e0a04 0%,
+          rgba(160,110,30,0.5) 12%,
+          rgba(212,175,55,0.9) 35%,
+          rgba(255,225,100,1) 50%,
+          rgba(212,175,55,0.9) 65%,
+          rgba(160,110,30,0.5) 88%,
+          #0e0a04 100%
+        );
+      }
+      #mkgTooltip::after {
+        content: '';
+        display: block;
+        height: 2px;
+        background: linear-gradient(90deg,
+          #0e0a04 0%,
+          rgba(160,110,30,0.5) 12%,
+          rgba(212,175,55,0.9) 35%,
+          rgba(255,225,100,1) 50%,
+          rgba(212,175,55,0.9) 65%,
+          rgba(160,110,30,0.5) 88%,
+          #0e0a04 100%
+        );
+      }
+      #mkgTooltip.tip-visible { opacity: 1; }
+      .tip-inner { padding: 11px 14px 13px; }
+      .tip-name {
+        font-family: 'Cinzel', serif;
+        font-size: 0.8rem;
+        font-weight: 600;
+        letter-spacing: 0.1em;
+        text-shadow: 0 0 12px rgba(255,210,60,0.35), 0 1px 3px rgba(0,0,0,0.9);
+        margin-bottom: 0;
+        padding-bottom: 8px;
+        border-bottom: 1px solid rgba(80,55,10,0.8);
+        box-shadow: 0 1px 0 rgba(212,175,55,0.2);
+      }
+      .tip-sep { height: 7px; }
+      .tip-meta {
+        font-size: 0.78rem;
+        color: #7a6640;
+        margin-bottom: 7px;
+        font-style: italic;
+        letter-spacing: 0.03em;
+      }
+      .tip-stats {
+        font-size: 0.88rem;
+        color: #c8bb9a;
+        margin-bottom: 6px;
+        line-height: 1.5;
+      }
+      .tip-passive,
+      .tip-active {
+        font-size: 0.85rem;
+        color: #c8bb9a;
+        margin-bottom: 4px;
+        line-height: 1.45;
+      }
+      .tip-passive::before {
+        content: 'Passive: ';
+        color: #8a7d60;
+        font-style: italic;
+      }
+      .tip-active::before {
+        content: 'Active: ';
+        color: #8a7d60;
+        font-style: italic;
+      }
+      .tip-flavor {
+        font-size: 0.86rem;
+        color: #8a7d60;
+        font-style: italic;
+        margin-top: 8px;
+        padding-top: 7px;
+        border-top: 1px solid rgba(80,55,10,0.6);
+        line-height: 1.5;
+      }
+      [data-tip-item] { cursor: help; }
     </style>
   </head>
 
   <body>
+    <!-- Item tooltip -->
+    <div id="mkgTooltip">
+      <div class="tip-inner">
+        <div class="tip-name"  id="tipName"></div>
+        <div class="tip-sep"></div>
+        <div class="tip-meta"  id="tipMeta"></div>
+        <div class="tip-stats" id="tipStats"></div>
+        <div id="tipLines"></div>
+        <div class="tip-flavor" id="tipFlavor"></div>
+      </div>
+    </div>
     <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
     <defs>
       <!-- Blade color gradient for Twin Blades of Azzinoth slashes -->
@@ -3279,21 +3396,15 @@
         if (!fx) {
           return;
         }
-        const anchorEl = fx.textNode || span;
-        const rect = anchorEl.getBoundingClientRect();
+        // Measure the bolt-inner SVG element — it fills the expanded overlay,
+        // so W/H now include the padding beyond the text on all sides.
+        const rect = fx.innerSvg.getBoundingClientRect();
         const W = rect.width;
         const H = rect.height;
         if (!W || !H) {
           return;
         }
         fx.innerSvg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-        fx.maskText.setAttribute("x", W / 2);
-        fx.maskText.setAttribute("y", H / 2);
-        const computed = window.getComputedStyle(anchorEl);
-        fx.maskText.setAttribute("font-size", computed.fontSize);
-        fx.maskText.setAttribute("font-family", computed.fontFamily);
-        fx.maskText.setAttribute("font-weight", computed.fontWeight || "700");
-        fx.maskText.setAttribute("letter-spacing", computed.letterSpacing || "normal");
 
         // Create 3 lightning strikes
         fx.strikes.forEach((strike) => {
@@ -3346,13 +3457,7 @@
         innerSvg.setAttribute("class", "bolt-inner");
         innerSvg.setAttribute("preserveAspectRatio", "none");
         innerSvg.innerHTML = `
-          <defs>
-            <mask id="${maskId}">
-              <rect width="100%" height="100%" fill="black"></rect>
-              <text text-anchor="middle" dominant-baseline="middle" fill="white">${escapeHtml(text)}</text>
-            </mask>
-          </defs>
-          <g mask="url(#${maskId})">
+          <g>
             <path class="inner-glow"></path>
             <path class="inner-glow"></path>
             <path class="inner-glow"></path>
@@ -3362,7 +3467,6 @@
           </g>
         `;
         overlayHost.appendChild(innerSvg);
-        const maskText = innerSvg.querySelector("text");
         const paths = innerSvg.querySelectorAll("path");
         const mainGlow1 = paths[0];
         const mainGlow2 = paths[1];
@@ -3371,10 +3475,9 @@
         const mainStrike2 = paths[4];
         const mainStrike3 = paths[5];
         span._thunderfuryFx = {
-          // Track the visible text span so mask sizing/color follows normal legendary text.
+          // Track the visible text span so sizing follows the text element.
           textNode,
           innerSvg,
-          maskText,
           strikes: [
             { glow: mainGlow1, path: mainStrike1 },
             { glow: mainGlow2, path: mainStrike2 },
@@ -4369,14 +4472,14 @@
         
         // Update equipped items
         if (data.you_items) {
-          setItemLabel(friendlyWeapon, data.you_items.weapon);
-          setItemLabel(friendlyArmor, data.you_items.armor);
-          setItemLabel(friendlyTrinket, data.you_items.trinket);
+          setFriendlyItemLabel(friendlyWeapon,  data.you_items.weapon);
+          setFriendlyItemLabel(friendlyArmor,   data.you_items.armor);
+          setFriendlyItemLabel(friendlyTrinket, data.you_items.trinket);
         }
         if (data.enemy_items) {
-          setItemLabel(enemyWeapon, data.enemy_items.weapon);
-          setItemLabel(enemyArmor, data.enemy_items.armor);
-          setItemLabel(enemyTrinket, data.enemy_items.trinket);
+          setFriendlyItemLabel(enemyWeapon,  data.enemy_items.weapon);
+          setFriendlyItemLabel(enemyArmor,   data.enemy_items.armor);
+          setFriendlyItemLabel(enemyTrinket, data.enemy_items.trinket);
         }
 
         renderRes(data.you, {
@@ -4521,6 +4624,241 @@
       queueBtn.addEventListener("click", () => socket.emit("duel_queue"));
       lockBtn.addEventListener("click", () => socket.emit("duel_lock_in"));
       passBtn.addEventListener("click", () => socket.emit("duel_action", { ability_id: "pass_turn" }));
+
+      // ── Item Tooltip System ──────────────────────────────────────────────────
+      // Each entry: { nameColor, meta, stats, lines: [{type:'passive'|'active', text}], flavor }
+      const itemTooltips = {
+        // ── Legendary (#ff8000) ─────────────────────────────────────────────
+        "Thunderfury, Blessed Blade of the Windseeker": {
+          nameColor: "#ff8000",
+          meta: "Weapon — Legendary",
+          stats: "+8 Physical Attack  |  Magic Resist: 1",
+          lines: [
+            { type: "passive", text: "25% chance on hit to blast the enemy with lightning (Attack x0.5 + d3 magic damage)" },
+            { type: "passive", text: "25% chance on hit to heal yourself (Attack x0.5 + d3 HP)" },
+          ],
+          flavor: "A legendary blade crackling with storms that punish foes and bolster its wielder.",
+        },
+        "Dragonwrath, Tarecgosa's Rest": {
+          nameColor: "#ff8000",
+          meta: "Weapon — Legendary",
+          stats: "+7 Intellect",
+          lines: [
+            { type: "passive", text: "20% chance on hit to duplicate offensive spells" },
+          ],
+          flavor: "The staff of Tarecgosa, bound to the will of the Blue Dragonflight. Arcane power given form.",
+        },
+        "Twin Blades of Azzinoth": {
+          nameColor: "#ff8000",
+          meta: "Weapon — Legendary",
+          stats: "+7 Physical Attack",
+          lines: [
+            { type: "active",  text: "Fury of Azzinoth — 4 strikes (Attack x0.2 + d6 each), heal for total damage dealt." },
+            { type: "passive", text: "30% chance on successful damaging hit to strike again for 40% of the hit damage" },
+          ],
+          flavor: "Demonic warglaives torn from Azzinoth himself. Fel energy courses through every strike.",
+        },
+        // ── Epic (#a335ee) ───────────────────────────────────────────────────
+        "Crusader's Greatsword": {
+          nameColor: "#a335ee",
+          meta: "Weapon — Epic",
+          stats: "+4 Physical Attack  |  +2 Intellect",
+          lines: [
+            { type: "passive", text: "25% chance on hit to empower your next offensive ability (+20% damage)" },
+          ],
+          flavor: "An epic blade that channels righteous fury into your next strike.",
+        },
+        "Void Blades": {
+          nameColor: "#a335ee",
+          meta: "Weapon — Epic",
+          stats: "+3 Physical Attack  |  +2 Intellect",
+          lines: [
+            { type: "passive", text: "Void Blade triggers extra magic damage (Intellect x0.4 + d4)" },
+          ],
+          flavor: "Blades attuned to the abyss, calling forth void energy on successful hits.",
+        },
+        "Glock 19": {
+          nameColor: "#a335ee",
+          meta: "Weapon — Epic",
+          stats: "+17 Physical Attack",
+          lines: [
+            { type: "passive", text: "55% chance to miss" },
+          ],
+          flavor: "A risky firearm with devastating potential. High damage, but with a cost...",
+        },
+        // ── Rare (#0070dd) ───────────────────────────────────────────────────
+        "Leather Armor": {
+          nameColor: "#0070dd",
+          meta: "Armor — Rare",
+          stats: "Armor: 9  |  Magic Resist: 9",
+          lines: [],
+          flavor: "Flexible protection. Reduces damage from all sources. Balanced defense.",
+        },
+        "Spirit Light Sword": {
+          nameColor: "#0070dd",
+          meta: "Weapon — Rare",
+          stats: "+3 Physical Attack",
+          lines: [
+            { type: "passive", text: "Heal 3 HP every turn" },
+          ],
+          flavor: "Blessed by the Light. Provides sustain through regeneration.",
+        },
+        "Staff of Immortality": {
+          nameColor: "#0070dd",
+          meta: "Weapon — Rare",
+          stats: "+3 Intellect",
+          lines: [
+            { type: "passive", text: "Heal 4 HP every turn" },
+          ],
+          flavor: "Ancient artifact of life magic. Grants powerful regeneration.",
+        },
+        "Focus Charm": {
+          nameColor: "#0070dd",
+          meta: "Trinket — Rare",
+          stats: "+10 Mana",
+          lines: [
+            { type: "passive", text: "Deal 10% more damage while above 70% HP" },
+          ],
+          flavor: "Channel a steady focus to amplify spell and weapon damage.",
+        },
+        "Rage Crystal": {
+          nameColor: "#0070dd",
+          meta: "Trinket — Rare",
+          stats: "+20 Rage",
+          lines: [
+            { type: "passive", text: "Deal 15% more damage while below 30% HP" },
+            { type: "passive", text: "Gain 25% more rage from all sources" },
+          ],
+          flavor: "A volatile crystal that supercharges every source of rage generation.",
+        },
+        "Spear of Light": {
+          nameColor: "#0070dd",
+          meta: "Weapon — Rare",
+          stats: "+3 Physical Attack  |  +3 Intellect  |  Magic Resist: 2",
+          lines: [],
+          flavor: "A radiant spear that balances martial prowess with arcane protection.",
+        },
+        // ── Uncommon (#1eff00) ───────────────────────────────────────────────
+        "Steel Long Sword": {
+          nameColor: "#1eff00",
+          meta: "Weapon — Uncommon",
+          stats: "+5 Physical Attack",
+          lines: [],
+          flavor: "A reliable blade forged in the fires of war. Ideal for Warriors.",
+        },
+        "Wand of Fire": {
+          nameColor: "#1eff00",
+          meta: "Weapon — Uncommon",
+          stats: "+6 Intellect",
+          lines: [
+            { type: "passive", text: "Burn enemy for 2 HP/turn on hit" },
+          ],
+          flavor: "Channels destructive flames. Burns enemies with every spell cast.",
+        },
+        "Plate Armor": {
+          nameColor: "#1eff00",
+          meta: "Armor — Uncommon",
+          stats: "Armor: 18  |  Magic Resist: 3",
+          lines: [],
+          flavor: "Heavy steel plating. Exceptional physical protection but vulnerable to magic.",
+        },
+        "Steel Daggers": {
+          nameColor: "#1eff00",
+          meta: "Weapon — Uncommon",
+          stats: "+4 Physical Attack",
+          lines: [
+            { type: "passive", text: "25% chance to strike again for 40% damage" },
+          ],
+          flavor: "Swift blades favored by rogues. Occasionally delivers a second strike.",
+        },
+        "Cloth Armor": {
+          nameColor: "#1eff00",
+          meta: "Armor — Uncommon",
+          stats: "Armor: 3  |  Magic Resist: 15",
+          lines: [],
+          flavor: "Lightweight cloth with strong enchantments. Great against spell damage.",
+        },
+      };
+
+      function setFriendlyItemLabel(el, name) {
+        setItemLabel(el, name);
+        const plain = stripFxTags(name || "");
+        if (plain && itemTooltips[plain]) {
+          el.setAttribute("data-tip-item", plain);
+        } else {
+          el.removeAttribute("data-tip-item");
+        }
+      }
+
+      // Tooltip DOM refs
+      const mkgTooltip = document.getElementById("mkgTooltip");
+      const tipName    = document.getElementById("tipName");
+      const tipMeta    = document.getElementById("tipMeta");
+      const tipStats   = document.getElementById("tipStats");
+      const tipLines   = document.getElementById("tipLines");
+      const tipFlavor  = document.getElementById("tipFlavor");
+      const TIP_OFFSET = 14;
+
+      function showItemTip(key, e) {
+        const d = itemTooltips[key];
+        if (!d) return;
+
+        tipName.textContent = key;
+        tipName.style.color = d.nameColor || "#f0d078";
+        tipName.style.textShadow = `0 0 14px ${d.nameColor}55, 0 1px 3px rgba(0,0,0,0.9)`;
+
+        tipMeta.textContent = d.meta;
+
+        tipStats.textContent = d.stats || "";
+        tipStats.style.display = d.stats ? "" : "none";
+
+        tipLines.innerHTML = "";
+        (d.lines || []).forEach(({ type, text }) => {
+          const el = document.createElement("div");
+          el.className = type === "active" ? "tip-active" : "tip-passive";
+          el.textContent = text;
+          tipLines.appendChild(el);
+        });
+
+        tipFlavor.textContent = d.flavor || "";
+        tipFlavor.style.display = d.flavor ? "" : "none";
+
+        positionTip(e);
+        mkgTooltip.classList.add("tip-visible");
+      }
+
+      function positionTip(e) {
+        const tw = mkgTooltip.offsetWidth  || 248;
+        const th = mkgTooltip.offsetHeight || 120;
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+        let x = e.clientX + TIP_OFFSET;
+        let y = e.clientY + TIP_OFFSET;
+        if (x + tw > vw - 8) x = e.clientX - tw - TIP_OFFSET;
+        if (y + th > vh - 8) y = e.clientY - th - TIP_OFFSET;
+        mkgTooltip.style.left = x + "px";
+        mkgTooltip.style.top  = y + "px";
+      }
+
+      function hideItemTip() {
+        mkgTooltip.classList.remove("tip-visible");
+      }
+
+      // Wire listeners on all six champion item slots (friendly + enemy)
+      [
+        friendlyWeapon, friendlyArmor, friendlyTrinket,
+        enemyWeapon,   enemyArmor,    enemyTrinket,
+      ].forEach(el => {
+        el.addEventListener("mouseenter", e => {
+          const key = el.getAttribute("data-tip-item");
+          if (key) showItemTip(key, e);
+        });
+        el.addEventListener("mousemove", e => {
+          if (mkgTooltip.classList.contains("tip-visible")) positionTip(e);
+        });
+        el.addEventListener("mouseleave", hideItemTip);
+      });
+      // ── End Item Tooltip System ──────────────────────────────────────────────
     </script>
   </body>
 </html>
