@@ -758,9 +758,35 @@
         box-shadow: none;
       }
 
+      /* Right-edge glow when HP is full but absorb shield is active.
+         Positioned at the right edge of the HP bar — no absorb bar rendered. */
+      .bar-fill.health.has-absorb::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        right: 0;
+        width: 6px;
+        height: 100%;
+        background: linear-gradient(90deg,
+          transparent 0%,
+          rgba(180, 215, 255, 0.55) 60%,
+          rgba(220, 240, 255, 0.85) 100%
+        );
+        box-shadow: 2px 0 8px rgba(160, 210, 255, 0.7);
+        pointer-events: none;
+      }
+
       .bar-fill.absorb {
-        background: #ffffff;
-        box-shadow: inset 0 2px 4px rgba(255, 255, 255, 0.6);
+        /* Flex sibling — sits immediately after the HP bar, no absolute positioning */
+        background: linear-gradient(90deg,
+          rgba(255, 255, 255, 0.80) 0%,
+          rgba(210, 232, 255, 0.55) 35%,
+          rgba(185, 215, 255, 0.42) 100%
+        );
+        box-shadow:
+          inset 2px 0 0 rgba(255, 255, 255, 0.9),
+          inset 0 1px 0 rgba(255, 255, 255, 0.5),
+          inset 0 -1px 0 rgba(130, 175, 255, 0.3);
       }
 
       .bar-fill.mana {
@@ -1725,7 +1751,14 @@
         border-top: 1px solid rgba(80,55,10,0.6);
         line-height: 1.5;
       }
-      [data-tip-item] { cursor: help; }
+      [data-tip-item]    { cursor: help; }
+      [data-tip-ability] { cursor: help; }
+      [data-tip-pet]     { cursor: help; }
+      .tip-desc {
+        font-size: 0.88rem;
+        color: #c8bb9a;
+        line-height: 1.5;
+      }
     </style>
   </head>
 
@@ -1738,6 +1771,7 @@
         <div class="tip-meta"  id="tipMeta"></div>
         <div class="tip-stats" id="tipStats"></div>
         <div id="tipLines"></div>
+        <div class="tip-desc"  id="tipDesc"></div>
         <div class="tip-flavor" id="tipFlavor"></div>
       </div>
     </div>
@@ -3997,6 +4031,21 @@
         return applyFxTokensToHtml(output, fxTokens);
       }
 
+      // Stamp data-tip-ability onto already-wrapped ability spans.
+      // We match the simple span the existing code produces: <span class="log-ability-XXX">Name</span>
+      // This runs AFTER all color spans are already in place, so coloring is never affected.
+      function stampAbilityTips(html) {
+        return html.replace(
+          /<span class="(log-ability-[^"]+)">([^<]+)<\/span>/g,
+          (match, cls, name) => {
+            if (abilityTipData[name]) {
+              return `<span class="${cls}" data-tip-ability="${name.replace(/"/g, '&quot;')}">${name}</span>`;
+            }
+            return match;
+          }
+        );
+      }
+
       function appendLine(msg, cls = "") {
         const line = document.createElement("div");
         const classes = ['log-line'];
@@ -4037,7 +4086,7 @@
           classes.push("logLineOutcome");
         }
         line.className = classes.join(" ");
-        line.innerHTML = highlightLogLine(msg);
+        line.innerHTML = stampPetTips(stampAbilityTips(highlightLogLine(msg)));
         logDiv.appendChild(line);
         initThunderfuryFx(line);
         initDragonwrathFx(line);
@@ -4254,13 +4303,20 @@
         const hpPercent = barPercent(res.hp, res.hp_max);
         const absorbRemaining = Math.max(0, res.absorb || 0);
         const absorbPercentOfHp = barPercent(absorbRemaining, res.hp_max);
-        const absorbWidth = Math.min(absorbPercentOfHp, Math.max(0, 100 - hpPercent));
+        const emptySpace = Math.max(0, 100 - hpPercent);
+        const isDead = res.hp <= 0;
+        // Only fill empty space — no overlap with HP bar and no sliver at full HP.
+        // At full HP with absorb, we show a right-edge glow via CSS class instead.
+        const hasAbsorb = absorbRemaining > 0 && !isDead;
+        const absorbWidth = (hasAbsorb && emptySpace > 0)
+          ? Math.min(absorbPercentOfHp, emptySpace)
+          : 0;
         const primaryResource = primaryResourceFrom(res, resource);
         const primaryPercent = barPercent(primaryResource.value, primaryResource.max);
 
         elements.hpText.textContent = `${res.hp} / ${res.hp_max}`;
-        const isDead = res.hp <= 0;
         elements.hpBar.classList.toggle("hp-dead", isDead);
+        elements.hpBar.classList.toggle("has-absorb", hasAbsorb);
         elements.hpBar.style.width = isDead ? "100%" : hpPercent + "%";
         if (elements.absorbBar) {
           elements.absorbBar.style.width = isDead ? "0%" : absorbWidth + "%";
@@ -4366,6 +4422,19 @@
         enemyPetClip.style.top = `${enemyRect.top - colRect.top + leftColumn.scrollTop}px`;
       }
 
+      // Maps pet display names to their owner class color variable
+      const petNameColors = {
+        "frostsaber":       "var(--hunter-color)",
+        "emerald serpent":  "var(--hunter-color)",
+        "barrens boar":     "var(--hunter-color)",
+        "imp":              "var(--warlock-color)",
+        "shadowfiend":      "var(--priest-color)",
+      };
+
+      function petColorForName(name) {
+        return petNameColors[(name || "").toLowerCase()] || null;
+      }
+
       function renderPetList(container, pets) {
         if (!container) {
           return 0;
@@ -4385,7 +4454,10 @@
           nameLine.className = "pet-name-line";
 
           const nameEl = document.createElement("strong");
-          nameEl.textContent = pet?.name || pet?.id || "Pet";
+          const petDisplayName = pet?.name || pet?.id || "Pet";
+          nameEl.textContent = petDisplayName;
+          const petColor = petColorForName(petDisplayName);
+          if (petColor) nameEl.style.color = petColor;
           nameLine.appendChild(nameEl);
 
           const count = Number(pet?.count || 1);
@@ -4820,6 +4892,10 @@
           tipLines.appendChild(el);
         });
 
+        // Always clear tipDesc — ability tooltips use it, items don't
+        tipDesc.textContent = "";
+        tipDesc.style.display = "none";
+
         tipFlavor.textContent = d.flavor || "";
         tipFlavor.style.display = d.flavor ? "" : "none";
 
@@ -4857,6 +4933,174 @@
           if (mkgTooltip.classList.contains("tip-visible")) positionTip(e);
         });
         el.addEventListener("mouseleave", hideItemTip);
+      });
+
+      // ── Ability Tooltip Data ─────────────────────────────────────────────────
+      // Class color map: log-ability-XXX → CSS var
+      const abilityClassColor = {
+        "log-ability-warrior":  "var(--warrior-color)",
+        "log-ability-mage":     "var(--mage-color)",
+        "log-ability-rogue":    "var(--rogue-color)",
+        "log-ability-druid":    "var(--druid-color)",
+        "log-ability-warlock":  "var(--warlock-color)",
+        "log-ability-paladin":  "var(--paladin-color)",
+        "log-ability-priest":   "var(--priest-color)",
+        "log-ability-hunter":   "var(--hunter-color)",
+        "log-ability-azzinoth": "var(--item-orange)",
+      };
+
+      // ── Build tooltip data live from the Champion's Codex docs section ──────
+      // Any edit to the documentation HTML automatically updates combat-log tooltips.
+      // No manual sync required.
+      const abilityTipData = {};
+      const petTipData     = {};
+
+      // tipDesc DOM ref
+      const tipDesc = document.getElementById("tipDesc");
+
+      (function buildTooltipDataFromDocs() {
+        const PET_NAMES = new Set(["Frostsaber", "Emerald Serpent", "Barrens Boar"]);
+
+        document.querySelectorAll(".documentation .doc-item").forEach(card => {
+          const h4 = card.querySelector("h4");
+          if (!h4) return;
+          const name = h4.textContent.trim();
+          if (!name) return;
+
+          const metaParts = [];
+          const descParts = [];
+
+          card.querySelectorAll("p").forEach(p => {
+            // Skip command lines — they contain .kbd elements
+            if (p.querySelector(".kbd")) return;
+
+            // Is this paragraph "pure meta"?
+            // Clone it, strip all .stat spans, then check if only whitespace/pipes remain.
+            const clone = p.cloneNode(true);
+            clone.querySelectorAll(".stat").forEach(s => s.remove());
+            const residual = clone.textContent.replace(/[|\s]/g, "");
+
+            if (residual.length === 0) {
+              // Pure meta: collect every .stat span's text as one segment
+              const statTexts = Array.from(p.querySelectorAll(".stat"))
+                .map(s => s.textContent.trim())
+                .filter(t => t.length > 0);
+              if (statTexts.length) metaParts.push(statTexts.join("  |  "));
+            } else {
+              // Description paragraph — use full textContent
+              const text = p.textContent.trim();
+              if (text) descParts.push(text);
+            }
+          });
+
+          if (!metaParts.length && !descParts.length) return;
+
+          const entry = {
+            meta: metaParts.join("  |  "),
+            desc: descParts.join("\n"),
+          };
+
+          if (PET_NAMES.has(name)) {
+            petTipData[name] = entry;
+          } else {
+            abilityTipData[name] = entry;
+          }
+        });
+      })();
+
+
+
+      // Stamp data-tip-pet onto log-class-hunter spans for pet names
+      function stampPetTips(html) {
+        return html.replace(
+          /<span class="(log-class-hunter)">([^<]+)<\/span>/g,
+          (match, cls, name) => {
+            if (petTipData[name]) {
+              return `<span class="${cls}" data-tip-pet="${name.replace(/"/g, '&quot;')}">${name}</span>`;
+            }
+            return match;
+          }
+        );
+      }
+
+      function showPetTip(petName, e) {
+        const d = petTipData[petName];
+        if (!d) return;
+
+        tipName.textContent = petName;
+        tipName.style.color = "var(--hunter-color)";
+        tipName.style.textShadow = "0 0 14px rgba(170,211,114,0.4), 0 1px 3px rgba(0,0,0,0.9)";
+
+        tipMeta.textContent = d.meta || "";
+
+        // Clear all other fields
+        tipStats.textContent = "";
+        tipStats.style.display = "none";
+        tipLines.innerHTML = "";
+        tipFlavor.textContent = "";
+        tipFlavor.style.display = "none";
+
+        // Render multi-line desc (newline-separated)
+        tipDesc.innerHTML = "";
+        tipDesc.style.display = "";
+        (d.desc || "").split("\n").forEach((line, i) => {
+          if (i > 0) tipDesc.appendChild(document.createElement("br"));
+          tipDesc.appendChild(document.createTextNode(line));
+        });
+
+        positionTip(e);
+        mkgTooltip.classList.add("tip-visible");
+      }
+
+      function showAbilityTip(abilityName, abilityClass, e) {
+        const d = abilityTipData[abilityName];
+        if (!d) return;
+
+        // Name colored by class
+        tipName.textContent = abilityName;
+        const col = abilityClassColor[abilityClass] || "#f0d078";
+        tipName.style.color = col;
+        tipName.style.textShadow = `0 0 14px color-mix(in srgb, ${col} 40%, transparent), 0 1px 3px rgba(0,0,0,0.9)`;
+
+        tipMeta.textContent = d.meta || "";
+
+        // Clear item-only fields
+        tipStats.textContent = "";
+        tipStats.style.display = "none";
+        tipLines.innerHTML = "";
+        tipFlavor.textContent = "";
+        tipFlavor.style.display = "none";
+
+        // Ability description
+        tipDesc.textContent = d.desc || "";
+        tipDesc.style.display = d.desc ? "" : "none";
+
+        positionTip(e);
+        mkgTooltip.classList.add("tip-visible");
+      }
+
+      // Event delegation on the combat log — one listener, zero risk of double-wrapping
+      logDiv.addEventListener("mouseover", (e) => {
+        const abilityEl = e.target.closest("[data-tip-ability]");
+        if (abilityEl && logDiv.contains(abilityEl)) {
+          const name = abilityEl.getAttribute("data-tip-ability");
+          const cls  = Array.from(abilityEl.classList).find(c => c.startsWith("log-ability-")) || "";
+          showAbilityTip(name, cls, e);
+          return;
+        }
+        const petEl = e.target.closest("[data-tip-pet]");
+        if (petEl && logDiv.contains(petEl)) {
+          showPetTip(petEl.getAttribute("data-tip-pet"), e);
+        }
+      });
+      logDiv.addEventListener("mousemove", (e) => {
+        if (mkgTooltip.classList.contains("tip-visible")) positionTip(e);
+      });
+      logDiv.addEventListener("mouseout", (e) => {
+        const tipEl = e.target.closest("[data-tip-ability], [data-tip-pet]");
+        if (!tipEl || !logDiv.contains(tipEl)) return;
+        if (e.relatedTarget && tipEl.contains(e.relatedTarget)) return;
+        hideItemTip();
       });
       // ── End Item Tooltip System ──────────────────────────────────────────────
     </script>
