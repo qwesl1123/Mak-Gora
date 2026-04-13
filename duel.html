@@ -4267,6 +4267,13 @@
             const name = document.createElement("span");
             name.className = "effect-name";
             name.textContent = entry?.name || "Unknown";
+            if (entry?.name && entry?.description) {
+              name.setAttribute("data-tip-effect-name", entry.name);
+              name.setAttribute("data-tip-effect-desc", entry.description);
+              name.setAttribute("data-tip-effect-meta", section.title === "Buff"
+                ? (section.rowClass === "buff-magic" ? "Magical Buff" : "Physical Buff")
+                : (section.rowClass === "debuff-magic" ? "Magical Debuff" : "Physical Debuff"));
+            }
             row.appendChild(name);
 
             const duration = document.createElement("span");
@@ -5079,6 +5086,30 @@
         mkgTooltip.classList.add("tip-visible");
       }
 
+      function showEffectTip(effectEl, e) {
+        if (!effectEl) return;
+        const name = effectEl.getAttribute("data-tip-effect-name");
+        const desc = effectEl.getAttribute("data-tip-effect-desc");
+        if (!name || !desc) return;
+
+        tipName.textContent = name;
+        tipName.style.color = "#f0d078";
+        tipName.style.textShadow = "0 0 14px rgba(240,208,120,0.35), 0 1px 3px rgba(0,0,0,0.9)";
+        tipMeta.textContent = effectEl.getAttribute("data-tip-effect-meta") || "";
+
+        tipStats.textContent = "";
+        tipStats.style.display = "none";
+        tipLines.innerHTML = "";
+        tipFlavor.textContent = "";
+        tipFlavor.style.display = "none";
+
+        tipDesc.textContent = desc;
+        tipDesc.style.display = "";
+
+        positionTip(e);
+        mkgTooltip.classList.add("tip-visible");
+      }
+
       // Event delegation on the combat log — one listener, zero risk of double-wrapping
       logDiv.addEventListener("mouseover", (e) => {
         const abilityEl = e.target.closest("[data-tip-ability]");
@@ -5101,6 +5132,23 @@
         if (!tipEl || !logDiv.contains(tipEl)) return;
         if (e.relatedTarget && tipEl.contains(e.relatedTarget)) return;
         hideItemTip();
+      });
+
+      [friendlyEffectsPanel, enemyEffectsPanel].forEach((panelEl) => {
+        panelEl.addEventListener("mouseover", (e) => {
+          const effectEl = e.target.closest("[data-tip-effect-name]");
+          if (!effectEl || !panelEl.contains(effectEl)) return;
+          showEffectTip(effectEl, e);
+        });
+        panelEl.addEventListener("mousemove", (e) => {
+          if (mkgTooltip.classList.contains("tip-visible")) positionTip(e);
+        });
+        panelEl.addEventListener("mouseout", (e) => {
+          const effectEl = e.target.closest("[data-tip-effect-name]");
+          if (!effectEl || !panelEl.contains(effectEl)) return;
+          if (e.relatedTarget && effectEl.contains(e.relatedTarget)) return;
+          hideItemTip();
+        });
       });
       // ── End Item Tooltip System ──────────────────────────────────────────────
     </script>
