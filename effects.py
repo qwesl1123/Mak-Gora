@@ -848,6 +848,7 @@ _EFFECT_PANEL_PHYSICAL_BUFF_NAMES = {
     "Aspect of the Turtle",
     "Raptor Strike proc",
     "Rip proc",
+    "Ambush",
 }
 _EFFECT_PANEL_MAGICAL_BUFF_NAMES = {
     "Hot Streak",
@@ -876,6 +877,7 @@ _EFFECT_PANEL_PHYSICAL_DEBUFF_NAMES = {
     "Cheap Shot",
     "Kidney Shot",
     "Typhoon",
+    "Maim",
 }
 _EFFECT_PANEL_MAGICAL_DEBUFF_NAMES = {
     "Ring of Ice",
@@ -932,6 +934,55 @@ _EFFECT_PANEL_DISPLAY_NAMES: Dict[str, str] = {
     _effect_panel_name_key("Raptor Strike proc"): "Killing Frenzy",
 }
 
+_EFFECT_PANEL_DESCRIPTION_BY_NAME: Dict[str, str] = {
+    "Rending Roar": "Bleed inflicted by Dragon Roar.",
+    "Astral Surge": "Able to cast Starfire (if not on cooldown).",
+    "Divine Reckoning": "Final Verdict empowered.",
+    "Mind Assault": "Mind Blast empowered.",
+    "Charged Quiver": "Able to cast Arcane Shot (if not on cooldown).",
+    "Killing Frenzy": "Able to cast Raptor Strike (if not on cooldown).",
+    "Fire Burn": "Damage over time every turn.",
+    "Ring of Ice": "Frozen and cannot act. Breaks on damage.",
+    "Hot Streak": "Able to cast Pyroblast (if not on cooldown).",
+    "Die by the Sword": "Immune to physical damage and reduces all damage taken by 30%.",
+    "Ignore Pain": "Absorb shield that helps the Warrior fight through pain.",
+    "Ice Block": "Immune to all damage (can be dispelled).",
+    "Ice Barrier": "Absorb shield (can be dispelled).",
+    "Cheap Shot": "Stunned and cannot act.",
+    "Kidney Shot": "Stunned and cannot act.",
+    "Stealth": "Stealthed and cannot be targeted.",
+    "Cloak of Shadows": "Immune to all magic attacks.",
+    "Evasion": "Evades all single-target physical damage abilities.",
+    "Thistle Tea": "Restores Energy at the end of every turn.",
+    "Ambush": "Able to cast Ambush (if not on cooldown).",
+    "Barkskin": "Reduces all damage taken by 35%.",
+    "Frenzied Regeneration": "Healing over time every turn.",
+    "Maim": "Stunned and cannot act.",
+    "Sharpened Claws": "Able to cast Rip (if not on cooldown).",
+    "Cyclone": "Cycloned, cannot act, and cannot take damage or healing.",
+    "Typhoon": "Blasted away by Typhoon, and outgoing attacks will miss.",
+    "Regrowth": "Healing over time (can be dispelled).",
+    "Agony": "Damage over time every turn.",
+    "Corruption": "Damage over time every turn (can be dispelled).",
+    "Unstable Affliction": "Damage over time every turn (can be dispelled).",
+    "Dark Pact": "Absorb shield (can be dispelled).",
+    "Unending Resolve": "Immune to all damage (can be dispelled).",
+    "Fear": "Feared and cannot act. Breaks on damage.",
+    "Hammer of Justice": "Stunned and cannot act.",
+    "Divine Shield": "Immune to all damage (can be dispelled).",
+    "Shield of Vengeance": "Absorb shield that deals damage when it explodes.",
+    "Avenging Wrath": "Increases outgoing damage by 20%. Also empowers Crusader Strike and Judgment.",
+    "Power Word: Shield": "Absorb shield (can be dispelled).",
+    "Vampiric Touch": "Damage over time every turn.",
+    "Devouring Plague": "Damage over time every turn.",
+    "Shadowy Insight": "Able to cast Devouring Plague (if not on cooldown).",
+    "Pain Suppression": "Reduces all incoming damage by 40%.",
+    "Mindgames": "Flips damage into healing and healing into self-damage.",
+    "Psychic Scream": "Feared and cannot act.",
+    "Aspect of the Turtle": "Incoming crowd control, single-target attacks, and spells will miss. Incoming damage is reduced by 30%. The Hunter cannot attack for the duration.",
+    "Freezing Trap": "Frozen and cannot act. Breaks on damage.",
+}
+
 _EFFECT_PANEL_INTERNAL_EFFECT_IDS = {
     "die_by_sword_mitigation",
     "bear_form_stats",
@@ -978,6 +1029,10 @@ def _effect_panel_fallback_bucket(effect: Dict[str, Any], visible_name: str) -> 
     return None
 
 
+def _effect_panel_description(display_name: str) -> str:
+    return _EFFECT_PANEL_DESCRIPTION_BY_NAME.get(display_name, "")
+
+
 def build_effect_panel_payload(ps: PlayerState) -> Dict[str, List[Dict[str, Any]]]:
     panel: Dict[str, List[Dict[str, Any]]] = {bucket: [] for bucket in EFFECT_PANEL_BUCKET_ORDER}
     merged: Dict[str, Dict[str, Dict[str, Any]]] = {
@@ -1010,7 +1065,11 @@ def build_effect_panel_payload(ps: PlayerState) -> Dict[str, List[Dict[str, Any]
         duration = int(duration_raw) if duration_raw is not None else None
         existing = merged[bucket].get(display_name)
         if not existing:
-            merged[bucket][display_name] = {"name": display_name, "duration": duration}
+            merged[bucket][display_name] = {
+                "name": display_name,
+                "duration": duration,
+                "description": _effect_panel_description(display_name),
+            }
             continue
         if duration is None:
             continue

@@ -3519,12 +3519,18 @@ def scenario_effect_panel_payload_normalization() -> bool:
     effects.apply_effect_by_id(warrior, "mind_blast_empowered", overrides={"duration": 2})
     effects.apply_effect_by_id(warrior, "burn", overrides={"duration": 3, "tick_damage": 2, "source_sid": warlock_sid})
     effects.apply_effect_by_id(warrior, "crusader_empower", overrides={"duration": 1})
+    effects.apply_effect_by_id(warrior, "ambush", overrides={"duration": 2})
     effects.apply_effect_by_id(warrior, "blocking_defence", overrides={"duration": 1})
     effects.apply_effect_by_id(warrior, "bear_form_stats", overrides={"duration": 2})
     effects.apply_effect_by_id(
         warrior,
         "stunned",
         overrides={"duration": 1, "source_ability_name": "Hammer of Justice", "school": "magical"},
+    )
+    effects.apply_effect_by_id(
+        warrior,
+        "stunned",
+        overrides={"duration": 2, "source_ability_name": "Maim", "school": "physical"},
     )
 
     before = state_extract(match)
@@ -3538,9 +3544,12 @@ def scenario_effect_panel_payload_normalization() -> bool:
     physical_debuffs = [entry.get("name") for entry in panel["debuffs_physical"]]
     magical_debuffs = [entry.get("name") for entry in panel["debuffs_magical"]]
     all_names = set(physical_buffs + magical_buffs + physical_debuffs + magical_debuffs)
+    all_entries = [entry for bucket in panel.values() for entry in bucket]
 
+    assert all("description" in entry for entry in all_entries), "Each visible effect entry should include a description field"
     assert physical_buffs.count("Die by the Sword") == 1, "Die by the Sword should appear exactly once as a physical buff"
     assert "Killing Frenzy" in physical_buffs, "Raptor Strike proc should render as Killing Frenzy in physical buffs"
+    assert "Ambush" in physical_buffs, "Ambush should appear as a physical buff"
     assert "Hot Streak" in magical_buffs, "Hot Streak should appear in magical buffs"
     assert "Charged Quiver" in magical_buffs, "Arcane Shot proc should render as Charged Quiver in magical buffs"
     assert "Astral Surge" in magical_buffs, "Starfire proc should render as Astral Surge in magical buffs"
@@ -3548,9 +3557,16 @@ def scenario_effect_panel_payload_normalization() -> bool:
     assert "Crusader's Might" in magical_buffs, "Crusader's Greatsword proc should render as Crusader's Might in magical buffs"
     assert "Sharpened Claws" in physical_buffs, "Rip proc should render as Sharpened Claws in physical buffs"
     assert "Rending Roar" in physical_debuffs, "Dragon Roar bleed should render as Rending Roar in physical debuffs"
+    assert "Maim" in physical_debuffs and "Maim" not in magical_debuffs, "Maim should classify as a physical debuff"
     assert "Agony" in magical_debuffs, "Agony should appear in magical debuffs"
     assert "Fire Burn" in magical_debuffs, "Wand of Fire burn should render as Fire Burn in magical debuffs"
     assert "Hammer of Justice" in magical_debuffs, "Shared stunned runtime effects should safely fallback into debuff buckets"
+    entries_by_name = {entry.get("name"): entry for entry in all_entries}
+    assert entries_by_name["Rending Roar"].get("description") == "Bleed inflicted by Dragon Roar.", "Rending Roar description should match source text"
+    assert entries_by_name["Mind Assault"].get("description") == "Mind Blast empowered.", "Mind Assault description should match source text"
+    assert entries_by_name["Fire Burn"].get("description") == "Damage over time every turn.", "Fire Burn description should match source text"
+    assert entries_by_name["Ambush"].get("description") == "Able to cast Ambush (if not on cooldown).", "Ambush description should match source text"
+    assert all("duration" not in str(entry.get("description") or "").lower() for entry in all_entries), "Descriptions should not duplicate duration wording"
     assert "Blocking Defence" not in all_names and "Guarded" not in all_names, "Implementation-detail redirect helpers should not leak into the panel"
     assert "bear_form_stats" not in all_names and "Bear Form Stats" not in all_names, "Companion stat effects should not leak into the panel"
 
