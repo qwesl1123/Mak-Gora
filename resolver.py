@@ -781,7 +781,16 @@ def resolve_turn(match: MatchState) -> None:
             and is_single_target_ability(ability)
         )
 
-    def can_cast_while_cc(ability: Dict[str, Any], *, reason: str | None = None, incoming_cc: bool = False) -> bool:
+    def can_cast_while_cc(
+        ability: Dict[str, Any],
+        actor: PlayerState | PetState,
+        *,
+        reason: str | None = None,
+        incoming_cc: bool = False,
+    ) -> bool:
+        is_crowd_control_locked = bool(reason or has_flag(actor, "cycloned") or incoming_cc)
+        if ability.get("allow_while_crowd_control"):
+            return is_crowd_control_locked
         if ability.get("allow_while_stunned"):
             return True
         if not ability.get("priority_defensive"):
@@ -1037,7 +1046,7 @@ def resolve_turn(match: MatchState) -> None:
         if not actor_cannot_act:
             return None
         reason = get_cant_act_reason(actor)
-        if can_cast_while_cc(ability, reason=reason, incoming_cc=incoming_cc):
+        if can_cast_while_cc(ability, actor, reason=reason, incoming_cc=incoming_cc):
             return None
         if has_flag(actor, "cycloned"):
             reason_text = "is cycloned and cannot act"

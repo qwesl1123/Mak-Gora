@@ -2636,6 +2636,49 @@ def scenario_break_on_damage_cc_blocks_other_normal_actions_same_turn() -> bool:
     return True
 
 
+def scenario_only_selected_defensives_can_cast_while_crowd_controlled() -> bool:
+    stunned_mage = make_match("mage", "warrior", seed=3201)
+    mage = stunned_mage.state[stunned_mage.players[0]]
+    effects.apply_effect_by_id(mage, "stunned", overrides={"duration": 1})
+    submit_turn(stunned_mage, "iceblock", _DEF_PASS)
+    assert _has_effect(mage, "iceblock"), "Stunned Mage should still cast Ice Block"
+
+    stunned_paladin = make_match("paladin", "warrior", seed=3202)
+    paladin = stunned_paladin.state[stunned_paladin.players[0]]
+    effects.apply_effect_by_id(paladin, "stunned", overrides={"duration": 1})
+    submit_turn(stunned_paladin, "divine_shield", _DEF_PASS)
+    assert _has_effect(paladin, "divine_shield"), "Stunned Paladin should still cast Divine Shield"
+
+    stunned_warlock = make_match("warlock", "warrior", seed=3203)
+    warlock = stunned_warlock.state[stunned_warlock.players[0]]
+    effects.apply_effect_by_id(warlock, "stunned", overrides={"duration": 1})
+    submit_turn(stunned_warlock, "unending_resolve", _DEF_PASS)
+    warlock_turn = _turn_lines(stunned_warlock, 1)
+    assert any("uses their bare hands to cast Unending Resolve." in line for line in warlock_turn), "Stunned Warlock should still cast Unending Resolve"
+    assert not any("tries to use Unending Resolve but is stunned and cannot act." in line for line in warlock_turn), "Unending Resolve should not be denied while stunned"
+
+    feared_mage = make_match("mage", "warrior", seed=3204)
+    feared_actor = feared_mage.state[feared_mage.players[0]]
+    effects.apply_effect_by_id(feared_actor, "feared", overrides={"duration": 1})
+    submit_turn(feared_mage, "iceblock", _DEF_PASS)
+    assert _has_effect(feared_actor, "iceblock"), "Feared Mage should still cast Ice Block"
+
+    frozen_paladin = make_match("paladin", "warrior", seed=3205)
+    frozen_actor = frozen_paladin.state[frozen_paladin.players[0]]
+    effects.apply_effect_by_id(frozen_actor, "ring_of_ice_freeze", overrides={"duration": 1})
+    submit_turn(frozen_paladin, "divine_shield", _DEF_PASS)
+    assert _has_effect(frozen_actor, "divine_shield"), "Frozen Paladin should still cast Divine Shield"
+
+    denied_warrior = make_match("warrior", "mage", seed=3206)
+    warrior = denied_warrior.state[denied_warrior.players[0]]
+    effects.apply_effect_by_id(warrior, "stunned", overrides={"duration": 1})
+    submit_turn(denied_warrior, "die_by_sword", _DEF_PASS)
+    latest_turn = _turn_lines(denied_warrior, 1)
+    assert any("tries to use Die by the Sword but is stunned and cannot act." in line for line in latest_turn), "Non-whitelisted defensives should remain denied while crowd controlled"
+    assert not _has_effect(warrior, "die_by_sword"), "Die by the Sword should not apply while stunned"
+    return True
+
+
 def scenario_passive_secondary_damage_logs_own_absorb_suffix() -> bool:
     for seed in range(1, 500):
         match = make_match("warrior", "priest", p1_items={"weapon": "thunderfury"}, seed=seed)
@@ -3984,6 +4027,7 @@ SCENARIOS = [
     scenario_break_on_damage_cc_pet_damage_breaks,
     scenario_break_on_damage_cc_blocks_form_shift_same_turn,
     scenario_break_on_damage_cc_blocks_other_normal_actions_same_turn,
+    scenario_only_selected_defensives_can_cast_while_crowd_controlled,
     scenario_break_on_damage_cc_persists_after_same_turn_mutual_freeze,
     scenario_break_on_damage_cc_persists_after_same_turn_fear_vs_freeze,
     scenario_break_on_damage_logs_use_clean_wording_and_bottom_order,
