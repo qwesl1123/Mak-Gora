@@ -2647,7 +2647,8 @@
             <h4>Summon Imp</h4>
             <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Cooldown: 3</span></p>
             <p><span class="stat">Command: <span class="kbd">summon_imp</span></span></p>
-            <p>Summons an Imp (max 3). Each Imp casts Firebolt at the enemy, at the end of your turn.</p>
+            <p><span class="stat">HP: 5</span> | <span class="stat">Attack: N/A</span> | <span class="stat">Intellect: Imp Uses Warlock Intellect</span></p>
+            <p>Summon an Imp to cast Firebolt that deals [Warlock Intellect (0.2x) + d4] magic (Fire) damage at the end of the Warlock's turn.</p>
           </div>
           <div class="doc-item">
             <h4>Demonic Gateway</h4>
@@ -4966,7 +4967,7 @@
       const tipDesc = document.getElementById("tipDesc");
 
       (function buildTooltipDataFromDocs() {
-        const PET_NAMES = new Set(["Frostsaber", "Emerald Serpent", "Barrens Boar"]);
+        const PET_NAMES = new Set(["Frostsaber", "Emerald Serpent", "Barrens Boar", "Imp"]);
 
         document.querySelectorAll(".documentation .doc-item").forEach(card => {
           const h4 = card.querySelector("h4");
@@ -5007,6 +5008,9 @@
             desc: descParts.join("\n"),
           };
 
+          if (name === "Summon Imp") {
+            petTipData["Imp"] = entry;
+          }
           if (PET_NAMES.has(name)) {
             petTipData[name] = entry;
           } else {
@@ -5017,10 +5021,10 @@
 
 
 
-      // Stamp data-tip-pet onto log-class-hunter spans for pet names
+      // Stamp data-tip-pet onto class spans for known pet names
       function stampPetTips(html) {
         return html.replace(
-          /<span class="(log-class-hunter)">([^<]+)<\/span>/g,
+          /<span class="(log-class-hunter|log-class-warlock)">([^<]+)<\/span>/g,
           (match, cls, name) => {
             if (petTipData[name]) {
               return `<span class="${cls}" data-tip-pet="${name.replace(/"/g, '&quot;')}">${name}</span>`;
@@ -5035,7 +5039,7 @@
         if (!d) return;
 
         tipName.textContent = petName;
-        tipName.style.color = "var(--hunter-color)";
+        tipName.style.color = petColorForName(petName) || "var(--hunter-color)";
         tipName.style.textShadow = "0 0 14px rgba(170,211,114,0.4), 0 1px 3px rgba(0,0,0,0.9)";
 
         tipMeta.textContent = d.meta || "";
