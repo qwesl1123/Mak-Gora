@@ -4108,6 +4108,184 @@ def scenario_high_risk_snapshot_payload_stability_pack() -> bool:
     return True
 
 
+def scenario_phase0_early_pipeline_contract_lock() -> bool:
+    stealth_match = make_match("rogue", "paladin", seed=9001)
+    submit_turn(stealth_match, "vanish", "hammer_of_justice")
+    turn_one = _turn_lines(stealth_match, 1)
+    rogue = stealth_match.state[stealth_match.players[0]]
+    assert _has_effect(rogue, "stealth"), "Stealth-at-start snapshot should preserve Vanish when same-turn stun is attempted"
+    assert not _has_effect(rogue, "stunned"), "Same-turn stun should still miss when target is stealthed at turn start"
+    assert any("Target is stealthed — Miss!" in line for line in turn_one), "Stealth miss log should remain visible on the action line"
+
+    immediate_denial = make_match("warlock", "warrior", seed=9002)
+    effects.apply_effect_by_id(immediate_denial.state[immediate_denial.players[0]], "feared", overrides={"duration": 1})
+    submit_turn(immediate_denial, "teleport", _DEF_PASS)
+    immediate_turn = _turn_lines(immediate_denial, 1)
+    assert any("tries to use Demonic Circle: Teleport but is feared and cannot act." in line for line in immediate_turn), "Immediate-path denial should win over selection checks"
+    assert not any("Demonic Circle is required." in line for line in immediate_turn), "Immediate-path selection-failure log should not replace denial"
+
+    normal_denial = make_match("druid", "warrior", seed=9003)
+    effects.apply_effect_by_id(normal_denial.state[normal_denial.players[0]], "feared", overrides={"duration": 1})
+    submit_turn(normal_denial, "maul", _DEF_PASS)
+    normal_turn = _turn_lines(normal_denial, 1)
+    assert any("tries to use Maul but is feared and cannot act." in line for line in normal_turn), "Normal-path denial should win over form/selection errors"
+    assert not any("wasn't in Bear Form" in line for line in normal_turn), "Normal-path selection-failure log should not replace denial"
+    return True
+
+
+def scenario_phase0_same_turn_protection_and_denial_timing_lock() -> bool:
+    allowed = make_match("mage", "warrior", seed=9011)
+    allowed_mage = allowed.state[allowed.players[0]]
+    effects.apply_effect_by_id(allowed_mage, "stunned", overrides={"duration": 1})
+    submit_turn(allowed, "iceblock", _DEF_PASS)
+    assert _has_effect(allowed_mage, "iceblock"), "Ice Block should remain castable while stunned"
+    assert not any("tries to use Ice Block but is stunned and cannot act." in line for line in _turn_lines(allowed, 1)), "Whitelisted defensive should not produce denial text"
+
+    denied = make_match("warrior", "mage", seed=9012)
+    denied_warrior = denied.state[denied.players[0]]
+    effects.apply_effect_by_id(denied_warrior, "stunned", overrides={"duration": 1})
+    submit_turn(denied, "die_by_sword", _DEF_PASS)
+    denied_turn = _turn_lines(denied, 1)
+    assert any("tries to use Die by the Sword but is stunned and cannot act." in line for line in denied_turn), "Non-whitelisted defensive should remain denied while stunned"
+    assert not _has_effect(denied_warrior, "die_by_sword"), "Denied non-whitelisted defensive must not apply its effect"
+
+    turtle = make_match("hunter", "rogue", seed=9013)
+    effects.remove_effect(turtle.state[turtle.players[1]], "stealth")
+    submit_turn(turtle, "turtle", "kidney_shot")
+    hunter = turtle.state[turtle.players[0]]
+    turtle_turn = _turn_lines(turtle, 1)
+    assert any("Target evades the attack — Miss!" in line for line in turtle_turn), "Aspect of the Turtle should still force single-target misses"
+    assert not _has_effect(hunter, "stunned"), "Kidney Shot should still fail into same-turn Turtle"
+
+    blink_aoe = make_match("mage", "warrior", seed=9014)
+    blink_aoe.state[blink_aoe.players[1]].res.rage = 10
+    mage_hp_before = blink_aoe.state[blink_aoe.players[0]].res.hp
+    submit_turn(blink_aoe, "blink", "dragon_roar")
+    assert any("Target blinks away — Miss." in line for line in _turn_lines(blink_aoe, 1)), "Blink-like AoE champion miss text should remain unchanged"
+    assert blink_aoe.state[blink_aoe.players[0]].res.hp == mage_hp_before, "Blink-like same-turn AoE champion protection behavior should remain unchanged"
+    return True
+
+
+def scenario_phase0_absorb_shield_contract_lock() -> bool:
+    layered = make_match("mage", "priest", seed=9021)
+    target = layered.state[layered.players[1]]
+    effects.apply_effect_by_id(target, "power_word_shield", overrides={"duration": 8})
+    effects.add_absorb(target, 9, source_name="Power Word: Shield", effect_id="power_word_shield")
+    effects.apply_effect_by_id(target, "ice_barrier", overrides={"duration": 8})
+    effects.add_absorb(target, 6, source_name="Ice Barrier", effect_id="ice_barrier")
+
+    spill, absorbed, _ = effects.consume_absorbs(target, 4)
+    assert spill == 0 and absorbed == 4, "Partial absorb should consume incoming damage without spill"
+    assert int(target.res.absorbs["ice_barrier"]["remaining"]) == 2, "Latest-cast shield should be consumed first"
+    assert any(entry.get("name") == "Ice Barrier" for entry in effects.build_effect_panel_payload(target)["buffs_magical"]), "Partially consumed shield should remain on panel"
+
+    spill, absorbed, _ = effects.consume_absorbs(target, 4)
+    assert spill == 0 and absorbed == 4, "Second absorb consume should continue from latest to earlier layer"
+    assert "ice_barrier" not in target.res.absorbs, "Fully consumed latest shield should be removed"
+    assert int(target.res.absorbs["power_word_shield"]["remaining"]) == 7, "Earlier shield should continue after latest shield is exhausted"
+    assert not any(entry.get("name") == "Ice Barrier" for entry in effects.build_effect_panel_payload(target)["buffs_magical"]), "Fully consumed shield should be removed from panel"
+
+    sov_match = make_match("paladin", "warrior", seed=9022)
+    pal_sid, war_sid = sov_match.players
+    submit_turn(sov_match, "shield_of_vengeance", _DEF_PASS)
+    paladin = sov_match.state[pal_sid]
+    enemy = sov_match.state[war_sid]
+    sov_absorb = int(paladin.res.absorbs.get("shield_of_vengeance", {}).get("remaining", 0) or 0)
+    effects.consume_absorbs(paladin, sov_absorb)
+    assert "shield_of_vengeance" not in paladin.res.absorbs, "Fully consumed SoV absorb should be removed"
+    assert not any(entry.get("name") == "Shield of Vengeance" for entry in effects.build_effect_panel_payload(paladin)["buffs_magical"]), "Fully consumed SoV should be removed from panel"
+    hp_before = enemy.res.hp
+    submit_turn(sov_match, _DEF_PASS, _DEF_PASS)
+    assert any("Shield of Vengeance explodes!" in line for line in _turn_lines(sov_match, 2)), "SoV explosion should still fire after full absorb consumption"
+    assert enemy.res.hp < hp_before, "SoV explosion should still deal damage after absorb depletion"
+    return True
+
+
+def scenario_phase0_end_of_turn_ordering_contract_lock() -> bool:
+    pet_lethal = make_match("hunter", "warlock", seed=9031)
+    hunter_sid, warlock_sid = pet_lethal.players
+    submit_turn(pet_lethal, "call_serpent", _DEF_PASS)
+    pet_lethal.state[warlock_sid].res.hp = 6
+    submit_turn(pet_lethal, _DEF_PASS, _DEF_PASS)
+    pet_turn = _turn_lines(pet_lethal, 2)
+    pet_idx = next(i for i, line in enumerate(pet_turn) if "Emerald Serpent" in line and ("melees the target" in line or "breathes lightning" in line))
+    summary_idx = next(i for i, line in enumerate(pet_turn) if line.startswith("Post-Combat Summary|"))
+    winner_idx = next(i for i, line in enumerate(pet_turn) if "wins the duel." in line)
+    assert pet_idx < summary_idx < winner_idx, "Pet phase should finish before summary and winner output"
+
+    double_ko = make_match("priest", "warlock", seed=9032)
+    p1_sid, p2_sid = double_ko.players
+    double_ko.state[p1_sid].res.hp = 1
+    double_ko.state[p2_sid].res.hp = 1
+    effects.apply_effect_by_id(double_ko.state[p1_sid], "agony", overrides={"duration": 1, "tick_damage": 1, "source_sid": p2_sid, "dot_mode": "fixed"})
+    effects.apply_effect_by_id(double_ko.state[p2_sid], "agony", overrides={"duration": 1, "tick_damage": 1, "source_sid": p1_sid, "dot_mode": "fixed"})
+    submit_turn(double_ko, _DEF_PASS, _DEF_PASS)
+    ko_turn = _turn_lines(double_ko, 1)
+    dot_idxs = [i for i, line in enumerate(ko_turn) if "suffers" in line and "Agony" in line]
+    ko_idx = next(i for i, line in enumerate(ko_turn) if line == "Double KO. No winner.")
+    assert len(dot_idxs) == 2 and max(dot_idxs) < ko_idx, "Winner check should run only after end-of-turn damage systems finish"
+    assert double_ko.phase == "ended" and double_ko.winner is None, "Double KO outcome should remain deterministic"
+    return True
+
+
+def scenario_phase0_pet_legality_and_protection_contract_lock() -> bool:
+    feared_pet = make_match("priest", "warrior", seed=9041)
+    submit_turn(feared_pet, "shadowfiend", _DEF_PASS)
+    fiend = next(iter(feared_pet.state[feared_pet.players[0]].pets.values()))
+    effects.apply_effect_by_id(fiend, "feared", overrides={"duration": 1})
+    hp_before = feared_pet.state[feared_pet.players[1]].res.hp
+    submit_turn(feared_pet, _DEF_PASS, _DEF_PASS)
+    assert any("Shadowfiend is feared and cannot act." in line for line in _turn_lines(feared_pet, 2)), "Feared pet should be denied from acting"
+    assert feared_pet.state[feared_pet.players[1]].res.hp == hp_before, "Denied feared pet action should not deal damage"
+
+    melee_protect = make_match("priest", "hunter", seed=9042)
+    submit_turn(melee_protect, "shadowfiend", "turtle")
+    hp_before = melee_protect.state[melee_protect.players[1]].res.hp
+    submit_turn(melee_protect, _DEF_PASS, _DEF_PASS)
+    melee_turn = _turn_lines(melee_protect, 2)
+    assert any("Shadowfiend melees the target." in line and "Target evades the attack — Miss!" in line for line in melee_turn), "Pet melee path should respect Turtle protection"
+    assert melee_protect.state[melee_protect.players[1]].res.hp == hp_before, "Pet melee should not bypass Turtle protection"
+
+    spell_protect = make_match("hunter", "warlock", seed=9043)
+    submit_turn(spell_protect, "turtle", "summon_imp")
+    spell_turn = _turn_lines(spell_protect, 1)
+    assert any("Imp casts Firebolt" in line and "Target evades the attack — Miss!" in line for line in spell_turn), "Pet spell path should respect Turtle protection immediately"
+
+    summon_immediate = make_match("mage", "warlock", seed=9044)
+    submit_turn(summon_immediate, "blink", "summon_imp")
+    assert any("Imp casts Firebolt" in line and "Target blinks away — Miss." in line for line in _turn_lines(summon_immediate, 1)), "Newly summoned pet should immediately respect current target protections"
+    return True
+
+
+def scenario_phase0_normal_vs_immediate_parity_ordering_lock() -> bool:
+    normal_unknown = make_match("warrior", "mage", seed=9051)
+    submit_turn(normal_unknown, "totally_fake_ability", _DEF_PASS)
+    normal_turn = _turn_lines(normal_unknown, 1)
+    assert any("fumbles (unknown ability)." in line for line in normal_turn), "Normal-path unknown abilities should keep current fumble behavior"
+
+    immediate_unknown = make_match("warlock", "warrior", seed=9052)
+    effects.apply_effect_by_id(immediate_unknown.state[immediate_unknown.players[0]], "feared", overrides={"duration": 1})
+    submit_turn(immediate_unknown, "totally_fake_ability", _DEF_PASS)
+    immediate_turn = _turn_lines(immediate_unknown, 1)
+    assert any("fumbles (unknown ability)." in line for line in immediate_turn), "Immediate-path unknown ability behavior should match current fumble behavior"
+    assert not any("is feared and cannot act" in line for line in immediate_turn), "Unknown-ability fumble precedence should remain unchanged for immediate path"
+
+    immediate_selection = make_match("warlock", "warrior", seed=9053)
+    effects.apply_effect_by_id(immediate_selection.state[immediate_selection.players[0]], "feared", overrides={"duration": 1})
+    submit_turn(immediate_selection, "teleport", _DEF_PASS)
+    immediate_selection_turn = _turn_lines(immediate_selection, 1)
+    assert any("tries to use Demonic Circle: Teleport but is feared and cannot act." in line for line in immediate_selection_turn), "Immediate-path denial should precede selection-failure logs"
+    assert not any("Demonic Circle is required." in line for line in immediate_selection_turn), "Immediate-path selection-failure log should remain suppressed when denial applies"
+
+    normal_selection = make_match("druid", "warrior", seed=9054)
+    effects.apply_effect_by_id(normal_selection.state[normal_selection.players[0]], "feared", overrides={"duration": 1})
+    submit_turn(normal_selection, "maul", _DEF_PASS)
+    normal_selection_turn = _turn_lines(normal_selection, 1)
+    assert any("tries to use Maul but is feared and cannot act." in line for line in normal_selection_turn), "Normal-path denial should precede selection-failure logs"
+    assert not any("wasn't in Bear Form" in line for line in normal_selection_turn), "Normal-path selection-failure log should remain suppressed when denial applies"
+    return True
+
+
 SCENARIOS = [
     scenario_mindgames_lay_on_hands,
     scenario_mass_dispel_selective_removal,
@@ -4254,6 +4432,12 @@ SCENARIOS = [
     scenario_step2_pet_legality_and_protection_contracts,
     scenario_high_risk_shared_effect_naming_and_panel_pack,
     scenario_high_risk_snapshot_payload_stability_pack,
+    scenario_phase0_early_pipeline_contract_lock,
+    scenario_phase0_same_turn_protection_and_denial_timing_lock,
+    scenario_phase0_absorb_shield_contract_lock,
+    scenario_phase0_end_of_turn_ordering_contract_lock,
+    scenario_phase0_pet_legality_and_protection_contract_lock,
+    scenario_phase0_normal_vs_immediate_parity_ordering_lock,
     scenario_invalid_class_rejected,
     scenario_valid_class_id_is_normalized_before_build,
     scenario_prep_selection_name_uses_current_submission,
