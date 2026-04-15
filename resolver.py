@@ -618,6 +618,54 @@ def resolve_turn(match: MatchState) -> None:
     def target_immune_log(log_parts: list) -> None:
         log_parts.append("Target is immune!")
 
+    # Resolution layer: target_resolution
+    def resolve_target_resolution(
+        target_entity: PlayerState | PetState,
+        *,
+        target_label: str,
+        source_ability_name: str,
+        allow_redirect: bool = True,
+    ) -> tuple[PlayerState | PetState, str, bool, str | None, str | None]:
+        is_player_entity = hasattr(target_entity, "res") and target_entity.res is not None
+        redirected_pet_name: str | None = None
+        redirect_log: str | None = None
+        if is_player_entity and allow_redirect and has_flag(target_entity, "redirect_single_target_to_pet"):
+            redirect_effect = next(
+                (
+                    fx for fx in reversed(target_entity.effects)
+                    if (fx.get("flags", {}) or {}).get("redirect_single_target_to_pet")
+                ),
+                None,
+            )
+            pet_id = (redirect_effect or {}).get("redirect_to_pet_id")
+            pet = target_entity.pets.get(pet_id) if pet_id else None
+            if pet and pet.hp > 0:
+                redirected_pet_name = pet.name
+                redirect_log = f"{pet.name} intercepts {source_ability_name} for {sid_token(target_label)}."
+                return pet, pet.name, False, redirected_pet_name, redirect_log
+        return target_entity, target_label, is_player_entity, redirected_pet_name, redirect_log
+
+    # Resolution layer: pre_resolution_protection
+    def resolve_target_effect_pre_resolution_protection(
+        *,
+        entry_target: PlayerState | PetState,
+        resolved_target: PlayerState | PetState,
+        ability: Dict[str, Any],
+        entry: Dict[str, Any],
+        effect: Dict[str, Any],
+    ) -> str | None:
+        if crowd_control_miss_active(entry_target, entry):
+            return single_target_miss_log()
+        if single_target_miss_active(entry_target, ability) and is_harmful_target_effect_entry(entry):
+            return single_target_miss_log()
+        if is_immune_all(resolved_target):
+            return "Target is immune!"
+        if target_effect_requires_visible_target(ability, entry) and is_stealthed(resolved_target):
+            return "Target is stealthed — no valid target. Miss!"
+        if has_effect(resolved_target, "cloak_of_shadows") and is_magical_harmful_effect(effect):
+            return "Immune!"
+        return None
+
     def apply_self_inflicted_magical_damage(ps: PlayerState, incoming: int) -> int:
         value = max(0, int(incoming or 0))
         if value <= 0:
@@ -666,32 +714,6 @@ def resolve_turn(match: MatchState) -> None:
         if ability_target_mode(ability) == "aoe_enemy" and isinstance(target, PlayerState):
             target_entries.extend(target.pets[pet_id] for pet_id in sorted((target.pets or {}).keys()))
         
-        def maybe_redirect_target_effect(
-            entry_target: PlayerState | PetState,
-            entry: Dict[str, Any],
-        ) -> tuple[PlayerState | PetState, str | None]:
-            if ability_target_mode(ability) == "aoe_enemy":
-                return entry_target, None
-            if not isinstance(entry_target, PlayerState):
-                return entry_target, None
-            if entry_target is actor:
-                return entry_target, None
-            if not is_harmful_target_effect_entry(entry):
-                return entry_target, None
-            if not has_flag(entry_target, "redirect_single_target_to_pet"):
-                return entry_target, None
-            redirect_effect = next(
-                (
-                    fx for fx in reversed(entry_target.effects)
-                    if (fx.get("flags", {}) or {}).get("redirect_single_target_to_pet")
-                ),
-                None,
-            )
-            pet_id = (redirect_effect or {}).get("redirect_to_pet_id")
-            pet = entry_target.pets.get(pet_id) if pet_id else None
-            if not pet or pet.hp <= 0:
-                return entry_target, None
-            return pet, f"{pet.name} intercepts {ability.get('name', 'the effect')} for {sid_token(entry_target.sid)}."
         for entry in ability.get("self_effects", []) or []:
             if entry.get("type") == "dispel":
                 removed = dispel_effects(
@@ -770,23 +792,29 @@ def resolve_turn(match: MatchState) -> None:
             effect = build_effect(entry["id"], overrides=overrides or None)
             applied_any = False
             for entry_target in target_entries:
-                resolved_target, redirect_log = maybe_redirect_target_effect(entry_target, entry)
+                allow_redirect = (
+                    ability_target_mode(ability) != "aoe_enemy"
+                    and isinstance(entry_target, PlayerState)
+                    and entry_target is not actor
+                    and is_harmful_target_effect_entry(entry)
+                )
+                resolved_target, _, _, _, redirect_log = resolve_target_resolution(
+                    entry_target,
+                    target_label=entry_target.sid if isinstance(entry_target, PlayerState) else entity_log_label(entry_target),
+                    source_ability_name=ability.get("name", "the effect"),
+                    allow_redirect=allow_redirect,
+                )
                 if redirect_log:
                     extra_log_parts.append(redirect_log)
-                if crowd_control_miss_active(entry_target, entry):
-                    log_parts.append(single_target_miss_log())
-                    continue
-                if single_target_miss_active(entry_target, ability) and is_harmful_target_effect_entry(entry):
-                    log_parts.append(single_target_miss_log())
-                    continue
-                if is_immune_all(resolved_target):
-                    target_immune_log(log_parts)
-                    continue
-                if target_effect_requires_visible_target(ability, entry) and is_stealthed(resolved_target):
-                    log_parts.append("Target is stealthed — no valid target. Miss!")
-                    continue
-                if has_effect(resolved_target, "cloak_of_shadows") and is_magical_harmful_effect(effect):
-                    log_parts.append("Immune!")
+                blocked_log = resolve_target_effect_pre_resolution_protection(
+                    entry_target=entry_target,
+                    resolved_target=resolved_target,
+                    ability=ability,
+                    entry=entry,
+                    effect=effect,
+                )
+                if blocked_log:
+                    log_parts.append(blocked_log)
                     continue
                 if entry["id"] in FORM_EFFECT_IDS:
                     apply_form(resolved_target, entry["id"], overrides=overrides or None)
@@ -1115,7 +1143,7 @@ def resolve_turn(match: MatchState) -> None:
         return summoned, False, None
 
     # Resolution layer: pre_resolution_protection
-    def _resolve_pre_resolution_protection(
+    def _resolve_action_pre_resolution_protection(
         attacker: PlayerState,
         target: PlayerState | PetState,
         ability: Dict[str, Any],
@@ -1125,6 +1153,23 @@ def resolve_turn(match: MatchState) -> None:
         if should_miss_due_to_stealth(attacker, target, ability, stealth_snapshot):
             return True, "Target is stealthed — Miss!"
         return False, None
+
+    # Resolution layer: pre_resolution_protection
+    def resolve_player_damage_pre_resolution_protection(
+        target_entity: PlayerState,
+        *,
+        target_label: str,
+        damage_school: str,
+    ) -> bool:
+        if is_immune_all(target_entity):
+            return True
+        if has_flag(target_entity, "cycloned"):
+            match.log.append(f"{sid_token(target_label)} is cycloned and takes no damage.")
+            return True
+        if damage_school == "magical" and has_effect(target_entity, "cloak_of_shadows"):
+            match.log.append(f"{sid_token(target_label)} is immune to magical harm under Cloak of Shadows.")
+            return True
+        return False
 
     # Resolution layer: hit_resolution
     def _resolve_hit_resolution(
@@ -1214,7 +1259,7 @@ def resolve_turn(match: MatchState) -> None:
         aoe_champion_log_override: str | None = None
 
         if has_damage or has_target_effects:
-            blocked, protection_log = _resolve_pre_resolution_protection(
+            blocked, protection_log = _resolve_action_pre_resolution_protection(
                 actor,
                 target,
                 ability,
@@ -2023,6 +2068,27 @@ def resolve_turn(match: MatchState) -> None:
     turn_ctx.deferred_pet_pre_action_logs = prepare_pet_pre_action_effects(turn_ctx.match, turn_ctx.rng)
     turn_ctx.stealth_targeting = {sid: is_stealthed(turn_ctx.match.state[sid]) for sid in sids}
 
+    # Resolution layer: pre_resolution_protection
+    def resolve_immediate_target_protection(
+        actor: PlayerState,
+        target: PlayerState,
+        ability: Dict[str, Any],
+        *,
+        include_untargetable: bool,
+        include_immune_all: bool,
+        include_single_target_miss: bool,
+    ) -> str | None:
+        is_aoe = is_aoe_ability(ability)
+        if should_miss_due_to_stealth(actor, target, ability, turn_ctx.stealth_targeting):
+            return "Target is stealthed — Miss!"
+        if include_untargetable and has_flag(target, "untargetable") and not is_aoe:
+            return untargetable_miss_log(target)
+        if include_single_target_miss and single_target_miss_active(target, ability):
+            return single_target_miss_log()
+        if include_immune_all and is_immune_all(target):
+            return "Immune!"
+        return None
+
     def immediate_action_can_stun(actor_sid: str, target_sid: str, ctx: Dict[str, Any]) -> bool:
         if ctx.get("resolved") or not ctx.get("immediate_only"):
             return False
@@ -2030,15 +2096,17 @@ def resolve_turn(match: MatchState) -> None:
         target_effects = ability.get("target_effects") or []
         if not target_effects:
             return False
-        is_aoe = is_aoe_ability(ability)
         target = turn_ctx.match.state[target_sid]
-        if should_miss_due_to_stealth(turn_ctx.match.state[actor_sid], target, ability, turn_ctx.stealth_targeting):
-            return False
-        if has_flag(target, "untargetable") and not is_aoe:
-            return False
-        if single_target_miss_active(target, ability):
-            return False
-        if is_immune_all(target):
+        actor = turn_ctx.match.state[actor_sid]
+        protection_log = resolve_immediate_target_protection(
+            actor,
+            target,
+            ability,
+            include_untargetable=True,
+            include_immune_all=True,
+            include_single_target_miss=True,
+        )
+        if protection_log:
             return False
         for entry in target_effects:
             if crowd_control_miss_active(target, entry):
@@ -2100,33 +2168,28 @@ def resolve_turn(match: MatchState) -> None:
 
         consume_costs(actor, ability.get("cost", {}))
 
-        if ability.get("target_effects") and should_miss_due_to_stealth(actor, target, ability, turn_ctx.stealth_targeting):
-            log_parts.append("Target is stealthed — Miss!")
-            set_cooldown(actor, ability_id, ability)
-            ctx["damage"] = 0
-            ctx["log"] = " ".join(log_parts)
-            ctx["resolved"] = True
-            if is_offensive_action(ability) and turn_ctx.stealth_start_at_turn_begin.get(actor_sid, False):
-                remove_stealth(actor)
-            return
-        if ability_id == "mindgames" and is_immune_all(target):
-            log_parts.append("Immune!")
-            set_cooldown(actor, ability_id, ability)
-            ctx["damage"] = 0
-            ctx["log"] = " ".join(log_parts)
-            ctx["resolved"] = True
-            return
-
-        if ability.get("target_effects") and has_flag(target, "untargetable"):
-            log_parts.append(untargetable_miss_log(target))
-            set_cooldown(actor, ability_id, ability)
-            ctx["damage"] = 0
-            ctx["log"] = " ".join(log_parts)
-            ctx["resolved"] = True
-            if is_offensive_action(ability) and turn_ctx.stealth_start_at_turn_begin.get(actor_sid, False):
-                remove_stealth(actor)
-            return
-
+        if ability.get("target_effects"):
+            protection_log = resolve_immediate_target_protection(
+                actor,
+                target,
+                ability,
+                include_untargetable=True,
+                include_immune_all=(ability_id == "mindgames"),
+                include_single_target_miss=False,
+            )
+            if protection_log:
+                log_parts.append(protection_log)
+                set_cooldown(actor, ability_id, ability)
+                ctx["damage"] = 0
+                ctx["log"] = " ".join(log_parts)
+                ctx["resolved"] = True
+                if (
+                    protection_log in {"Target is stealthed — Miss!", untargetable_miss_log(target)}
+                    and is_offensive_action(ability)
+                    and turn_ctx.stealth_start_at_turn_begin.get(actor_sid, False)
+                ):
+                    remove_stealth(actor)
+                return
         _resolve_effect_application(
             actor_sid,
             actor,
@@ -2290,54 +2353,22 @@ def resolve_turn(match: MatchState) -> None:
         subschool: str | None = None,
         allow_redirect: bool = True,
     ) -> Dict[str, Any]:
-        # Resolution layer: target_resolution
-        def _resolve_target_resolution(
-            target_entity: PlayerState | PetState,
-            target_label: str,
-        ) -> tuple[PlayerState | PetState, str, bool, str | None, str | None]:
-            is_player_entity = hasattr(target_entity, "res") and target_entity.res is not None
-            redirected_pet_name: str | None = None
-            redirect_log: str | None = None
-            if is_player_entity and allow_redirect and has_flag(target_entity, "redirect_single_target_to_pet"):
-                redirect_effect = next(
-                    (
-                        fx for fx in reversed(target_entity.effects)
-                        if (fx.get("flags", {}) or {}).get("redirect_single_target_to_pet")
-                    ),
-                    None,
-                )
-                pet_id = (redirect_effect or {}).get("redirect_to_pet_id")
-                pet = target_entity.pets.get(pet_id) if pet_id else None
-                if pet and pet.hp > 0:
-                    redirected_pet_name = pet.name
-                    redirect_log = f"{pet.name} intercepts {source_ability_name} for {sid_token(target_label)}."
-                    return pet, pet.name, False, redirected_pet_name, redirect_log
-            return target_entity, target_label, is_player_entity, redirected_pet_name, redirect_log
-
-        # Resolution layer: pre_resolution_protection
-        def _resolve_pre_resolution_protection(
-            target_entity: PlayerState,
-            target_label: str,
-            damage_school: str,
-        ) -> tuple[bool, Dict[str, Any] | None]:
-            if is_immune_all(target_entity):
-                return True, None
-            if has_flag(target_entity, "cycloned"):
-                match.log.append(f"{sid_token(target_label)} is cycloned and takes no damage.")
-                return True, None
-            if damage_school == "magical" and has_effect(target_entity, "cloak_of_shadows"):
-                match.log.append(f"{sid_token(target_label)} is immune to magical harm under Cloak of Shadows.")
-                return True, None
-            return False, None
-
         normalized_school = normalize_school(school) or "physical"
         is_player_target = hasattr(target, "res") and target.res is not None
         if incoming <= 0:
             return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0, "school": normalized_school, "subschool": subschool, "redirect_log": None}
-        target, target_sid, is_player_target, redirected_to, redirect_log = _resolve_target_resolution(target, target_sid)
+        target, target_sid, is_player_target, redirected_to, redirect_log = resolve_target_resolution(
+            target,
+            target_label=target_sid,
+            source_ability_name=source_ability_name,
+            allow_redirect=allow_redirect,
+        )
         if is_player_target:
-            blocked, _ = _resolve_pre_resolution_protection(target, target_sid, normalized_school)
-            if blocked:
+            if resolve_player_damage_pre_resolution_protection(
+                target,
+                target_label=target_sid,
+                damage_school=normalized_school,
+            ):
                 return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0, "school": normalized_school, "subschool": subschool, "redirect_log": redirect_log}
         instance_values = [max(0, int(value or 0)) for value in (damage_instances or []) if int(value or 0) > 0]
         accounted = sum(instance_values)
