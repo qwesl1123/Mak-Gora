@@ -1,5 +1,6 @@
 # games/duel/engine/resolver.py
 import json
+from dataclasses import dataclass, field
 from typing import Dict, Any, Tuple
 from .models import MatchState, PlayerState, PlayerBuild, Resources, PetState
 from .dice import rng_for, roll
@@ -251,6 +252,22 @@ def resolution_key(match: MatchState) -> str:
         sort_keys=True,
     )
 
+
+@dataclass
+class TurnResolutionContext:
+    """Turn-scoped resolver state shared across internal resolution helpers."""
+    match: MatchState
+    rng: Any
+    sids: tuple[str, str]
+    submitted_actions: dict[str, dict[str, Any]]
+    stunned_at_start: dict[str, bool]
+    stealth_start_at_turn_begin: dict[str, bool]
+    stealth_targeting: dict[str, bool]
+    immediate_contexts: dict[str, dict[str, Any]] = field(default_factory=dict)
+    start_of_turn_cant_act: dict[str, bool] = field(default_factory=dict)
+    deferred_pet_pre_action_logs: list[str] = field(default_factory=list)
+
+
 def resolve_turn(match: MatchState) -> None:
     """
     Resolves both submitted actions simultaneously.
@@ -277,6 +294,15 @@ def resolve_turn(match: MatchState) -> None:
         return stunned_snapshot, stealth_snapshot, dict(stealth_snapshot)
 
     stunned_at_start, stealth_start_at_turn_begin, stealth_targeting = _capture_pre_action_state()
+    turn_ctx = TurnResolutionContext(
+        match=match,
+        rng=r,
+        sids=(sids[0], sids[1]),
+        submitted_actions={sids[0]: a1, sids[1]: a2},
+        stunned_at_start=stunned_at_start,
+        stealth_start_at_turn_begin=stealth_start_at_turn_begin,
+        stealth_targeting=stealth_targeting,
+    )
     match.log.append(f"Turn {match.turn + 1}")
 
     def can_pay_costs(ps: PlayerState, costs: Dict[str, int]) -> Tuple[bool, str]:
@@ -936,8 +962,8 @@ def resolve_turn(match: MatchState) -> None:
 
     # Resolution layer: action_selection_modifiers
     def _resolve_action_selection_modifiers(actor_sid: str, target_sid: str, action: Dict[str, Any]) -> Dict[str, Any]:
-        actor = match.state[actor_sid]
-        target = match.state[target_sid]
+        actor = turn_ctx.match.state[actor_sid]
+        target = turn_ctx.match.state[target_sid]
         ability_id = action.get("ability_id")
         ability = ABILITIES.get(ability_id)
         if not ability:
@@ -1041,7 +1067,7 @@ def resolve_turn(match: MatchState) -> None:
         start_locked: bool = False,
         include_runtime_cant_act: bool = True,
     ) -> Dict[str, Any] | None:
-        actor = match.state[actor_sid]
+        actor = turn_ctx.match.state[actor_sid]
         actor_cannot_act = start_locked or (include_runtime_cant_act and cannot_act(actor))
         if not actor_cannot_act:
             return None
@@ -1159,14 +1185,14 @@ def resolve_turn(match: MatchState) -> None:
                 actor,
                 target,
                 ability,
-                stealth_snapshot=stealth_targeting,
+                stealth_snapshot=turn_ctx.stealth_targeting,
             )
             if blocked:
                 log_parts.append(protection_log or "Target is stealthed — Miss!")
                 set_cooldown(actor, ability_id, ability)
                 if ability.get("consume_effect"):
                     remove_effect(actor, ability["consume_effect"])
-                if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
+                if offensive_action and turn_ctx.stealth_start_at_turn_begin.get(actor_sid, False):
                     remove_stealth(actor)
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
             missed, miss_log, skip_aoe_champion, aoe_immune_log = _resolve_hit_resolution(
@@ -1183,7 +1209,7 @@ def resolve_turn(match: MatchState) -> None:
                 set_cooldown(actor, ability_id, ability)
                 if ability.get("consume_effect"):
                     remove_effect(actor, ability["consume_effect"])
-                if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
+                if offensive_action and turn_ctx.stealth_start_at_turn_begin.get(actor_sid, False):
                     remove_stealth(actor)
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
 
@@ -1265,16 +1291,16 @@ def resolve_turn(match: MatchState) -> None:
             return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
 
         if ability_id == "agony":
-            if should_miss_due_to_stealth(actor, target, ability, stealth_targeting):
+            if should_miss_due_to_stealth(actor, target, ability, turn_ctx.stealth_targeting):
                 log_parts.append("Target is stealthed — Miss!")
                 set_cooldown(actor, ability_id, ability)
-                if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
+                if offensive_action and turn_ctx.stealth_start_at_turn_begin.get(actor_sid, False):
                     remove_stealth(actor)
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
             if single_target_miss_active(target, ability):
                 log_parts.append(single_target_miss_log())
                 set_cooldown(actor, ability_id, ability)
-                if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
+                if offensive_action and turn_ctx.stealth_start_at_turn_begin.get(actor_sid, False):
                     remove_stealth(actor)
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
             if is_immune_all(target):
@@ -1555,13 +1581,13 @@ def resolve_turn(match: MatchState) -> None:
                 )
             log_parts.append(f"{ability.get('name', 'Shield')} grants {absorb_value} absorb.")
             set_cooldown(actor, ability_id, ability)
-            if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
+            if offensive_action and turn_ctx.stealth_start_at_turn_begin.get(actor_sid, False):
                 remove_stealth(actor)
             return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
 
         if not has_damage:
             set_cooldown(actor, ability_id, ability)
-            if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
+            if offensive_action and turn_ctx.stealth_start_at_turn_begin.get(actor_sid, False):
                 remove_stealth(actor)
             return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "extra_logs": extra_logs}
 
@@ -1838,7 +1864,7 @@ def resolve_turn(match: MatchState) -> None:
         if ability.get("pet_command"):
             actor.pending_pet_command = ability["pet_command"]
         set_cooldown(actor, ability_id, ability)
-        if offensive_action and stealth_start_at_turn_begin.get(actor_sid, False):
+        if offensive_action and turn_ctx.stealth_start_at_turn_begin.get(actor_sid, False):
             remove_stealth(actor)
 
         damage_instances = [value for value in per_hit_damage_values if value > 0]
@@ -1914,11 +1940,11 @@ def resolve_turn(match: MatchState) -> None:
             "immediate_only": immediate_effects_only,
         }
 
-    contexts = {
+    turn_ctx.immediate_contexts = {
         sids[0]: build_immediate_resolution(sids[0], sids[1], a1),
         sids[1]: build_immediate_resolution(sids[1], sids[0], a2),
     }
-    start_of_turn_cant_act = {sid: cannot_act(match.state[sid]) for sid in sids}
+    turn_ctx.start_of_turn_cant_act = {sid: cannot_act(turn_ctx.match.state[sid]) for sid in sids}
 
     def apply_pre_resolution_defensive(actor_sid: str, ctx: Dict[str, Any]) -> None:
         if ctx.get("resolved"):
@@ -1926,7 +1952,7 @@ def resolve_turn(match: MatchState) -> None:
         ability = ctx.get("ability")
         if not ability or not ability.get("priority_defensive"):
             return
-        if start_of_turn_cant_act.get(actor_sid, False):
+        if turn_ctx.start_of_turn_cant_act.get(actor_sid, False):
             return
         actor = match.state[actor_sid]
         pre_applied: set[str] = set()
@@ -1947,17 +1973,17 @@ def resolve_turn(match: MatchState) -> None:
         if pre_applied:
             ctx["pre_resolved_self_effects"] = pre_applied
 
-    apply_pre_resolution_defensive(sids[0], contexts[sids[0]])
-    apply_pre_resolution_defensive(sids[1], contexts[sids[1]])
+    apply_pre_resolution_defensive(sids[0], turn_ctx.immediate_contexts[sids[0]])
+    apply_pre_resolution_defensive(sids[1], turn_ctx.immediate_contexts[sids[1]])
     for sid in sids:
-        ctx = contexts[sid]
+        ctx = turn_ctx.immediate_contexts[sid]
         if ctx.get("resolved"):
             continue
         pet_command = (ctx.get("ability") or {}).get("pet_command")
         if pet_command:
             match.state[sid].pending_pet_command = pet_command
-    deferred_pet_pre_action_logs = prepare_pet_pre_action_effects(match, r)
-    stealth_targeting = {sid: is_stealthed(match.state[sid]) for sid in sids}
+    turn_ctx.deferred_pet_pre_action_logs = prepare_pet_pre_action_effects(turn_ctx.match, turn_ctx.rng)
+    turn_ctx.stealth_targeting = {sid: is_stealthed(turn_ctx.match.state[sid]) for sid in sids}
 
     def immediate_action_can_stun(actor_sid: str, target_sid: str, ctx: Dict[str, Any]) -> bool:
         if ctx.get("resolved") or not ctx.get("immediate_only"):
@@ -1967,8 +1993,8 @@ def resolve_turn(match: MatchState) -> None:
         if not target_effects:
             return False
         is_aoe = is_aoe_ability(ability)
-        target = match.state[target_sid]
-        if should_miss_due_to_stealth(match.state[actor_sid], target, ability, stealth_targeting):
+        target = turn_ctx.match.state[target_sid]
+        if should_miss_due_to_stealth(turn_ctx.match.state[actor_sid], target, ability, turn_ctx.stealth_targeting):
             return False
         if has_flag(target, "untargetable") and not is_aoe:
             return False
@@ -1991,20 +2017,20 @@ def resolve_turn(match: MatchState) -> None:
         return False
 
     incoming_immediate_stun = {
-        sids[0]: immediate_action_can_stun(sids[1], sids[0], contexts[sids[1]]),
-        sids[1]: immediate_action_can_stun(sids[0], sids[1], contexts[sids[0]]),
+        sids[0]: immediate_action_can_stun(sids[1], sids[0], turn_ctx.immediate_contexts[sids[1]]),
+        sids[1]: immediate_action_can_stun(sids[0], sids[1], turn_ctx.immediate_contexts[sids[0]]),
     }
 
     outgoing_immediate_stun = {
-        sid: immediate_action_can_stun(sid, sids[1] if sid == sids[0] else sids[0], contexts[sid])
+        sid: immediate_action_can_stun(sid, sids[1] if sid == sids[0] else sids[0], turn_ctx.immediate_contexts[sid])
         for sid in sids
     }
 
     def resolve_immediate_effects(actor_sid: str, target_sid: str, ctx: Dict[str, Any]) -> None:
         if ctx.get("resolved") or not ctx.get("immediate_only"):
             return
-        actor = match.state[actor_sid]
-        target = match.state[target_sid]
+        actor = turn_ctx.match.state[actor_sid]
+        target = turn_ctx.match.state[target_sid]
         ability = ctx["ability"]
         ability_id = ctx["ability_id"]
         skip_self_effect_ids = ctx.get("pre_resolved_self_effects", set())
@@ -2022,7 +2048,7 @@ def resolve_turn(match: MatchState) -> None:
             actor_sid,
             ability,
             incoming_cc=incoming_lock,
-            start_locked=start_of_turn_cant_act.get(actor_sid, False) or incoming_lock,
+            start_locked=turn_ctx.start_of_turn_cant_act.get(actor_sid, False) or incoming_lock,
             include_runtime_cant_act=False,
         )
         if denial:
@@ -2035,13 +2061,13 @@ def resolve_turn(match: MatchState) -> None:
 
         consume_costs(actor, ability.get("cost", {}))
 
-        if ability.get("target_effects") and should_miss_due_to_stealth(actor, target, ability, stealth_targeting):
+        if ability.get("target_effects") and should_miss_due_to_stealth(actor, target, ability, turn_ctx.stealth_targeting):
             log_parts.append("Target is stealthed — Miss!")
             set_cooldown(actor, ability_id, ability)
             ctx["damage"] = 0
             ctx["log"] = " ".join(log_parts)
             ctx["resolved"] = True
-            if is_offensive_action(ability) and stealth_start_at_turn_begin.get(actor_sid, False):
+            if is_offensive_action(ability) and turn_ctx.stealth_start_at_turn_begin.get(actor_sid, False):
                 remove_stealth(actor)
             return
         if ability_id == "mindgames" and is_immune_all(target):
@@ -2058,7 +2084,7 @@ def resolve_turn(match: MatchState) -> None:
             ctx["damage"] = 0
             ctx["log"] = " ".join(log_parts)
             ctx["resolved"] = True
-            if is_offensive_action(ability) and stealth_start_at_turn_begin.get(actor_sid, False):
+            if is_offensive_action(ability) and turn_ctx.stealth_start_at_turn_begin.get(actor_sid, False):
                 remove_stealth(actor)
             return
 
@@ -2117,12 +2143,12 @@ def resolve_turn(match: MatchState) -> None:
         ctx["log"] = " ".join(log_parts)
         ctx["extra_logs"] = extra_logs
         ctx["resolved"] = True
-        if is_offensive_action(ability) and stealth_start_at_turn_begin.get(actor_sid, False):
+        if is_offensive_action(ability) and turn_ctx.stealth_start_at_turn_begin.get(actor_sid, False):
             remove_stealth(actor)
 
-    resolve_immediate_effects(sids[0], sids[1], contexts[sids[0]])
-    resolve_immediate_effects(sids[1], sids[0], contexts[sids[1]])
-    stealth_targeting = {sid: is_stealthed(match.state[sid]) for sid in sids}
+    resolve_immediate_effects(sids[0], sids[1], turn_ctx.immediate_contexts[sids[0]])
+    resolve_immediate_effects(sids[1], sids[0], turn_ctx.immediate_contexts[sids[1]])
+    turn_ctx.stealth_targeting = {sid: is_stealthed(turn_ctx.match.state[sid]) for sid in sids}
 
     def finalize_action(actor_sid: str, target_sid: str, action: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
         if ctx.get("resolved"):
@@ -2138,8 +2164,8 @@ def resolve_turn(match: MatchState) -> None:
         return resolve_action(actor_sid, target_sid, action)
 
     # Resolve both actions
-    result1 = finalize_action(sids[0], sids[1], a1, contexts[sids[0]])
-    result2 = finalize_action(sids[1], sids[0], a2, contexts[sids[1]])
+    result1 = finalize_action(sids[0], sids[1], a1, turn_ctx.immediate_contexts[sids[0]])
+    result2 = finalize_action(sids[1], sids[0], a2, turn_ctx.immediate_contexts[sids[1]])
 
     for sid, result in ((sids[0], result1), (sids[1], result2)):
         totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
@@ -2527,7 +2553,7 @@ def resolve_turn(match: MatchState) -> None:
     source_name_2 = ABILITIES.get(result2.get("ability_id", ""), {}).get("name", "attack")
     match.log.extend(result1.get("pre_logs", []))
     match.log.extend(result2.get("pre_logs", []))
-    match.log.extend(deferred_pet_pre_action_logs)
+    match.log.extend(turn_ctx.deferred_pet_pre_action_logs)
     dealt1_data = (
         {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0}
         if result1.get("skip_direct_target_damage")
@@ -2824,7 +2850,7 @@ def resolve_turn(match: MatchState) -> None:
             r,
             apply_damage,
             absorb_suffix,
-            stealth_targeting,
+            turn_ctx.stealth_targeting,
             should_miss_due_to_stealth,
             untargetable_miss_log,
             can_evasion_force_miss,
