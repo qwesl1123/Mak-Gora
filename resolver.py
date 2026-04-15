@@ -2461,11 +2461,11 @@ def resolve_turn(match: MatchState) -> None:
             )
             champion_hp_damage = int(champion_dealt_data.get("hp_damage", 0) or 0)
             if champion_log_template:
-                if champion_hp_damage <= 0 and champion_immune_log:
+                flipped_heal = int(champion_dealt_data.get("mindgames_healing", 0) or 0)
+                if champion_hp_damage <= 0 and flipped_heal <= 0 and champion_immune_log:
                     match.log.append(champion_immune_log)
                 else:
                     champion_log = format_damage_log(champion_log_template, champion_dealt_data)
-                    flipped_heal = int(champion_dealt_data.get("mindgames_healing", 0) or 0)
                     if flipped_heal > 0:
                         champion_log = (
                             f"{champion_log} Mindgames flips damage into {flipped_heal} healing for the target."
@@ -2534,6 +2534,7 @@ def resolve_turn(match: MatchState) -> None:
             "Shield of Vengeance",
             "magical",
             "holy",
+            mindgames_flip_damage=bool(has_effect(owner, "mindgames")),
             champion_log_template=f"Shield of Vengeance hits {sid_token(enemy_sid)} for __DMG_0__ damage.",
             champion_immune_log=untargetable_log or f"{sid_token(enemy_sid)} is immune to Shield of Vengeance explosion.",
             skip_champion=skip_champion,

@@ -308,6 +308,51 @@ def scenario_mindgames_lay_on_hands() -> bool:
     return True
 
 
+def scenario_mindgames_shield_of_vengeance_explosion_interactions() -> bool:
+    normal_damage = make_match("priest", "paladin", seed=9101)
+    priest_sid, pal_sid = normal_damage.players
+    priest = normal_damage.state[priest_sid]
+    priest.res.hp = max(1, priest.res.hp - 20)
+    hp_before = priest.res.hp
+    submit_turn(normal_damage, "mindgames", "judgment")
+    assert priest.res.hp > hp_before, "Mindgames should still flip normal Paladin damage into healing"
+    assert any("Mindgames flips damage into" in line for line in _turn_lines(normal_damage, 1)), "Normal Paladin damage path should still log Mindgames flips"
+
+    sov_mindgames = make_match("priest", "paladin", seed=9102)
+    priest_sid, pal_sid = sov_mindgames.players
+    priest = sov_mindgames.state[priest_sid]
+    paladin = sov_mindgames.state[pal_sid]
+    effects.apply_effect_by_id(paladin, "shield_of_vengeance", overrides={"duration": 1, "absorbed": 18})
+    priest.res.hp = max(1, priest.res.hp - 20)
+    hp_before = priest.res.hp
+    submit_turn(sov_mindgames, "mindgames", _DEF_PASS)
+    assert any("Shield of Vengeance explodes!" in line for line in _turn_lines(sov_mindgames, 1)), "Shield of Vengeance should still explode on expiry"
+    assert priest.res.hp > hp_before, "Shield of Vengeance explosion should be flipped into healing under Mindgames"
+    assert any("Shield of Vengeance hits" in line and "Mindgames flips damage into" in line for line in _turn_lines(sov_mindgames, 1)), "Shield of Vengeance explosion should use Mindgames flip logging"
+
+    sov_no_mindgames = make_match("priest", "paladin", seed=9103)
+    priest_sid, pal_sid = sov_no_mindgames.players
+    priest = sov_no_mindgames.state[priest_sid]
+    paladin = sov_no_mindgames.state[pal_sid]
+    effects.apply_effect_by_id(paladin, "shield_of_vengeance", overrides={"duration": 1, "absorbed": 18})
+    hp_before = priest.res.hp
+    submit_turn(sov_no_mindgames, _DEF_PASS, _DEF_PASS)
+    assert priest.res.hp < hp_before, "Shield of Vengeance explosion should still deal normal damage without Mindgames"
+
+    sov_absorb = make_match("priest", "paladin", seed=9104)
+    priest_sid, pal_sid = sov_absorb.players
+    priest = sov_absorb.state[priest_sid]
+    paladin = sov_absorb.state[pal_sid]
+    effects.apply_effect_by_id(paladin, "shield_of_vengeance", overrides={"duration": 1, "absorbed": 18})
+    effects.apply_effect_by_id(priest, "power_word_shield", overrides={"duration": 8})
+    effects.add_absorb(priest, 18, source_name="Power Word: Shield", effect_id="power_word_shield")
+    hp_before = priest.res.hp
+    submit_turn(sov_absorb, _DEF_PASS, _DEF_PASS)
+    assert priest.res.hp == hp_before, "Shield of Vengeance explosion should still respect absorbs when Mindgames is absent"
+    assert any("Shield of Vengeance explodes!" in line for line in _turn_lines(sov_absorb, 1)), "SoV explosion should still trigger into active absorbs"
+    return True
+
+
 def scenario_mass_dispel_selective_removal() -> bool:
     match = make_match("priest", "paladin", seed=123)
     pal = match.state[match.players[1]]
@@ -4288,6 +4333,7 @@ def scenario_phase0_normal_vs_immediate_parity_ordering_lock() -> bool:
 
 SCENARIOS = [
     scenario_mindgames_lay_on_hands,
+    scenario_mindgames_shield_of_vengeance_explosion_interactions,
     scenario_mass_dispel_selective_removal,
     scenario_healing_resolves_from_negative_hp_before_winner_check,
     scenario_mass_dispel_can_remove_pain_suppression_and_devouring_plague,
