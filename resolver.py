@@ -276,6 +276,66 @@ def effect_name(effect_id: str) -> str:
     return effect_id.replace("_", " ").title()
 
 
+def is_crowd_control_effect_entry(entry: Dict[str, Any]) -> bool:
+    effect_id = entry.get("id")
+    if not effect_id:
+        return False
+    effect = build_effect(effect_id, overrides=entry.get("overrides"))
+    if not effect:
+        return False
+    flags = effect.get("flags", {}) or {}
+    return bool(flags.get("stunned") or effect.get("cant_act_reason"))
+
+
+def crowd_control_miss_active(target: PlayerState | PetState, entry: Dict[str, Any]) -> bool:
+    return has_flag(target, "incoming_cc_miss") and is_crowd_control_effect_entry(entry)
+
+
+def can_cast_while_crowd_control(
+    ability: Dict[str, Any],
+    actor: PlayerState | PetState,
+    *,
+    reason: str | None = None,
+    incoming_cc: bool = False,
+) -> bool:
+    is_crowd_control_locked = bool(reason or has_flag(actor, "cycloned") or incoming_cc)
+    if ability.get("allow_while_crowd_control"):
+        return is_crowd_control_locked
+    if ability.get("allow_while_stunned"):
+        return True
+    if not ability.get("priority_defensive"):
+        return False
+    return incoming_cc and reason == "stunned"
+
+
+def resolve_action_denial_stage(
+    actor_sid: str,
+    actor: PlayerState | PetState,
+    ability: Dict[str, Any],
+    *,
+    incoming_cc: bool,
+    start_locked: bool = False,
+    include_runtime_cant_act: bool = True,
+) -> Dict[str, Any] | None:
+    actor_cannot_act = start_locked or (include_runtime_cant_act and cannot_act(actor))
+    if not actor_cannot_act:
+        return None
+    reason = get_cant_act_reason(actor)
+    if can_cast_while_crowd_control(ability, actor, reason=reason, incoming_cc=incoming_cc):
+        return None
+    if has_flag(actor, "cycloned"):
+        reason_text = "is cycloned and cannot act"
+    elif reason:
+        reason_text = f"is {reason} and cannot act"
+    else:
+        reason_text = "cannot act"
+    return {
+        "damage": 0,
+        "healing": 0,
+        "log": f"{sid_token(actor_sid)} tries to use {ability['name']} but {reason_text}.",
+    }
+
+
 def can_pay_costs(ps: PlayerState, costs: Dict[str, int]) -> Tuple[bool, str]:
     res = ps.res
     for key, value in costs.items():
@@ -938,22 +998,6 @@ def resolve_turn(match: MatchState) -> None:
             and is_single_target_ability(ability)
         )
 
-    def can_cast_while_cc(
-        ability: Dict[str, Any],
-        actor: PlayerState | PetState,
-        *,
-        reason: str | None = None,
-        incoming_cc: bool = False,
-    ) -> bool:
-        is_crowd_control_locked = bool(reason or has_flag(actor, "cycloned") or incoming_cc)
-        if ability.get("allow_while_crowd_control"):
-            return is_crowd_control_locked
-        if ability.get("allow_while_stunned"):
-            return True
-        if not ability.get("priority_defensive"):
-            return False
-        return incoming_cc and reason == "stunned"
-
     def is_harmful_target_effect_entry(entry: Dict[str, Any]) -> bool:
         effect_id = entry.get("id")
         if not effect_id:
@@ -963,19 +1007,6 @@ def resolve_turn(match: MatchState) -> None:
             return False
         flags = effect.get("flags", {}) or {}
         return bool(is_magical_harmful_effect(effect) or effect.get("harmful") or flags.get("stunned") or effect.get("cant_act_reason"))
-
-    def is_crowd_control_effect_entry(entry: Dict[str, Any]) -> bool:
-        effect_id = entry.get("id")
-        if not effect_id:
-            return False
-        effect = build_effect(effect_id, overrides=entry.get("overrides"))
-        if not effect:
-            return False
-        flags = effect.get("flags", {}) or {}
-        return bool(flags.get("stunned") or effect.get("cant_act_reason"))
-
-    def crowd_control_miss_active(target: PlayerState | PetState, entry: Dict[str, Any]) -> bool:
-        return has_flag(target, "incoming_cc_miss") and is_crowd_control_effect_entry(entry)
 
     def is_harmful_single_target_action(ability: Dict[str, Any]) -> bool:
         if not is_single_target_ability(ability):
@@ -1083,34 +1114,6 @@ def resolve_turn(match: MatchState) -> None:
             actor.active_pet_id = summoned.id
         return summoned, False, None
 
-    # Resolution layer: action_denial
-    def _resolve_action_denial(
-        actor_sid: str,
-        ability: Dict[str, Any],
-        *,
-        incoming_cc: bool,
-        start_locked: bool = False,
-        include_runtime_cant_act: bool = True,
-    ) -> Dict[str, Any] | None:
-        actor = turn_ctx.match.state[actor_sid]
-        actor_cannot_act = start_locked or (include_runtime_cant_act and cannot_act(actor))
-        if not actor_cannot_act:
-            return None
-        reason = get_cant_act_reason(actor)
-        if can_cast_while_cc(ability, actor, reason=reason, incoming_cc=incoming_cc):
-            return None
-        if has_flag(actor, "cycloned"):
-            reason_text = "is cycloned and cannot act"
-        elif reason:
-            reason_text = f"is {reason} and cannot act"
-        else:
-            reason_text = "cannot act"
-        return {
-            "damage": 0,
-            "healing": 0,
-            "log": f"{sid_token(actor_sid)} tries to use {ability['name']} but {reason_text}.",
-        }
-
     # Resolution layer: pre_resolution_protection
     def _resolve_pre_resolution_protection(
         attacker: PlayerState,
@@ -1160,7 +1163,12 @@ def resolve_turn(match: MatchState) -> None:
 
         weapon_name = ITEMS.get(weapon_id, {}).get("name", "their bare hands")
 
-        denial = _resolve_action_denial(actor_sid, ability, incoming_cc=False)
+        denial = resolve_action_denial_stage(
+            actor_sid,
+            actor,
+            ability,
+            incoming_cc=False,
+        )
         if denial:
             return denial
 
@@ -1923,7 +1931,12 @@ def resolve_turn(match: MatchState) -> None:
         if not ability:
             return {"damage": 0, "log": f"{sid_token(actor_sid)} fumbles (unknown ability).", "resolved": True}
 
-        denial = _resolve_action_denial(actor_sid, ability, incoming_cc=False)
+        denial = resolve_action_denial_stage(
+            actor_sid,
+            turn_ctx.match.state[actor_sid],
+            ability,
+            incoming_cc=False,
+        )
         if denial:
             return {
                 "damage": int(denial.get("damage", 0) or 0),
@@ -2069,8 +2082,9 @@ def resolve_turn(match: MatchState) -> None:
         extra_logs: list[Any] = []
 
         incoming_lock = incoming_immediate_stun.get(actor_sid, False) and not outgoing_immediate_stun.get(actor_sid, False)
-        denial = _resolve_action_denial(
+        denial = resolve_action_denial_stage(
             actor_sid,
+            actor,
             ability,
             incoming_cc=incoming_lock,
             start_locked=turn_ctx.start_of_turn_cant_act.get(actor_sid, False) or incoming_lock,
