@@ -268,6 +268,99 @@ class TurnResolutionContext:
     deferred_pet_pre_action_logs: list[str] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class HitResolutionResult:
+    missed: bool
+    miss_log: str | None = None
+    skip_aoe_champion: bool = False
+    aoe_immune_log: str | None = None
+
+
+def resolve_hit_resolution_stage(
+    *,
+    has_aoe_untargetable: bool,
+    aoe_untargetable_log: str | None,
+    is_aoe: bool,
+    single_target_miss_active: bool,
+    single_target_miss_log: str,
+    has_evade_all: bool,
+    evasion_forces_miss: bool,
+    untargetable_miss_log: str,
+) -> HitResolutionResult:
+    if has_aoe_untargetable:
+        if is_aoe:
+            return HitResolutionResult(
+                missed=False,
+                miss_log=None,
+                skip_aoe_champion=True,
+                aoe_immune_log=aoe_untargetable_log,
+            )
+        return HitResolutionResult(
+            missed=True,
+            miss_log=aoe_untargetable_log or untargetable_miss_log,
+        )
+    if not is_aoe and single_target_miss_active:
+        return HitResolutionResult(missed=True, miss_log=single_target_miss_log)
+    if has_evade_all and evasion_forces_miss:
+        return HitResolutionResult(missed=True, miss_log="Evaded!")
+    return HitResolutionResult(missed=False)
+
+
+@dataclass(frozen=True)
+class AccuracyResolutionResult:
+    landed: bool
+    miss_log: str | None = None
+
+
+def resolve_accuracy_stage(
+    *,
+    rng: Any,
+    prefix: str,
+    has_forced_miss: bool,
+    weapon_miss_chance: float,
+    cannot_miss: bool,
+    accuracy: int,
+) -> AccuracyResolutionResult:
+    if has_forced_miss:
+        return AccuracyResolutionResult(landed=False, miss_log=f"{prefix}Miss!")
+    if weapon_miss_chance > 0 and rng.random() <= weapon_miss_chance:
+        return AccuracyResolutionResult(landed=False, miss_log=f"{prefix}Misfire!")
+    if not cannot_miss and rng.randint(1, 100) > accuracy:
+        return AccuracyResolutionResult(landed=False, miss_log=f"{prefix}Miss!")
+    return AccuracyResolutionResult(landed=True)
+
+
+def resolve_damage_modification_stage(
+    *,
+    raw_damage: int,
+    target: PlayerState | PetState,
+    ability_school: str,
+    ignore_armor: bool,
+    ignore_magic_resist: bool,
+    passive_damage_multiplier: float,
+    empower_multiplier: float,
+    outgoing_multiplier: float,
+    death_doubled: bool,
+) -> int:
+    reduced_damage = mitigate_damage(
+        raw_damage,
+        target,
+        ability_school,
+        ignore_armor=ignore_armor,
+        ignore_magic_resist=ignore_magic_resist,
+    )
+    modified_damage = reduced_damage
+    if passive_damage_multiplier != 1.0:
+        modified_damage = int(modified_damage * passive_damage_multiplier)
+    if empower_multiplier != 1.0:
+        modified_damage = int(modified_damage * empower_multiplier)
+    if outgoing_multiplier != 1.0:
+        modified_damage = int(modified_damage * outgoing_multiplier)
+    if death_doubled and modified_damage > 0:
+        modified_damage *= 2
+    return modified_damage
+
+
 def sid_token(sid: str) -> str:
     return sid[:5]
 
@@ -1180,15 +1273,17 @@ def resolve_turn(match: MatchState) -> None:
         is_aoe: bool,
     ) -> tuple[bool, str | None, bool, str | None]:
         aoe_untargetable, aoe_untargetable_log = aoe_untargetable_resolution(target)
-        if aoe_untargetable:
-            if is_aoe:
-                return False, None, True, aoe_untargetable_log
-            return True, (aoe_untargetable_log or untargetable_miss_log(target)), False, None
-        if not is_aoe and single_target_miss_active(target, ability):
-            return True, single_target_miss_log(), False, None
-        if has_flag(target, "evade_all") and can_evasion_force_miss(ability, has_damage):
-            return True, "Evaded!", False, None
-        return False, None, False, None
+        result = resolve_hit_resolution_stage(
+            has_aoe_untargetable=aoe_untargetable,
+            aoe_untargetable_log=aoe_untargetable_log,
+            is_aoe=is_aoe,
+            single_target_miss_active=(not is_aoe and single_target_miss_active(target, ability)),
+            single_target_miss_log=single_target_miss_log(),
+            has_evade_all=has_flag(target, "evade_all"),
+            evasion_forces_miss=can_evasion_force_miss(ability, has_damage),
+            untargetable_miss_log=untargetable_miss_log(target),
+        )
+        return result.missed, result.miss_log, result.skip_aoe_champion, result.aoe_immune_log
 
 
     def resolve_action(actor_sid: str, target_sid: str, action: Dict[str, Any]) -> Dict[str, Any]:
@@ -1669,26 +1764,6 @@ def resolve_turn(match: MatchState) -> None:
                 remove_stealth(actor)
             return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "extra_logs": extra_logs}
 
-        def _resolve_damage_modification(raw_damage: int) -> int:
-            reduced_damage = mitigate_damage(
-                raw_damage,
-                target,
-                ability_school,
-                ignore_armor=bool(ability.get("ignore_armor") or ability.get("ignore_physical_reduction")),
-                ignore_magic_resist=bool(ability.get("ignore_magic_resist")),
-            )
-            modified_damage = reduced_damage
-            multiplier = damage_multiplier_from_passives(actor)
-            if multiplier != 1.0:
-                modified_damage = int(modified_damage * multiplier)
-            if empower_multiplier != 1.0:
-                modified_damage = int(modified_damage * empower_multiplier)
-            if outgoing_mult != 1.0:
-                modified_damage = int(modified_damage * outgoing_mult)
-            if death_doubled and modified_damage > 0:
-                modified_damage *= 2
-            return modified_damage
-
         # Calculate base damage using appropriate stat
         ability_school = normalize_school(ability.get("school") or ability.get("damage_type") or "physical") or "physical"
         ability_subschool = ability.get("subschool") if ability_school == "magical" else None
@@ -1728,16 +1803,16 @@ def resolve_turn(match: MatchState) -> None:
                 roll_power = roll(dice_data["type"], r)
                 log_parts.append(f"{prefix}Roll {dice_data['type']} = {roll_power}.")
 
-            if has_flag(actor, "forced_miss"):
-                log_parts.append(f"{prefix}Miss!")
-                continue
-
-            if miss_chance > 0 and r.random() <= miss_chance:
-                log_parts.append(f"{prefix}Misfire!")
-                continue
-
-            if not ability.get("cannot_miss") and r.randint(1, 100) > accuracy:
-                log_parts.append(f"{prefix}Miss!")
+            accuracy_resolution = resolve_accuracy_stage(
+                rng=r,
+                prefix=prefix,
+                has_forced_miss=has_flag(actor, "forced_miss"),
+                weapon_miss_chance=miss_chance,
+                cannot_miss=bool(ability.get("cannot_miss")),
+                accuracy=int(accuracy),
+            )
+            if not accuracy_resolution.landed:
+                log_parts.append(accuracy_resolution.miss_log or f"{prefix}Miss!")
                 continue
 
             ability_hit_landed = True
@@ -1774,7 +1849,17 @@ def resolve_turn(match: MatchState) -> None:
                 log_parts.append(f"{prefix}Critical hit!")
 
             # Resolution layer: damage_modification
-            incoming_for_hit = _resolve_damage_modification(raw)
+            incoming_for_hit = resolve_damage_modification_stage(
+                raw_damage=raw,
+                target=target,
+                ability_school=ability_school,
+                ignore_armor=bool(ability.get("ignore_armor") or ability.get("ignore_physical_reduction")),
+                ignore_magic_resist=bool(ability.get("ignore_magic_resist")),
+                passive_damage_multiplier=damage_multiplier_from_passives(actor),
+                empower_multiplier=empower_multiplier,
+                outgoing_multiplier=outgoing_mult,
+                death_doubled=death_doubled,
+            )
 
             if ability_target_mode(ability) == "aoe_enemy" and incoming_for_hit > 0:
                 aoe_incoming_damage += incoming_for_hit
