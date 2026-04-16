@@ -89,6 +89,71 @@ from .effects import (
     normalize_school,
 )
 
+
+def _empty_damage_result(*, school: str, subschool: str | None, redirect_log: str | None = None) -> Dict[str, Any]:
+    return {
+        "hp_damage": 0,
+        "absorbed": 0,
+        "absorbed_breakdown": [],
+        "instances": [],
+        "mindgames_healing": 0,
+        "school": school,
+        "subschool": subschool,
+        "redirect_log": redirect_log,
+    }
+
+
+def _build_damage_instance_values(incoming: int, damage_instances: list[int] | None) -> list[int]:
+    instance_values = [max(0, int(value or 0)) for value in (damage_instances or []) if int(value or 0) > 0]
+    accounted = sum(instance_values)
+    if incoming > accounted:
+        instance_values.append(incoming - accounted)
+    if not instance_values:
+        instance_values = [incoming]
+    return instance_values
+
+
+def _apply_heal_with_clamp(target: PlayerState, amount: int) -> int:
+    if amount <= 0:
+        return 0
+    before_hp = target.res.hp
+    target.res.hp = min(target.res.hp + amount, target.res.hp_max)
+    return target.res.hp - before_hp
+
+
+def _apply_damage_application_stage(
+    target_entity: PlayerState | PetState,
+    instance_damage: list[int],
+    *,
+    is_player_entity: bool,
+) -> tuple[list[Dict[str, Any]], int, int, list[Dict[str, Any]]]:
+    """
+    Resolution layer: damage_application.
+    Applies absorb consumption in instance order and then subtracts remaining HP.
+    """
+    instance_results: list[Dict[str, Any]] = []
+    total_absorbed = 0
+    total_remaining = 0
+    total_breakdown: list[Dict[str, Any]] = []
+
+    for value in instance_damage:
+        if is_player_entity:
+            remaining, absorbed, breakdown = consume_absorbs(target_entity, value)
+        else:
+            remaining, absorbed, breakdown = value, 0, []
+        total_absorbed += absorbed
+        total_remaining += remaining
+        instance_results.append({"absorbed": absorbed, "hp_damage": remaining, "absorbed_breakdown": breakdown})
+        total_breakdown.extend(breakdown)
+
+    if total_remaining > 0:
+        if is_player_entity:
+            target_entity.res.hp -= total_remaining
+        else:
+            target_entity.hp -= total_remaining
+
+    return instance_results, total_absorbed, total_remaining, total_breakdown
+
 def cooldown_slots(ps: PlayerState, ability_id: str) -> list:
     stored = ps.cooldowns.get(ability_id, [])
     if isinstance(stored, int):
@@ -2441,7 +2506,7 @@ def resolve_turn(match: MatchState) -> None:
         normalized_school = normalize_school(school) or "physical"
         is_player_target = hasattr(target, "res") and target.res is not None
         if incoming <= 0:
-            return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0, "school": normalized_school, "subschool": subschool, "redirect_log": None}
+            return _empty_damage_result(school=normalized_school, subschool=subschool, redirect_log=None)
         target, target_sid, is_player_target, redirected_to, redirect_log = resolve_target_resolution(
             target,
             target_label=target_sid,
@@ -2454,17 +2519,11 @@ def resolve_turn(match: MatchState) -> None:
                 target_label=target_sid,
                 damage_school=normalized_school,
             ):
-                return {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0, "school": normalized_school, "subschool": subschool, "redirect_log": redirect_log}
-        instance_values = [max(0, int(value or 0)) for value in (damage_instances or []) if int(value or 0) > 0]
-        accounted = sum(instance_values)
-        if incoming > accounted:
-            instance_values.append(incoming - accounted)
-        if not instance_values:
-            instance_values = [incoming]
+                return _empty_damage_result(school=normalized_school, subschool=subschool, redirect_log=redirect_log)
+        instance_values = _build_damage_instance_values(incoming, damage_instances)
 
         if is_player_target and mindgames_flip_damage and source.sid != target.sid:
-            before_hp = target.res.hp
-            target.res.hp = min(target.res.hp + incoming, target.res.hp_max)
+            _apply_heal_with_clamp(target, incoming)
             instance_results = [{"absorbed": 0, "hp_damage": value, "absorbed_breakdown": []} for value in instance_values]
             return {
                 "hp_damage": 0,
@@ -2476,32 +2535,6 @@ def resolve_turn(match: MatchState) -> None:
                 "subschool": subschool,
                 "redirect_log": redirect_log,
             }
-
-        # Resolution layer: damage_application
-        def _resolve_damage_application(
-            target_entity: PlayerState | PetState,
-            instance_damage: list[int],
-            is_player_entity: bool,
-        ) -> tuple[list[Dict[str, Any]], int, int, list[Dict[str, Any]]]:
-            instance_results_local: list[Dict[str, Any]] = []
-            total_absorbed_local = 0
-            total_remaining_local = 0
-            total_breakdown_local: list[Dict[str, Any]] = []
-            for value in instance_damage:
-                if is_player_entity:
-                    remaining, absorbed, breakdown = consume_absorbs(target_entity, value)
-                else:
-                    remaining, absorbed, breakdown = value, 0, []
-                total_absorbed_local += absorbed
-                total_remaining_local += remaining
-                instance_results_local.append({"absorbed": absorbed, "hp_damage": remaining, "absorbed_breakdown": breakdown})
-                total_breakdown_local.extend(breakdown)
-            if total_remaining_local > 0:
-                if is_player_entity:
-                    target_entity.res.hp -= total_remaining_local
-                else:
-                    target_entity.hp -= total_remaining_local
-            return instance_results_local, total_absorbed_local, total_remaining_local, total_breakdown_local
 
         # Resolution layer: post_damage_reactions
         def _resolve_target_post_damage_reactions(
@@ -2536,10 +2569,10 @@ def resolve_turn(match: MatchState) -> None:
                     f"{effect_name} on {target_entity.name} breaks on damage."
                 )
 
-        instance_results, total_absorbed, total_remaining, total_breakdown = _resolve_damage_application(
+        instance_results, total_absorbed, total_remaining, total_breakdown = _apply_damage_application_stage(
             target,
             instance_values,
-            is_player_target,
+            is_player_entity=is_player_target,
         )
         _resolve_target_post_damage_reactions(target, target_sid, total_remaining, is_player_target)
         return {
