@@ -1,7 +1,7 @@
 # games/duel/engine/resolver.py
 import json
 from dataclasses import dataclass, field
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Callable
 from .models import MatchState, PlayerState, PlayerBuild, Resources, PetState
 from .dice import rng_for, roll
 from .rules import base_damage, hit_chance, clamp
@@ -153,6 +153,374 @@ def _apply_damage_application_stage(
             target_entity.hp -= total_remaining
 
     return instance_results, total_absorbed, total_remaining, total_breakdown
+
+
+def _break_effects_and_collect_labels(
+    target_entity: PlayerState | PetState,
+    *,
+    break_on_damage_effect_name: Callable[[Dict[str, Any]], str],
+) -> list[str]:
+    removed_labels: list[str] = []
+    for effect in list(getattr(target_entity, "effects", []) or []):
+        has_legacy_flag = (effect.get("flags", {}) or {}).get("break_on_damage")
+        if not (effect_has_tag(effect, "break_on_damage") or has_legacy_flag):
+            continue
+        effect_id = effect.get("id")
+        if not effect_id:
+            continue
+        removed_labels.append(break_on_damage_effect_name(effect))
+        remove_effect(target_entity, effect_id)
+    return removed_labels
+
+
+def _resolve_target_post_damage_reactions_stage(
+    *,
+    target_entity: PlayerState | PetState,
+    target_label: str,
+    hp_damage: int,
+    is_player_entity: bool,
+    source_ability_name: str,
+    stealth_damage_taken_by_sid: Dict[str, int],
+    deferred_stealth_break_logs: list[str],
+    deferred_break_on_damage_logs: list[str],
+    break_on_damage_effect_name: Callable[[Dict[str, Any]], str],
+    grant_resource: Callable[[PlayerState, str, int], int],
+) -> None:
+    if hp_damage <= 0:
+        return
+    if is_player_entity:
+        was_stealthed = is_stealthed(target_entity)
+        sid = str(getattr(target_entity, "sid", "") or "")
+        cumulative_damage = hp_damage
+        if sid:
+            cumulative_damage = int(stealth_damage_taken_by_sid.get(sid, 0) or 0) + hp_damage
+            stealth_damage_taken_by_sid[sid] = cumulative_damage
+        break_stealth_on_damage(target_entity, cumulative_damage)
+        broken_effects = _break_effects_and_collect_labels(
+            target_entity,
+            break_on_damage_effect_name=break_on_damage_effect_name,
+        )
+        if was_stealthed and not is_stealthed(target_entity):
+            deferred_stealth_break_logs.append(f"{sid_token(target_label)} stealth broken by {source_ability_name}.")
+        for effect_name in broken_effects:
+            deferred_break_on_damage_logs.append(f"{effect_name} on {sid_token(target_label)} breaks on damage.")
+        if current_form_id(target_entity) == "bear_form":
+            grant_resource(target_entity, "rage", hp_damage)
+        return
+    broken_effects = _break_effects_and_collect_labels(
+        target_entity,
+        break_on_damage_effect_name=break_on_damage_effect_name,
+    )
+    for effect_name in broken_effects:
+        deferred_break_on_damage_logs.append(f"{effect_name} on {target_entity.name} breaks on damage.")
+
+
+def _resolve_actor_post_damage_reactions_stage(
+    *,
+    actor_sid: str,
+    target_sid: str,
+    dealt: int,
+    ability_id: str,
+    ability: Dict[str, Any],
+    actor: PlayerState,
+    target: PlayerState,
+    apply_damage: Callable[..., Dict[str, Any]],
+    grant_resource: Callable[[PlayerState, str, int], int],
+    combat_totals: Dict[str, Dict[str, int]],
+    log: list[str],
+) -> None:
+    if dealt > 0 and ability.get("heal_from_dealt_damage") and actor.res:
+        before_hp = actor.res.hp
+        actor.res.hp = min(actor.res.hp + dealt, actor.res.hp_max)
+        gained = actor.res.hp - before_hp
+        if gained > 0:
+            log.append(f"{sid_token(actor_sid)} heals {gained} HP from {ability.get('name', 'their attack')}.")
+            totals = combat_totals.setdefault(actor_sid, {"damage": 0, "healing": 0})
+            totals["healing"] += gained
+
+    if ability_id == "death" and target.res.hp > 0 and dealt > 0:
+        backlash = int(dealt * 1.0)
+        if backlash > 0:
+            apply_damage(
+                actor,
+                actor,
+                backlash,
+                actor_sid,
+                "Shadow Word: Death backlash",
+                school="magical",
+                subschool="shadow",
+                allow_redirect=False,
+            )
+            log.append(f"{sid_token(actor_sid)} suffers {backlash} backlash from Shadow Word: Death.")
+
+    lifesteal = float(ability.get("heal_from_damage", 0) or 0)
+    if dealt > 0 and lifesteal > 0 and actor.res:
+        heal_value = int(dealt * lifesteal)
+        before_hp = actor.res.hp
+        actor.res.hp = min(actor.res.hp + heal_value, actor.res.hp_max)
+        gained = actor.res.hp - before_hp
+        if gained > 0:
+            log.append(f"{sid_token(actor_sid)} drains {gained} life.")
+            totals = combat_totals.setdefault(actor_sid, {"damage": 0, "healing": 0})
+            totals["healing"] += gained
+
+    dealt_resource_gain = ability.get("resource_gain_on_dealt", {})
+    if dealt > 0 and dealt_resource_gain and actor.res:
+        for resource, gain in dealt_resource_gain.items():
+            if gain == "damage":
+                gain_value = dealt
+            elif gain == "damage_x3":
+                gain_value = dealt * 3
+            else:
+                gain_value = int(gain or 0)
+            if gain_value > 0 and hasattr(actor.res, resource):
+                grant_resource(actor, resource, gain_value)
+
+
+def _apply_effect_entries_stage(
+    *,
+    actor: PlayerState,
+    target: PlayerState | PetState,
+    ability: Dict[str, Any],
+    log_parts: list[str],
+    pre_log_parts: list[str] | None,
+    extra_log_parts: list[str] | None,
+    skip_self_effect_ids: set[str] | None,
+    skip_primary_target: bool,
+    resolve_target_resolution: Callable[..., tuple[PlayerState | PetState, str, bool, str | None, str | None]],
+    resolve_target_effect_pre_resolution_protection: Callable[..., str | None],
+    is_harmful_target_effect_entry: Callable[[Dict[str, Any]], bool],
+    ability_target_mode: Callable[[Dict[str, Any]], str],
+) -> None:
+    def format_entry_log(message: str | None) -> str | None:
+        if not isinstance(message, str):
+            return message
+        return message.replace("{actor}", sid_token(actor.sid))
+
+    if pre_log_parts is None:
+        pre_log_parts = []
+    if extra_log_parts is None:
+        extra_log_parts = []
+    skip_self_effect_ids = skip_self_effect_ids or set()
+    target_entries: list[PlayerState | PetState] = []
+    if not skip_primary_target:
+        target_entries.append(target)
+    if ability_target_mode(ability) == "aoe_enemy" and isinstance(target, PlayerState):
+        target_entries.extend(target.pets[pet_id] for pet_id in sorted((target.pets or {}).keys()))
+
+    for entry in ability.get("self_effects", []) or []:
+        if entry.get("type") == "dispel":
+            removed = dispel_effects(
+                actor,
+                category=entry.get("category"),
+                school=entry.get("school"),
+            )
+            if removed > 0:
+                school = entry.get("school")
+                school_text = f" {school}" if school else ""
+                log_parts.append(f"{sid_token(actor.sid)} dispels {removed}{school_text} effects.")
+            continue
+        effect_id = entry.get("id")
+        if not effect_id:
+            continue
+        if effect_id in skip_self_effect_ids:
+            if entry.get("log"):
+                formatted_log = format_entry_log(entry.get("log"))
+                if entry.get("separate_log"):
+                    pre_log_parts.append(formatted_log)
+                else:
+                    log_parts.append(formatted_log)
+            continue
+        overrides = dict(entry.get("overrides", {}) or {})
+        if entry.get("duration"):
+            overrides["duration"] = int(entry.get("duration"))
+        if "source_ability_name" not in overrides:
+            overrides["source_ability_name"] = ability.get("name") or effect_name(entry["id"])
+        if "school" not in overrides and ability.get("school"):
+            overrides["school"] = ability.get("school")
+        if "subschool" not in overrides and ability.get("subschool"):
+            overrides["subschool"] = ability.get("subschool")
+        if effect_id in FORM_EFFECT_IDS:
+            apply_form(actor, effect_id, overrides=overrides or None)
+        else:
+            apply_effect_by_id(actor, effect_id, overrides=overrides or None)
+        if entry.get("log"):
+            formatted_log = format_entry_log(entry.get("log"))
+            if entry.get("separate_log"):
+                pre_log_parts.append(formatted_log)
+            else:
+                log_parts.append(formatted_log)
+
+    for entry in ability.get("target_effects", []) or []:
+        if entry.get("type") == "remove_effect":
+            effect_id = entry.get("effect_id")
+            removed_targets: list[PlayerState | PetState] = []
+            for entry_target in target_entries:
+                if effect_id and has_effect(entry_target, effect_id):
+                    if effect_id == "stealth":
+                        remove_stealth(entry_target)
+                    else:
+                        remove_effect(entry_target, effect_id)
+                    removed_targets.append(entry_target)
+            if removed_targets and entry.get("log"):
+                log_parts.append(entry["log"])
+            removed_log_template = entry.get("removed_log_template")
+            if removed_log_template:
+                for removed_target in removed_targets:
+                    extra_log_parts.append(
+                        str(removed_log_template).format(
+                            target=sid_token(removed_target.sid) if isinstance(removed_target, PlayerState) else getattr(removed_target, "name", "Target"),
+                            effect=effect_name(effect_id) if effect_id else "Effect",
+                            source_ability=ability.get("name") or "Effect",
+                        )
+                    )
+            continue
+        overrides = dict(entry.get("overrides", {}) or {})
+        if entry.get("duration"):
+            overrides["duration"] = int(entry.get("duration"))
+        if "source_ability_name" not in overrides:
+            overrides["source_ability_name"] = ability.get("name") or effect_name(entry["id"])
+        if "school" not in overrides and ability.get("school"):
+            overrides["school"] = ability.get("school")
+        if "subschool" not in overrides and ability.get("subschool"):
+            overrides["subschool"] = ability.get("subschool")
+        effect = build_effect(entry["id"], overrides=overrides or None)
+        applied_any = False
+        for entry_target in target_entries:
+            allow_redirect = (
+                ability_target_mode(ability) != "aoe_enemy"
+                and isinstance(entry_target, PlayerState)
+                and entry_target is not actor
+                and is_harmful_target_effect_entry(entry)
+            )
+            resolved_target, _, _, _, redirect_log = resolve_target_resolution(
+                entry_target,
+                target_label=entry_target.sid if isinstance(entry_target, PlayerState) else getattr(entry_target, "name", "Target"),
+                source_ability_name=ability.get("name", "the effect"),
+                allow_redirect=allow_redirect,
+            )
+            if redirect_log:
+                extra_log_parts.append(redirect_log)
+            blocked_log = resolve_target_effect_pre_resolution_protection(
+                entry_target=entry_target,
+                resolved_target=resolved_target,
+                ability=ability,
+                entry=entry,
+                effect=effect,
+            )
+            if blocked_log:
+                log_parts.append(blocked_log)
+                continue
+            if entry["id"] in FORM_EFFECT_IDS:
+                apply_form(resolved_target, entry["id"], overrides=overrides or None)
+            else:
+                apply_effect_by_id(resolved_target, entry["id"], overrides=overrides or None)
+            applied_any = True
+        if applied_any and entry.get("log"):
+            log_parts.append(entry["log"])
+
+
+def _resolve_effect_application_stage(
+    *,
+    actor_sid: str,
+    actor: PlayerState,
+    target: PlayerState | PetState,
+    ability_id: str,
+    ability: Dict[str, Any],
+    log_parts: list[str],
+    match: MatchState,
+    rng: Any,
+    set_cooldown: Callable[[PlayerState, str, Dict[str, Any]], None],
+    resolve_target_resolution: Callable[..., tuple[PlayerState | PetState, str, bool, str | None, str | None]],
+    resolve_target_effect_pre_resolution_protection: Callable[..., str | None],
+    is_harmful_target_effect_entry: Callable[[Dict[str, Any]], bool],
+    ability_target_mode: Callable[[Dict[str, Any]], str],
+    pre_log_parts: list[str] | None = None,
+    extra_log_parts: list[str] | None = None,
+    skip_self_effect_ids: set[str] | None = None,
+    skip_primary_target: bool = False,
+    apply_entries: bool = True,
+    apply_defensive_effect_template: bool = False,
+    has_damage: bool = False,
+    has_target_effects: bool = False,
+    include_non_damaging_summon: bool = False,
+    allow_summon_with_target_effects: bool = False,
+    set_cooldown_on_summon: bool = True,
+    return_on_summon_error: bool = True,
+    summon_pet_from_template: Callable[[PlayerState, str], tuple[PetState | None, bool, str | None]] | None = None,
+) -> Dict[str, Any] | None:
+    if apply_defensive_effect_template and ability.get("effect"):
+        effect = dict(ability["effect"])
+        effect["duration"] = int(effect.get("duration", 1))
+        apply_effect_by_id(
+            actor,
+            "item_passive_template",
+            overrides={"type": effect.get("type", "status"), **effect},
+        )
+        log_parts.append("Defensive stance raised.")
+    else:
+        has_self_effects = bool(ability.get("self_effects"))
+        if apply_entries and (has_self_effects or has_target_effects):
+            _apply_effect_entries_stage(
+                actor=actor,
+                target=target,
+                ability=ability,
+                log_parts=log_parts,
+                pre_log_parts=pre_log_parts,
+                extra_log_parts=extra_log_parts,
+                skip_self_effect_ids=skip_self_effect_ids,
+                skip_primary_target=skip_primary_target,
+                resolve_target_resolution=resolve_target_resolution,
+                resolve_target_effect_pre_resolution_protection=resolve_target_effect_pre_resolution_protection,
+                is_harmful_target_effect_entry=is_harmful_target_effect_entry,
+                ability_target_mode=ability_target_mode,
+            )
+
+    summon_pet_id = ability.get("summon_pet_id")
+    allow_summon = (
+        include_non_damaging_summon
+        and summon_pet_id
+        and (
+            allow_summon_with_target_effects
+            or (not has_damage and not has_target_effects)
+        )
+    )
+    if allow_summon and summon_pet_from_template is not None:
+        summoned_pet, refreshed, summon_error = summon_pet_from_template(actor, summon_pet_id)
+        template = PETS.get(summon_pet_id, {})
+        if summon_error:
+            if return_on_summon_error:
+                return {"damage": 0, "healing": 0, "log": summon_error, "ability_id": ability_id}
+            log_parts.append(summon_error)
+            return None
+        max_count = int(template.get("max_count", 1) or 1)
+        current = len([p for p in actor.pets.values() if p.template_id == summon_pet_id])
+        summon_log = ability.get("summon_log")
+        force_call_wording = summon_pet_id in {"barrens_boar", "frostsaber", "emerald_serpent"} and bool(summon_log)
+        if refreshed:
+            if force_call_wording:
+                log_parts.append(str(summon_log))
+            else:
+                log_parts.append(f"refreshes {template.get('name', summon_pet_id.title())}.")
+        elif max_count > 1:
+            log_parts.append(f"summons a {template.get('name', summon_pet_id.title())} ({current}/{max_count}).")
+        elif summoned_pet is not None:
+            if summon_log:
+                log_parts.append(str(summon_log))
+            else:
+                remembered = actor.hunter_pet_memory.get(summon_pet_id)
+                if remembered is not None:
+                    log_parts.append(f"summons {template.get('name', summon_pet_id.title())} with {summoned_pet.hp}/{summoned_pet.hp_max} HP.")
+                else:
+                    log_parts.append(f"summons {template.get('name', summon_pet_id.title())}.")
+        if summoned_pet is not None and not refreshed:
+            trigger_pre_action_special(actor, summoned_pet, actor_sid, match, rng, consume_action=True)
+        remove_effect(actor, summon_pet_id)
+        if set_cooldown_on_summon:
+            set_cooldown(actor, ability_id, ability)
+            return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
+
+    return None
 
 def cooldown_slots(ps: PlayerState, ability_id: str) -> list:
     stored = ps.cooldowns.get(ability_id, [])
@@ -856,131 +1224,20 @@ def resolve_turn(match: MatchState) -> None:
         skip_self_effect_ids: set[str] | None = None,
         skip_primary_target: bool = False,
     ) -> None:
-        def format_entry_log(message: str | None) -> str | None:
-            if not isinstance(message, str):
-                return message
-            return message.replace("{actor}", sid_token(actor.sid))
-
-        if pre_log_parts is None:
-            pre_log_parts = []
-        if extra_log_parts is None:
-            extra_log_parts = []
-        skip_self_effect_ids = skip_self_effect_ids or set()
-        target_entries: list[PlayerState | PetState] = []
-        if not skip_primary_target:
-            target_entries.append(target)
-        if ability_target_mode(ability) == "aoe_enemy" and isinstance(target, PlayerState):
-            target_entries.extend(target.pets[pet_id] for pet_id in sorted((target.pets or {}).keys()))
-        
-        for entry in ability.get("self_effects", []) or []:
-            if entry.get("type") == "dispel":
-                removed = dispel_effects(
-                    actor,
-                    category=entry.get("category"),
-                    school=entry.get("school"),
-                )
-                if removed > 0:
-                    school = entry.get("school")
-                    school_text = f" {school}" if school else ""
-                    log_parts.append(f"{sid_token(actor.sid)} dispels {removed}{school_text} effects.")
-                continue
-            effect_id = entry.get("id")
-            if not effect_id:
-                continue
-            if effect_id in skip_self_effect_ids:
-                if entry.get("log"):
-                    formatted_log = format_entry_log(entry.get("log"))
-                    if entry.get("separate_log"):
-                        pre_log_parts.append(formatted_log)
-                    else:
-                        log_parts.append(formatted_log)
-                continue
-            overrides = dict(entry.get("overrides", {}) or {})
-            if entry.get("duration"):
-                overrides["duration"] = int(entry.get("duration"))
-            if "source_ability_name" not in overrides:
-                overrides["source_ability_name"] = ability.get("name") or effect_name(entry["id"])
-            if "school" not in overrides and ability.get("school"):
-                overrides["school"] = ability.get("school")
-            if "subschool" not in overrides and ability.get("subschool"):
-                overrides["subschool"] = ability.get("subschool")
-            if effect_id in FORM_EFFECT_IDS:
-                apply_form(actor, effect_id, overrides=overrides or None)
-            else:
-                apply_effect_by_id(actor, effect_id, overrides=overrides or None)
-            if entry.get("log"):
-                formatted_log = format_entry_log(entry.get("log"))
-                if entry.get("separate_log"):
-                    pre_log_parts.append(formatted_log)
-                else:
-                    log_parts.append(formatted_log)
-        for entry in ability.get("target_effects", []) or []:
-            if entry.get("type") == "remove_effect":
-                effect_id = entry.get("effect_id")
-                removed_targets: list[PlayerState | PetState] = []
-                for entry_target in target_entries:
-                    if effect_id and has_effect(entry_target, effect_id):
-                        if effect_id == "stealth":
-                            remove_stealth(entry_target)
-                        else:
-                            remove_effect(entry_target, effect_id)
-                        removed_targets.append(entry_target)
-                if removed_targets and entry.get("log"):
-                    log_parts.append(entry["log"])
-                removed_log_template = entry.get("removed_log_template")
-                if removed_log_template:
-                    for removed_target in removed_targets:
-                        extra_log_parts.append(
-                            str(removed_log_template).format(
-                                target=entity_log_label(removed_target),
-                                effect=effect_name(effect_id) if effect_id else "Effect",
-                                source_ability=ability.get("name") or "Effect",
-                            )
-                        )
-                continue
-            overrides = dict(entry.get("overrides", {}) or {})
-            if entry.get("duration"):
-                overrides["duration"] = int(entry.get("duration"))
-            if "source_ability_name" not in overrides:
-                overrides["source_ability_name"] = ability.get("name") or effect_name(entry["id"])
-            if "school" not in overrides and ability.get("school"):
-                overrides["school"] = ability.get("school")
-            if "subschool" not in overrides and ability.get("subschool"):
-                overrides["subschool"] = ability.get("subschool")
-            effect = build_effect(entry["id"], overrides=overrides or None)
-            applied_any = False
-            for entry_target in target_entries:
-                allow_redirect = (
-                    ability_target_mode(ability) != "aoe_enemy"
-                    and isinstance(entry_target, PlayerState)
-                    and entry_target is not actor
-                    and is_harmful_target_effect_entry(entry)
-                )
-                resolved_target, _, _, _, redirect_log = resolve_target_resolution(
-                    entry_target,
-                    target_label=entry_target.sid if isinstance(entry_target, PlayerState) else entity_log_label(entry_target),
-                    source_ability_name=ability.get("name", "the effect"),
-                    allow_redirect=allow_redirect,
-                )
-                if redirect_log:
-                    extra_log_parts.append(redirect_log)
-                blocked_log = resolve_target_effect_pre_resolution_protection(
-                    entry_target=entry_target,
-                    resolved_target=resolved_target,
-                    ability=ability,
-                    entry=entry,
-                    effect=effect,
-                )
-                if blocked_log:
-                    log_parts.append(blocked_log)
-                    continue
-                if entry["id"] in FORM_EFFECT_IDS:
-                    apply_form(resolved_target, entry["id"], overrides=overrides or None)
-                else:
-                    apply_effect_by_id(resolved_target, entry["id"], overrides=overrides or None)
-                applied_any = True
-            if applied_any and entry.get("log"):
-                log_parts.append(entry["log"])
+        _apply_effect_entries_stage(
+            actor=actor,
+            target=target,
+            ability=ability,
+            log_parts=log_parts,
+            pre_log_parts=pre_log_parts,
+            extra_log_parts=extra_log_parts,
+            skip_self_effect_ids=skip_self_effect_ids,
+            skip_primary_target=skip_primary_target,
+            resolve_target_resolution=resolve_target_resolution,
+            resolve_target_effect_pre_resolution_protection=resolve_target_effect_pre_resolution_protection,
+            is_harmful_target_effect_entry=is_harmful_target_effect_entry,
+            ability_target_mode=ability_target_mode,
+        )
 
     def _resolve_effect_application(
         actor_sid: str,
@@ -1003,76 +1260,34 @@ def resolve_turn(match: MatchState) -> None:
         set_cooldown_on_summon: bool = True,
         return_on_summon_error: bool = True,
     ) -> Dict[str, Any] | None:
-        # effect_application: buff_application / debuff_application / dot_application /
-        # hot_application / proc_grant / dispel_application / effect_refresh / effect_removal
-        if apply_defensive_effect_template and ability.get("effect"):
-            effect = dict(ability["effect"])
-            effect["duration"] = int(effect.get("duration", 1))
-            apply_effect_by_id(
-                actor,
-                "item_passive_template",
-                overrides={"type": effect.get("type", "status"), **effect},
-            )
-            log_parts.append("Defensive stance raised.")
-        else:
-            has_self_effects = bool(ability.get("self_effects"))
-            if apply_entries and (has_self_effects or has_target_effects):
-                apply_effect_entries(
-                    actor,
-                    target,
-                    ability,
-                    log_parts,
-                    pre_log_parts=pre_log_parts,
-                    extra_log_parts=extra_log_parts,
-                    skip_self_effect_ids=skip_self_effect_ids,
-                    skip_primary_target=skip_primary_target,
-                )
-
-        summon_pet_id = ability.get("summon_pet_id")
-        allow_summon = (
-            include_non_damaging_summon
-            and summon_pet_id
-            and (
-                allow_summon_with_target_effects
-                or (not has_damage and not has_target_effects)
-            )
+        return _resolve_effect_application_stage(
+            actor_sid=actor_sid,
+            actor=actor,
+            target=target,
+            ability_id=ability_id,
+            ability=ability,
+            log_parts=log_parts,
+            match=match,
+            rng=r,
+            set_cooldown=set_cooldown,
+            resolve_target_resolution=resolve_target_resolution,
+            resolve_target_effect_pre_resolution_protection=resolve_target_effect_pre_resolution_protection,
+            is_harmful_target_effect_entry=is_harmful_target_effect_entry,
+            ability_target_mode=ability_target_mode,
+            pre_log_parts=pre_log_parts,
+            extra_log_parts=extra_log_parts,
+            skip_self_effect_ids=skip_self_effect_ids,
+            skip_primary_target=skip_primary_target,
+            apply_entries=apply_entries,
+            apply_defensive_effect_template=apply_defensive_effect_template,
+            has_damage=has_damage,
+            has_target_effects=has_target_effects,
+            include_non_damaging_summon=include_non_damaging_summon,
+            allow_summon_with_target_effects=allow_summon_with_target_effects,
+            set_cooldown_on_summon=set_cooldown_on_summon,
+            return_on_summon_error=return_on_summon_error,
+            summon_pet_from_template=summon_pet_from_template,
         )
-        if allow_summon:
-            summoned_pet, refreshed, summon_error = summon_pet_from_template(actor, summon_pet_id)
-            template = PETS.get(summon_pet_id, {})
-            if summon_error:
-                if return_on_summon_error:
-                    return {"damage": 0, "healing": 0, "log": summon_error, "ability_id": ability_id}
-                log_parts.append(summon_error)
-                return None
-            max_count = int(template.get("max_count", 1) or 1)
-            current = len([p for p in actor.pets.values() if p.template_id == summon_pet_id])
-            summon_log = ability.get("summon_log")
-            force_call_wording = summon_pet_id in {"barrens_boar", "frostsaber", "emerald_serpent"} and bool(summon_log)
-            if refreshed:
-                if force_call_wording:
-                    log_parts.append(str(summon_log))
-                else:
-                    log_parts.append(f"refreshes {template.get('name', summon_pet_id.title())}.")
-            elif max_count > 1:
-                log_parts.append(f"summons a {template.get('name', summon_pet_id.title())} ({current}/{max_count}).")
-            elif summoned_pet is not None:
-                if summon_log:
-                    log_parts.append(str(summon_log))
-                else:
-                    remembered = actor.hunter_pet_memory.get(summon_pet_id)
-                    if remembered is not None:
-                        log_parts.append(f"summons {template.get('name', summon_pet_id.title())} with {summoned_pet.hp}/{summoned_pet.hp_max} HP.")
-                    else:
-                        log_parts.append(f"summons {template.get('name', summon_pet_id.title())}.")
-            if summoned_pet is not None and not refreshed:
-                trigger_pre_action_special(actor, summoned_pet, actor_sid, match, r, consume_action=True)
-            remove_effect(actor, summon_pet_id)
-            if set_cooldown_on_summon:
-                set_cooldown(actor, ability_id, ability)
-                return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
-
-        return None
 
     def apply_hp_sacrifice_absorb(
         actor: PlayerState,
@@ -2478,19 +2693,6 @@ def resolve_turn(match: MatchState) -> None:
         match.log.extend(deferred_stealth_break_logs)
         deferred_stealth_break_logs.clear()
 
-    def break_effects_and_collect_labels(target_entity: PlayerState | PetState) -> list[str]:
-        removed_labels: list[str] = []
-        for effect in list(getattr(target_entity, "effects", []) or []):
-            has_legacy_flag = (effect.get("flags", {}) or {}).get("break_on_damage")
-            if not (effect_has_tag(effect, "break_on_damage") or has_legacy_flag):
-                continue
-            effect_id = effect.get("id")
-            if not effect_id:
-                continue
-            removed_labels.append(break_on_damage_effect_name(effect))
-            remove_effect(target_entity, effect_id)
-        return removed_labels
-
     def apply_damage(
         source: PlayerState,
         target: PlayerState | PetState,
@@ -2536,45 +2738,23 @@ def resolve_turn(match: MatchState) -> None:
                 "redirect_log": redirect_log,
             }
 
-        # Resolution layer: post_damage_reactions
-        def _resolve_target_post_damage_reactions(
-            target_entity: PlayerState | PetState,
-            target_label: str,
-            hp_damage: int,
-            is_player_entity: bool,
-        ) -> None:
-            if hp_damage <= 0:
-                return
-            if is_player_entity:
-                was_stealthed = is_stealthed(target_entity)
-                sid = str(getattr(target_entity, "sid", "") or "")
-                cumulative_damage = hp_damage
-                if sid:
-                    cumulative_damage = int(stealth_damage_taken_by_sid.get(sid, 0) or 0) + hp_damage
-                    stealth_damage_taken_by_sid[sid] = cumulative_damage
-                break_stealth_on_damage(target_entity, cumulative_damage)
-                broken_effects = break_effects_and_collect_labels(target_entity)
-                if was_stealthed and not is_stealthed(target_entity):
-                    deferred_stealth_break_logs.append(f"{sid_token(target_label)} stealth broken by {source_ability_name}.")
-                for effect_name in broken_effects:
-                    deferred_break_on_damage_logs.append(
-                        f"{effect_name} on {sid_token(target_label)} breaks on damage."
-                    )
-                if current_form_id(target_entity) == "bear_form":
-                    grant_resource(target_entity, "rage", hp_damage)
-                return
-            broken_effects = break_effects_and_collect_labels(target_entity)
-            for effect_name in broken_effects:
-                deferred_break_on_damage_logs.append(
-                    f"{effect_name} on {target_entity.name} breaks on damage."
-                )
-
         instance_results, total_absorbed, total_remaining, total_breakdown = _apply_damage_application_stage(
             target,
             instance_values,
             is_player_entity=is_player_target,
         )
-        _resolve_target_post_damage_reactions(target, target_sid, total_remaining, is_player_target)
+        _resolve_target_post_damage_reactions_stage(
+            target_entity=target,
+            target_label=target_sid,
+            hp_damage=total_remaining,
+            is_player_entity=is_player_target,
+            source_ability_name=source_ability_name,
+            stealth_damage_taken_by_sid=stealth_damage_taken_by_sid,
+            deferred_stealth_break_logs=deferred_stealth_break_logs,
+            deferred_break_on_damage_logs=deferred_break_on_damage_logs,
+            break_on_damage_effect_name=break_on_damage_effect_name,
+            grant_resource=grant_resource,
+        )
         return {
             "hp_damage": max(0, total_remaining),
             "absorbed": total_absorbed,
@@ -2981,56 +3161,22 @@ def resolve_turn(match: MatchState) -> None:
                     target_label=pet_label,
                 )
 
-    def _resolve_actor_post_damage_reactions(
-        actor_sid: str,
-        target_sid: str,
-        dealt: int,
-        result: Dict[str, Any],
-    ) -> None:
-        ability = ABILITIES.get(result.get("ability_id", ""), {})
-        actor = match.state[actor_sid]
-        target = match.state[target_sid]
-
-        if dealt > 0 and ability.get("heal_from_dealt_damage") and actor.res:
-            before_hp = actor.res.hp
-            actor.res.hp = min(actor.res.hp + dealt, actor.res.hp_max)
-            gained = actor.res.hp - before_hp
-            if gained > 0:
-                match.log.append(f"{sid_token(actor_sid)} heals {gained} HP from {ability.get('name', 'their attack')}.")
-                totals = match.combat_totals.setdefault(actor_sid, {"damage": 0, "healing": 0})
-                totals["healing"] += gained
-
-        if result.get("ability_id") == "death" and target.res.hp > 0 and dealt > 0:
-            backlash = int(dealt * 1.0)
-            if backlash > 0:
-                apply_damage(actor, actor, backlash, actor_sid, "Shadow Word: Death backlash", school="magical", subschool="shadow", allow_redirect=False)
-                match.log.append(f"{sid_token(actor_sid)} suffers {backlash} backlash from Shadow Word: Death.")
-
-        lifesteal = float(ability.get("heal_from_damage", 0) or 0)
-        if dealt > 0 and lifesteal > 0 and actor.res:
-            heal_value = int(dealt * lifesteal)
-            before_hp = actor.res.hp
-            actor.res.hp = min(actor.res.hp + heal_value, actor.res.hp_max)
-            gained = actor.res.hp - before_hp
-            if gained > 0:
-                match.log.append(f"{sid_token(actor_sid)} drains {gained} life.")
-                totals = match.combat_totals.setdefault(actor_sid, {"damage": 0, "healing": 0})
-                totals["healing"] += gained
-
-        dealt_resource_gain = ability.get("resource_gain_on_dealt", {})
-        if dealt > 0 and dealt_resource_gain and actor.res:
-            for resource, gain in dealt_resource_gain.items():
-                if gain == "damage":
-                    gain_value = dealt
-                elif gain == "damage_x3":
-                    gain_value = dealt * 3
-                else:
-                    gain_value = int(gain or 0)
-                if gain_value > 0 and hasattr(actor.res, resource):
-                    grant_resource(actor, resource, gain_value)
-
-    _resolve_actor_post_damage_reactions(sids[0], sids[1], int(total_dealt_by_actor.get(sids[0], 0) or 0), result1)
-    _resolve_actor_post_damage_reactions(sids[1], sids[0], int(total_dealt_by_actor.get(sids[1], 0) or 0), result2)
+    for actor_sid, target_sid, result in ((sids[0], sids[1], result1), (sids[1], sids[0], result2)):
+        ability_id = str(result.get("ability_id", "") or "")
+        ability = ABILITIES.get(ability_id, {})
+        _resolve_actor_post_damage_reactions_stage(
+            actor_sid=actor_sid,
+            target_sid=target_sid,
+            dealt=int(total_dealt_by_actor.get(actor_sid, 0) or 0),
+            ability_id=ability_id,
+            ability=ability,
+            actor=match.state[actor_sid],
+            target=match.state[target_sid],
+            apply_damage=apply_damage,
+            grant_resource=grant_resource,
+            combat_totals=match.combat_totals,
+            log=match.log,
+        )
 
     def _resolve_end_of_turn() -> tuple[bool, bool, bool]:
         # end_of_turn: pet_phase
