@@ -1359,32 +1359,7 @@ def resolve_turn(match: MatchState) -> None:
             grant_resource(ps, "rage", remaining)
         return remaining
 
-    def apply_effect_entries(
-        actor: PlayerState,
-        target: PlayerState | PetState,
-        ability: Dict[str, Any],
-        log_parts: list[str],
-        pre_log_parts: list[str] | None = None,
-        extra_log_parts: list[str] | None = None,
-        skip_self_effect_ids: set[str] | None = None,
-        skip_primary_target: bool = False,
-    ) -> None:
-        _apply_effect_entries_stage(
-            actor=actor,
-            target=target,
-            ability=ability,
-            log_parts=log_parts,
-            pre_log_parts=pre_log_parts,
-            extra_log_parts=extra_log_parts,
-            skip_self_effect_ids=skip_self_effect_ids,
-            skip_primary_target=skip_primary_target,
-            resolve_target_resolution=resolve_target_resolution,
-            resolve_target_effect_pre_resolution_protection=resolve_target_effect_pre_resolution_protection,
-            is_harmful_target_effect_entry=is_harmful_target_effect_entry,
-            ability_target_mode=ability_target_mode,
-        )
-
-    def _resolve_effect_application(
+    def resolve_effect_application(
         actor_sid: str,
         actor: PlayerState,
         target: PlayerState | PetState,
@@ -1684,7 +1659,7 @@ def resolve_turn(match: MatchState) -> None:
         return None
 
     # Resolution layer: pre_resolution_protection
-    def _resolve_action_pre_resolution_protection(
+    def resolve_action_pre_resolution_protection(
         attacker: PlayerState,
         target: PlayerState | PetState,
         ability: Dict[str, Any],
@@ -1720,7 +1695,7 @@ def resolve_turn(match: MatchState) -> None:
         return False
 
     # Resolution layer: hit_resolution
-    def _resolve_hit_resolution(
+    def resolve_action_hit_resolution(
         target: PlayerState | PetState,
         ability: Dict[str, Any],
         *,
@@ -1779,7 +1754,6 @@ def resolve_turn(match: MatchState) -> None:
         pre_log_parts: list[str] = []
 
         has_target_effects = bool(ability.get("target_effects"))
-        has_self_effects = bool(ability.get("self_effects"))
         is_aoe = is_aoe_ability(ability)
         if "pass" in (ability.get("tags") or []):
             set_cooldown(actor, ability_id, ability)
@@ -1809,7 +1783,7 @@ def resolve_turn(match: MatchState) -> None:
         aoe_champion_log_override: str | None = None
 
         if has_damage or has_target_effects:
-            blocked, protection_log = _resolve_action_pre_resolution_protection(
+            blocked, protection_log = resolve_action_pre_resolution_protection(
                 actor,
                 target,
                 ability,
@@ -1823,7 +1797,7 @@ def resolve_turn(match: MatchState) -> None:
                 if offensive_action and turn_ctx.stealth_start_at_turn_begin.get(actor_sid, False):
                     remove_stealth(actor)
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
-            missed, miss_log, skip_aoe_champion, aoe_immune_log = _resolve_hit_resolution(
+            missed, miss_log, skip_aoe_champion, aoe_immune_log = resolve_action_hit_resolution(
                 target,
                 ability,
                 has_damage=has_damage,
@@ -1841,7 +1815,7 @@ def resolve_turn(match: MatchState) -> None:
                     remove_stealth(actor)
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
 
-        effect_application_result = _resolve_effect_application(
+        effect_application_result = resolve_effect_application(
             actor_sid,
             actor,
             target,
@@ -2735,7 +2709,7 @@ def resolve_turn(match: MatchState) -> None:
                 ):
                     remove_stealth(actor)
                 return
-        _resolve_effect_application(
+        resolve_effect_application(
             actor_sid,
             actor,
             target,
