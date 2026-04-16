@@ -1661,6 +1661,29 @@ def resolve_turn(match: MatchState) -> None:
         return summoned, False, None
 
     # Resolution layer: pre_resolution_protection
+    def resolve_target_pre_resolution_protection_stage(
+        attacker: PlayerState,
+        target: PlayerState | PetState,
+        ability: Dict[str, Any],
+        *,
+        stealth_snapshot: Dict[str, bool],
+        include_untargetable: bool,
+        include_single_target_miss: bool,
+        include_immune_all: bool,
+        immune_all_log: str = "Immune!",
+    ) -> str | None:
+        if should_miss_due_to_stealth(attacker, target, ability, stealth_snapshot):
+            return "Target is stealthed — Miss!"
+        is_aoe = is_aoe_ability(ability)
+        if include_untargetable and has_flag(target, "untargetable") and not is_aoe:
+            return untargetable_miss_log(target)
+        if include_single_target_miss and single_target_miss_active(target, ability):
+            return single_target_miss_log()
+        if include_immune_all and is_immune_all(target):
+            return immune_all_log
+        return None
+
+    # Resolution layer: pre_resolution_protection
     def _resolve_action_pre_resolution_protection(
         attacker: PlayerState,
         target: PlayerState | PetState,
@@ -1668,9 +1691,16 @@ def resolve_turn(match: MatchState) -> None:
         *,
         stealth_snapshot: Dict[str, bool],
     ) -> tuple[bool, str | None]:
-        if should_miss_due_to_stealth(attacker, target, ability, stealth_snapshot):
-            return True, "Target is stealthed — Miss!"
-        return False, None
+        protection_log = resolve_target_pre_resolution_protection_stage(
+            attacker,
+            target,
+            ability,
+            stealth_snapshot=stealth_snapshot,
+            include_untargetable=False,
+            include_single_target_miss=False,
+            include_immune_all=False,
+        )
+        return bool(protection_log), protection_log
 
     # Resolution layer: pre_resolution_protection
     def resolve_player_damage_pre_resolution_protection(
@@ -2588,16 +2618,16 @@ def resolve_turn(match: MatchState) -> None:
         include_immune_all: bool,
         include_single_target_miss: bool,
     ) -> str | None:
-        is_aoe = is_aoe_ability(ability)
-        if should_miss_due_to_stealth(actor, target, ability, turn_ctx.stealth_targeting):
-            return "Target is stealthed — Miss!"
-        if include_untargetable and has_flag(target, "untargetable") and not is_aoe:
-            return untargetable_miss_log(target)
-        if include_single_target_miss and single_target_miss_active(target, ability):
-            return single_target_miss_log()
-        if include_immune_all and is_immune_all(target):
-            return "Immune!"
-        return None
+        return resolve_target_pre_resolution_protection_stage(
+            actor,
+            target,
+            ability,
+            stealth_snapshot=turn_ctx.stealth_targeting,
+            include_untargetable=include_untargetable,
+            include_single_target_miss=include_single_target_miss,
+            include_immune_all=include_immune_all,
+            immune_all_log="Immune!",
+        )
 
     def immediate_action_can_stun(actor_sid: str, target_sid: str, ctx: Dict[str, Any]) -> bool:
         if ctx.get("resolved") or not ctx.get("immediate_only"):
@@ -2619,15 +2649,20 @@ def resolve_turn(match: MatchState) -> None:
         if protection_log:
             return False
         for entry in target_effects:
-            if crowd_control_miss_active(target, entry):
-                continue
             effect_id = entry.get("id")
             if not effect_id:
                 continue
             effect = build_effect(effect_id, overrides=entry.get("overrides"))
-            flags = effect.get("flags", {}) or {}
-            if has_effect(target, "cloak_of_shadows") and is_magical_harmful_effect(effect):
+            blocked_log = resolve_target_effect_pre_resolution_protection(
+                entry_target=target,
+                resolved_target=target,
+                ability=ability,
+                entry=entry,
+                effect=effect,
+            )
+            if blocked_log:
                 continue
+            flags = effect.get("flags", {}) or {}
             if flags.get("stunned") or effect.get("cant_act_reason"):
                 return True
         return False
