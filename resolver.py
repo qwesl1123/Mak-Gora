@@ -785,12 +785,70 @@ def _handle_lay_on_hands_special(ctx: SpecialAbilityHandlerContext) -> Dict[str,
     return {"damage": 0, "healing": missing_hp, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
 
 
+def _handle_mass_dispel_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, Any]:
+    removed_names = []
+    self_removed = 0
+    enemy_removed = 0
+
+    def dispel_name(effect: Dict[str, Any]) -> str:
+        effect_id = effect.get("id")
+        template_name = effect_template(effect_id).get("name") if effect_id else None
+        return str(effect.get("name") or template_name or "Effect")
+
+    actor_to_remove = []
+    for effect in list(ctx.actor.effects):
+        effect_id = effect.get("id")
+        if not effect_id:
+            continue
+        if not is_dispellable_by(effect, dispel_type="mass_dispel", kind="magical"):
+            continue
+        effect_category = str(effect.get("category") or effect_template(effect_id).get("category") or "").lower()
+        if effect_category not in {"dot", "debuff"}:
+            continue
+        actor_to_remove.append(effect)
+
+    for effect in actor_to_remove:
+        effect_id = effect.get("id")
+        if not effect_id:
+            continue
+        removed_names.append(dispel_name(effect))
+        remove_effect(ctx.actor, effect_id)
+        self_removed += 1
+
+    enemy_to_remove = []
+    for effect in list(ctx.target.effects):
+        effect_id = effect.get("id")
+        if not effect_id:
+            continue
+        if not is_dispellable_by(effect, dispel_type="mass_dispel", kind="magical"):
+            continue
+        effect_category = str(effect.get("category") or effect_template(effect_id).get("category") or "").lower()
+        if effect_category in {"dot", "debuff"}:
+            continue
+        enemy_to_remove.append(effect)
+
+    for effect in enemy_to_remove:
+        effect_id = effect.get("id")
+        if not effect_id:
+            continue
+        removed_names.append(dispel_name(effect))
+        remove_effect(ctx.target, effect_id)
+        enemy_removed += 1
+
+    if removed_names:
+        ctx.log_parts.append(f"{', '.join(removed_names)} removed by Mass Dispel!")
+    ctx.log_parts.append(f"Dispels {self_removed} effects on self and {enemy_removed} effects on enemy")
+    ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
+    return {"damage": 0, "healing": 0, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
+
+
 SPECIAL_ABILITY_HANDLERS: dict[str, Callable[[SpecialAbilityHandlerContext], Dict[str, Any]]] = {
     "healthstone": _handle_healthstone_special,
     "innervate": _handle_innervate_special,
     "holy_light": _handle_holy_light_special,
     "flash_heal": _handle_flash_heal_special,
     "lay_on_hands": _handle_lay_on_hands_special,
+    "mass_dispel": _handle_mass_dispel_special,
 }
 
 
@@ -2077,62 +2135,6 @@ def resolve_turn(match: MatchState) -> None:
             log_parts.append("Healing over time for 5 turns.")
             set_cooldown(actor, ability_id, ability)
             return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
-
-        if ability_id == "mass_dispel":
-            removed_names = []
-            self_removed = 0
-            enemy_removed = 0
-
-            def dispel_name(effect: Dict[str, Any]) -> str:
-                effect_id = effect.get("id")
-                template_name = effect_template(effect_id).get("name") if effect_id else None
-                return str(effect.get("name") or template_name or "Effect")
-
-            actor_to_remove = []
-            for effect in list(actor.effects):
-                effect_id = effect.get("id")
-                if not effect_id:
-                    continue
-                if not is_dispellable_by(effect, dispel_type="mass_dispel", kind="magical"):
-                    continue
-                effect_category = str(effect.get("category") or effect_template(effect_id).get("category") or "").lower()
-                if effect_category not in {"dot", "debuff"}:
-                    continue
-                actor_to_remove.append(effect)
-
-            for effect in actor_to_remove:
-                effect_id = effect.get("id")
-                if not effect_id:
-                    continue
-                removed_names.append(dispel_name(effect))
-                remove_effect(actor, effect_id)
-                self_removed += 1
-
-            enemy_to_remove = []
-            for effect in list(target.effects):
-                effect_id = effect.get("id")
-                if not effect_id:
-                    continue
-                if not is_dispellable_by(effect, dispel_type="mass_dispel", kind="magical"):
-                    continue
-                effect_category = str(effect.get("category") or effect_template(effect_id).get("category") or "").lower()
-                if effect_category in {"dot", "debuff"}:
-                    continue
-                enemy_to_remove.append(effect)
-
-            for effect in enemy_to_remove:
-                effect_id = effect.get("id")
-                if not effect_id:
-                    continue
-                removed_names.append(dispel_name(effect))
-                remove_effect(target, effect_id)
-                enemy_removed += 1
-
-            if removed_names:
-                log_parts.append(f"{', '.join(removed_names)} removed by Mass Dispel!")
-            log_parts.append(f"Dispels {self_removed} effects on self and {enemy_removed} effects on enemy")
-            set_cooldown(actor, ability_id, ability)
-            return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
 
         if ability_id in ("vampiric_touch", "devouring_plague"):
             if is_immune_all(target):

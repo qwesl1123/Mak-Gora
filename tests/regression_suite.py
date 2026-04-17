@@ -341,19 +341,57 @@ def scenario_special_handler_innervate_mana_and_cooldown() -> bool:
 
 
 def scenario_special_handler_non_handler_baseline_path_unchanged() -> bool:
-    assert "mass_dispel" not in resolver.SPECIAL_ABILITY_HANDLERS, "Mass Dispel should remain on the baseline resolver path"
+    assert "die_by_sword" not in resolver.SPECIAL_ABILITY_HANDLERS, "Die by the Sword should remain on the baseline resolver path"
 
-    match = make_match("priest", "paladin", seed=9112)
-    priest_sid, paladin_sid = match.players
-    priest = match.state[priest_sid]
-    paladin = match.state[paladin_sid]
-    effects.apply_effect_by_id(paladin, "divine_shield", overrides={"duration": 2})
+    match = make_match("warrior", "priest", seed=9112)
+    warrior_sid, _ = match.players
+    warrior = match.state[warrior_sid]
 
-    submit_turn(match, "mass_dispel", _DEF_PASS)
+    submit_turn(match, "die_by_sword", _DEF_PASS)
 
-    assert not _has_effect(paladin, "divine_shield"), "Baseline non-handler Mass Dispel should still remove eligible magical buffs"
-    assert priest.cooldowns.get("mass_dispel"), "Baseline non-handler Mass Dispel should still consume cooldown"
-    assert any("Dispels " in line for line in _turn_lines(match, 1)), "Baseline non-handler Mass Dispel log wording should remain unchanged"
+    assert _has_effect(warrior, "die_by_sword"), "Baseline non-handler Die by the Sword should still apply its defensive effect"
+    assert warrior.cooldowns.get("die_by_sword"), "Baseline non-handler Die by the Sword should still consume cooldown"
+    assert any("Die by the Sword" in line for line in _turn_lines(match, 1)), "Baseline non-handler Die by the Sword log wording should remain unchanged"
+    return True
+
+
+def scenario_special_handler_mass_dispel_parity_and_denial_order() -> bool:
+    assert "mass_dispel" in resolver.SPECIAL_ABILITY_HANDLERS, "Mass Dispel should be routed through special handler dispatch in phase 3"
+
+    parity_match = make_match("priest", "rogue", seed=9122)
+    priest_sid, rogue_sid = parity_match.players
+    priest = parity_match.state[priest_sid]
+    rogue = parity_match.state[rogue_sid]
+    effects.apply_effect_by_id(priest, "devouring_plague", overrides={"duration": 3, "source_sid": rogue_sid})
+    effects.apply_effect_by_id(priest, "burn", overrides={"duration": 2, "tick_damage": 3, "source_sid": rogue_sid})
+    effects.apply_effect_by_id(rogue, "divine_shield", overrides={"duration": 2})
+    effects.apply_effect_by_id(rogue, "iceblock", overrides={"duration": 2})
+
+    submit_turn(parity_match, "mass_dispel", _DEF_PASS)
+
+    assert not _has_effect(priest, "devouring_plague"), "Mass Dispel handler should still remove self harmful magical debuffs"
+    assert not _has_effect(priest, "burn"), "Mass Dispel handler should still remove self magical DoTs"
+    assert not _has_effect(rogue, "divine_shield"), "Mass Dispel handler should still remove enemy magical immunity buffs"
+    assert not _has_effect(rogue, "iceblock"), "Mass Dispel handler should still remove enemy magical shields"
+    assert not _has_effect(rogue, "stealth"), "Mass Dispel handler should still remove enemy stealth"
+    parity_turn = _turn_lines(parity_match, 1)
+    assert any("removed by Mass Dispel!" in line for line in parity_turn), "Mass Dispel handler should preserve removal summary wording"
+    assert any("Dispels 2 effects on self and 3 effects on enemy" in line for line in parity_turn), "Mass Dispel handler should preserve dispel count wording and order"
+
+    denied_match = make_match("priest", "warrior", seed=9123)
+    denied_priest_sid, denied_enemy_sid = denied_match.players
+    denied_priest = denied_match.state[denied_priest_sid]
+    denied_enemy = denied_match.state[denied_enemy_sid]
+    effects.apply_effect_by_id(denied_priest, "feared", overrides={"duration": 1})
+    effects.apply_effect_by_id(denied_priest, "devouring_plague", overrides={"duration": 2, "source_sid": denied_enemy_sid})
+    effects.apply_effect_by_id(denied_enemy, "pain_suppression", overrides={"duration": 2})
+    submit_turn(denied_match, "mass_dispel", _DEF_PASS)
+    denied_turn = _turn_lines(denied_match, 1)
+    assert any("tries to use Mass Dispel but is feared and cannot act." in line for line in denied_turn), "Denial should still occur before Mass Dispel handler execution"
+    assert _has_effect(denied_priest, "devouring_plague"), "Denied Mass Dispel should not remove self effects"
+    assert _has_effect(denied_enemy, "pain_suppression"), "Denied Mass Dispel should not remove enemy effects"
+    assert "mass_dispel" not in denied_priest.cooldowns, "Denied Mass Dispel should not consume cooldown"
+    assert not any("removed by Mass Dispel!" in line for line in denied_turn), "Denied Mass Dispel should not emit handler removal logs"
     return True
 
 
@@ -4492,6 +4530,7 @@ SCENARIOS = [
     scenario_special_handler_healthstone_mindgames_parity,
     scenario_special_handler_innervate_mana_and_cooldown,
     scenario_special_handler_non_handler_baseline_path_unchanged,
+    scenario_special_handler_mass_dispel_parity_and_denial_order,
     scenario_special_handler_holy_light_parity_and_denial_order,
     scenario_special_handler_flash_heal_parity_and_denial_order,
     scenario_special_handler_lay_on_hands_parity_and_denial_order,
