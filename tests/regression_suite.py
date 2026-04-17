@@ -308,6 +308,54 @@ def scenario_mindgames_lay_on_hands() -> bool:
     return True
 
 
+def scenario_special_handler_healthstone_mindgames_parity() -> bool:
+    match = make_match("warlock", "priest", seed=9110)
+    warlock_sid, priest_sid = match.players
+    warlock = match.state[warlock_sid]
+    hp_before = warlock.res.hp
+
+    submit_turn(match, "healthstone", "mindgames")
+
+    expected_self_damage = max(1, int(warlock.res.hp_max * 0.25))
+    assert warlock.res.hp == hp_before - expected_self_damage, "Healthstone should still be twisted into fixed self-damage under Mindgames"
+    turn_lines = _turn_lines(match, 1)
+    assert any("Mindgames twists healing into" in line for line in turn_lines), "Healthstone path should keep Mindgames twist wording"
+    assert not any("Healthstone restores" in line for line in turn_lines), "Healthstone restore log should not appear when Mindgames twists healing"
+    assert warlock.cooldowns.get("healthstone"), "Healthstone should still consume cooldown via special handler dispatch"
+    return True
+
+
+def scenario_special_handler_innervate_mana_and_cooldown() -> bool:
+    match = make_match("druid", "warrior", seed=9111)
+    druid_sid, _ = match.players
+    druid = match.state[druid_sid]
+    effects.apply_effect_by_id(druid, "tree_form", overrides={"duration": 3})
+    druid.res.mp = 1
+
+    submit_turn(match, "innervate", _DEF_PASS)
+
+    assert druid.res.mp == druid.res.mp_max, "Innervate should still restore mana to full through special handler dispatch"
+    assert druid.cooldowns.get("innervate"), "Innervate should still trigger cooldown"
+    assert any("restores their mana to full." in line for line in _turn_lines(match, 1)), "Innervate log wording should remain unchanged"
+    return True
+
+
+def scenario_special_handler_non_handler_baseline_path_unchanged() -> bool:
+    assert "holy_light" not in resolver.SPECIAL_ABILITY_HANDLERS, "Holy Light should remain on the baseline resolver path in phase 1"
+
+    match = make_match("paladin", "warrior", seed=9112)
+    paladin_sid, _ = match.players
+    paladin = match.state[paladin_sid]
+    paladin.res.hp = max(1, paladin.res.hp - 40)
+    hp_before = paladin.res.hp
+
+    submit_turn(match, "holy_light", _DEF_PASS)
+
+    assert paladin.res.hp > hp_before, "Non-handler Holy Light should still heal on baseline path"
+    assert any("Holy Light restores" in line for line in _turn_lines(match, 1)), "Baseline Holy Light log wording should remain unchanged"
+    return True
+
+
 def scenario_mindgames_shield_of_vengeance_explosion_interactions() -> bool:
     normal_damage = make_match("priest", "paladin", seed=9101)
     priest_sid, pal_sid = normal_damage.players
@@ -4333,6 +4381,9 @@ def scenario_phase0_normal_vs_immediate_parity_ordering_lock() -> bool:
 
 SCENARIOS = [
     scenario_mindgames_lay_on_hands,
+    scenario_special_handler_healthstone_mindgames_parity,
+    scenario_special_handler_innervate_mana_and_cooldown,
+    scenario_special_handler_non_handler_baseline_path_unchanged,
     scenario_mindgames_shield_of_vengeance_explosion_interactions,
     scenario_mass_dispel_selective_removal,
     scenario_healing_resolves_from_negative_hp_before_winner_check,

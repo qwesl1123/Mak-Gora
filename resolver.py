@@ -701,6 +701,58 @@ class TurnResolutionContext:
     deferred_pet_pre_action_logs: list[str] = field(default_factory=list)
 
 
+@dataclass
+class SpecialAbilityHandlerContext:
+    actor_sid: str
+    target_sid: str
+    actor: PlayerState
+    target: PlayerState | PetState
+    ability_id: str
+    ability: Dict[str, Any]
+    log_parts: list[str]
+    pre_log_parts: list[str]
+    extra_log_parts: list[Any]
+    turn_ctx: TurnResolutionContext
+    rng: Any
+    set_cooldown: Callable[[PlayerState, str, Dict[str, Any]], None]
+    apply_self_inflicted_magical_damage: Callable[[PlayerState, int], int]
+
+
+def _handle_healthstone_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, Any]:
+    heal_value = max(1, int(ctx.actor.res.hp_max * 0.25))
+    if has_effect(ctx.actor, "mindgames"):
+        ctx.apply_self_inflicted_magical_damage(ctx.actor, heal_value)
+        ctx.log_parts.append(f"Mindgames twists healing into {heal_value} self-damage.")
+        ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
+        return {"damage": 0, "healing": 0, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
+    before_hp = ctx.actor.res.hp
+    ctx.actor.res.hp = min(ctx.actor.res.hp + heal_value, ctx.actor.res.hp_max)
+    healed = ctx.actor.res.hp - before_hp
+    ctx.log_parts.append(f"Healthstone restores {healed} HP.")
+    ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
+    return {"damage": 0, "healing": healed, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
+
+
+def _handle_innervate_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, Any]:
+    ctx.actor.res.mp = ctx.actor.res.mp_max
+    ctx.log_parts.append("restores their mana to full.")
+    ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
+    return {"damage": 0, "healing": 0, "log": " ".join(ctx.log_parts)}
+
+
+SPECIAL_ABILITY_HANDLERS: dict[str, Callable[[SpecialAbilityHandlerContext], Dict[str, Any]]] = {
+    "healthstone": _handle_healthstone_special,
+    "innervate": _handle_innervate_special,
+}
+
+
+def resolve_special_ability_handler_stage(ctx: SpecialAbilityHandlerContext) -> Dict[str, Any] | None:
+    handler = SPECIAL_ABILITY_HANDLERS.get(ctx.ability_id)
+    if handler is None:
+        return None
+    return handler(ctx)
+
+
 @dataclass(frozen=True)
 class HitResolutionResult:
     missed: bool
@@ -1832,19 +1884,25 @@ def resolve_turn(match: MatchState) -> None:
         if effect_application_result is not None:
             return effect_application_result
 
-        if ability_id == "healthstone":
-            heal_value = max(1, int(actor.res.hp_max * 0.25))
-            if has_effect(actor, "mindgames"):
-                apply_self_inflicted_magical_damage(actor, heal_value)
-                log_parts.append(f"Mindgames twists healing into {heal_value} self-damage.")
-                set_cooldown(actor, ability_id, ability)
-                return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
-            before_hp = actor.res.hp
-            actor.res.hp = min(actor.res.hp + heal_value, actor.res.hp_max)
-            healed = actor.res.hp - before_hp
-            log_parts.append(f"Healthstone restores {healed} HP.")
-            set_cooldown(actor, ability_id, ability)
-            return {"damage": 0, "healing": healed, "log": " ".join(log_parts), "ability_id": ability_id}
+        special_ability_result = resolve_special_ability_handler_stage(
+            SpecialAbilityHandlerContext(
+                actor_sid=actor_sid,
+                target_sid=target_sid,
+                actor=actor,
+                target=target,
+                ability_id=ability_id,
+                ability=ability,
+                log_parts=log_parts,
+                pre_log_parts=pre_log_parts,
+                extra_log_parts=extra_logs,
+                turn_ctx=turn_ctx,
+                rng=r,
+                set_cooldown=set_cooldown,
+                apply_self_inflicted_magical_damage=apply_self_inflicted_magical_damage,
+            )
+        )
+        if special_ability_result is not None:
+            return special_ability_result
 
         if ability_id in ("corruption", "unstable_affliction"):
             if is_immune_all(target):
@@ -1969,12 +2027,6 @@ def resolve_turn(match: MatchState) -> None:
                 overrides={"duration": 5, "regen": {"hp": per_tick}},
             )
             log_parts.append("Healing over time for 5 turns.")
-            set_cooldown(actor, ability_id, ability)
-            return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
-
-        if ability_id == "innervate":
-            actor.res.mp = actor.res.mp_max
-            log_parts.append("restores their mana to full.")
             set_cooldown(actor, ability_id, ability)
             return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
 
