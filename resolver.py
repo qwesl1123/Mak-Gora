@@ -740,9 +740,57 @@ def _handle_innervate_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, An
     return {"damage": 0, "healing": 0, "log": " ".join(ctx.log_parts)}
 
 
+def _handle_holy_light_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, Any]:
+    intellect = modify_stat(ctx.actor, "int", ctx.actor.stats.get("int", 0))
+    heal_value = int(intellect * 2.0) + int(roll("d4", ctx.rng))
+    if has_effect(ctx.actor, "mindgames"):
+        ctx.apply_self_inflicted_magical_damage(ctx.actor, heal_value)
+        ctx.log_parts.append(f"Mindgames twists healing into {heal_value} self-damage.")
+        ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
+        return {"damage": 0, "healing": 0, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
+    before_hp = ctx.actor.res.hp
+    ctx.actor.res.hp = min(ctx.actor.res.hp + heal_value, ctx.actor.res.hp_max)
+    healed = ctx.actor.res.hp - before_hp
+    ctx.log_parts.append(f"Holy Light restores {healed} HP.")
+    ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
+    return {"damage": 0, "healing": healed, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
+
+
+def _handle_flash_heal_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, Any]:
+    intellect = modify_stat(ctx.actor, "int", ctx.actor.stats.get("int", 0))
+    heal_value = int(intellect * 0.9) + int(roll("d8", ctx.rng))
+    if has_effect(ctx.actor, "mindgames"):
+        ctx.apply_self_inflicted_magical_damage(ctx.actor, heal_value)
+        ctx.log_parts.append(f"Mindgames twists healing into {heal_value} self-damage.")
+        ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
+        return {"damage": 0, "healing": 0, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
+    before_hp = ctx.actor.res.hp
+    ctx.actor.res.hp = min(ctx.actor.res.hp + heal_value, ctx.actor.res.hp_max)
+    healed = ctx.actor.res.hp - before_hp
+    ctx.log_parts.append(f"Flash Heal restores {healed} HP.")
+    ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
+    return {"damage": 0, "healing": healed, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
+
+
+def _handle_lay_on_hands_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, Any]:
+    missing_hp = max(0, ctx.actor.res.hp_max - ctx.actor.res.hp)
+    if has_effect(ctx.actor, "mindgames"):
+        ctx.apply_self_inflicted_magical_damage(ctx.actor, missing_hp)
+        ctx.log_parts.append(f"Mindgames twists healing into {missing_hp} self-damage.")
+        ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
+        return {"damage": 0, "healing": 0, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
+    ctx.actor.res.hp = ctx.actor.res.hp_max
+    ctx.log_parts.append("Lay on Hands restores health to full.")
+    ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
+    return {"damage": 0, "healing": missing_hp, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
+
+
 SPECIAL_ABILITY_HANDLERS: dict[str, Callable[[SpecialAbilityHandlerContext], Dict[str, Any]]] = {
     "healthstone": _handle_healthstone_special,
     "innervate": _handle_innervate_special,
+    "holy_light": _handle_holy_light_special,
+    "flash_heal": _handle_flash_heal_special,
+    "lay_on_hands": _handle_lay_on_hands_special,
 }
 
 
@@ -2030,36 +2078,6 @@ def resolve_turn(match: MatchState) -> None:
             set_cooldown(actor, ability_id, ability)
             return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
 
-        if ability_id == "holy_light":
-            intellect = modify_stat(actor, "int", actor.stats.get("int", 0))
-            heal_value = int(intellect * 2.0) + int(roll("d4", r))
-            if has_effect(actor, "mindgames"):
-                apply_self_inflicted_magical_damage(actor, heal_value)
-                log_parts.append(f"Mindgames twists healing into {heal_value} self-damage.")
-                set_cooldown(actor, ability_id, ability)
-                return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
-            before_hp = actor.res.hp
-            actor.res.hp = min(actor.res.hp + heal_value, actor.res.hp_max)
-            healed = actor.res.hp - before_hp
-            log_parts.append(f"Holy Light restores {healed} HP.")
-            set_cooldown(actor, ability_id, ability)
-            return {"damage": 0, "healing": healed, "log": " ".join(log_parts), "ability_id": ability_id}
-
-        if ability_id == "flash_heal":
-            intellect = modify_stat(actor, "int", actor.stats.get("int", 0))
-            heal_value = int(intellect * 0.9) + int(roll("d8", r))
-            if has_effect(actor, "mindgames"):
-                apply_self_inflicted_magical_damage(actor, heal_value)
-                log_parts.append(f"Mindgames twists healing into {heal_value} self-damage.")
-                set_cooldown(actor, ability_id, ability)
-                return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
-            before_hp = actor.res.hp
-            actor.res.hp = min(actor.res.hp + heal_value, actor.res.hp_max)
-            healed = actor.res.hp - before_hp
-            log_parts.append(f"Flash Heal restores {healed} HP.")
-            set_cooldown(actor, ability_id, ability)
-            return {"damage": 0, "healing": healed, "log": " ".join(log_parts), "ability_id": ability_id}
-
         if ability_id == "mass_dispel":
             removed_names = []
             self_removed = 0
@@ -2115,18 +2133,6 @@ def resolve_turn(match: MatchState) -> None:
             log_parts.append(f"Dispels {self_removed} effects on self and {enemy_removed} effects on enemy")
             set_cooldown(actor, ability_id, ability)
             return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
-
-        if ability_id == "lay_on_hands":
-            missing_hp = max(0, actor.res.hp_max - actor.res.hp)
-            if has_effect(actor, "mindgames"):
-                apply_self_inflicted_magical_damage(actor, missing_hp)
-                log_parts.append(f"Mindgames twists healing into {missing_hp} self-damage.")
-                set_cooldown(actor, ability_id, ability)
-                return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
-            actor.res.hp = actor.res.hp_max
-            log_parts.append("Lay on Hands restores health to full.")
-            set_cooldown(actor, ability_id, ability)
-            return {"damage": 0, "healing": missing_hp, "log": " ".join(log_parts), "ability_id": ability_id}
 
         if ability_id in ("vampiric_touch", "devouring_plague"):
             if is_immune_all(target):

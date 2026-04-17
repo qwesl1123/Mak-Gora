@@ -341,18 +341,126 @@ def scenario_special_handler_innervate_mana_and_cooldown() -> bool:
 
 
 def scenario_special_handler_non_handler_baseline_path_unchanged() -> bool:
-    assert "holy_light" not in resolver.SPECIAL_ABILITY_HANDLERS, "Holy Light should remain on the baseline resolver path in phase 1"
+    assert "mass_dispel" not in resolver.SPECIAL_ABILITY_HANDLERS, "Mass Dispel should remain on the baseline resolver path"
 
-    match = make_match("paladin", "warrior", seed=9112)
-    paladin_sid, _ = match.players
+    match = make_match("priest", "paladin", seed=9112)
+    priest_sid, paladin_sid = match.players
+    priest = match.state[priest_sid]
     paladin = match.state[paladin_sid]
+    effects.apply_effect_by_id(paladin, "divine_shield", overrides={"duration": 2})
+
+    submit_turn(match, "mass_dispel", _DEF_PASS)
+
+    assert not _has_effect(paladin, "divine_shield"), "Baseline non-handler Mass Dispel should still remove eligible magical buffs"
+    assert priest.cooldowns.get("mass_dispel"), "Baseline non-handler Mass Dispel should still consume cooldown"
+    assert any("Dispels " in line for line in _turn_lines(match, 1)), "Baseline non-handler Mass Dispel log wording should remain unchanged"
+    return True
+
+
+def scenario_special_handler_holy_light_parity_and_denial_order() -> bool:
+    assert "holy_light" in resolver.SPECIAL_ABILITY_HANDLERS, "Holy Light should be routed through special handler dispatch in phase 2"
+
+    heal_match = make_match("paladin", "warrior", seed=9113)
+    paladin_sid, _ = heal_match.players
+    paladin = heal_match.state[paladin_sid]
     paladin.res.hp = max(1, paladin.res.hp - 40)
     hp_before = paladin.res.hp
+    submit_turn(heal_match, "holy_light", _DEF_PASS)
+    assert paladin.res.hp > hp_before, "Holy Light handler should still heal"
+    assert any("Holy Light restores" in line for line in _turn_lines(heal_match, 1)), "Holy Light handler should preserve log wording"
 
-    submit_turn(match, "holy_light", _DEF_PASS)
+    mindgames_match = make_match("priest", "paladin", seed=9114)
+    priest_sid, paladin_sid = mindgames_match.players
+    paladin = mindgames_match.state[paladin_sid]
+    hp_before = paladin.res.hp
+    submit_turn(mindgames_match, "mindgames", "holy_light")
+    assert paladin.res.hp < hp_before, "Holy Light should still be twisted into self-damage under Mindgames"
+    assert any("Mindgames twists healing into" in line for line in _turn_lines(mindgames_match, 1)), "Holy Light handler should preserve Mindgames twist log wording"
 
-    assert paladin.res.hp > hp_before, "Non-handler Holy Light should still heal on baseline path"
-    assert any("Holy Light restores" in line for line in _turn_lines(match, 1)), "Baseline Holy Light log wording should remain unchanged"
+    denied_match = make_match("paladin", "warrior", seed=9115)
+    denied_paladin_sid, _ = denied_match.players
+    denied_paladin = denied_match.state[denied_paladin_sid]
+    denied_paladin.res.hp = max(1, denied_paladin.res.hp - 20)
+    hp_before = denied_paladin.res.hp
+    effects.apply_effect_by_id(denied_paladin, "feared", overrides={"duration": 1})
+    submit_turn(denied_match, "holy_light", _DEF_PASS)
+    denied_turn = _turn_lines(denied_match, 1)
+    assert any("tries to use Holy Light but is feared and cannot act." in line for line in denied_turn), "Denial should still occur before Holy Light handler execution"
+    assert denied_paladin.res.hp == hp_before, "Denied Holy Light should not apply healing side effects"
+    assert "holy_light" not in denied_paladin.cooldowns, "Denied Holy Light should not consume cooldown"
+    assert not any("Holy Light restores" in line for line in denied_turn), "Denied Holy Light should not produce handler heal log"
+    return True
+
+
+def scenario_special_handler_flash_heal_parity_and_denial_order() -> bool:
+    assert "flash_heal" in resolver.SPECIAL_ABILITY_HANDLERS, "Flash Heal should be routed through special handler dispatch in phase 2"
+
+    heal_match = make_match("priest", "warrior", seed=9116)
+    priest_sid, _ = heal_match.players
+    priest = heal_match.state[priest_sid]
+    priest.res.hp = max(1, priest.res.hp - 30)
+    hp_before = priest.res.hp
+    submit_turn(heal_match, "flash_heal", _DEF_PASS)
+    assert priest.res.hp > hp_before, "Flash Heal handler should still heal"
+    assert any("Flash Heal restores" in line for line in _turn_lines(heal_match, 1)), "Flash Heal handler should preserve log wording"
+
+    mindgames_match = make_match("priest", "priest", seed=9117)
+    _, priest_sid = mindgames_match.players
+    priest = mindgames_match.state[priest_sid]
+    hp_before = priest.res.hp
+    submit_turn(mindgames_match, "mindgames", "flash_heal")
+    assert priest.res.hp < hp_before, "Flash Heal should still be twisted into self-damage under Mindgames"
+    assert any("Mindgames twists healing into" in line for line in _turn_lines(mindgames_match, 1)), "Flash Heal handler should preserve Mindgames twist log wording"
+
+    denied_match = make_match("priest", "warrior", seed=9118)
+    denied_priest_sid, _ = denied_match.players
+    denied_priest = denied_match.state[denied_priest_sid]
+    denied_priest.res.hp = max(1, denied_priest.res.hp - 20)
+    hp_before = denied_priest.res.hp
+    effects.apply_effect_by_id(denied_priest, "feared", overrides={"duration": 1})
+    submit_turn(denied_match, "flash_heal", _DEF_PASS)
+    denied_turn = _turn_lines(denied_match, 1)
+    assert any("tries to use Flash Heal but is feared and cannot act." in line for line in denied_turn), "Denial should still occur before Flash Heal handler execution"
+    assert denied_priest.res.hp == hp_before, "Denied Flash Heal should not apply healing side effects"
+    assert "flash_heal" not in denied_priest.cooldowns, "Denied Flash Heal should not consume cooldown"
+    assert not any("Flash Heal restores" in line for line in denied_turn), "Denied Flash Heal should not produce handler heal log"
+    return True
+
+
+def scenario_special_handler_lay_on_hands_parity_and_denial_order() -> bool:
+    assert "lay_on_hands" in resolver.SPECIAL_ABILITY_HANDLERS, "Lay on Hands should be routed through special handler dispatch in phase 2"
+
+    heal_match = make_match("paladin", "warrior", seed=9119)
+    paladin_sid, _ = heal_match.players
+    paladin = heal_match.state[paladin_sid]
+    paladin.res.hp = max(1, paladin.res.hp - 60)
+    missing_hp = paladin.res.hp_max - paladin.res.hp
+    submit_turn(heal_match, "lay_on_hands", _DEF_PASS)
+    assert paladin.res.hp == paladin.res.hp_max, "Lay on Hands handler should still full-heal"
+    assert any("Lay on Hands restores health to full." in line for line in _turn_lines(heal_match, 1)), "Lay on Hands handler should preserve log wording"
+    assert paladin.cooldowns.get("lay_on_hands"), "Lay on Hands handler should preserve cooldown behavior"
+    assert missing_hp > 0, "Lay on Hands parity test should start with missing health"
+
+    mindgames_match = make_match("priest", "paladin", seed=9120)
+    paladin = mindgames_match.state[mindgames_match.players[1]]
+    paladin.res.hp = max(1, paladin.res.hp - 40)
+    hp_before = paladin.res.hp
+    submit_turn(mindgames_match, "mindgames", "lay_on_hands")
+    assert paladin.res.hp < hp_before, "Lay on Hands should still be twisted into self-damage under Mindgames"
+    assert any("Mindgames twists healing into" in line for line in _turn_lines(mindgames_match, 1)), "Lay on Hands handler should preserve Mindgames twist log wording"
+
+    denied_match = make_match("paladin", "warrior", seed=9121)
+    denied_paladin_sid, _ = denied_match.players
+    denied_paladin = denied_match.state[denied_paladin_sid]
+    denied_paladin.res.hp = max(1, denied_paladin.res.hp - 35)
+    hp_before = denied_paladin.res.hp
+    effects.apply_effect_by_id(denied_paladin, "feared", overrides={"duration": 1})
+    submit_turn(denied_match, "lay_on_hands", _DEF_PASS)
+    denied_turn = _turn_lines(denied_match, 1)
+    assert any("tries to use Lay on Hands but is feared and cannot act." in line for line in denied_turn), "Denial should still occur before Lay on Hands handler execution"
+    assert denied_paladin.res.hp == hp_before, "Denied Lay on Hands should not apply healing side effects"
+    assert "lay_on_hands" not in denied_paladin.cooldowns, "Denied Lay on Hands should not consume cooldown"
+    assert not any("Lay on Hands restores health to full." in line for line in denied_turn), "Denied Lay on Hands should not produce handler heal log"
     return True
 
 
@@ -4384,6 +4492,9 @@ SCENARIOS = [
     scenario_special_handler_healthstone_mindgames_parity,
     scenario_special_handler_innervate_mana_and_cooldown,
     scenario_special_handler_non_handler_baseline_path_unchanged,
+    scenario_special_handler_holy_light_parity_and_denial_order,
+    scenario_special_handler_flash_heal_parity_and_denial_order,
+    scenario_special_handler_lay_on_hands_parity_and_denial_order,
     scenario_mindgames_shield_of_vengeance_explosion_interactions,
     scenario_mass_dispel_selective_removal,
     scenario_healing_resolves_from_negative_hp_before_winner_check,
