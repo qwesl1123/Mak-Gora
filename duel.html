@@ -740,6 +740,21 @@
         display: flex;
       }
 
+      /* Hit flash overlay — triggered by adding .hit-flash class in JS */
+      .bar-container.hit-flash::before {
+        content: '';
+        position: absolute;
+        inset: 0;
+        background: rgba(255, 60, 60, 0.35);
+        z-index: 3;
+        animation: hitFlash 0.4s ease-out forwards;
+        pointer-events: none;
+      }
+      @keyframes hitFlash {
+        0%   { opacity: 1; }
+        100% { opacity: 0; }
+      }
+
       .bar-fill {
         height: 100%;
         transition: width 0.3s ease;
@@ -748,55 +763,127 @@
         flex: 0 0 auto;
       }
 
+      /* Shimmer stripe drifting left→right */
+      .bar-fill::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: -60%;
+        width: 40%;
+        height: 100%;
+        background: linear-gradient(90deg,
+          transparent 0%,
+          rgba(255, 255, 255, 0.12) 50%,
+          transparent 100%
+        );
+        animation: barShimmer 3.2s ease-in-out infinite;
+        pointer-events: none;
+      }
+      @keyframes barShimmer {
+        0%   { left: -60%; opacity: 0; }
+        10%  { opacity: 1; }
+        90%  { opacity: 1; }
+        100% { left: 110%; opacity: 0; }
+      }
+
+      /* Top-edge highlight pulse */
+      .bar-fill::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        height: 2px;
+        background: rgba(255, 255, 255, 0.35);
+        animation: barTopPulse 2.4s ease-in-out infinite;
+        pointer-events: none;
+      }
+      @keyframes barTopPulse {
+        0%, 100% { opacity: 0.3; }
+        50%       { opacity: 0.7; }
+      }
+
       .bar-fill.health {
-        background: linear-gradient(180deg, #ff4444 0%, #cc0000 100%);
-        box-shadow: inset 0 2px 4px rgba(255, 255, 255, 0.3);
+        background: linear-gradient(180deg, #ff5555 0%, #cc1111 55%, #990000 100%);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 120, 120, 0.5),
+          inset 0 -1px 0 rgba(0, 0, 0, 0.4);
       }
 
       .bar-fill.health.hp-dead {
         background: #000;
         box-shadow: none;
       }
+      .bar-fill.health.hp-dead::before,
+      .bar-fill.health.hp-dead::after { display: none; }
 
-      /* Right-edge glow when HP is full but absorb shield is active.
-         Positioned at the right edge of the HP bar — no absorb bar rendered. */
-      .bar-fill.health.has-absorb::after {
-        content: '';
+      /* Full-HP absorb: min-width sliver rendered by JS at right edge */
+      /* (has-absorb class no longer used — absorb bar always handles it) */
+
+      .bar-fill.absorb {
         position: absolute;
         top: 0;
-        right: 0;
-        width: 6px;
+        height: 100%;
+        background: linear-gradient(90deg,
+          rgba(185, 215, 255, 0.42) 0%,
+          rgba(210, 232, 255, 0.55) 65%,
+          rgba(255, 255, 255, 0.80) 100%
+        );
+        box-shadow:
+          inset -2px 0 0 rgba(255, 255, 255, 0.9),
+          inset 0  1px 0 rgba(255, 255, 255, 0.5),
+          inset 0 -1px 0 rgba(130, 175, 255, 0.3);
+        animation: absorbPulse 2s ease-in-out infinite;
+      }
+
+      /* Absorb doesn't use the shared shimmer/top-pulse pseudos */
+      .bar-fill.absorb::before,
+      .bar-fill.absorb::after { display: none; }
+
+      @keyframes absorbPulse {
+        0%, 100% { opacity: 0.85; }
+        50%       { opacity: 1; }
+      }
+
+      /* Absorb's own shimmer — faster, blue-tinted, child element */
+      .absorb-shimmer {
+        position: absolute;
+        top: 0;
+        left: -60%;
+        width: 40%;
         height: 100%;
         background: linear-gradient(90deg,
           transparent 0%,
-          rgba(180, 215, 255, 0.55) 60%,
-          rgba(220, 240, 255, 0.85) 100%
+          rgba(200, 230, 255, 0.45) 50%,
+          transparent 100%
         );
-        box-shadow: 2px 0 8px rgba(160, 210, 255, 0.7);
+        animation: absorbShimmer 1.6s ease-in-out infinite;
         pointer-events: none;
       }
-
-      .bar-fill.absorb {
-        /* Flex sibling — sits immediately after the HP bar, no absolute positioning */
-        background: linear-gradient(90deg,
-          rgba(255, 255, 255, 0.80) 0%,
-          rgba(210, 232, 255, 0.55) 35%,
-          rgba(185, 215, 255, 0.42) 100%
-        );
-        box-shadow:
-          inset 2px 0 0 rgba(255, 255, 255, 0.9),
-          inset 0 1px 0 rgba(255, 255, 255, 0.5),
-          inset 0 -1px 0 rgba(130, 175, 255, 0.3);
+      @keyframes absorbShimmer {
+        0%   { left: -60%; }
+        100% { left: 110%; }
       }
 
       .bar-fill.mana {
-        background: linear-gradient(180deg, #4488ff 0%, #0044cc 100%);
-        box-shadow: inset 0 2px 4px rgba(255, 255, 255, 0.3);
+        background: linear-gradient(180deg, #55aaff 0%, #1155cc 55%, #003399 100%);
+        box-shadow:
+          inset 0 1px 0 rgba(140, 200, 255, 0.5),
+          inset 0 -1px 0 rgba(0, 0, 0, 0.4);
+      }
+
+      .bar-fill.rage {
+        background: linear-gradient(180deg, #cc2222 0%, #8b1a1a 55%, #5a0a0a 100%);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 100, 100, 0.35),
+          inset 0 -1px 0 rgba(0, 0, 0, 0.5);
       }
 
       .bar-fill.energy {
-        background: linear-gradient(180deg, #ffff44 0%, #cccc00 100%);
-        box-shadow: inset 0 2px 4px rgba(255, 255, 255, 0.3);
+        background: linear-gradient(180deg, #a89a20 0%, #7a6e10 55%, #524808 100%);
+        box-shadow:
+          inset 0 1px 0 rgba(220, 200, 80, 0.4),
+          inset 0 -1px 0 rgba(0, 0, 0, 0.5);
       }
 
       .bar-text {
@@ -1907,7 +1994,7 @@
                     <div class="bar-container">
                       <div class="bar-text" id="friendlyHpText">--</div>
                       <div class="bar-fill health" id="friendlyHpBar" style="width: 100%;"></div>
-                      <div class="bar-fill absorb" id="friendlyAbsorbBar" style="width: 0%;"></div>
+                      <div class="bar-fill absorb" id="friendlyAbsorbBar" style="width: 0%;"><div class="absorb-shimmer"></div></div>
                     </div>
                   </div>
                   <div class="resource-bar">
@@ -1947,7 +2034,7 @@
                     <div class="bar-container">
                       <div class="bar-text" id="enemyHpText">--</div>
                       <div class="bar-fill health" id="enemyHpBar" style="width: 100%;"></div>
-                      <div class="bar-fill absorb" id="enemyAbsorbBar" style="width: 0%;"></div>
+                      <div class="bar-fill absorb" id="enemyAbsorbBar" style="width: 0%;"><div class="absorb-shimmer"></div></div>
                     </div>
                   </div>
                   <div class="resource-bar">
@@ -2949,6 +3036,7 @@
       const friendlyHpText = document.getElementById("friendlyHpText");
       const friendlyHpBar = document.getElementById("friendlyHpBar");
       const friendlyAbsorbBar = document.getElementById("friendlyAbsorbBar");
+      const friendlyHpContainer = friendlyHpBar.parentElement;
       const friendlyPrimaryLabel = document.getElementById("friendlyPrimaryLabel");
       const friendlyPrimaryText = document.getElementById("friendlyPrimaryText");
       const friendlyPrimaryBar = document.getElementById("friendlyPrimaryBar");
@@ -2960,6 +3048,7 @@
       const enemyHpText = document.getElementById("enemyHpText");
       const enemyHpBar = document.getElementById("enemyHpBar");
       const enemyAbsorbBar = document.getElementById("enemyAbsorbBar");
+      const enemyHpContainer = enemyHpBar.parentElement;
       const enemyPrimaryLabel = document.getElementById("enemyPrimaryLabel");
       const enemyPrimaryText = document.getElementById("enemyPrimaryText");
       const enemyPrimaryBar = document.getElementById("enemyPrimaryBar");
@@ -4313,6 +4402,7 @@
           elements.hpText.textContent = "--";
           elements.hpBar.style.width = "0%";
           if (elements.absorbBar) {
+            elements.absorbBar.style.left  = "0%";
             elements.absorbBar.style.width = "0%";
           }
           elements.primaryText.textContent = "--";
@@ -4325,27 +4415,55 @@
         const absorbPercentOfHp = barPercent(absorbRemaining, res.hp_max);
         const emptySpace = Math.max(0, 100 - hpPercent);
         const isDead = res.hp <= 0;
-        // Only fill empty space — no overlap with HP bar and no sliver at full HP.
-        // At full HP with absorb, we show a right-edge glow via CSS class instead.
         const hasAbsorb = absorbRemaining > 0 && !isDead;
-        const absorbWidth = (hasAbsorb && emptySpace > 0)
-          ? Math.min(absorbPercentOfHp, emptySpace)
-          : 0;
+
+        // Full-HP absorb: pin a 5px sliver at the right edge.
+        // Partial HP: fill empty space up to the absorb amount.
+        const minAbsorbPx  = 5;
+        const containerPx  = (elements.absorbBar?.parentElement?.offsetWidth) || 300;
+        const minAbsorbPct = (minAbsorbPx / containerPx) * 100;
+        let absorbLeft, absorbWidth;
+        if (!hasAbsorb) {
+          absorbLeft  = hpPercent;
+          absorbWidth = 0;
+        } else if (emptySpace <= 0) {
+          absorbLeft  = 100 - minAbsorbPct;
+          absorbWidth = minAbsorbPct;
+        } else {
+          absorbLeft  = hpPercent;
+          absorbWidth = Math.min(absorbPercentOfHp, emptySpace);
+        }
+
         const primaryResource = primaryResourceFrom(res, resource);
         const primaryPercent = barPercent(primaryResource.value, primaryResource.max);
 
-        elements.hpText.textContent = `${res.hp} / ${res.hp_max}`;
+        // Flash the HP container when HP drops
+        const prevPct = parseFloat(elements.hpBar.style.width) || 0;
+        if (hpPercent < prevPct && elements.hpContainer && !isDead) {
+          const c = elements.hpContainer;
+          c.classList.remove("hit-flash");
+          void c.offsetWidth; // reflow restarts the animation
+          c.classList.add("hit-flash");
+          setTimeout(() => c.classList.remove("hit-flash"), 420);
+        }
+
+        elements.hpText.textContent = hasAbsorb
+          ? `${res.hp} / ${res.hp_max} (+${absorbRemaining})`
+          : `${res.hp} / ${res.hp_max}`;
         elements.hpBar.classList.toggle("hp-dead", isDead);
-        elements.hpBar.classList.toggle("has-absorb", hasAbsorb);
         elements.hpBar.style.width = isDead ? "100%" : hpPercent + "%";
         if (elements.absorbBar) {
-          elements.absorbBar.style.width = isDead ? "0%" : absorbWidth + "%";
+          elements.absorbBar.style.left  = absorbLeft  + "%";
+          elements.absorbBar.style.width = absorbWidth + "%";
         }
         elements.primaryText.textContent = `${primaryResource.value} / ${primaryResource.max}`;
         elements.primaryBar.style.width = primaryPercent + "%";
+        // Apply resource type as a CSS class so gradients work (avoids inline backgroundColor override)
+        const barClass = { mp: "mana", rage: "rage", energy: "energy" }[resource.id] || "mana";
+        elements.primaryBar.classList.remove("mana", "rage", "energy");
+        elements.primaryBar.classList.add(barClass);
         elements.primaryLabel.textContent = resource.label || "Mana";
         elements.primaryLabel.style.color = resource.color || "var(--mana-blue)";
-        elements.primaryBar.style.backgroundColor = resource.color || "var(--mana-blue)";
       }
 
       function classKeyFromLabel(label) {
@@ -4577,6 +4695,7 @@
         renderRes(data.you, {
           hpText: friendlyHpText,
           hpBar: friendlyHpBar,
+          hpContainer: friendlyHpContainer,
           absorbBar: friendlyAbsorbBar,
           primaryText: friendlyPrimaryText,
           primaryBar: friendlyPrimaryBar,
@@ -4593,6 +4712,7 @@
         renderRes(data.enemy, {
           hpText: enemyHpText,
           hpBar: enemyHpBar,
+          hpContainer: enemyHpContainer,
           absorbBar: enemyAbsorbBar,
           primaryText: enemyPrimaryText,
           primaryBar: enemyPrimaryBar,
