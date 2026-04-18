@@ -842,6 +842,58 @@ def _handle_mass_dispel_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, 
     return {"damage": 0, "healing": 0, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
 
 
+def _handle_frenzied_regeneration_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, Any]:
+    if ctx.actor.res.rage <= 0:
+        return {"damage": 0, "healing": 0, "log": resource_failure_log(ctx.actor_sid, ctx.ability["name"], "rage")}
+    total_heal = int(ctx.actor.res.rage)
+    per_tick = total_heal // 4
+    ctx.actor.res.rage = 0
+    apply_effect_by_id(
+        ctx.actor,
+        "frenzied_regeneration",
+        overrides={"duration": 4, "regen": {"hp": per_tick}},
+    )
+    ctx.log_parts.append("channels Frenzied Regeneration.")
+    ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
+    return {"damage": 0, "healing": 0, "log": " ".join(ctx.log_parts)}
+
+
+def _handle_wild_growth_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, Any]:
+    intellect = modify_stat(ctx.actor, "int", ctx.actor.stats.get("int", 0))
+    attack = modify_stat(ctx.actor, "atk", ctx.actor.stats.get("atk", 0))
+    roll_power = roll("d8", ctx.rng)
+    heal_value = int((intellect + attack) * 1.6) + int(roll_power)
+    if has_effect(ctx.actor, "mindgames"):
+        ctx.apply_self_inflicted_magical_damage(ctx.actor, heal_value)
+        ctx.log_parts.append(f"Mindgames twists healing into {heal_value} self-damage.")
+        ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
+        return {"damage": 0, "healing": 0, "log": " ".join(ctx.log_parts)}
+    healing_done = 0
+    if not has_flag(ctx.actor, "cycloned"):
+        before_hp = ctx.actor.res.hp
+        ctx.actor.res.hp = min(ctx.actor.res.hp + heal_value, ctx.actor.res.hp_max)
+        healing_done = ctx.actor.res.hp - before_hp
+    ctx.log_parts.append(f"Wild Growth heals {heal_value} HP.")
+    ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
+    return {"damage": 0, "healing": healing_done, "log": " ".join(ctx.log_parts)}
+
+
+def _handle_regrowth_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, Any]:
+    intellect = modify_stat(ctx.actor, "int", ctx.actor.stats.get("int", 0))
+    attack = modify_stat(ctx.actor, "atk", ctx.actor.stats.get("atk", 0))
+    roll_power = roll("d4", ctx.rng)
+    total_heal = int((intellect + attack) * 1.5) + int(roll_power)
+    per_tick = total_heal // 5
+    apply_effect_by_id(
+        ctx.actor,
+        "regrowth",
+        overrides={"duration": 5, "regen": {"hp": per_tick}},
+    )
+    ctx.log_parts.append("Healing over time for 5 turns.")
+    ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
+    return {"damage": 0, "healing": 0, "log": " ".join(ctx.log_parts)}
+
+
 SPECIAL_ABILITY_HANDLERS: dict[str, Callable[[SpecialAbilityHandlerContext], Dict[str, Any]]] = {
     "healthstone": _handle_healthstone_special,
     "innervate": _handle_innervate_special,
@@ -849,6 +901,9 @@ SPECIAL_ABILITY_HANDLERS: dict[str, Callable[[SpecialAbilityHandlerContext], Dic
     "flash_heal": _handle_flash_heal_special,
     "lay_on_hands": _handle_lay_on_hands_special,
     "mass_dispel": _handle_mass_dispel_special,
+    "frenzied_regeneration": _handle_frenzied_regeneration_special,
+    "wild_growth": _handle_wild_growth_special,
+    "regrowth": _handle_regrowth_special,
 }
 
 
@@ -2086,55 +2141,6 @@ def resolve_turn(match: MatchState) -> None:
             log_parts.append("inflicts Agony.")
             set_cooldown(actor, ability_id, ability)
             return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
-
-        if ability_id == "frenzied_regeneration":
-            if actor.res.rage <= 0:
-                return {"damage": 0, "healing": 0, "log": resource_failure_log(actor_sid, ability["name"], "rage")}
-            total_heal = int(actor.res.rage)
-            per_tick = total_heal // 4
-            actor.res.rage = 0
-            apply_effect_by_id(
-                actor,
-                "frenzied_regeneration",
-                overrides={"duration": 4, "regen": {"hp": per_tick}},
-            )
-            log_parts.append("channels Frenzied Regeneration.")
-            set_cooldown(actor, ability_id, ability)
-            return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
-
-        if ability_id == "wild_growth":
-            intellect = modify_stat(actor, "int", actor.stats.get("int", 0))
-            attack = modify_stat(actor, "atk", actor.stats.get("atk", 0))
-            roll_power = roll("d8", r)
-            heal_value = int((intellect + attack) * 1.6) + int(roll_power)
-            if has_effect(actor, "mindgames"):
-                apply_self_inflicted_magical_damage(actor, heal_value)
-                log_parts.append(f"Mindgames twists healing into {heal_value} self-damage.")
-                set_cooldown(actor, ability_id, ability)
-                return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
-            healing_done = 0
-            if not has_flag(actor, "cycloned"):
-                before_hp = actor.res.hp
-                actor.res.hp = min(actor.res.hp + heal_value, actor.res.hp_max)
-                healing_done = actor.res.hp - before_hp
-            log_parts.append(f"Wild Growth heals {heal_value} HP.")
-            set_cooldown(actor, ability_id, ability)
-            return {"damage": 0, "healing": healing_done, "log": " ".join(log_parts)}
-
-        if ability_id == "regrowth":
-            intellect = modify_stat(actor, "int", actor.stats.get("int", 0))
-            attack = modify_stat(actor, "atk", actor.stats.get("atk", 0))
-            roll_power = roll("d4", r)
-            total_heal = int((intellect + attack) * 1.5) + int(roll_power)
-            per_tick = total_heal // 5
-            apply_effect_by_id(
-                actor,
-                "regrowth",
-                overrides={"duration": 5, "regen": {"hp": per_tick}},
-            )
-            log_parts.append("Healing over time for 5 turns.")
-            set_cooldown(actor, ability_id, ability)
-            return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
 
         if ability_id in ("vampiric_touch", "devouring_plague"):
             if is_immune_all(target):

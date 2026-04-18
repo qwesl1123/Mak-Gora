@@ -502,6 +502,122 @@ def scenario_special_handler_lay_on_hands_parity_and_denial_order() -> bool:
     return True
 
 
+def scenario_special_handler_frenzied_regeneration_parity_and_denial_order() -> bool:
+    assert "frenzied_regeneration" in resolver.SPECIAL_ABILITY_HANDLERS, "Frenzied Regeneration should be routed through special handler dispatch in this extraction pass"
+
+    parity_match = make_match("druid", "warrior", seed=9124)
+    druid_sid, _ = parity_match.players
+    druid = parity_match.state[druid_sid]
+    effects.apply_effect_by_id(druid, "bear_form", overrides={"duration": 2})
+    druid.res.rage = 28
+
+    submit_turn(parity_match, "frenzied_regeneration", _DEF_PASS)
+
+    regen = next((fx for fx in druid.effects if fx.get("id") == "frenzied_regeneration"), None)
+    assert regen is not None, "Frenzied Regeneration handler should still apply the same HoT effect"
+    assert int(((regen.get("regen") or {}).get("hp") or 0)) == 7, "Frenzied Regeneration handler should preserve rage-to-regen conversion"
+    assert druid.res.rage == 0, "Frenzied Regeneration handler should still consume all rage"
+    assert druid.cooldowns.get("frenzied_regeneration"), "Frenzied Regeneration handler should still consume cooldown on successful cast"
+    assert any("channels Frenzied Regeneration." in line for line in _turn_lines(parity_match, 1)), "Frenzied Regeneration handler should preserve log wording"
+
+    denied_match = make_match("druid", "warrior", seed=9125)
+    denied_druid_sid, _ = denied_match.players
+    denied_druid = denied_match.state[denied_druid_sid]
+    effects.apply_effect_by_id(denied_druid, "bear_form", overrides={"duration": 2})
+    denied_druid.res.rage = 24
+    effects.apply_effect_by_id(denied_druid, "feared", overrides={"duration": 1})
+    submit_turn(denied_match, "frenzied_regeneration", _DEF_PASS)
+    denied_turn = _turn_lines(denied_match, 1)
+    assert any("tries to use Frenzied Regeneration but is feared and cannot act." in line for line in denied_turn), "Denial should still occur before Frenzied Regeneration handler execution"
+    assert denied_druid.res.rage == 24, "Denied Frenzied Regeneration should not consume rage"
+    assert not _has_effect(denied_druid, "frenzied_regeneration"), "Denied Frenzied Regeneration should not apply regen effect"
+    assert "frenzied_regeneration" not in denied_druid.cooldowns, "Denied Frenzied Regeneration should not consume cooldown"
+    assert not any("channels Frenzied Regeneration." in line for line in denied_turn), "Denied Frenzied Regeneration should not emit handler success log"
+    return True
+
+
+def scenario_special_handler_wild_growth_parity_and_denial_order() -> bool:
+    assert "wild_growth" in resolver.SPECIAL_ABILITY_HANDLERS, "Wild Growth should be routed through special handler dispatch in this extraction pass"
+
+    heal_match = make_match("druid", "warrior", seed=9126)
+    druid_sid, _ = heal_match.players
+    druid = heal_match.state[druid_sid]
+    effects.apply_effect_by_id(druid, "tree_form", overrides={"duration": 3})
+    druid.res.hp = max(1, druid.res.hp - 30)
+    hp_before = druid.res.hp
+    submit_turn(heal_match, "wild_growth", _DEF_PASS)
+    assert druid.res.hp > hp_before, "Wild Growth handler should still heal"
+    assert any("Wild Growth heals" in line for line in _turn_lines(heal_match, 1)), "Wild Growth handler should preserve log wording"
+
+    mindgames_match = make_match("priest", "druid", seed=9127)
+    _, druid_sid = mindgames_match.players
+    druid = mindgames_match.state[druid_sid]
+    effects.apply_effect_by_id(druid, "tree_form", overrides={"duration": 3})
+    hp_before = druid.res.hp
+    submit_turn(mindgames_match, "mindgames", "wild_growth")
+    assert druid.res.hp < hp_before, "Wild Growth should still be twisted into self-damage under Mindgames"
+    assert any("Mindgames twists healing into" in line for line in _turn_lines(mindgames_match, 1)), "Wild Growth handler should preserve Mindgames twist log wording"
+
+    cycloned_match = make_match("druid", "druid", seed=9128)
+    actor_sid, _ = cycloned_match.players
+    cycloned_druid = cycloned_match.state[actor_sid]
+    effects.apply_effect_by_id(cycloned_druid, "tree_form", overrides={"duration": 3})
+    cycloned_druid.res.hp = max(1, cycloned_druid.res.hp - 40)
+    effects.apply_effect_by_id(cycloned_druid, "cyclone", overrides={"duration": 1})
+    hp_before = cycloned_druid.res.hp
+    submit_turn(cycloned_match, "wild_growth", _DEF_PASS)
+    turn_one = _turn_lines(cycloned_match, 1)
+    assert any("tries to use Wild Growth but is cycloned and cannot act." in line for line in turn_one), "Cycloned Wild Growth should be denied before special handler execution"
+    assert cycloned_druid.res.hp == hp_before, "Cycloned Wild Growth cast should not apply healing"
+    assert "wild_growth" not in cycloned_druid.cooldowns, "Cycloned-denied Wild Growth should not consume cooldown"
+
+    denied_match = make_match("druid", "warrior", seed=9129)
+    denied_druid_sid, _ = denied_match.players
+    denied_druid = denied_match.state[denied_druid_sid]
+    effects.apply_effect_by_id(denied_druid, "tree_form", overrides={"duration": 3})
+    denied_druid.res.hp = max(1, denied_druid.res.hp - 25)
+    hp_before = denied_druid.res.hp
+    effects.apply_effect_by_id(denied_druid, "feared", overrides={"duration": 1})
+    submit_turn(denied_match, "wild_growth", _DEF_PASS)
+    denied_turn = _turn_lines(denied_match, 1)
+    assert any("tries to use Wild Growth but is feared and cannot act." in line for line in denied_turn), "Denial should still occur before Wild Growth handler execution"
+    assert denied_druid.res.hp == hp_before, "Denied Wild Growth should not apply healing side effects"
+    assert "wild_growth" not in denied_druid.cooldowns, "Denied Wild Growth should not consume cooldown"
+    assert not any("Wild Growth heals" in line for line in denied_turn), "Denied Wild Growth should not emit handler heal log"
+    return True
+
+
+def scenario_special_handler_regrowth_parity_and_denial_order() -> bool:
+    assert "regrowth" in resolver.SPECIAL_ABILITY_HANDLERS, "Regrowth should be routed through special handler dispatch in this extraction pass"
+
+    parity_match = make_match("druid", "warrior", seed=9130)
+    druid_sid, _ = parity_match.players
+    druid = parity_match.state[druid_sid]
+    effects.apply_effect_by_id(druid, "tree_form", overrides={"duration": 3})
+
+    submit_turn(parity_match, "regrowth", _DEF_PASS)
+
+    regrowth_fx = next((fx for fx in druid.effects if fx.get("id") == "regrowth"), None)
+    assert regrowth_fx is not None, "Regrowth handler should still apply regrowth HoT effect"
+    assert int(regrowth_fx.get("duration") or 0) == 4, "Regrowth handler should preserve same-turn tick/decrement semantics for regrowth duration"
+    assert int(((regrowth_fx.get("regen") or {}).get("hp") or 0)) > 0, "Regrowth handler should preserve positive per-tick healing"
+    assert druid.cooldowns.get("regrowth"), "Regrowth handler should still consume cooldown"
+    assert any("Healing over time for 5 turns." in line for line in _turn_lines(parity_match, 1)), "Regrowth handler should preserve log wording"
+
+    denied_match = make_match("druid", "warrior", seed=9131)
+    denied_druid_sid, _ = denied_match.players
+    denied_druid = denied_match.state[denied_druid_sid]
+    effects.apply_effect_by_id(denied_druid, "tree_form", overrides={"duration": 3})
+    effects.apply_effect_by_id(denied_druid, "feared", overrides={"duration": 1})
+    submit_turn(denied_match, "regrowth", _DEF_PASS)
+    denied_turn = _turn_lines(denied_match, 1)
+    assert any("tries to use Regrowth but is feared and cannot act." in line for line in denied_turn), "Denial should still occur before Regrowth handler execution"
+    assert not _has_effect(denied_druid, "regrowth"), "Denied Regrowth should not apply HoT effect"
+    assert "regrowth" not in denied_druid.cooldowns, "Denied Regrowth should not consume cooldown"
+    assert not any("Healing over time for 5 turns." in line for line in denied_turn), "Denied Regrowth should not emit handler success log"
+    return True
+
+
 def scenario_mindgames_shield_of_vengeance_explosion_interactions() -> bool:
     normal_damage = make_match("priest", "paladin", seed=9101)
     priest_sid, pal_sid = normal_damage.players
@@ -4534,6 +4650,9 @@ SCENARIOS = [
     scenario_special_handler_holy_light_parity_and_denial_order,
     scenario_special_handler_flash_heal_parity_and_denial_order,
     scenario_special_handler_lay_on_hands_parity_and_denial_order,
+    scenario_special_handler_frenzied_regeneration_parity_and_denial_order,
+    scenario_special_handler_wild_growth_parity_and_denial_order,
+    scenario_special_handler_regrowth_parity_and_denial_order,
     scenario_mindgames_shield_of_vengeance_explosion_interactions,
     scenario_mass_dispel_selective_removal,
     scenario_healing_resolves_from_negative_hp_before_winner_check,
