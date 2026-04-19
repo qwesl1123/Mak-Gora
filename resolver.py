@@ -2117,7 +2117,7 @@ def resolve_turn(match: MatchState) -> None:
                 _, consumed_absorb, _ = consume_absorbs(actor, absorbed_pool)
 
             if not enemy_pets:
-                log_parts.append("No enemy pets or totems are present.")
+                log_parts.append("No enemy pets are present.")
                 set_cooldown(actor, ability_id, ability)
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
 
