@@ -36,6 +36,7 @@
         --paladin-color: #F48CBA;
         --priest-color: #FFFFFF;
         --hunter-color: #AAD372;
+        --shaman-color: #0070DD;
         --item-green: #1eff00;
         --item-blue: #0070dd;
         --item-purple: #a335ee;
@@ -645,6 +646,10 @@
         color: var(--hunter-color);
       }
 
+      .champion-name-class.shaman {
+        color: var(--shaman-color);
+      }
+
       .stat-row {
         display: flex;
         justify-content: space-between;
@@ -720,6 +725,10 @@
 
       .status-text.hunter {
         color: var(--hunter-color);
+      }
+
+      .status-text.shaman {
+        color: var(--shaman-color);
       }
 
       .resource-bar {
@@ -1249,6 +1258,12 @@
       .log-class-hunter,
       .log-ability-hunter {
         color: var(--hunter-color);
+        font-weight: 700;
+      }
+
+      .log-class-shaman,
+      .log-ability-shaman {
+        color: var(--shaman-color);
         font-weight: 700;
       }
 
@@ -2070,7 +2085,7 @@
 
             <div class="hint">
               <strong>Choose your class:</strong><br>
-              <span class="kbd">/class warrior</span>, <span class="kbd">/class mage</span>, <span class="kbd">/class rogue</span>, <span class="kbd">/class paladin</span>, <span class="kbd">/class druid</span>, <span class="kbd">/class warlock</span>, <span class="kbd">/class priest</span>, or <span class="kbd">/class hunter</span><br>
+              <span class="kbd">/class warrior</span>, <span class="kbd">/class mage</span>, <span class="kbd">/class rogue</span>, <span class="kbd">/class paladin</span>, <span class="kbd">/class druid</span>, <span class="kbd">/class warlock</span>, <span class="kbd">/class priest</span>, <span class="kbd">/class hunter</span>, or <span class="kbd">/class shaman</span><br>
               <strong>Equip weapon:</strong><br>
               <span class="kbd">/item weapon thunderfury</span>, <span class="kbd">/item weapon twin_blades_azzinoth</span>, <span class="kbd">/item weapon dragonwrath</span><br>
               <strong>Equip armor:</strong><br>
@@ -2125,57 +2140,64 @@
           <div class="doc-item">
             <h4 style="color: var(--warrior-color);">Warrior</h4>
             <p><span class="stat">Attack: 12</span> | <span class="stat">Intellect: 2</span> | <span class="stat">Defense: 8</span></p>
-            <p><span class="stat">HP: 110</span> | Speed: 8 | Crit: 5% | Accuracy: 90%</p>
+            <p><span class="stat">HP: 110</span> | Speed: 8 | Crit: 5% | Accuracy: 90% | Evasion: 5%</p>
             <p>Master of physical combat. Excels at melee attacks and tanking damage. High HP and physical damage output.</p>
           </div>
           
           <div class="doc-item">
             <h4 style="color: var(--mage-color);">Mage</h4>
             <p><span class="stat">Attack: 4</span> | <span class="stat">Intellect: 14</span> | <span class="stat">Defense: 4</span></p>
-            <p><span class="stat">HP: 90</span> | <span class="stat">Mana: 80</span> | Speed: 9 | Crit: 8% | Accuracy: 95%</p>
+            <p><span class="stat">HP: 90</span> | <span class="stat">Mana: 80</span> | Speed: 9 | Crit: 8% | Accuracy: 95% | Evasion: 6%</p>
             <p>Master of arcane magic. Weak physical attacks but devastating spells. Uses Mana for powerful abilities.</p>
           </div>
 
           <div class="doc-item">
             <h4 style="color: var(--rogue-color);">Rogue</h4>
             <p><span class="stat">Attack: 10</span> | <span class="stat">Intellect: 1</span> | <span class="stat">Defense: 4</span></p>
-            <p><span class="stat">HP: 95</span> | <span class="stat">Energy: 100</span> | Speed: 9 | Crit: 8% | Accuracy: 97%</p>
+            <p><span class="stat">HP: 95</span> | <span class="stat">Energy: 100</span> | Speed: 9 | Crit: 8% | Accuracy: 97% | Evasion: 9%</p>
             <p>Elusive striker with exceptional evasion. Uses Energy and excels at stealthy burst damage.</p>
           </div>
 
           <div class="doc-item">
             <h4 style="color: var(--druid-color);">Druid</h4>
             <p><span class="stat">Attack: 6</span> | <span class="stat">Intellect: 6</span> | <span class="stat">Defense: 5</span></p>
-            <p><span class="stat">HP: 100</span> | <span class="stat">Mana: 80</span> | <span class="stat">Energy: 100</span> | Speed: 8 | Crit: 8% | Accuracy: 95%</p>
+            <p><span class="stat">HP: 100</span> | <span class="stat">Mana: 80</span> | <span class="stat">Energy: 100</span> | Speed: 8 | Crit: 8% | Accuracy: 95% | Evasion: 5%</p>
             <p>Adaptive shapeshifter. Switches forms to access different resources and roles.</p>
           </div>
 
           <div class="doc-item">
             <h4 style="color: var(--warlock-color);">Warlock</h4>
             <p><span class="stat">Attack: 3</span> | <span class="stat">Intellect: 15</span> | <span class="stat">Defense: 7</span></p>
-            <p><span class="stat">HP: 110</span> | <span class="stat">Mana: 100</span> | Speed: 9 | Crit: 4% | Accuracy: 96%</p>
+            <p><span class="stat">HP: 110</span> | <span class="stat">Mana: 100</span> | Speed: 9 | Crit: 4% | Accuracy: 96% | Evasion: 2%</p>
             <p>Master of curses and demons. Uses Mana only and specializes in magical afflictions.</p>
           </div>
 
           <div class="doc-item">
             <h4 style="color: var(--paladin-color);">Paladin</h4>
             <p><span class="stat">Attack: 10</span> | <span class="stat">Intellect: 7</span> | <span class="stat">Defense: 6</span></p>
-            <p><span class="stat">HP: 100</span> | <span class="stat">Mana: 70</span> | Speed: 7 | Crit: 5% | Accuracy: 90%</p>
+            <p><span class="stat">HP: 100</span> | <span class="stat">Mana: 70</span> | Speed: 7 | Crit: 5% | Accuracy: 90% | Evasion: 3%</p>
             <p>Holy warrior of the Light. Mixes weapon strikes, shielding, and support magic for balanced offense and defense.</p>
           </div>
 
           <div class="doc-item">
             <h4 style="color: var(--priest-color);">Priest</h4>
             <p><span class="stat">Attack: 3</span> | <span class="stat">Intellect: 12</span> | <span class="stat">Defense: 5</span></p>
-            <p><span class="stat">HP: 95</span> | <span class="stat">Mana: 110</span> | Speed: 8 | Crit: 7% | Accuracy: 95%</p>
+            <p><span class="stat">HP: 95</span> | <span class="stat">Mana: 110</span> | Speed: 8 | Crit: 7% | Accuracy: 95% | Evasion: 4%</p>
             <p>Faith-driven spellcaster. Balances direct holy casts, shadow damage-over-time pressure, and powerful healing to outlast foes.</p>
           </div>
 
           <div class="doc-item">
             <h4 style="color: #AAD372;">Hunter</h4>
             <p><span class="stat">Attack: 12</span> | <span class="stat">Intellect: 0</span> | <span class="stat">Defense: 5</span></p>
-            <p><span class="stat">HP: 95</span> | <span class="stat">Mana: 50</span> | Speed: 9 | Crit: 7% | Accuracy: 96%</p>
+            <p><span class="stat">HP: 95</span> | <span class="stat">Mana: 50</span> | Speed: 9 | Crit: 7% | Accuracy: 96% | Evasion: 10%</p>
             <p>Agile ranged predator. Uses mana-fueled shots, anti-stealth utility, and one persistent animal companion at a time.</p>
+          </div>
+
+          <div class="doc-item">
+            <h4 style="color: var(--shaman-color);">Shaman</h4>
+            <p><span class="stat">Attack: 3</span> | <span class="stat">Intellect: 7</span> | <span class="stat">Defense: 5</span></p>
+            <p><span class="stat">HP: 95</span> | <span class="stat">Mana: 100</span> | Speed: 9 | Crit: 8% | Accuracy: 95% | Evasion: 3%</p>
+            <p>Elemental mystic who chains shocks, shields with ancestral power, and summons totems.</p>
           </div>
 
         </div>
@@ -2982,6 +3004,64 @@
           </div>
         </div>
 
+        <h4 class="doc-subtitle" style="color: var(--shaman-color);">Shaman</h4>
+        <div class="doc-grid">
+          <div class="doc-item">
+            <h4>Earth Shock</h4>
+            <p><span class="stat">Cost: 5 Mana</span> | <span class="stat">Type: Magic (Nature)</span> | <span class="stat">Cooldown: 3</span></p>
+            <p><span class="stat">Command: <span class="kbd">earth_shock</span></span></p>
+            <p>Deals [Intellect (0.7x) + d4] Nature damage and grants <span class="stat">Flame Shock</span>.</p>
+          </div>
+          <div class="doc-item">
+            <h4>Flame Shock</h4>
+            <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Type: Magic (Fire)</span> | <span class="stat">Cooldown: 3</span></p>
+            <p><span class="stat">Command: <span class="kbd">flame_shock</span></span></p>
+            <p>Requires the Flame Shock proc. Deals [Intellect (0.6x) + d4] Fire damage and grants <span class="stat">Frost Shock</span>.</p>
+          </div>
+          <div class="doc-item">
+            <h4>Frost Shock</h4>
+            <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Type: Magic (Frost)</span> | <span class="stat">Cooldown: 3</span></p>
+            <p><span class="stat">Command: <span class="kbd">frost_shock</span></span></p>
+            <p>Requires the Frost Shock proc. Deals [Intellect (0.7x) + d6] Frost damage.</p>
+          </div>
+          <div class="doc-item">
+            <h4>Healing Stream</h4>
+            <p><span class="stat">Cost: 6 Mana</span> | <span class="stat">Cooldown: 10</span></p>
+            <p><span class="stat">Command: <span class="kbd">healing_stream</span></span></p>
+            <p>For 6 turns, restores [Intellect (0.2x) + d2] HP each turn.</p>
+          </div>
+          <div class="doc-item">
+            <h4>Ancestral Guidance</h4>
+            <p><span class="stat">Cost: 20 Mana</span> | <span class="stat">Cooldown: 15</span></p>
+            <p><span class="stat">Command: <span class="kbd">ancestral_guidance</span></span></p>
+            <p>For 3 turns, grants an end-of-turn absorb shield each turn: [Intellect (0.3x) + d4].</p>
+          </div>
+          <div class="doc-item">
+            <h4>Astral Shift</h4>
+            <p><span class="stat">Cost: 20 Mana</span> | <span class="stat">Cooldown: 15</span></p>
+            <p><span class="stat">Command: <span class="kbd">astral_shift</span></span></p>
+            <p>Converts all available HP into absorb while leaving 1 HP.</p>
+          </div>
+          <div class="doc-item">
+            <h4>Mana Tide Totem</h4>
+            <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Cooldown: 15</span></p>
+            <p><span class="stat">Command: <span class="kbd">mana_tide_totem</span></span></p>
+            <p>Summons a 4-turn totem with 15 HP that restores 10 mana each turn while alive.</p>
+          </div>
+          <div class="doc-item">
+            <h4>Capacitor Totem</h4>
+            <p><span class="stat">Cost: 20 Mana</span> | <span class="stat">Cooldown: 6</span></p>
+            <p><span class="stat">Command: <span class="kbd">capacitor_totem</span></span></p>
+            <p>After a 1-turn delay, stuns the enemy champion for 2 turns, then disappears.</p>
+          </div>
+          <div class="doc-item">
+            <h4>Astral Explosion</h4>
+            <p><span class="stat">Cost: 15 Mana</span> | <span class="stat">Type: Magic (Arcane)</span> | <span class="stat">Cooldown: 20</span></p>
+            <p><span class="stat">Command: <span class="kbd">astral_explosion</span></span></p>
+            <p>Consumes all absorb shield and splits that total damage across enemy pets/totems only.</p>
+          </div>
+        </div>
+
         <h3>Combat Mechanics</h3>
         <div class="doc-content">
           <p><strong>Damage Types:</strong> Physical damage is reduced by DEF + Armor. Magic damage is reduced by DEF + Magic Resist.</p>
@@ -3005,7 +3085,7 @@
         <div class="doc-content">
           <p><strong>1. Join Queue:</strong> Click "Enter the Arena" to find an opponent.</p>
           
-          <p><strong>2. Prep Phase:</strong> Choose your class with <span class="kbd">/class warrior</span>, <span class="kbd">/class mage</span>, <span class="kbd">/class rogue</span>, <span class="kbd">/class druid</span>, <span class="kbd">/class warlock</span>, <span class="kbd">/class paladin</span>, <span class="kbd">/class priest</span>, or <span class="kbd">/class hunter</span></p>
+          <p><strong>2. Prep Phase:</strong> Choose your class with <span class="kbd">/class warrior</span>, <span class="kbd">/class mage</span>, <span class="kbd">/class rogue</span>, <span class="kbd">/class druid</span>, <span class="kbd">/class warlock</span>, <span class="kbd">/class paladin</span>, <span class="kbd">/class priest</span>, <span class="kbd">/class hunter</span>, or <span class="kbd">/class shaman</span></p>
           
           <p><strong>3. Equip Items:</strong> Use <span class="kbd">/item weapon steel_long_sword</span> and <span class="kbd">/item armor plate_armor</span></p>
           
@@ -3180,6 +3260,17 @@
         "Call Frostsaber",
         "Call Emerald Serpent",
         "Call Barrens Boar",
+      ];
+      const shamanAbilities = [
+        "Earth Shock",
+        "Flame Shock",
+        "Frost Shock",
+        "Healing Stream",
+        "Ancestral Guidance",
+        "Astral Shift",
+        "Mana Tide Totem",
+        "Capacitor Totem",
+        "Astral Explosion",
       ];
       const druidAbilities = [
         "Bear Form",
@@ -3382,16 +3473,16 @@
 
       const abilityIconCategories = {
         "Physical Attack": ["Overpower", "Victory Rush", "Rampage", "Mortal Strike", "Execute", "Dragon Roar", "Cleave", "Eviscerate", "Shadowstrike", "Ambush", "Maul", "Swipe", "Claw", "Shred", "Rip", "Crusader Strike", "Final Verdict", "Aimed Shot", "Raptor Strike", "Multi-Shot"],
-        "Magical Attack": ["Fireball", "Fire Blast", "Arcane Barrage", "Pyroblast", "Wrath", "Starfire", "Agony", "Corruption", "Unstable Affliction", "Drain Life", "Judgment", "Shield of Vengeance", "Mind Flay", "Mind Blast", "Vampiric Touch", "Devouring Plague", "Penance", "Mindgames", "Shadow Word: Death", "Wildfire Bomb", "Arcane Shot"],
-        "Single Target": ["Overpower", "Victory Rush", "Rampage", "Mortal Strike", "Execute", "Fireball", "Fire Blast", "Arcane Barrage", "Pyroblast", "Ring of Ice", "Eviscerate", "Shadowstrike", "Ambush", "Maul", "Claw", "Shred", "Rip", "Cheap Shot", "Kidney Shot", "Maim", "Wrath", "Starfire", "Cyclone", "Typhoon", "Agony", "Corruption", "Unstable Affliction", "Drain Life", "Fear", "Crusader Strike", "Judgment", "Final Verdict", "Hammer of Justice", "Mind Flay", "Mind Blast", "Vampiric Touch", "Devouring Plague", "Penance", "Shadow Word: Death", "Wildfire Bomb", "Arcane Shot", "Freezing Trap", "Aimed Shot", "Raptor Strike"],
-        "AoE": ["Dragon Roar", "Cleave", "Swipe", "Shield of Vengeance", "Psychic Scream", "Multi-Shot"],
-        "Crowd Control": ["Ring of Ice", "Cheap Shot", "Kidney Shot", "Maim", "Cyclone", "Typhoon", "Fear", "Hammer of Justice", "Freezing Trap"],
+        "Magical Attack": ["Fireball", "Fire Blast", "Arcane Barrage", "Pyroblast", "Wrath", "Starfire", "Agony", "Corruption", "Unstable Affliction", "Drain Life", "Judgment", "Shield of Vengeance", "Mind Flay", "Mind Blast", "Vampiric Touch", "Devouring Plague", "Penance", "Mindgames", "Shadow Word: Death", "Wildfire Bomb", "Arcane Shot", "Earth Shock", "Flame Shock", "Frost Shock", "Astral Explosion"],
+        "Single Target": ["Overpower", "Victory Rush", "Rampage", "Mortal Strike", "Execute", "Fireball", "Fire Blast", "Arcane Barrage", "Pyroblast", "Ring of Ice", "Eviscerate", "Shadowstrike", "Ambush", "Maul", "Claw", "Shred", "Rip", "Cheap Shot", "Kidney Shot", "Maim", "Wrath", "Starfire", "Cyclone", "Typhoon", "Agony", "Corruption", "Unstable Affliction", "Drain Life", "Fear", "Crusader Strike", "Judgment", "Final Verdict", "Hammer of Justice", "Mind Flay", "Mind Blast", "Vampiric Touch", "Devouring Plague", "Penance", "Shadow Word: Death", "Wildfire Bomb", "Arcane Shot", "Freezing Trap", "Aimed Shot", "Raptor Strike", "Earth Shock", "Flame Shock", "Frost Shock"],
+        "AoE": ["Dragon Roar", "Cleave", "Swipe", "Shield of Vengeance", "Psychic Scream", "Multi-Shot", "Astral Explosion"],
+        "Crowd Control": ["Ring of Ice", "Cheap Shot", "Kidney Shot", "Maim", "Cyclone", "Typhoon", "Fear", "Hammer of Justice", "Freezing Trap", "Capacitor Totem"],
         "Immunity": ["Ice Block", "Unending Resolve", "Divine Shield"],
-        "Defensive": ["Die by the Sword", "Ignore Pain", "Ice Barrier", "Vanish", "Cloak of Shadows", "Evasion", "Frenzied Regeneration", "Barkskin", "Dark Pact", "Shield of Vengeance", "Power Word: Shield", "Pain Suppression", "Mindgames", "Psychic Scream", "Aspect of the Turtle"],
+        "Defensive": ["Die by the Sword", "Ignore Pain", "Ice Barrier", "Vanish", "Cloak of Shadows", "Evasion", "Frenzied Regeneration", "Barkskin", "Dark Pact", "Shield of Vengeance", "Power Word: Shield", "Pain Suppression", "Mindgames", "Psychic Scream", "Aspect of the Turtle", "Ancestral Guidance"],
         "Mobility": ["Blink", "Demonic Gateway", "Demonic Circle: Teleport", "Disengage"],
-        "Healing": ["Wild Growth", "Regrowth", "Victory Rush", "Healthstone", "Drain Life", "Holy Light", "Lay on Hands", "Vampiric Touch", "Devouring Plague", "Penance", "Flash Heal"],
-        "Utility": ["Thistle Tea", "Innervate", "Demonic Circle", "Mass Dispel", "Flare"],
-        "Summon": ["Summon Imp", "Shadowfiend", "Frostsaber", "Emerald Serpent", "Barrens Boar"],
+        "Healing": ["Wild Growth", "Regrowth", "Victory Rush", "Healthstone", "Drain Life", "Holy Light", "Lay on Hands", "Vampiric Touch", "Devouring Plague", "Penance", "Flash Heal", "Healing Stream"],
+        "Utility": ["Thistle Tea", "Innervate", "Demonic Circle", "Mass Dispel", "Flare", "Astral Shift", "Mana Tide Totem"],
+        "Summon": ["Summon Imp", "Shadowfiend", "Frostsaber", "Emerald Serpent", "Barrens Boar", "Mana Tide Totem", "Capacitor Totem"],
         "Empowerment": ["Avenging Wrath"],
       };
 
@@ -4056,6 +4147,7 @@
           { pattern: /\bPaladin(\(you\))?\b/g, className: "log-class-paladin" },
           { pattern: /\bPriest(\(you\))?\b/g, className: "log-class-priest" },
           { pattern: /\bHunter(\(you\))?\b/g, className: "log-class-hunter" },
+          { pattern: /\bShaman(\(you\))?\b/g, className: "log-class-shaman" },
         ];
         classPatterns.forEach(({ pattern, className }) => {
           output = output.replace(pattern, `<span class="${className}">$&</span>`);
@@ -4100,9 +4192,14 @@
           const pattern = new RegExp(`\\b${escapeRegExp(ability)}\\b`, "g");
           output = output.replace(pattern, `<span class="log-ability-hunter">$&</span>`);
         });
+        shamanAbilities.forEach((ability) => {
+          const pattern = new RegExp(`\\b${escapeRegExp(ability)}\\b`, "g");
+          output = output.replace(pattern, `<span class="log-ability-shaman">$&</span>`);
+        });
         [
           { names: ["Frostsaber", "Emerald Serpent", "Barrens Boar"], className: "log-class-hunter" },
           { names: ["Imp"], className: "log-class-warlock" },
+          { names: ["Mana Tide Totem", "Capacitor Totem"], className: "log-class-shaman" },
         ].forEach(({ names, className }) => {
           names.forEach((petName) => {
             const pattern = new RegExp(`\\b${escapeRegExp(petName)}\\b`, "g");
@@ -4474,14 +4571,14 @@
       }
 
       function isStyledChampionClass(classKey) {
-        return ["warrior", "mage", "rogue", "druid", "warlock", "paladin", "priest", "hunter"].includes(classKey);
+        return ["warrior", "mage", "rogue", "druid", "warlock", "paladin", "priest", "hunter", "shaman"].includes(classKey);
       }
 
       function setStatusClass(element, classKey) {
         if (!element) {
           return;
         }
-        element.classList.remove("warrior", "mage", "rogue", "druid", "warlock", "paladin", "priest", "hunter");
+        element.classList.remove("warrior", "mage", "rogue", "druid", "warlock", "paladin", "priest", "hunter", "shaman");
       }
 
       function renderStatus(effects, stealthed, formId, classKey, element) {
@@ -4567,6 +4664,8 @@
         "barrens boar":     "var(--hunter-color)",
         "imp":              "var(--warlock-color)",
         "shadowfiend":      "var(--priest-color)",
+        "mana tide totem":  "var(--shaman-color)",
+        "capacitor totem":  "var(--shaman-color)",
       };
 
       function petColorForName(name) {
@@ -5086,6 +5185,7 @@
         "log-ability-paladin":  "var(--paladin-color)",
         "log-ability-priest":   "var(--priest-color)",
         "log-ability-hunter":   "var(--hunter-color)",
+        "log-ability-shaman":   "var(--shaman-color)",
         "log-ability-azzinoth": "var(--item-orange)",
       };
 
@@ -5099,7 +5199,7 @@
       const tipDesc = document.getElementById("tipDesc");
 
       (function buildTooltipDataFromDocs() {
-        const PET_NAMES = new Set(["Frostsaber", "Emerald Serpent", "Barrens Boar", "Imp"]);
+        const PET_NAMES = new Set(["Frostsaber", "Emerald Serpent", "Barrens Boar", "Imp", "Mana Tide Totem", "Capacitor Totem"]);
 
         document.querySelectorAll(".documentation .doc-item").forEach(card => {
           const h4 = card.querySelector("h4");

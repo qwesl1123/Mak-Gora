@@ -3900,6 +3900,118 @@ def scenario_duel_html_agony_docs_updated() -> bool:
     return True
 
 
+def scenario_shaman_shock_proc_chain() -> bool:
+    match = make_match("shaman", "warrior", seed=7001)
+    shaman_sid, enemy_sid = match.players
+    match.state[shaman_sid].stats["acc"] = 999
+    match.state[enemy_sid].stats["eva"] = 0
+
+    submit_turn(match, "earth_shock", _DEF_PASS)
+    assert effects.has_effect(match.state[shaman_sid], "flame_shock_proc"), "Earth Shock should grant Flame Shock proc"
+
+    submit_turn(match, "flame_shock", _DEF_PASS)
+    assert not effects.has_effect(match.state[shaman_sid], "flame_shock_proc"), "Flame Shock should consume Flame Shock proc"
+    assert effects.has_effect(match.state[shaman_sid], "frost_shock_proc"), "Flame Shock should grant Frost Shock proc"
+
+    submit_turn(match, "frost_shock", _DEF_PASS)
+    assert not effects.has_effect(match.state[shaman_sid], "frost_shock_proc"), "Frost Shock should consume Frost Shock proc"
+    return True
+
+
+def scenario_shaman_healing_stream_hot() -> bool:
+    match = make_match("shaman", "warrior", seed=7002)
+    shaman_sid, enemy_sid = match.players
+    shaman = match.state[shaman_sid]
+    enemy = match.state[enemy_sid]
+    shaman.res.hp = 50
+    shaman.stats["acc"] = 999
+    enemy.stats["eva"] = 0
+    submit_turn(match, "healing_stream", _DEF_PASS)
+    hp_after_cast = shaman.res.hp
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+    assert shaman.res.hp > hp_after_cast, "Healing Stream should heal over time"
+    return True
+
+
+def scenario_shaman_ancestral_guidance_and_knowledge() -> bool:
+    match = make_match("shaman", "warrior", seed=7003)
+    shaman_sid, _ = match.players
+    shaman = match.state[shaman_sid]
+    base_int = int(shaman.stats.get("int", 0))
+    shaman.res.hp = 60
+    submit_turn(match, "ancestral_guidance", _DEF_PASS)
+    assert effects.absorb_total(shaman) > 0, "Ancestral Guidance should grant an end-of-turn shield"
+    assert effects.has_effect(shaman, "ancestral_guidance_shield"), "Ancestral Guidance Shield should be present"
+    assert shaman.stats["int"] >= base_int + 1, "Ancestral Knowledge should grant at least +1 permanent Int"
+    return True
+
+
+def scenario_shaman_astral_shift_conversion() -> bool:
+    match = make_match("shaman", "warrior", seed=7004)
+    shaman_sid, _ = match.players
+    shaman = match.state[shaman_sid]
+    shaman.res.hp = 40
+    submit_turn(match, "astral_shift", _DEF_PASS)
+    assert shaman.res.hp >= 1, "Astral Shift should never reduce the caster below 1 HP"
+    assert effects.absorb_total(shaman) >= 39, "Astral Shift should convert HP into absorb"
+    assert effects.has_effect(shaman, "astral_shield"), "Astral Shift should apply Astral Shield"
+    return True
+
+
+def scenario_shaman_totems_and_astral_explosion() -> bool:
+    match = make_match("shaman", "warlock", seed=7005)
+    shaman_sid, warlock_sid = match.players
+    shaman = match.state[shaman_sid]
+    warlock = match.state[warlock_sid]
+
+    shaman.res.mp = 0
+    submit_turn(match, "mana_tide_totem", "summon_imp")
+    mp_after_summon = shaman.res.mp
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+    assert shaman.res.mp > mp_after_summon, "Mana Tide Totem should restore mana while alive"
+
+    shaman.res.mp = max(shaman.res.mp, 30)
+    submit_turn(match, "capacitor_totem", _DEF_PASS)
+    assert any(p.template_id == "capacitor_totem" for p in match.state[shaman_sid].pets.values()), "Capacitor Totem should be summoned"
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+    assert effects.has_effect(match.state[warlock_sid], "capacitor_totem_stun"), "Capacitor Totem should stun after a one-turn delay"
+    assert not any(p.template_id == "capacitor_totem" for p in match.state[shaman_sid].pets.values()), "Capacitor Totem should disappear after discharging"
+
+    shaman.res.mp = max(shaman.res.mp, 100)
+    submit_turn(match, "astral_shift", _DEF_PASS)
+    warlock_hp_before = warlock.res.hp
+    imp_ids = sorted(warlock.pets.keys())
+    assert imp_ids, "Warlock should have at least one pet target for Astral Explosion"
+    imp_hp_before = {pid: warlock.pets[pid].hp for pid in imp_ids}
+    submit_turn(match, "astral_explosion", _DEF_PASS)
+    imp_hp_after = {pid: warlock.pets[pid].hp for pid in imp_ids if pid in warlock.pets}
+    assert warlock.res.hp == warlock_hp_before, "Astral Explosion should not damage the enemy champion"
+    assert any(imp_hp_after.get(pid, 0) < hp for pid, hp in imp_hp_before.items()), "Astral Explosion should damage enemy pets/totems"
+    assert effects.absorb_total(shaman) == 0, "Astral Explosion should consume all absorb when valid targets exist"
+    return True
+
+
+def scenario_shaman_astral_explosion_no_pet_no_consume() -> bool:
+    match = make_match("shaman", "warrior", seed=7006)
+    shaman_sid, _ = match.players
+    shaman = match.state[shaman_sid]
+    submit_turn(match, "astral_shift", _DEF_PASS)
+    before_absorb = effects.absorb_total(shaman)
+    submit_turn(match, "astral_explosion", _DEF_PASS)
+    assert effects.absorb_total(shaman) == before_absorb, "Astral Explosion should not consume absorb when no enemy pets/totems exist"
+    return True
+
+
+def scenario_shaman_and_rogue_docs_and_stats() -> bool:
+    assert CLASSES["rogue"]["base_stats"]["eva"] == 9, "Rogue evasion should be 9"
+    duel_html_text = _detect_duel_html_path().read_text(encoding="utf-8")
+    for class_name in ("Warrior", "Mage", "Rogue", "Druid", "Warlock", "Paladin", "Priest", "Hunter", "Shaman"):
+        assert f"<h4 style=" in duel_html_text and class_name in duel_html_text, f"{class_name} docs should be present"
+    assert "Evasion: 9%" in duel_html_text, "Rogue docs should show Evasion: 9%"
+    assert duel_html_text.count("Evasion:") >= 9, "Class docs should show Evasion for each class"
+    return True
+
+
 def scenario_effect_panel_payload_normalization() -> bool:
     match = make_match("warrior", "warlock", seed=6106)
     warrior_sid, warlock_sid = match.players
@@ -4787,6 +4899,13 @@ SCENARIOS = [
     scenario_shadowfiend_summon_log_deduped,
     scenario_balance_metadata_updates_and_shadowstrike_rename,
     scenario_duel_html_agony_docs_updated,
+    scenario_shaman_shock_proc_chain,
+    scenario_shaman_healing_stream_hot,
+    scenario_shaman_ancestral_guidance_and_knowledge,
+    scenario_shaman_astral_shift_conversion,
+    scenario_shaman_totems_and_astral_explosion,
+    scenario_shaman_astral_explosion_no_pet_no_consume,
+    scenario_shaman_and_rogue_docs_and_stats,
     scenario_effect_panel_payload_normalization,
     scenario_proc_and_burn_duration_cleanup_and_shield_panel_cleanup,
     scenario_high_risk_shields_absorbs_regression_pack,

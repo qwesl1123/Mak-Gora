@@ -17,7 +17,7 @@ CLASSES = {
     },
     "rogue": {
         "name": "Rogue",
-        "base_stats": {"atk": 10, "int": 1, "def": 4, "spd": 9, "crit": 8, "acc": 97, "eva": 20},
+        "base_stats": {"atk": 10, "int": 1, "def": 4, "spd": 9, "crit": 8, "acc": 97, "eva": 9},
         "resources": {"hp": 95, "mp": 0, "energy": 100, "rage": 0, "rage_max": 0},
         "resource_display": {"primary": {"id": "energy", "label": "Energy", "color": "#FFF468"}},
     },
@@ -57,6 +57,13 @@ CLASSES = {
         "color": "#AAD372",
         "base_stats": {"atk": 12, "int": 0, "def": 5, "spd": 9, "crit": 7, "acc": 96, "eva": 10},
         "resources": {"hp": 95, "mp": 50, "energy": 0, "rage": 0, "rage_max": 0},
+        "resource_display": {"primary": {"id": "mp", "label": "Mana", "color": "var(--mana-blue)"}},
+    },
+    "shaman": {
+        "name": "Shaman",
+        "color": "#0070DD",
+        "base_stats": {"atk": 3, "int": 7, "def": 5, "spd": 9, "crit": 8, "acc": 95, "eva": 3},
+        "resources": {"hp": 95, "mp": 100, "energy": 0, "rage": 0, "rage_max": 0},
         "resource_display": {"primary": {"id": "mp", "label": "Mana", "color": "var(--mana-blue)"}},
     },
 }

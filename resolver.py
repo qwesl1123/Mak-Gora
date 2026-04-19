@@ -894,6 +894,19 @@ def _handle_regrowth_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, Any
     return {"damage": 0, "healing": 0, "log": " ".join(ctx.log_parts)}
 
 
+def _handle_healing_stream_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, Any]:
+    intellect = modify_stat(ctx.actor, "int", ctx.actor.stats.get("int", 0))
+    per_tick = max(0, int(intellect * 0.2) + int(roll("d2", ctx.rng)))
+    apply_effect_by_id(
+        ctx.actor,
+        "healing_stream",
+        overrides={"duration": 6, "regen": {"hp": per_tick}},
+    )
+    ctx.log_parts.append("Healing Stream flows for 6 turns.")
+    ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
+    return {"damage": 0, "healing": 0, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
+
+
 SPECIAL_ABILITY_HANDLERS: dict[str, Callable[[SpecialAbilityHandlerContext], Dict[str, Any]]] = {
     "healthstone": _handle_healthstone_special,
     "innervate": _handle_innervate_special,
@@ -904,6 +917,7 @@ SPECIAL_ABILITY_HANDLERS: dict[str, Callable[[SpecialAbilityHandlerContext], Dic
     "frenzied_regeneration": _handle_frenzied_regeneration_special,
     "wild_growth": _handle_wild_growth_special,
     "regrowth": _handle_regrowth_special,
+    "healing_stream": _handle_healing_stream_special,
 }
 
 
@@ -1105,6 +1119,34 @@ def resolve_end_of_turn_stage(
     trigger_shield_of_vengeance_explosion(sids[0], sids[1])
     trigger_shield_of_vengeance_explosion(sids[1], sids[0])
     flush_deferred_stealth_break_logs()
+
+    for sid in sids:
+        ps = match.state[sid]
+        if (ps.build.class_id or "").strip().lower() != "shaman":
+            continue
+        if has_effect(ps, "ancestral_guidance"):
+            guidance_absorb = int(base_damage(modify_stat(ps, "int", ps.stats.get("int", 0)), 0.3, roll("d4", rng)))
+            if guidance_absorb > 0:
+                apply_effect_by_id(ps, "ancestral_guidance_shield", overrides={"duration": 2})
+                add_absorb(
+                    ps,
+                    guidance_absorb,
+                    source_name="Ancestral Guidance Shield",
+                    effect_id="ancestral_guidance_shield",
+                )
+                match.log.append(f"{sid_token(sid)} gains {guidance_absorb} absorb from Ancestral Guidance.")
+        if absorb_total(ps) > 0:
+            current_int = max(0, int(ps.stats.get("int", 0) or 0))
+            heal_value = int(modify_stat(ps, "int", current_int) * 0.4) + int(roll("d2", rng))
+            if heal_value > 0 and ps.res.hp > 0:
+                before_hp = ps.res.hp
+                ps.res.hp = min(ps.res.hp + heal_value, ps.res.hp_max)
+                gained = ps.res.hp - before_hp
+                if gained > 0:
+                    match.log.append(f"{sid_token(sid)} restores {gained} HP from Ancestral Knowledge.")
+            int_gain = max(1, int(current_int * 0.03))
+            ps.stats["int"] = current_int + int_gain
+            match.log.append(f"{sid_token(sid)} gains +{int_gain} Intellect from Ancestral Knowledge.")
 
     # end_of_turn: duration_decrement / expiry_cleanup
     for sid in sids:
@@ -2064,6 +2106,57 @@ def resolve_turn(match: MatchState) -> None:
         )
         if special_ability_result is not None:
             return special_ability_result
+
+        if ability_id == "astral_explosion":
+            enemy = turn_ctx.match.state[target_sid]
+            enemy_pet_ids = sorted((enemy.pets or {}).keys())
+            enemy_pets = [enemy.pets[pet_id] for pet_id in enemy_pet_ids if enemy.pets.get(pet_id) and enemy.pets[pet_id].hp > 0]
+            if not enemy_pets:
+                log_parts.append("No enemy pets or totems are present.")
+                set_cooldown(actor, ability_id, ability)
+                return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
+
+            absorbed_pool = absorb_total(actor)
+            if absorbed_pool <= 0:
+                log_parts.append("No absorb is available to detonate.")
+                set_cooldown(actor, ability_id, ability)
+                return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
+
+            _, consumed_absorb, _ = consume_absorbs(actor, absorbed_pool)
+            if consumed_absorb <= 0:
+                log_parts.append("No absorb is available to detonate.")
+                set_cooldown(actor, ability_id, ability)
+                return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
+
+            split_count = len(enemy_pets)
+            per_target = consumed_absorb // split_count
+            remainder = consumed_absorb % split_count
+            total_damage = 0
+            for index, pet in enumerate(enemy_pets):
+                incoming = per_target + (1 if index < remainder else 0)
+                if incoming <= 0:
+                    continue
+                hp_damage = min(incoming, max(0, int(pet.hp)))
+                absorbed = max(0, incoming - hp_damage)
+                pet.hp = max(0, int(pet.hp) - hp_damage)
+                total_damage += hp_damage
+                total_incoming = hp_damage + absorbed
+                if total_incoming > 0:
+                    match.log.append(f"Astral Explosion hits {sid_token(target_sid)}'s {pet.name} for {total_incoming} damage.")
+                if pet.hp <= 0:
+                    handle_pet_defeat(enemy, pet)
+            if total_damage > 0:
+                totals = match.combat_totals.setdefault(actor_sid, {"damage": 0, "healing": 0})
+                totals["damage"] += total_damage
+            set_cooldown(actor, ability_id, ability)
+            log_parts.append(f"Detonates {consumed_absorb} absorb into nearby enemy pets and totems.")
+            return {
+                "damage": 0,
+                "healing": 0,
+                "log": " ".join(log_parts),
+                "ability_id": ability_id,
+                "skip_direct_target_damage": True,
+            }
 
         if ability_id in ("corruption", "unstable_affliction"):
             if is_immune_all(target):

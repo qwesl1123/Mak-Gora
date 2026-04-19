@@ -313,6 +313,63 @@ def _run_hunter_basic_plus_special(
     )
 
 
+def _run_mana_tide_totem_regen(
+    owner,
+    enemy,
+    pet,
+    owner_sid,
+    enemy_sid,
+    match,
+    rng,
+    apply_damage,
+    absorb_suffix,
+    stealth_targeting,
+    should_miss_due_to_stealth,
+    untargetable_miss_log,
+    can_evasion_force_miss,
+    single_target_miss_active,
+    single_target_miss_log,
+):
+    if owner.res.hp <= 0:
+        return
+    before_mp = owner.res.mp
+    owner.res.mp = min(owner.res.mp + 10, owner.res.mp_max)
+    restored = owner.res.mp - before_mp
+    if restored > 0:
+        match.log.append(f"{_owner_label(owner_sid)}'s Mana Tide Totem restores {restored} mana.")
+
+
+def _run_capacitor_totem_discharge(
+    owner,
+    enemy,
+    pet,
+    owner_sid,
+    enemy_sid,
+    match,
+    rng,
+    apply_damage,
+    absorb_suffix,
+    stealth_targeting,
+    should_miss_due_to_stealth,
+    untargetable_miss_log,
+    can_evasion_force_miss,
+    single_target_miss_active,
+    single_target_miss_log,
+):
+    if not bool(getattr(pet, "_capacitor_primed", False)):
+        setattr(pet, "_capacitor_primed", True)
+        match.log.append(f"{_owner_label(owner_sid)}'s Capacitor Totem is charging.")
+        return
+    apply_effect_by_id(
+        enemy,
+        "capacitor_totem_stun",
+        overrides={"duration": 2, "source_ability_name": "Capacitor Totem Stun"},
+    )
+    match.log.append(f"{_owner_label(owner_sid)}'s Capacitor Totem discharges and stuns {_owner_label(enemy_sid)}.")
+    pet.hp = 0
+
+
+
 
 def _run_pet_attack(
     owner,
@@ -493,6 +550,8 @@ BEHAVIOR_RUNNERS: dict[str, Callable] = {
     "imp_firebolt": _run_imp_firebolt,
     "shadowfiend_melee_mana": _run_shadowfiend_melee_mana,
     "hunter_basic_plus_special": _run_hunter_basic_plus_special,
+    "mana_tide_totem_regen": _run_mana_tide_totem_regen,
+    "capacitor_totem_discharge": _run_capacitor_totem_discharge,
 }
 
 

@@ -117,5 +117,36 @@ PETS = {
             "color": "#AAD372",
             "priority": 25,
         },
-    }
+    },
+    "mana_tide_totem": {
+        "id": "mana_tide_totem",
+        "template_id": "mana_tide_totem",
+        "name": "Mana Tide Totem",
+        "entity_type": "totem",
+        "hp": 15,
+        "duration": 4,
+        "max_count": 1,
+        "behavior_id": "mana_tide_totem_regen",
+        "display": {
+            "war_council": True,
+            "label": "Mana Tide Totem",
+            "color": "#0070DD",
+            "priority": 25,
+        },
+    },
+    "capacitor_totem": {
+        "id": "capacitor_totem",
+        "template_id": "capacitor_totem",
+        "name": "Capacitor Totem",
+        "entity_type": "totem",
+        "hp": 5,
+        "max_count": 1,
+        "behavior_id": "capacitor_totem_discharge",
+        "display": {
+            "war_council": True,
+            "label": "Capacitor Totem",
+            "color": "#0070DD",
+            "priority": 25,
+        },
+    },
 }
