@@ -3986,19 +3986,18 @@ def scenario_shaman_totems_and_astral_explosion() -> bool:
     submit_turn(match, "astral_explosion", _DEF_PASS)
     imp_hp_after = {pid: warlock.pets[pid].hp for pid in imp_ids if pid in warlock.pets}
     assert warlock.res.hp == warlock_hp_before, "Astral Explosion should not damage the enemy champion"
-    assert any(imp_hp_after.get(pid, 0) < hp for pid, hp in imp_hp_before.items()), "Astral Explosion should damage enemy pets/totems"
+    assert any(imp_hp_after.get(pid, 0) < hp for pid, hp in imp_hp_before.items()), "Astral Explosion should damage enemy pets"
     assert effects.absorb_total(shaman) == 0, "Astral Explosion should consume all absorb when valid targets exist"
     return True
 
 
-def scenario_shaman_astral_explosion_no_pet_no_consume() -> bool:
+def scenario_shaman_astral_explosion_no_pet_consumes_absorb() -> bool:
     match = make_match("shaman", "warrior", seed=7006)
     shaman_sid, _ = match.players
     shaman = match.state[shaman_sid]
     submit_turn(match, "astral_shift", _DEF_PASS)
-    before_absorb = effects.absorb_total(shaman)
     submit_turn(match, "astral_explosion", _DEF_PASS)
-    assert effects.absorb_total(shaman) == before_absorb, "Astral Explosion should not consume absorb when no enemy pets/totems exist"
+    assert effects.absorb_total(shaman) == 0, "Astral Explosion should consume absorb even when no enemy pets are present"
     return True
 
 
@@ -4904,7 +4903,7 @@ SCENARIOS = [
     scenario_shaman_ancestral_guidance_and_knowledge,
     scenario_shaman_astral_shift_conversion,
     scenario_shaman_totems_and_astral_explosion,
-    scenario_shaman_astral_explosion_no_pet_no_consume,
+    scenario_shaman_astral_explosion_no_pet_consumes_absorb,
     scenario_shaman_and_rogue_docs_and_stats,
     scenario_effect_panel_payload_normalization,
     scenario_proc_and_burn_duration_cleanup_and_shield_panel_cleanup,

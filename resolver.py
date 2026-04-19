@@ -2111,18 +2111,16 @@ def resolve_turn(match: MatchState) -> None:
             enemy = turn_ctx.match.state[target_sid]
             enemy_pet_ids = sorted((enemy.pets or {}).keys())
             enemy_pets = [enemy.pets[pet_id] for pet_id in enemy_pet_ids if enemy.pets.get(pet_id) and enemy.pets[pet_id].hp > 0]
+            absorbed_pool = absorb_total(actor)
+            consumed_absorb = 0
+            if absorbed_pool > 0:
+                _, consumed_absorb, _ = consume_absorbs(actor, absorbed_pool)
+
             if not enemy_pets:
                 log_parts.append("No enemy pets or totems are present.")
                 set_cooldown(actor, ability_id, ability)
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
 
-            absorbed_pool = absorb_total(actor)
-            if absorbed_pool <= 0:
-                log_parts.append("No absorb is available to detonate.")
-                set_cooldown(actor, ability_id, ability)
-                return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
-
-            _, consumed_absorb, _ = consume_absorbs(actor, absorbed_pool)
             if consumed_absorb <= 0:
                 log_parts.append("No absorb is available to detonate.")
                 set_cooldown(actor, ability_id, ability)
@@ -2149,7 +2147,7 @@ def resolve_turn(match: MatchState) -> None:
                 totals = match.combat_totals.setdefault(actor_sid, {"damage": 0, "healing": 0})
                 totals["damage"] += total_damage
             set_cooldown(actor, ability_id, ability)
-            log_parts.append(f"Detonates {consumed_absorb} absorb into nearby enemy pets and totems.")
+            log_parts.append(f"Detonates {consumed_absorb} absorb into nearby enemy pets.")
             return {
                 "damage": 0,
                 "healing": 0,

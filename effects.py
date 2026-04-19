@@ -813,7 +813,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
     "astral_shield": {
         "type": "status",
         "name": "Astral Shield",
-        "duration": 8,
+        "duration": 50,
         "category": "absorb",
         "dispellable": True,
         "school": "magical",
@@ -823,7 +823,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
     },
     "capacitor_totem_stun": {
         "type": "status",
-        "name": "Capacitor Totem Stun",
+        "name": "Capacitor Totem Discharge",
         "duration": 2,
         "category": "cc",
         "school": "magical",
@@ -977,7 +977,7 @@ _EFFECT_PANEL_MAGICAL_DEBUFF_NAMES = {
     "Wildfire Burn",
     "Burn",
     "Freezing Trap",
-    "Capacitor Totem Stun",
+    "Capacitor Totem Discharge",
 }
 
 
@@ -1062,7 +1062,7 @@ _EFFECT_PANEL_DESCRIPTION_BY_NAME: Dict[str, str] = {
     "Healing Stream": "Healing over time every turn (can be dispelled).",
     "Ancestral Guidance Shield": "Absorb shield (can be dispelled).",
     "Astral Shield": "Absorb shield (can be dispelled).",
-    "Capacitor Totem Stun": "Stunned and cannot act.",
+    "Capacitor Totem Discharge": "Stunned and cannot act.",
     "Vampiric Touch": "Damage over time every turn.",
     "Devouring Plague": "Damage over time every turn.",
     "Shadowy Insight": "Able to cast Devouring Plague (if not on cooldown).",

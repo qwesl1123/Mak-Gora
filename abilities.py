@@ -1291,7 +1291,7 @@ ABILITIES = {
         "cooldown": 3,
         "classes": ["shaman"],
         "self_effects": [
-            {"id": "flame_shock_proc", "duration": 3, "log": "has Flame Shock!", "separate_log": True}
+            {"id": "flame_shock_proc", "duration": 3, "log": "{actor} has Flame Shock!", "separate_log": True}
         ],
     },
     "flame_shock": {
@@ -1309,7 +1309,7 @@ ABILITIES = {
         "requires_effect": "flame_shock_proc",
         "consume_effect": "flame_shock_proc",
         "self_effects": [
-            {"id": "frost_shock_proc", "duration": 3, "log": "has Frost Shock!", "separate_log": True}
+            {"id": "frost_shock_proc", "duration": 3, "log": "{actor} has Frost Shock!", "separate_log": True}
         ],
     },
     "frost_shock": {
@@ -1349,7 +1349,7 @@ ABILITIES = {
         "cooldown": 15,
         "classes": ["shaman"],
         "self_effects": [
-            {"id": "ancestral_guidance", "duration": 3, "log": "is guided by ancestral spirits."}
+            {"id": "ancestral_guidance", "duration": 3, "log": "Calls for their ancestral spirits."}
         ],
     },
     "astral_shift": {
@@ -1363,7 +1363,7 @@ ABILITIES = {
         "cooldown": 15,
         "classes": ["shaman"],
         "hp_sacrifice": {"pct": 1.0, "min_hp_leave": 1},
-        "grant_absorb_from_sacrifice": {"mult": 1.0, "effect_id": "astral_shield", "duration": 8},
+        "grant_absorb_from_sacrifice": {"mult": 1.0, "effect_id": "astral_shield", "duration": 50},
     },
     "mana_tide_totem": {
         "name": "Mana Tide Totem",

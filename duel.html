@@ -1157,6 +1157,11 @@
         font-weight: 700;
         text-shadow: 0 0 12px rgba(170, 211, 114, 0.95);
       }
+      .logLineShamanProc {
+        color: var(--shaman-color);
+        font-weight: 700;
+        text-shadow: 0 0 12px rgba(0, 112, 221, 0.95);
+      }
 
       .logLineExecute {
         color: #ff4444;
@@ -3037,10 +3042,14 @@
             <p>For 3 turns, grants an end-of-turn absorb shield each turn: [Intellect (0.3x) + d4].</p>
           </div>
           <div class="doc-item">
+            <h4>Ancestral Knowledge (Passive)</h4>
+            <p>At the end of each turn, if you have absorb, restore [Intellect (0.4x) + d2] HP and permanently gain +3% Intellect (minimum +1).</p>
+          </div>
+          <div class="doc-item">
             <h4>Astral Shift</h4>
             <p><span class="stat">Cost: 20 Mana</span> | <span class="stat">Cooldown: 15</span></p>
             <p><span class="stat">Command: <span class="kbd">astral_shift</span></span></p>
-            <p>Converts all available HP into absorb while leaving 1 HP.</p>
+            <p>Converts all available HP into absorb while leaving 1 HP. The Astral Shield lasts 50 turns.</p>
           </div>
           <div class="doc-item">
             <h4>Mana Tide Totem</h4>
@@ -3058,7 +3067,7 @@
             <h4>Astral Explosion</h4>
             <p><span class="stat">Cost: 15 Mana</span> | <span class="stat">Type: Magic (Arcane)</span> | <span class="stat">Cooldown: 20</span></p>
             <p><span class="stat">Command: <span class="kbd">astral_explosion</span></span></p>
-            <p>Consumes all absorb shield and splits that total damage across enemy pets/totems only.</p>
+            <p>Consumes all absorb shield and splits that total damage across enemy pets only.</p>
           </div>
         </div>
 
@@ -3267,6 +3276,7 @@
         "Frost Shock",
         "Healing Stream",
         "Ancestral Guidance",
+        "Ancestral Knowledge",
         "Astral Shift",
         "Mana Tide Totem",
         "Capacitor Totem",
@@ -4128,6 +4138,12 @@
           return applyFxTokensToHtml(`<span class="log-class-hunter logLineHunterProc">${renderTextWithFxTags(textWithoutFx)}</span>`, fxTokens);
         }
         if (
+          textWithoutFx.includes("has Flame Shock!")
+          || textWithoutFx.includes("has Frost Shock!")
+        ) {
+          return applyFxTokensToHtml(`<span class="log-class-shaman logLineShamanProc">${renderTextWithFxTags(textWithoutFx)}</span>`, fxTokens);
+        }
+        if (
           textWithoutFx.includes("Has Shadowy Insight!")
           || textWithoutFx.includes("Mind Blast is empowered!")
         ) {
@@ -4234,6 +4250,9 @@
       // We match the simple span the existing code produces: <span class="log-ability-XXX">Name</span>
       // This runs AFTER all color spans are already in place, so coloring is never affected.
       function stampAbilityTips(html) {
+        if (html.includes("has Flame Shock!") || html.includes("has Frost Shock!")) {
+          return html;
+        }
         return html.replace(
           /<span class="(log-ability-[^"]+)">([^<]+)<\/span>/g,
           (match, cls, name) => {
@@ -4265,6 +4284,12 @@
           || msg.includes("has Raptor Strike!")
         ) {
           classes.push("logLineHunterProc");
+        }
+        if (
+          msg.includes("has Flame Shock!")
+          || msg.includes("has Frost Shock!")
+        ) {
+          classes.push("logLineShamanProc");
         }
         if (msg.includes("Can Use Execute")) {
           classes.push("logLineExecute");
@@ -5247,6 +5272,10 @@
             petTipData[name] = entry;
           } else {
             abilityTipData[name] = entry;
+            const passiveMatch = name.match(/^(.+?)\s+\(Passive\)$/i);
+            if (passiveMatch && passiveMatch[1]) {
+              abilityTipData[passiveMatch[1].trim()] = entry;
+            }
           }
         });
       })();
