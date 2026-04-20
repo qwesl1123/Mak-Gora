@@ -3015,19 +3015,31 @@
             <h4>Earth Shock</h4>
             <p><span class="stat">Cost: 5 Mana</span> | <span class="stat">Type: Magic (Nature)</span> | <span class="stat">Cooldown: 3</span></p>
             <p><span class="stat">Command: <span class="kbd">earth_shock</span></span></p>
-            <p>Deals [Intellect (0.7x) + d4] Nature damage and grants <span class="stat">Flame Shock</span>.</p>
+            <p>Deals [Intellect (0.3x) + d4] Nature damage, grants <span class="stat">Flame Shock</span>, and has a 10% chance to grant <span class="stat">Lava Surge</span> (empowers Lava Lash).</p>
           </div>
           <div class="doc-item">
             <h4>Flame Shock</h4>
             <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Type: Magic (Fire)</span> | <span class="stat">Cooldown: 3</span></p>
             <p><span class="stat">Command: <span class="kbd">flame_shock</span></span></p>
-            <p>Requires the Flame Shock proc. Deals [Intellect (0.6x) + d4] Fire damage and grants <span class="stat">Frost Shock</span>.</p>
+            <p>Requires the Flame Shock proc. Deals [Intellect (0.4x) + d4] Fire damage, grants <span class="stat">Frost Shock</span>, and has a 20% chance to grant <span class="stat">Lava Surge</span>.</p>
           </div>
           <div class="doc-item">
             <h4>Frost Shock</h4>
             <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Type: Magic (Frost)</span> | <span class="stat">Cooldown: 3</span></p>
             <p><span class="stat">Command: <span class="kbd">frost_shock</span></span></p>
-            <p>Requires the Frost Shock proc. Deals [Intellect (0.7x) + d6] Frost damage.</p>
+            <p>Requires the Frost Shock proc. Deals [Intellect (0.5x) + d4] Frost damage and has a 30% chance to grant <span class="stat">Lava Surge</span>.</p>
+          </div>
+          <div class="doc-item">
+            <h4>Lava Lash</h4>
+            <p><span class="stat">Cost: 5 Mana</span> | <span class="stat">Type: Magic (Fire)</span> | <span class="stat">Cooldown: 0</span></p>
+            <p><span class="stat">Command: <span class="kbd">lava_lash</span></span></p>
+            <p>Deals [Intellect (0.2x) + d4] Fire damage. While <span class="stat">Lava Surge</span> is active, Lava Lash is empowered to [Intellect (0.5x) + d6], then consumes Lava Surge.</p>
+          </div>
+          <div class="doc-item">
+            <h4>Chain Lightning</h4>
+            <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Type: Magic (Nature, AoE)</span> | <span class="stat">Cooldown: 8</span></p>
+            <p><span class="stat">Command: <span class="kbd">chain_lightning</span></span></p>
+            <p>Deals [Intellect (0.6x) + d6] Nature damage to all enemy targets.</p>
           </div>
           <div class="doc-item">
             <h4>Healing Stream</h4>
@@ -3274,6 +3286,8 @@
         "Earth Shock",
         "Flame Shock",
         "Frost Shock",
+        "Lava Lash",
+        "Chain Lightning",
         "Healing Stream",
         "Ancestral Guidance",
         "Ancestral Knowledge",
@@ -3483,9 +3497,9 @@
 
       const abilityIconCategories = {
         "Physical Attack": ["Overpower", "Victory Rush", "Rampage", "Mortal Strike", "Execute", "Dragon Roar", "Cleave", "Eviscerate", "Shadowstrike", "Ambush", "Maul", "Swipe", "Claw", "Shred", "Rip", "Crusader Strike", "Final Verdict", "Aimed Shot", "Raptor Strike", "Multi-Shot"],
-        "Magical Attack": ["Fireball", "Fire Blast", "Arcane Barrage", "Pyroblast", "Wrath", "Starfire", "Agony", "Corruption", "Unstable Affliction", "Drain Life", "Judgment", "Shield of Vengeance", "Mind Flay", "Mind Blast", "Vampiric Touch", "Devouring Plague", "Penance", "Mindgames", "Shadow Word: Death", "Wildfire Bomb", "Arcane Shot", "Earth Shock", "Flame Shock", "Frost Shock", "Astral Explosion"],
-        "Single Target": ["Overpower", "Victory Rush", "Rampage", "Mortal Strike", "Execute", "Fireball", "Fire Blast", "Arcane Barrage", "Pyroblast", "Ring of Ice", "Eviscerate", "Shadowstrike", "Ambush", "Maul", "Claw", "Shred", "Rip", "Cheap Shot", "Kidney Shot", "Maim", "Wrath", "Starfire", "Cyclone", "Typhoon", "Agony", "Corruption", "Unstable Affliction", "Drain Life", "Fear", "Crusader Strike", "Judgment", "Final Verdict", "Hammer of Justice", "Mind Flay", "Mind Blast", "Vampiric Touch", "Devouring Plague", "Penance", "Shadow Word: Death", "Wildfire Bomb", "Arcane Shot", "Freezing Trap", "Aimed Shot", "Raptor Strike", "Earth Shock", "Flame Shock", "Frost Shock"],
-        "AoE": ["Dragon Roar", "Cleave", "Swipe", "Shield of Vengeance", "Psychic Scream", "Multi-Shot", "Astral Explosion"],
+        "Magical Attack": ["Fireball", "Fire Blast", "Arcane Barrage", "Pyroblast", "Wrath", "Starfire", "Agony", "Corruption", "Unstable Affliction", "Drain Life", "Judgment", "Shield of Vengeance", "Mind Flay", "Mind Blast", "Vampiric Touch", "Devouring Plague", "Penance", "Mindgames", "Shadow Word: Death", "Wildfire Bomb", "Arcane Shot", "Earth Shock", "Flame Shock", "Frost Shock", "Lava Lash", "Chain Lightning", "Astral Explosion"],
+        "Single Target": ["Overpower", "Victory Rush", "Rampage", "Mortal Strike", "Execute", "Fireball", "Fire Blast", "Arcane Barrage", "Pyroblast", "Ring of Ice", "Eviscerate", "Shadowstrike", "Ambush", "Maul", "Claw", "Shred", "Rip", "Cheap Shot", "Kidney Shot", "Maim", "Wrath", "Starfire", "Cyclone", "Typhoon", "Agony", "Corruption", "Unstable Affliction", "Drain Life", "Fear", "Crusader Strike", "Judgment", "Final Verdict", "Hammer of Justice", "Mind Flay", "Mind Blast", "Vampiric Touch", "Devouring Plague", "Penance", "Shadow Word: Death", "Wildfire Bomb", "Arcane Shot", "Freezing Trap", "Aimed Shot", "Raptor Strike", "Earth Shock", "Flame Shock", "Frost Shock", "Lava Lash"],
+        "AoE": ["Dragon Roar", "Cleave", "Swipe", "Shield of Vengeance", "Psychic Scream", "Multi-Shot", "Chain Lightning", "Astral Explosion"],
         "Crowd Control": ["Ring of Ice", "Cheap Shot", "Kidney Shot", "Maim", "Cyclone", "Typhoon", "Fear", "Hammer of Justice", "Freezing Trap", "Capacitor Totem"],
         "Immunity": ["Ice Block", "Unending Resolve", "Divine Shield"],
         "Defensive": ["Die by the Sword", "Ignore Pain", "Ice Barrier", "Vanish", "Cloak of Shadows", "Evasion", "Frenzied Regeneration", "Barkskin", "Dark Pact", "Shield of Vengeance", "Power Word: Shield", "Pain Suppression", "Mindgames", "Psychic Scream", "Aspect of the Turtle", "Ancestral Guidance"],

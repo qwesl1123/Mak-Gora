@@ -3918,6 +3918,95 @@ def scenario_shaman_shock_proc_chain() -> bool:
     return True
 
 
+def scenario_shaman_shock_and_lava_lash_balance_metadata() -> bool:
+    assert ABILITIES["earth_shock"]["scaling"]["int"] == 0.3, "Earth Shock should scale with Intellect at 0.3x"
+    assert ABILITIES["earth_shock"]["dice"]["type"] == "d4", "Earth Shock should use d4"
+    assert ABILITIES["flame_shock"]["scaling"]["int"] == 0.4, "Flame Shock should scale with Intellect at 0.4x"
+    assert ABILITIES["flame_shock"]["dice"]["type"] == "d4", "Flame Shock should use d4"
+    assert ABILITIES["frost_shock"]["scaling"]["int"] == 0.5, "Frost Shock should scale with Intellect at 0.5x"
+    assert ABILITIES["frost_shock"]["dice"]["type"] == "d4", "Frost Shock should use d4"
+    assert ABILITIES["lava_lash"]["scaling"]["int"] == 0.2, "Lava Lash base should scale with Intellect at 0.2x"
+    assert ABILITIES["lava_lash"]["dice"]["type"] == "d4", "Lava Lash base should use d4"
+    assert not ABILITIES["lava_lash"].get("requires_effect"), "Lava Lash should remain castable without Lava Surge"
+    assert ABILITIES["chain_lightning"]["target_mode"] == "aoe_enemy", "Chain Lightning should use enemy AoE targeting"
+    assert ABILITIES["chain_lightning"]["scaling"]["int"] == 0.6, "Chain Lightning should scale with Intellect at 0.6x"
+    assert ABILITIES["chain_lightning"]["dice"]["type"] == "d6", "Chain Lightning should use d6"
+    return True
+
+
+def scenario_shaman_shock_lava_surge_proc_chances() -> bool:
+    for ability_id, chance in (("earth_shock", 0.1), ("flame_shock", 0.2), ("frost_shock", 0.3)):
+        effects_list = ABILITIES[ability_id].get("on_hit_effects", [])
+        lava_surge = next((entry for entry in effects_list if entry.get("id") == "lava_surge"), None)
+        assert lava_surge is not None, f"{ability_id} should be able to grant Lava Surge"
+        assert float(lava_surge.get("chance", 0)) == chance, f"{ability_id} should use {int(chance * 100)}% Lava Surge proc chance"
+        assert lava_surge.get("log") == "{actor} has Lava Surge empowered!", f"{ability_id} Lava Surge proc log should use empowered wording"
+    return True
+
+
+def scenario_shaman_lava_lash_empowered_damage_and_consume() -> bool:
+    match = make_match("shaman", "warrior", seed=7007)
+    shaman_sid, enemy_sid = match.players
+    shaman = match.state[shaman_sid]
+    warrior = match.state[enemy_sid]
+    shaman.stats["acc"] = 999
+    shaman.stats["crit"] = 0
+    shaman.stats["int"] = 10
+    warrior.stats["eva"] = 0
+    warrior.stats["def"] = 0
+    warrior.res.hp = warrior.res.hp_max
+
+    submit_turn(match, "lava_lash", _DEF_PASS)
+    base_turn = _turn_lines(match, 1)
+    assert any("Roll d4 =" in line for line in base_turn), "Base Lava Lash should roll d4"
+    assert not any("Empowered by Lava Surge!" in line for line in base_turn), "Base Lava Lash should not log empowerment"
+
+    hp_after_base = warrior.res.hp
+    effects.apply_effect_by_id(shaman, "lava_surge", overrides={"duration": 2})
+    submit_turn(match, "lava_lash", _DEF_PASS)
+    empowered_turn = _turn_lines(match, 2)
+    assert any("Roll d6 =" in line for line in empowered_turn), "Empowered Lava Lash should roll d6"
+    assert any("Empowered by Lava Surge!" in line for line in empowered_turn), "Empowered Lava Lash should log Lava Surge empowerment"
+    assert not effects.has_effect(shaman, "lava_surge"), "Empowered Lava Lash should consume Lava Surge"
+    assert warrior.res.hp < hp_after_base, "Empowered Lava Lash should deal damage"
+    return True
+
+
+def scenario_shaman_chain_lightning_aoe_and_docs_and_effect_panel() -> bool:
+    match = make_match("shaman", "hunter", seed=7008)
+    shaman_sid, hunter_sid = match.players
+    shaman = match.state[shaman_sid]
+    hunter = match.state[hunter_sid]
+    shaman.stats["acc"] = 999
+    shaman.stats["crit"] = 0
+    hunter.stats["eva"] = 0
+    hunter.stats["def"] = 0
+
+    submit_turn(match, _DEF_PASS, "call_saber")
+    pet_ids = sorted(hunter.pets.keys())
+    assert pet_ids, "Hunter should have a pet target for Chain Lightning AoE validation"
+    pet_hp_before = {pid: hunter.pets[pid].hp for pid in pet_ids}
+    submit_turn(match, "chain_lightning", _DEF_PASS)
+    assert hunter.res.hp < hunter.res.hp_max, "Chain Lightning should hit enemy champion"
+    assert any(hunter.pets.get(pid) and hunter.pets[pid].hp < pet_hp_before[pid] for pid in pet_ids), "Chain Lightning should hit enemy pets/totems under AoE model"
+
+    effects.apply_effect_by_id(shaman, "lava_surge", overrides={"duration": 2})
+    panel = effects.build_effect_panel_payload(shaman)
+    magical_names = {entry.get("name") for entry in panel.get("buffs_magical", [])}
+    lava_surge_entry = next((entry for entry in panel.get("buffs_magical", []) if entry.get("name") == "Lava Surge"), None)
+    assert "Lava Surge" in magical_names, "Lava Surge should appear in magical buffs effect panel"
+    assert lava_surge_entry and lava_surge_entry.get("description") == "Lava Lash empowered.", "Lava Surge effect panel description should match"
+
+    duel_html_text = _detect_duel_html_path().read_text(encoding="utf-8")
+    assert '<h4>Lava Lash</h4>' in duel_html_text, "Lava Lash docs entry should exist"
+    assert '<h4>Chain Lightning</h4>' in duel_html_text, "Chain Lightning docs entry should exist"
+    assert '"Lava Lash"' in duel_html_text and '"Chain Lightning"' in duel_html_text, "Tooltip/doc-driven ability lists should include Lava Lash and Chain Lightning"
+    assert '"Magical Attack": [' in duel_html_text and '"Lava Lash"' in duel_html_text and '"Chain Lightning"' in duel_html_text, "Icon source should classify Lava Lash and Chain Lightning as magical attacks"
+    assert '"Single Target": [' in duel_html_text and '"Lava Lash"' in duel_html_text, "Icon source should classify Lava Lash as single target"
+    assert '"AoE": [' in duel_html_text and '"Chain Lightning"' in duel_html_text, "Icon source should classify Chain Lightning as AoE"
+    return True
+
+
 def scenario_shaman_healing_stream_hot() -> bool:
     match = make_match("shaman", "warrior", seed=7002)
     shaman_sid, enemy_sid = match.players
@@ -4899,6 +4988,10 @@ SCENARIOS = [
     scenario_balance_metadata_updates_and_shadowstrike_rename,
     scenario_duel_html_agony_docs_updated,
     scenario_shaman_shock_proc_chain,
+    scenario_shaman_shock_and_lava_lash_balance_metadata,
+    scenario_shaman_shock_lava_surge_proc_chances,
+    scenario_shaman_lava_lash_empowered_damage_and_consume,
+    scenario_shaman_chain_lightning_aoe_and_docs_and_effect_panel,
     scenario_shaman_healing_stream_hot,
     scenario_shaman_ancestral_guidance_and_knowledge,
     scenario_shaman_astral_shift_conversion,

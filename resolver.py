@@ -2420,6 +2420,14 @@ def resolve_turn(match: MatchState) -> None:
                     log_parts.pop()
                 log_parts.append(f"{prefix}Roll d8 = {roll_power}.")
                 log_parts.append(f"{prefix}Empowered by Mind Flay!")
+            is_empowered_lava_lash = ability_id == "lava_lash" and has_effect(actor, "lava_surge")
+            if is_empowered_lava_lash:
+                local_scaling = {"int": 0.5}
+                roll_power = roll("d6", r)
+                if dice_data:
+                    log_parts.pop()
+                log_parts.append(f"{prefix}Roll d6 = {roll_power}.")
+                log_parts.append(f"{prefix}Empowered by Lava Surge!")
             if flat_damage is not None:
                 raw = int(flat_damage)
             elif "atk" in local_scaling:
@@ -2606,6 +2614,8 @@ def resolve_turn(match: MatchState) -> None:
             remove_effect(actor, "paladin_final_verdict_empowered")
         if ability_id == "mind_blast" and has_effect(actor, "mind_blast_empowered"):
             remove_effect(actor, "mind_blast_empowered")
+        if ability_id == "lava_lash" and has_effect(actor, "lava_surge"):
+            remove_effect(actor, "lava_surge")
 
         if consume_empower and empower_multiplier != 1.0:
             remove_effect(actor, "crusader_empower")

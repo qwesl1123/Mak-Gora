@@ -1283,13 +1283,16 @@ ABILITIES = {
         "display_color": "#0070DD",
         "cost": {"mp": 5},
         "dice": {"type": "d4", "power_on": "roll"},
-        "scaling": {"int": 0.7},
+        "scaling": {"int": 0.3},
         "damage_type": "magic",
         "school": "magical",
         "subschool": "nature",
         "tags": ["spell", "attack", "magic"],
         "cooldown": 3,
         "classes": ["shaman"],
+        "on_hit_effects": [
+            {"id": "lava_surge", "chance": 0.1, "log": "{actor} has Lava Surge empowered!", "separate_log": True}
+        ],
         "self_effects": [
             {"id": "flame_shock_proc", "duration": 3, "log": "{actor} has Flame Shock!", "separate_log": True}
         ],
@@ -1299,7 +1302,7 @@ ABILITIES = {
         "display_color": "#0070DD",
         "cost": {"mp": 10},
         "dice": {"type": "d4", "power_on": "roll"},
-        "scaling": {"int": 0.6},
+        "scaling": {"int": 0.4},
         "damage_type": "magic",
         "school": "magical",
         "subschool": "fire",
@@ -1308,6 +1311,9 @@ ABILITIES = {
         "classes": ["shaman"],
         "requires_effect": "flame_shock_proc",
         "consume_effect": "flame_shock_proc",
+        "on_hit_effects": [
+            {"id": "lava_surge", "chance": 0.2, "log": "{actor} has Lava Surge empowered!", "separate_log": True}
+        ],
         "self_effects": [
             {"id": "frost_shock_proc", "duration": 3, "log": "{actor} has Frost Shock!", "separate_log": True}
         ],
@@ -1316,8 +1322,8 @@ ABILITIES = {
         "name": "Frost Shock",
         "display_color": "#0070DD",
         "cost": {"mp": 10},
-        "dice": {"type": "d6", "power_on": "roll"},
-        "scaling": {"int": 0.7},
+        "dice": {"type": "d4", "power_on": "roll"},
+        "scaling": {"int": 0.5},
         "damage_type": "magic",
         "school": "magical",
         "subschool": "frost",
@@ -1326,6 +1332,36 @@ ABILITIES = {
         "classes": ["shaman"],
         "requires_effect": "frost_shock_proc",
         "consume_effect": "frost_shock_proc",
+        "on_hit_effects": [
+            {"id": "lava_surge", "chance": 0.3, "log": "{actor} has Lava Surge empowered!", "separate_log": True}
+        ],
+    },
+    "lava_lash": {
+        "name": "Lava Lash",
+        "display_color": "#0070DD",
+        "cost": {"mp": 5},
+        "dice": {"type": "d4", "power_on": "roll"},
+        "scaling": {"int": 0.2},
+        "damage_type": "magic",
+        "school": "magical",
+        "subschool": "fire",
+        "tags": ["spell", "attack", "magic"],
+        "cooldown": 0,
+        "classes": ["shaman"],
+    },
+    "chain_lightning": {
+        "name": "Chain Lightning",
+        "display_color": "#0070DD",
+        "cost": {"mp": 10},
+        "dice": {"type": "d6", "power_on": "roll"},
+        "scaling": {"int": 0.6},
+        "damage_type": "magic",
+        "school": "magical",
+        "subschool": "nature",
+        "target_mode": "aoe_enemy",
+        "tags": ["spell", "attack", "magic", "aoe"],
+        "cooldown": 8,
+        "classes": ["shaman"],
     },
     "healing_stream": {
         "name": "Healing Stream",
