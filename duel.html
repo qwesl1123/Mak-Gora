@@ -4154,6 +4154,7 @@
         if (
           textWithoutFx.includes("has Flame Shock!")
           || textWithoutFx.includes("has Frost Shock!")
+          || textWithoutFx.includes("has Lava Surge empowered!")
         ) {
           return applyFxTokensToHtml(`<span class="log-class-shaman logLineShamanProc">${renderTextWithFxTags(textWithoutFx)}</span>`, fxTokens);
         }
@@ -4264,7 +4265,11 @@
       // We match the simple span the existing code produces: <span class="log-ability-XXX">Name</span>
       // This runs AFTER all color spans are already in place, so coloring is never affected.
       function stampAbilityTips(html) {
-        if (html.includes("has Flame Shock!") || html.includes("has Frost Shock!")) {
+        if (
+          html.includes("has Flame Shock!")
+          || html.includes("has Frost Shock!")
+          || html.includes("has Lava Surge empowered!")
+        ) {
           return html;
         }
         return html.replace(
@@ -4302,6 +4307,7 @@
         if (
           msg.includes("has Flame Shock!")
           || msg.includes("has Frost Shock!")
+          || msg.includes("has Lava Surge empowered!")
         ) {
           classes.push("logLineShamanProc");
         }
