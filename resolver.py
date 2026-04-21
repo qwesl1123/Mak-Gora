@@ -159,6 +159,7 @@ def _break_effects_and_collect_labels(
     target_entity: PlayerState | PetState,
     *,
     break_on_damage_effect_name: Callable[[Dict[str, Any]], str],
+    source_ability_name: str | None = None,
 ) -> list[str]:
     removed_labels: list[str] = []
     for effect in list(getattr(target_entity, "effects", []) or []):
@@ -167,6 +168,12 @@ def _break_effects_and_collect_labels(
             continue
         effect_id = effect.get("id")
         if not effect_id:
+            continue
+        if (
+            source_ability_name
+            and effect.get("break_on_damage_ignore_source_hit")
+            and str(effect.get("source_ability_name") or "") == source_ability_name
+        ):
             continue
         removed_labels.append(break_on_damage_effect_name(effect))
         remove_effect(target_entity, effect_id)
@@ -199,6 +206,7 @@ def _resolve_target_post_damage_reactions_stage(
         broken_effects = _break_effects_and_collect_labels(
             target_entity,
             break_on_damage_effect_name=break_on_damage_effect_name,
+            source_ability_name=source_ability_name,
         )
         if was_stealthed and not is_stealthed(target_entity):
             deferred_stealth_break_logs.append(f"{sid_token(target_label)} stealth broken by {source_ability_name}.")
@@ -210,6 +218,7 @@ def _resolve_target_post_damage_reactions_stage(
     broken_effects = _break_effects_and_collect_labels(
         target_entity,
         break_on_damage_effect_name=break_on_damage_effect_name,
+        source_ability_name=source_ability_name,
     )
     for effect_name in broken_effects:
         deferred_break_on_damage_logs.append(f"{effect_name} on {target_entity.name} breaks on damage.")
@@ -2375,6 +2384,7 @@ def resolve_turn(match: MatchState) -> None:
         )
 
         ability_hit_landed = False
+        had_flame_dance_at_cast_start = has_effect(actor, "flame_dance")
         on_hit_base_damage = 0
         per_hit_damage_values: list[int] = []
         aoe_damage_instances: list[int] = []
@@ -2428,12 +2438,19 @@ def resolve_turn(match: MatchState) -> None:
                     log_parts.pop()
                 log_parts.append(f"{prefix}Roll d6 = {roll_power}.")
                 log_parts.append(f"{prefix}Empowered by Lava Surge!")
+            is_empowered_flame_dance = bool(
+                has_effect(actor, "flame_dance")
+                and str(ability_subschool or "").lower() == "fire"
+            )
             if flat_damage is not None:
                 raw = int(flat_damage)
             elif "atk" in local_scaling:
                 raw = base_damage(modify_stat(actor, "atk", actor.stats.get("atk", 0)), local_scaling["atk"], roll_power)
             elif "int" in local_scaling:
                 raw = base_damage(modify_stat(actor, "int", actor.stats.get("int", 0)), local_scaling["int"], roll_power)
+            if is_empowered_flame_dance and raw > 0:
+                raw = int(raw * 2)
+                log_parts.append(f"{prefix}Empowered by Flame Dance!")
 
             # Apply critical hit
             crit_chance = modify_stat(actor, "crit", actor.stats.get("crit", 0))
@@ -2461,9 +2478,11 @@ def resolve_turn(match: MatchState) -> None:
 
             if is_damage_immune(target, "physical" if ability_school == "physical" else "magic"):
                 reduced = 0
+                on_hit_effects_allowed = False
                 log_parts.append(f"{prefix}Immune!")
             else:
                 reduced = incoming_for_hit
+                on_hit_effects_allowed = True
                 if empower_multiplier != 1.0:
                     if not empower_logged:
                         log_parts.append(f"{prefix}Empowered strike!")
@@ -2480,7 +2499,7 @@ def resolve_turn(match: MatchState) -> None:
             if reduced > 0:
                 per_hit_damage_values.append(reduced)
 
-            if reduced > 0:
+            if on_hit_effects_allowed:
                 effects_on_hit = ability.get("stealth_on_hit_effects") if was_stealthed else None
                 if not effects_on_hit:
                     effects_on_hit = ability.get("on_hit_effects", [])
@@ -2500,6 +2519,37 @@ def resolve_turn(match: MatchState) -> None:
                                     label=sid_token(actor_sid),
                                     log_message=str(effect.get("log")).replace("{actor}", sid_token(actor_sid)) if effect.get("log") else None,
                                 )
+                for entry in ability.get("self_effects_on_hit", []) or []:
+                    if not entry.get("id"):
+                        continue
+                    chance = float(entry.get("chance", 1.0) or 1.0)
+                    if r.random() > chance:
+                        continue
+                    if not has_effect(actor, entry["id"]):
+                        apply_effect_by_id(
+                            actor,
+                            entry["id"],
+                            overrides={"duration": int(entry["duration"])} if entry.get("duration") is not None else None,
+                        )
+                        if entry.get("log"):
+                            pre_log_parts.append(str(entry["log"]).replace("{actor}", sid_token(actor_sid)))
+                for entry in ability.get("target_effects_on_hit", []) or []:
+                    effect_id = entry.get("id")
+                    if not effect_id:
+                        continue
+                    chance = float(entry.get("chance", 1.0) or 1.0)
+                    if r.random() > chance:
+                        continue
+                    apply_effect_by_id(
+                        target,
+                        effect_id,
+                        overrides={
+                            **({"duration": int(entry["duration"])} if entry.get("duration") is not None else {}),
+                            "source_ability_name": ability.get("name"),
+                        },
+                    )
+                    if entry.get("log"):
+                        log_parts.append(str(entry["log"]))
                 for gain in ability.get("on_hit_resource_gains", []) or []:
                     chance = float(gain.get("chance", 1.0) or 1.0)
                     if r.random() > chance:
@@ -2616,6 +2666,8 @@ def resolve_turn(match: MatchState) -> None:
             remove_effect(actor, "mind_blast_empowered")
         if ability_id == "lava_lash" and has_effect(actor, "lava_surge"):
             remove_effect(actor, "lava_surge")
+        if had_flame_dance_at_cast_start and has_effect(actor, "flame_dance") and str(ability_subschool or "").lower() == "fire" and ability_hit_landed:
+            remove_effect(actor, "flame_dance")
 
         if consume_empower and empower_multiplier != 1.0:
             remove_effect(actor, "crusader_empower")

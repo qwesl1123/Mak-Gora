@@ -1290,11 +1290,11 @@ ABILITIES = {
         "tags": ["spell", "attack", "magic"],
         "cooldown": 3,
         "classes": ["shaman"],
-        "on_hit_effects": [
-            {"id": "lava_surge", "chance": 0.1, "log": "{actor} has Lava Surge empowered!", "separate_log": True}
+        "target_effects_on_hit": [
+            {"id": "earth_shock", "duration": 2, "log": "shakes the target's aim."}
         ],
-        "self_effects": [
-            {"id": "flame_shock_proc", "duration": 3, "log": "{actor} has Flame Shock!", "separate_log": True}
+        "on_hit_effects": [
+            {"id": "lava_surge", "chance": 0.3, "log": "{actor} has Lava Surge empowered!", "separate_log": True}
         ],
     },
     "flame_shock": {
@@ -1309,13 +1309,11 @@ ABILITIES = {
         "tags": ["spell", "attack", "magic"],
         "cooldown": 3,
         "classes": ["shaman"],
-        "requires_effect": "flame_shock_proc",
-        "consume_effect": "flame_shock_proc",
-        "on_hit_effects": [
-            {"id": "lava_surge", "chance": 0.2, "log": "{actor} has Lava Surge empowered!", "separate_log": True}
+        "self_effects_on_hit": [
+            {"id": "flame_dance", "duration": 5, "log": "{actor} has Flame Dance!", "separate_log": True}
         ],
-        "self_effects": [
-            {"id": "frost_shock_proc", "duration": 3, "log": "{actor} has Frost Shock!", "separate_log": True}
+        "on_hit_effects": [
+            {"id": "lava_surge", "chance": 0.3, "log": "{actor} has Lava Surge empowered!", "separate_log": True}
         ],
     },
     "frost_shock": {
@@ -1330,8 +1328,9 @@ ABILITIES = {
         "tags": ["spell", "attack", "magic"],
         "cooldown": 3,
         "classes": ["shaman"],
-        "requires_effect": "frost_shock_proc",
-        "consume_effect": "frost_shock_proc",
+        "target_effects_on_hit": [
+            {"id": "frost_shock_freeze", "duration": 2, "log": "freezes the enemy in place."}
+        ],
         "on_hit_effects": [
             {"id": "lava_surge", "chance": 0.3, "log": "{actor} has Lava Surge empowered!", "separate_log": True}
         ],

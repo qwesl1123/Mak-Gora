@@ -3900,21 +3900,53 @@ def scenario_duel_html_agony_docs_updated() -> bool:
     return True
 
 
-def scenario_shaman_shock_proc_chain() -> bool:
-    match = make_match("shaman", "warrior", seed=7001)
-    shaman_sid, enemy_sid = match.players
-    match.state[shaman_sid].stats["acc"] = 999
-    match.state[enemy_sid].stats["eva"] = 0
+def scenario_shaman_shocks_apply_phase1_riders_and_lava_surge() -> bool:
+    earth_match = make_match("shaman", "warrior", seed=7004)
+    shaman_sid, enemy_sid = earth_match.players
+    shaman = earth_match.state[shaman_sid]
+    enemy = earth_match.state[enemy_sid]
+    shaman.stats["acc"] = 999
+    shaman.stats["int"] = 25
+    enemy.stats["eva"] = 0
+    enemy.stats["mres"] = 0
+    enemy.stats["damage_reduction"] = 0
+    submit_turn(earth_match, "earth_shock", _DEF_PASS)
+    earth_debuff = next((fx for fx in enemy.effects if fx.get("id") == "earth_shock"), None)
+    assert earth_debuff is not None, "Earth Shock should apply its outgoing-miss debuff on hit"
+    assert int(earth_debuff.get("duration", 0) or 0) == 1, "Earth Shock debuff should leave exactly one outgoing-miss turn after application"
+    assert effects.has_effect(shaman, "lava_surge"), "Earth Shock hit should be able to grant Lava Surge at the 30% proc path"
 
-    submit_turn(match, "earth_shock", _DEF_PASS)
-    assert effects.has_effect(match.state[shaman_sid], "flame_shock_proc"), "Earth Shock should grant Flame Shock proc"
+    flame_match = make_match("shaman", "warrior", seed=7004)
+    shaman_sid, enemy_sid = flame_match.players
+    flame_shaman = flame_match.state[shaman_sid]
+    flame_enemy = flame_match.state[enemy_sid]
+    flame_shaman.stats["acc"] = 999
+    flame_shaman.stats["int"] = 25
+    flame_enemy.stats["eva"] = 0
+    flame_enemy.stats["mres"] = 0
+    flame_enemy.stats["damage_reduction"] = 0
+    submit_turn(flame_match, "flame_shock", _DEF_PASS)
+    flame_dance = next((fx for fx in flame_shaman.effects if fx.get("id") == "flame_dance"), None)
+    assert flame_dance is not None, "Flame Shock should grant Flame Dance on hit"
+    assert int(flame_dance.get("duration", 0) or 0) == 4, "Flame Dance should leave 4 turns remaining after its application turn resolves"
+    assert effects.has_effect(flame_shaman, "lava_surge"), "Flame Shock hit should be able to grant Lava Surge at the 30% proc path"
 
-    submit_turn(match, "flame_shock", _DEF_PASS)
-    assert not effects.has_effect(match.state[shaman_sid], "flame_shock_proc"), "Flame Shock should consume Flame Shock proc"
-    assert effects.has_effect(match.state[shaman_sid], "frost_shock_proc"), "Flame Shock should grant Frost Shock proc"
-
-    submit_turn(match, "frost_shock", _DEF_PASS)
-    assert not effects.has_effect(match.state[shaman_sid], "frost_shock_proc"), "Frost Shock should consume Frost Shock proc"
+    frost_match = make_match("shaman", "warrior", seed=7004)
+    shaman_sid, enemy_sid = frost_match.players
+    frost_shaman = frost_match.state[shaman_sid]
+    frost_enemy = frost_match.state[enemy_sid]
+    frost_shaman.stats["acc"] = 999
+    frost_shaman.stats["int"] = 25
+    frost_enemy.stats["eva"] = 0
+    frost_enemy.stats["mres"] = 0
+    frost_enemy.stats["damage_reduction"] = 0
+    submit_turn(frost_match, "frost_shock", _DEF_PASS)
+    freeze = next((fx for fx in frost_enemy.effects if fx.get("id") == "frost_shock_freeze"), None)
+    assert freeze is not None, "Frost Shock should apply a 2-turn freeze on hit"
+    assert int(freeze.get("duration", 0) or 0) == 1, "Frost Shock should leave exactly one locked turn after the application turn resolves"
+    assert effects.has_effect(frost_shaman, "lava_surge"), "Frost Shock hit should be able to grant Lava Surge at the 30% proc path"
+    submit_turn(frost_match, _DEF_PASS, "basic_attack")
+    assert not effects.has_effect(frost_enemy, "frost_shock_freeze"), "Frost Shock freeze should break on damage"
     return True
 
 
@@ -3925,6 +3957,9 @@ def scenario_shaman_shock_and_lava_lash_balance_metadata() -> bool:
     assert ABILITIES["flame_shock"]["dice"]["type"] == "d4", "Flame Shock should use d4"
     assert ABILITIES["frost_shock"]["scaling"]["int"] == 0.5, "Frost Shock should scale with Intellect at 0.5x"
     assert ABILITIES["frost_shock"]["dice"]["type"] == "d4", "Frost Shock should use d4"
+    assert not ABILITIES["earth_shock"].get("requires_effect"), "Earth Shock should be independently castable"
+    assert not ABILITIES["flame_shock"].get("requires_effect"), "Flame Shock should be independently castable"
+    assert not ABILITIES["frost_shock"].get("requires_effect"), "Frost Shock should be independently castable"
     assert ABILITIES["lava_lash"]["scaling"]["int"] == 0.2, "Lava Lash base should scale with Intellect at 0.2x"
     assert ABILITIES["lava_lash"]["dice"]["type"] == "d4", "Lava Lash base should use d4"
     assert not ABILITIES["lava_lash"].get("requires_effect"), "Lava Lash should remain castable without Lava Surge"
@@ -3935,12 +3970,34 @@ def scenario_shaman_shock_and_lava_lash_balance_metadata() -> bool:
 
 
 def scenario_shaman_shock_lava_surge_proc_chances() -> bool:
-    for ability_id, chance in (("earth_shock", 0.1), ("flame_shock", 0.2), ("frost_shock", 0.3)):
+    for ability_id, chance in (("earth_shock", 0.3), ("flame_shock", 0.3), ("frost_shock", 0.3)):
         effects_list = ABILITIES[ability_id].get("on_hit_effects", [])
         lava_surge = next((entry for entry in effects_list if entry.get("id") == "lava_surge"), None)
         assert lava_surge is not None, f"{ability_id} should be able to grant Lava Surge"
         assert float(lava_surge.get("chance", 0)) == chance, f"{ability_id} should use {int(chance * 100)}% Lava Surge proc chance"
         assert lava_surge.get("log") == "{actor} has Lava Surge empowered!", f"{ability_id} Lava Surge proc log should use empowered wording"
+    return True
+
+
+def scenario_shaman_shock_lava_surge_does_not_proc_on_no_hit() -> bool:
+    miss_match = make_match("shaman", "warrior", seed=7020)
+    shaman_sid, enemy_sid = miss_match.players
+    miss_shaman = miss_match.state[shaman_sid]
+    miss_enemy = miss_match.state[enemy_sid]
+    miss_shaman.stats["acc"] = 0
+    miss_enemy.stats["eva"] = 100
+    submit_turn(miss_match, "earth_shock", _DEF_PASS)
+    assert not effects.has_effect(miss_shaman, "lava_surge"), "Missed Shock should not grant Lava Surge"
+
+    immune_match = make_match("shaman", "mage", seed=7021)
+    shaman_sid, mage_sid = immune_match.players
+    immune_shaman = immune_match.state[shaman_sid]
+    immune_mage = immune_match.state[mage_sid]
+    immune_shaman.stats["acc"] = 999
+    immune_mage.stats["eva"] = 0
+    submit_turn(immune_match, _DEF_PASS, "iceblock")
+    submit_turn(immune_match, "flame_shock", _DEF_PASS)
+    assert not effects.has_effect(immune_shaman, "lava_surge"), "Immune/no-hit Shock should not grant Lava Surge"
     return True
 
 
@@ -3969,6 +4026,25 @@ def scenario_shaman_lava_lash_empowered_damage_and_consume() -> bool:
     assert any("Empowered by Lava Surge!" in line for line in empowered_turn), "Empowered Lava Lash should log Lava Surge empowerment"
     assert not effects.has_effect(shaman, "lava_surge"), "Empowered Lava Lash should consume Lava Surge"
     assert warrior.res.hp < hp_after_base, "Empowered Lava Lash should deal damage"
+
+    match_flame_dance = make_match("shaman", "warrior", seed=7009)
+    shaman_sid, enemy_sid = match_flame_dance.players
+    dance_shaman = match_flame_dance.state[shaman_sid]
+    dance_enemy = match_flame_dance.state[enemy_sid]
+    dance_shaman.stats["acc"] = 999
+    dance_shaman.stats["crit"] = 0
+    dance_shaman.stats["int"] = 10
+    dance_enemy.stats["eva"] = 0
+    dance_enemy.stats["def"] = 0
+
+    submit_turn(match_flame_dance, "flame_shock", _DEF_PASS)
+    assert effects.has_effect(dance_shaman, "flame_dance"), "Flame Shock should grant Flame Dance"
+    hp_after_flame_shock = dance_enemy.res.hp
+    submit_turn(match_flame_dance, "lava_lash", _DEF_PASS)
+    flame_dance_turn = _turn_lines(match_flame_dance, 2)
+    assert any("Empowered by Flame Dance!" in line for line in flame_dance_turn), "Next qualifying fire spell should be empowered by Flame Dance"
+    assert not effects.has_effect(dance_shaman, "flame_dance"), "Flame Dance should be consumed by the next qualifying fire spell"
+    assert dance_enemy.res.hp < hp_after_flame_shock, "Flame Dance empowered fire spell should deal damage"
     return True
 
 
@@ -3991,11 +4067,22 @@ def scenario_shaman_chain_lightning_aoe_and_docs_and_effect_panel() -> bool:
     assert any(hunter.pets.get(pid) and hunter.pets[pid].hp < pet_hp_before[pid] for pid in pet_ids), "Chain Lightning should hit enemy pets/totems under AoE model"
 
     effects.apply_effect_by_id(shaman, "lava_surge", overrides={"duration": 2})
+    effects.apply_effect_by_id(shaman, "flame_dance", overrides={"duration": 5})
+    effects.apply_effect_by_id(hunter, "earth_shock", overrides={"duration": 1})
+    effects.apply_effect_by_id(hunter, "frost_shock_freeze", overrides={"duration": 2})
     panel = effects.build_effect_panel_payload(shaman)
     magical_names = {entry.get("name") for entry in panel.get("buffs_magical", [])}
     lava_surge_entry = next((entry for entry in panel.get("buffs_magical", []) if entry.get("name") == "Lava Surge"), None)
+    flame_dance_entry = next((entry for entry in panel.get("buffs_magical", []) if entry.get("name") == "Flame Dance"), None)
     assert "Lava Surge" in magical_names, "Lava Surge should appear in magical buffs effect panel"
     assert lava_surge_entry and lava_surge_entry.get("description") == "Lava Lash empowered.", "Lava Surge effect panel description should match"
+    assert flame_dance_entry and flame_dance_entry.get("description") == "Next Fire spell’s damage increased by 100%.", "Flame Dance effect panel entry/description should match"
+
+    enemy_panel = effects.build_effect_panel_payload(hunter)
+    earth_shock_entry = next((entry for entry in enemy_panel.get("debuffs_magical", []) if entry.get("name") == "Earth Shock"), None)
+    frost_shock_entry = next((entry for entry in enemy_panel.get("debuffs_magical", []) if entry.get("name") == "Frost Shock"), None)
+    assert earth_shock_entry and earth_shock_entry.get("description") == "Incoming attacks from this target will miss.", "Earth Shock effect panel entry/description should match"
+    assert frost_shock_entry and frost_shock_entry.get("description") == "Frozen and cannot act. Breaks on damage.", "Frost Shock effect panel entry/description should match"
 
     duel_html_text = _detect_duel_html_path().read_text(encoding="utf-8")
     assert '<h4>Lava Lash</h4>' in duel_html_text, "Lava Lash docs entry should exist"
@@ -4004,6 +4091,9 @@ def scenario_shaman_chain_lightning_aoe_and_docs_and_effect_panel() -> bool:
     assert '"Magical Attack": [' in duel_html_text and '"Lava Lash"' in duel_html_text and '"Chain Lightning"' in duel_html_text, "Icon source should classify Lava Lash and Chain Lightning as magical attacks"
     assert '"Single Target": [' in duel_html_text and '"Lava Lash"' in duel_html_text, "Icon source should classify Lava Lash as single target"
     assert '"AoE": [' in duel_html_text and '"Chain Lightning"' in duel_html_text, "Icon source should classify Chain Lightning as AoE"
+    assert "On hit, applies <span class=\"stat\">Earth Shock</span> for 1 turn" in duel_html_text, "Earth Shock docs should describe the Phase 1 rider"
+    assert "On hit, grants <span class=\"stat\">Flame Dance</span> for 5 turns" in duel_html_text, "Flame Shock docs should describe Flame Dance"
+    assert "On hit, freezes the target for 2 turns (breaks on damage)" in duel_html_text, "Frost Shock docs should describe freeze rider"
     return True
 
 
@@ -4987,9 +5077,10 @@ SCENARIOS = [
     scenario_shadowfiend_summon_log_deduped,
     scenario_balance_metadata_updates_and_shadowstrike_rename,
     scenario_duel_html_agony_docs_updated,
-    scenario_shaman_shock_proc_chain,
+    scenario_shaman_shocks_apply_phase1_riders_and_lava_surge,
     scenario_shaman_shock_and_lava_lash_balance_metadata,
     scenario_shaman_shock_lava_surge_proc_chances,
+    scenario_shaman_shock_lava_surge_does_not_proc_on_no_hit,
     scenario_shaman_lava_lash_empowered_damage_and_consume,
     scenario_shaman_chain_lightning_aoe_and_docs_and_effect_panel,
     scenario_shaman_healing_stream_hot,

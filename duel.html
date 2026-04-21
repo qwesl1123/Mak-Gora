@@ -3015,19 +3015,19 @@
             <h4>Earth Shock</h4>
             <p><span class="stat">Cost: 5 Mana</span> | <span class="stat">Type: Magic (Nature)</span> | <span class="stat">Cooldown: 3</span></p>
             <p><span class="stat">Command: <span class="kbd">earth_shock</span></span></p>
-            <p>Deals [Intellect (0.3x) + d4] Nature damage, grants <span class="stat">Flame Shock</span>, and has a 10% chance to grant <span class="stat">Lava Surge</span> (empowers Lava Lash).</p>
+            <p>Deals [Intellect (0.3x) + d4] Nature damage. On hit, applies <span class="stat">Earth Shock</span> for 1 turn (incoming attacks from that target will miss) and has a 30% chance to grant <span class="stat">Lava Surge</span> (empowers Lava Lash).</p>
           </div>
           <div class="doc-item">
             <h4>Flame Shock</h4>
             <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Type: Magic (Fire)</span> | <span class="stat">Cooldown: 3</span></p>
             <p><span class="stat">Command: <span class="kbd">flame_shock</span></span></p>
-            <p>Requires the Flame Shock proc. Deals [Intellect (0.4x) + d4] Fire damage, grants <span class="stat">Frost Shock</span>, and has a 20% chance to grant <span class="stat">Lava Surge</span>.</p>
+            <p>Deals [Intellect (0.4x) + d4] Fire damage. On hit, grants <span class="stat">Flame Dance</span> for 5 turns (next Fire spell’s damage increased by 100%) and has a 30% chance to grant <span class="stat">Lava Surge</span>.</p>
           </div>
           <div class="doc-item">
             <h4>Frost Shock</h4>
             <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Type: Magic (Frost)</span> | <span class="stat">Cooldown: 3</span></p>
             <p><span class="stat">Command: <span class="kbd">frost_shock</span></span></p>
-            <p>Requires the Frost Shock proc. Deals [Intellect (0.5x) + d4] Frost damage and has a 30% chance to grant <span class="stat">Lava Surge</span>.</p>
+            <p>Deals [Intellect (0.5x) + d4] Frost damage. On hit, freezes the target for 2 turns (breaks on damage) and has a 30% chance to grant <span class="stat">Lava Surge</span>.</p>
           </div>
           <div class="doc-item">
             <h4>Lava Lash</h4>
@@ -4152,8 +4152,7 @@
           return applyFxTokensToHtml(`<span class="log-class-hunter logLineHunterProc">${renderTextWithFxTags(textWithoutFx)}</span>`, fxTokens);
         }
         if (
-          textWithoutFx.includes("has Flame Shock!")
-          || textWithoutFx.includes("has Frost Shock!")
+          textWithoutFx.includes("has Flame Dance!")
           || textWithoutFx.includes("has Lava Surge empowered!")
         ) {
           return applyFxTokensToHtml(`<span class="log-class-shaman logLineShamanProc">${renderTextWithFxTags(textWithoutFx)}</span>`, fxTokens);
@@ -4266,8 +4265,7 @@
       // This runs AFTER all color spans are already in place, so coloring is never affected.
       function stampAbilityTips(html) {
         if (
-          html.includes("has Flame Shock!")
-          || html.includes("has Frost Shock!")
+          html.includes("has Flame Dance!")
           || html.includes("has Lava Surge empowered!")
         ) {
           return html;
@@ -4305,8 +4303,7 @@
           classes.push("logLineHunterProc");
         }
         if (
-          msg.includes("has Flame Shock!")
-          || msg.includes("has Frost Shock!")
+          msg.includes("has Flame Dance!")
           || msg.includes("has Lava Surge empowered!")
         ) {
           classes.push("logLineShamanProc");
