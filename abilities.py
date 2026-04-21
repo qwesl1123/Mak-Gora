@@ -1283,18 +1283,18 @@ ABILITIES = {
         "display_color": "#0070DD",
         "cost": {"mp": 5},
         "dice": {"type": "d4", "power_on": "roll"},
-        "scaling": {"int": 0.3},
+        "scaling": {"int": 0.4},
         "damage_type": "magic",
         "school": "magical",
         "subschool": "nature",
         "tags": ["spell", "attack", "magic"],
-        "cooldown": 3,
+        "cooldown": 5,
         "classes": ["shaman"],
         "target_effects_on_hit": [
-            {"id": "earth_shock", "duration": 2, "log": "shakes the target's aim."}
+            {"id": "earth_shock", "duration": 1, "log": "shakes the target's aim."}
         ],
         "on_hit_effects": [
-            {"id": "lava_surge", "chance": 0.3, "log": "{actor} has Lava Surge empowered!", "separate_log": True}
+            {"id": "lava_surge", "chance": 0.3, "log": "{actor} has Lava Lash empowered!", "separate_log": True}
         ],
     },
     "flame_shock": {
@@ -1302,18 +1302,18 @@ ABILITIES = {
         "display_color": "#0070DD",
         "cost": {"mp": 10},
         "dice": {"type": "d4", "power_on": "roll"},
-        "scaling": {"int": 0.4},
+        "scaling": {"int": 0.8},
         "damage_type": "magic",
         "school": "magical",
         "subschool": "fire",
         "tags": ["spell", "attack", "magic"],
-        "cooldown": 3,
+        "cooldown": 6,
         "classes": ["shaman"],
         "self_effects_on_hit": [
             {"id": "flame_dance", "duration": 5, "log": "{actor} has Flame Dance!", "separate_log": True}
         ],
         "on_hit_effects": [
-            {"id": "lava_surge", "chance": 0.3, "log": "{actor} has Lava Surge empowered!", "separate_log": True}
+            {"id": "lava_surge", "chance": 0.3, "log": "{actor} has Lava Lash empowered!", "separate_log": True}
         ],
     },
     "frost_shock": {
@@ -1321,18 +1321,18 @@ ABILITIES = {
         "display_color": "#0070DD",
         "cost": {"mp": 10},
         "dice": {"type": "d4", "power_on": "roll"},
-        "scaling": {"int": 0.5},
+        "scaling": {"int": 0.4},
         "damage_type": "magic",
         "school": "magical",
         "subschool": "frost",
         "tags": ["spell", "attack", "magic"],
-        "cooldown": 3,
+        "cooldown": 7,
         "classes": ["shaman"],
         "target_effects_on_hit": [
             {"id": "frost_shock_freeze", "duration": 2, "log": "freezes the enemy in place."}
         ],
         "on_hit_effects": [
-            {"id": "lava_surge", "chance": 0.3, "log": "{actor} has Lava Surge empowered!", "separate_log": True}
+            {"id": "lava_surge", "chance": 0.3, "log": "{actor} has Lava Lash empowered!", "separate_log": True}
         ],
     },
     "lava_lash": {

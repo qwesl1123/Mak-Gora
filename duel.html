@@ -3013,27 +3013,27 @@
         <div class="doc-grid">
           <div class="doc-item">
             <h4>Earth Shock</h4>
-            <p><span class="stat">Cost: 5 Mana</span> | <span class="stat">Type: Magic (Nature)</span> | <span class="stat">Cooldown: 3</span></p>
+            <p><span class="stat">Cost: 5 Mana</span> | <span class="stat">Type: Magic (Nature)</span> | <span class="stat">Cooldown: 5</span></p>
             <p><span class="stat">Command: <span class="kbd">earth_shock</span></span></p>
-            <p>Deals [Intellect (0.3x) + d4] Nature damage. On hit, applies <span class="stat">Earth Shock</span> for 1 turn (incoming attacks from that target will miss) and has a 30% chance to grant <span class="stat">Lava Surge</span> (empowers Lava Lash).</p>
+            <p>Deals [Intellect (0.4x) + d4] Nature damage. On hit, applies <span class="stat">Earth Shock</span> for 1 turn (incoming attacks from that target will miss) and has a 30% chance to grant <span class="stat">Lava Surge</span> (empowers Lava Lash).</p>
           </div>
           <div class="doc-item">
             <h4>Flame Shock</h4>
-            <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Type: Magic (Fire)</span> | <span class="stat">Cooldown: 3</span></p>
+            <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Type: Magic (Fire)</span> | <span class="stat">Cooldown: 6</span></p>
             <p><span class="stat">Command: <span class="kbd">flame_shock</span></span></p>
-            <p>Deals [Intellect (0.4x) + d4] Fire damage. On hit, grants <span class="stat">Flame Dance</span> for 5 turns (next Fire spell’s damage increased by 100%) and has a 30% chance to grant <span class="stat">Lava Surge</span>.</p>
+            <p>Deals [Intellect (0.8x) + d4] Fire damage. On hit, grants <span class="stat">Flame Dance</span> for 5 turns (next Fire spell’s damage increased by 100%) and has a 30% chance to grant <span class="stat">Lava Surge</span>.</p>
           </div>
           <div class="doc-item">
             <h4>Frost Shock</h4>
-            <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Type: Magic (Frost)</span> | <span class="stat">Cooldown: 3</span></p>
+            <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Type: Magic (Frost)</span> | <span class="stat">Cooldown: 7</span></p>
             <p><span class="stat">Command: <span class="kbd">frost_shock</span></span></p>
-            <p>Deals [Intellect (0.5x) + d4] Frost damage. On hit, freezes the target for 2 turns (breaks on damage) and has a 30% chance to grant <span class="stat">Lava Surge</span>.</p>
+            <p>Deals [Intellect (0.4x) + d4] Frost damage. On hit, freezes the target for 2 turns (breaks on damage) and has a 30% chance to grant <span class="stat">Lava Surge</span>.</p>
           </div>
           <div class="doc-item">
             <h4>Lava Lash</h4>
             <p><span class="stat">Cost: 5 Mana</span> | <span class="stat">Type: Magic (Fire)</span> | <span class="stat">Cooldown: 0</span></p>
             <p><span class="stat">Command: <span class="kbd">lava_lash</span></span></p>
-            <p>Deals [Intellect (0.2x) + d4] Fire damage. While <span class="stat">Lava Surge</span> is active, Lava Lash is empowered to [Intellect (0.5x) + d6], then consumes Lava Surge.</p>
+            <p>Deals [Intellect (0.2x) + d4] Fire damage. While <span class="stat">Lava Surge</span> is active, Lava Lash is empowered to [Intellect (1.5x) + d6], then consumes Lava Surge.</p>
           </div>
           <div class="doc-item">
             <h4>Chain Lightning</h4>
@@ -4153,7 +4153,7 @@
         }
         if (
           textWithoutFx.includes("has Flame Dance!")
-          || textWithoutFx.includes("has Lava Surge empowered!")
+          || textWithoutFx.includes("has Lava Lash empowered!")
         ) {
           return applyFxTokensToHtml(`<span class="log-class-shaman logLineShamanProc">${renderTextWithFxTags(textWithoutFx)}</span>`, fxTokens);
         }
@@ -4266,7 +4266,7 @@
       function stampAbilityTips(html) {
         if (
           html.includes("has Flame Dance!")
-          || html.includes("has Lava Surge empowered!")
+          || html.includes("has Lava Lash empowered!")
         ) {
           return html;
         }
@@ -4304,7 +4304,7 @@
         }
         if (
           msg.includes("has Flame Dance!")
-          || msg.includes("has Lava Surge empowered!")
+          || msg.includes("has Lava Lash empowered!")
         ) {
           classes.push("logLineShamanProc");
         }

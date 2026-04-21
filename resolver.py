@@ -2432,7 +2432,7 @@ def resolve_turn(match: MatchState) -> None:
                 log_parts.append(f"{prefix}Empowered by Mind Flay!")
             is_empowered_lava_lash = ability_id == "lava_lash" and has_effect(actor, "lava_surge")
             if is_empowered_lava_lash:
-                local_scaling = {"int": 0.5}
+                local_scaling = {"int": 1.5}
                 roll_power = roll("d6", r)
                 if dice_data:
                     log_parts.pop()

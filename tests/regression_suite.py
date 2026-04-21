@@ -3912,9 +3912,14 @@ def scenario_shaman_shocks_apply_phase1_riders_and_lava_surge() -> bool:
     enemy.stats["damage_reduction"] = 0
     submit_turn(earth_match, "earth_shock", _DEF_PASS)
     earth_debuff = next((fx for fx in enemy.effects if fx.get("id") == "earth_shock"), None)
-    assert earth_debuff is not None, "Earth Shock should apply its outgoing-miss debuff on hit"
-    assert int(earth_debuff.get("duration", 0) or 0) == 1, "Earth Shock debuff should leave exactly one outgoing-miss turn after application"
+    assert earth_debuff is None, "Earth Shock should expire on the same turn when applied as a 1-turn effect"
+    earth_turn = _turn_lines(earth_match, 1)
+    assert any("has Lava Lash empowered!" in line for line in earth_turn), "Lava Surge proc reminder should reference Lava Lash"
+    assert not any("has Lava Surge empowered!" in line for line in earth_turn), "Legacy Lava Surge empowered reminder text should not appear"
     assert effects.has_effect(shaman, "lava_surge"), "Earth Shock hit should be able to grant Lava Surge at the 30% proc path"
+    enemy_panel_after_earth = effects.build_effect_panel_payload(enemy)
+    earth_shock_entry = next((entry for entry in enemy_panel_after_earth.get("debuffs_magical", []) if entry.get("name") == "Earth Shock"), None)
+    assert earth_shock_entry is None, "Earth Shock should not remain visible in effect panel after the cast turn resolves"
 
     flame_match = make_match("shaman", "warrior", seed=7004)
     shaman_sid, enemy_sid = flame_match.players
@@ -3951,11 +3956,14 @@ def scenario_shaman_shocks_apply_phase1_riders_and_lava_surge() -> bool:
 
 
 def scenario_shaman_shock_and_lava_lash_balance_metadata() -> bool:
-    assert ABILITIES["earth_shock"]["scaling"]["int"] == 0.3, "Earth Shock should scale with Intellect at 0.3x"
+    assert ABILITIES["earth_shock"]["cooldown"] == 5, "Earth Shock cooldown should be 5"
+    assert ABILITIES["earth_shock"]["scaling"]["int"] == 0.4, "Earth Shock should scale with Intellect at 0.4x"
     assert ABILITIES["earth_shock"]["dice"]["type"] == "d4", "Earth Shock should use d4"
-    assert ABILITIES["flame_shock"]["scaling"]["int"] == 0.4, "Flame Shock should scale with Intellect at 0.4x"
+    assert ABILITIES["flame_shock"]["cooldown"] == 6, "Flame Shock cooldown should be 6"
+    assert ABILITIES["flame_shock"]["scaling"]["int"] == 0.8, "Flame Shock should scale with Intellect at 0.8x"
     assert ABILITIES["flame_shock"]["dice"]["type"] == "d4", "Flame Shock should use d4"
-    assert ABILITIES["frost_shock"]["scaling"]["int"] == 0.5, "Frost Shock should scale with Intellect at 0.5x"
+    assert ABILITIES["frost_shock"]["cooldown"] == 7, "Frost Shock cooldown should be 7"
+    assert ABILITIES["frost_shock"]["scaling"]["int"] == 0.4, "Frost Shock should scale with Intellect at 0.4x"
     assert ABILITIES["frost_shock"]["dice"]["type"] == "d4", "Frost Shock should use d4"
     assert not ABILITIES["earth_shock"].get("requires_effect"), "Earth Shock should be independently castable"
     assert not ABILITIES["flame_shock"].get("requires_effect"), "Flame Shock should be independently castable"
@@ -3975,7 +3983,7 @@ def scenario_shaman_shock_lava_surge_proc_chances() -> bool:
         lava_surge = next((entry for entry in effects_list if entry.get("id") == "lava_surge"), None)
         assert lava_surge is not None, f"{ability_id} should be able to grant Lava Surge"
         assert float(lava_surge.get("chance", 0)) == chance, f"{ability_id} should use {int(chance * 100)}% Lava Surge proc chance"
-        assert lava_surge.get("log") == "{actor} has Lava Surge empowered!", f"{ability_id} Lava Surge proc log should use empowered wording"
+        assert lava_surge.get("log") == "{actor} has Lava Lash empowered!", f"{ability_id} Lava Surge proc log should reference Lava Lash"
     return True
 
 
@@ -4024,6 +4032,14 @@ def scenario_shaman_lava_lash_empowered_damage_and_consume() -> bool:
     empowered_turn = _turn_lines(match, 2)
     assert any("Roll d6 =" in line for line in empowered_turn), "Empowered Lava Lash should roll d6"
     assert any("Empowered by Lava Surge!" in line for line in empowered_turn), "Empowered Lava Lash should log Lava Surge empowerment"
+    roll_line = next((line for line in empowered_turn if "Roll d6 =" in line), "")
+    dealt_line = next((line for line in empowered_turn if "Deals " in line and "damage" in line), "")
+    roll_match = re.search(r"Roll d6 = (\d+)", roll_line)
+    dealt_match = re.search(r"Deals (\d+) damage", dealt_line)
+    assert roll_match and dealt_match, "Empowered Lava Lash logs should include both d6 roll and dealt damage"
+    roll_value = int(roll_match.group(1))
+    dealt_value = int(dealt_match.group(1))
+    assert dealt_value == int(shaman.stats["int"] * 1.5 + roll_value), "Empowered Lava Lash damage should be [Intellect * 1.5 + d6] under zero-mitigation setup"
     assert not effects.has_effect(shaman, "lava_surge"), "Empowered Lava Lash should consume Lava Surge"
     assert warrior.res.hp < hp_after_base, "Empowered Lava Lash should deal damage"
 
@@ -4068,7 +4084,6 @@ def scenario_shaman_chain_lightning_aoe_and_docs_and_effect_panel() -> bool:
 
     effects.apply_effect_by_id(shaman, "lava_surge", overrides={"duration": 2})
     effects.apply_effect_by_id(shaman, "flame_dance", overrides={"duration": 5})
-    effects.apply_effect_by_id(hunter, "earth_shock", overrides={"duration": 1})
     effects.apply_effect_by_id(hunter, "frost_shock_freeze", overrides={"duration": 2})
     panel = effects.build_effect_panel_payload(shaman)
     magical_names = {entry.get("name") for entry in panel.get("buffs_magical", [])}
@@ -4079,9 +4094,7 @@ def scenario_shaman_chain_lightning_aoe_and_docs_and_effect_panel() -> bool:
     assert flame_dance_entry and flame_dance_entry.get("description") == "Next Fire spell’s damage increased by 100%.", "Flame Dance effect panel entry/description should match"
 
     enemy_panel = effects.build_effect_panel_payload(hunter)
-    earth_shock_entry = next((entry for entry in enemy_panel.get("debuffs_magical", []) if entry.get("name") == "Earth Shock"), None)
     frost_shock_entry = next((entry for entry in enemy_panel.get("debuffs_magical", []) if entry.get("name") == "Frost Shock"), None)
-    assert earth_shock_entry and earth_shock_entry.get("description") == "Incoming attacks from this target will miss.", "Earth Shock effect panel entry/description should match"
     assert frost_shock_entry and frost_shock_entry.get("description") == "Frozen and cannot act. Breaks on damage.", "Frost Shock effect panel entry/description should match"
 
     duel_html_text = _detect_duel_html_path().read_text(encoding="utf-8")
@@ -4091,7 +4104,14 @@ def scenario_shaman_chain_lightning_aoe_and_docs_and_effect_panel() -> bool:
     assert '"Magical Attack": [' in duel_html_text and '"Lava Lash"' in duel_html_text and '"Chain Lightning"' in duel_html_text, "Icon source should classify Lava Lash and Chain Lightning as magical attacks"
     assert '"Single Target": [' in duel_html_text and '"Lava Lash"' in duel_html_text, "Icon source should classify Lava Lash as single target"
     assert '"AoE": [' in duel_html_text and '"Chain Lightning"' in duel_html_text, "Icon source should classify Chain Lightning as AoE"
-    assert "On hit, applies <span class=\"stat\">Earth Shock</span> for 1 turn" in duel_html_text, "Earth Shock docs should describe the Phase 1 rider"
+    assert '<p><span class="stat">Cost: 5 Mana</span> | <span class="stat">Type: Magic (Nature)</span> | <span class="stat">Cooldown: 5</span></p>' in duel_html_text, "Earth Shock docs should list 5 cooldown"
+    assert "Deals [Intellect (0.4x) + d4] Nature damage." in duel_html_text, "Earth Shock docs should list 0.4x Intellect scaling with d4"
+    assert '<p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Type: Magic (Fire)</span> | <span class="stat">Cooldown: 6</span></p>' in duel_html_text, "Flame Shock docs should list 6 cooldown"
+    assert "Deals [Intellect (0.8x) + d4] Fire damage." in duel_html_text, "Flame Shock docs should list 0.8x Intellect scaling with d4"
+    assert '<p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Type: Magic (Frost)</span> | <span class="stat">Cooldown: 7</span></p>' in duel_html_text, "Frost Shock docs should list 7 cooldown"
+    assert "Deals [Intellect (0.4x) + d4] Frost damage." in duel_html_text, "Frost Shock docs should list 0.4x Intellect scaling with d4"
+    assert "Lava Lash is empowered to [Intellect (1.5x) + d6]" in duel_html_text, "Lava Lash docs should list 1.5x empowered scaling with d6"
+    assert "On hit, applies <span class=\"stat\">Earth Shock</span> for 1 turn" in duel_html_text, "Earth Shock docs should describe the 1-turn rider"
     assert "On hit, grants <span class=\"stat\">Flame Dance</span> for 5 turns" in duel_html_text, "Flame Shock docs should describe Flame Dance"
     assert "On hit, freezes the target for 2 turns (breaks on damage)" in duel_html_text, "Frost Shock docs should describe freeze rider"
     return True
