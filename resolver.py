@@ -122,6 +122,13 @@ def _apply_heal_with_clamp(target: PlayerState, amount: int) -> int:
     return target.res.hp - before_hp
 
 
+def _can_reapply_effect(target: PlayerState | PetState, effect_id: str) -> bool:
+    template = effect_template(effect_id)
+    if template.get("stackable"):
+        return True
+    return not has_effect(target, effect_id)
+
+
 def _apply_damage_application_stage(
     target_entity: PlayerState | PetState,
     instance_damage: list[int],
@@ -2538,33 +2545,36 @@ def resolve_turn(match: MatchState) -> None:
                 for effect in effects_on_hit:
                     chance = float(effect.get("chance", 0) or 0)
                     if chance > 0 and r.random() <= chance:
-                        if not has_effect(actor, effect["id"]):
-                            if effect.get("separate_log"):
-                                apply_effect_by_id(actor, effect["id"])
-                                if effect.get("log"):
-                                    pre_log_parts.append(str(effect["log"]).replace("{actor}", sid_token(actor_sid)))
-                            else:
-                                apply_effect_by_id(
-                                    actor,
-                                    effect["id"],
-                                    log=match.log,
-                                    label=sid_token(actor_sid),
-                                    log_message=str(effect.get("log")).replace("{actor}", sid_token(actor_sid)) if effect.get("log") else None,
-                                )
+                        effect_id = effect.get("id")
+                        if not effect_id or not _can_reapply_effect(actor, effect_id):
+                            continue
+                        if effect.get("separate_log"):
+                            did_grant = apply_effect_by_id(actor, effect_id)
+                            if did_grant and effect.get("log"):
+                                pre_log_parts.append(str(effect["log"]).replace("{actor}", sid_token(actor_sid)))
+                        else:
+                            apply_effect_by_id(
+                                actor,
+                                effect_id,
+                                log=match.log if effect.get("log") else None,
+                                label=sid_token(actor_sid),
+                                log_message=str(effect.get("log")).replace("{actor}", sid_token(actor_sid)) if effect.get("log") else None,
+                            )
                 for entry in ability.get("self_effects_on_hit", []) or []:
                     if not entry.get("id"):
                         continue
                     chance = float(entry.get("chance", 1.0) or 1.0)
                     if r.random() > chance:
                         continue
-                    if not has_effect(actor, entry["id"]):
-                        apply_effect_by_id(
-                            actor,
-                            entry["id"],
-                            overrides={"duration": int(entry["duration"])} if entry.get("duration") is not None else None,
-                        )
-                        if entry.get("log"):
-                            pre_log_parts.append(str(entry["log"]).replace("{actor}", sid_token(actor_sid)))
+                    if not _can_reapply_effect(actor, entry["id"]):
+                        continue
+                    did_grant = apply_effect_by_id(
+                        actor,
+                        entry["id"],
+                        overrides={"duration": int(entry["duration"])} if entry.get("duration") is not None else None,
+                    )
+                    if did_grant and entry.get("log"):
+                        pre_log_parts.append(str(entry["log"]).replace("{actor}", sid_token(actor_sid)))
                 for entry in ability.get("target_effects_on_hit", []) or []:
                     effect_id = entry.get("id")
                     if not effect_id:

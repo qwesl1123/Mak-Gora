@@ -1347,16 +1347,18 @@ def apply_effect_by_id(
     label: str = "",
     log_message: Optional[str] = None,
     overrides: Optional[Dict[str, Any]] = None,
-) -> None:
+) -> bool:
     effect = build_effect(effect_id, overrides=overrides)
     if not effect:
-        return
+        return False
+    granted_new_stack = False
     if is_effect_stackable(effect):
         max_stacks = effect_max_stacks(effect)
         existing = get_effect(target, effect_id)
         if existing:
             existing_stacks = effect_stack_count(existing)
             existing["stacks"] = min(max_stacks, existing_stacks + 1)
+            granted_new_stack = effect_stack_count(existing) > existing_stacks
             if "duration" in effect:
                 existing["duration"] = effect.get("duration")
             for key, value in effect.items():
@@ -1366,13 +1368,16 @@ def apply_effect_by_id(
         else:
             effect["stacks"] = max(1, min(max_stacks, int(effect.get("stacks", 1) or 1)))
             target.effects.append(effect)
+            granted_new_stack = effect_stack_count(effect) > 0
     else:
         if effect.get("category") == "absorb":
             remove_effect(target, effect_id)
         target.effects.append(effect)
-    if log is not None and log_message:
+        granted_new_stack = True
+    if granted_new_stack and log is not None and log_message:
         prefix = f"{label} " if label else ""
         log.append(f"{prefix}{log_message}")
+    return granted_new_stack
 
 
 def has_effect(target, effect_id: str) -> bool:

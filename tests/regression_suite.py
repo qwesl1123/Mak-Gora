@@ -4015,6 +4015,56 @@ def scenario_shaman_shock_lava_surge_does_not_proc_on_no_hit() -> bool:
     return True
 
 
+def scenario_shaman_repeated_shock_lava_surge_stacks_and_logs() -> bool:
+    shock_ids = ("earth_shock", "flame_shock", "frost_shock")
+    original_on_hit = {shock_id: list(ABILITIES[shock_id].get("on_hit_effects", [])) for shock_id in shock_ids}
+    try:
+        for shock_id in shock_ids:
+            ABILITIES[shock_id]["on_hit_effects"] = [
+                {
+                    "id": "lava_surge",
+                    "chance": 1.0,
+                    "log": "{actor} has Lava Lash empowered!",
+                    "separate_log": True,
+                }
+            ]
+
+        match = make_match("shaman", "warrior", seed=7102)
+        shaman_sid, enemy_sid = match.players
+        shaman = match.state[shaman_sid]
+        enemy = match.state[enemy_sid]
+        shaman.stats["acc"] = 999
+        shaman.stats["crit"] = 0
+        enemy.stats["eva"] = 0
+        enemy.stats["mres"] = 0
+        enemy.stats["damage_reduction"] = 0
+
+        ability_sequence = ("earth_shock", "flame_shock", "frost_shock", "earth_shock")
+        for turn_no, ability_id in enumerate(ability_sequence, start=1):
+            submit_turn(match, ability_id, _DEF_PASS)
+            turn_lines = _turn_lines(match, turn_no)
+            surge = effects.get_effect(shaman, "lava_surge")
+            assert surge is not None, "Repeated successful Shock hits should keep Lava Surge active"
+            expected_stacks = min(3, turn_no)
+            assert effects.effect_stack_count(surge) == expected_stacks, "Repeated successful Shock hits should add Lava Surge stacks up to max"
+            row_count = sum(1 for fx in shaman.effects if fx.get("id") == "lava_surge")
+            assert row_count == 1, "Stackable Lava Surge should stay as one effect row instead of duplicates"
+            if turn_no <= 3:
+                assert any("has Lava Lash empowered!" in line for line in turn_lines), "A successful Lava Surge stack gain should log the proc message again"
+
+        capped_turn_lines = _turn_lines(match, 4)
+        assert not any("has Lava Lash empowered!" in line for line in capped_turn_lines), "Lava Surge proc log should not repeat when already at stack cap with no new stack gained"
+
+        panel = effects.build_effect_panel_payload(shaman)
+        lava_entry = next((entry for entry in panel.get("buffs_magical", []) if entry.get("name") == "Lava Surge"), None)
+        assert lava_entry is not None, "Visible payload should still include Lava Surge after repeated procs"
+        assert lava_entry.get("stacks") == 3, "Visible payload should report the capped Lava Surge stack count"
+        return True
+    finally:
+        for shock_id in shock_ids:
+            ABILITIES[shock_id]["on_hit_effects"] = original_on_hit[shock_id]
+
+
 def scenario_shaman_lava_lash_empowered_damage_and_consume() -> bool:
     match = make_match("shaman", "warrior", seed=7007)
     shaman_sid, enemy_sid = match.players
@@ -5255,6 +5305,7 @@ SCENARIOS = [
     scenario_shaman_shock_and_lava_lash_balance_metadata,
     scenario_shaman_shock_lava_surge_proc_chances,
     scenario_shaman_shock_lava_surge_does_not_proc_on_no_hit,
+    scenario_shaman_repeated_shock_lava_surge_stacks_and_logs,
     scenario_shaman_lava_lash_empowered_damage_and_consume,
     scenario_shaman_lava_surge_stackable_backend_contract,
     scenario_shaman_chain_lightning_aoe_and_docs_and_effect_panel,
