@@ -1093,7 +1093,7 @@ _EFFECT_PANEL_DESCRIPTION_BY_NAME: Dict[str, str] = {
     "Avenging Wrath": "Increases outgoing damage by 20%. Also empowers Crusader Strike and Judgment.",
     "Power Word: Shield": "Absorb shield (can be dispelled).",
     "Earth Shock": "Incoming attacks from this target will miss.",
-    "Flame Dance": "Next Fire spell’s damage increased by 100%.",
+    "Flame Dance": "Next Fire spell’s damage increased by 50%.",
     "Frost Shock": "Frozen and cannot act. Breaks on damage.",
     "Lava Surge": "Lava Lash empowered.",
     "Healing Stream": "Healing over time every turn (can be dispelled).",

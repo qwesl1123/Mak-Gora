@@ -3800,7 +3800,7 @@ def scenario_dot_balance_per_turn_values_and_durations() -> bool:
     checks = [
         ("priest", "vampiric_touch", "vampiric_touch", 0.3, 6, 6),
         ("priest", "devouring_plague", "devouring_plague", 0.4, 4, 7),
-        ("warlock", "corruption", "corruption", 0.4, 4, 8),
+        ("warlock", "corruption", "corruption", 0.2, 4, 8),
         ("warlock", "unstable_affliction", "unstable_affliction", 0.3, 6, 10),
     ]
     for caster_class, ability_id, effect_id, scale, die_max, expected_duration in checks:
@@ -3974,6 +3974,12 @@ def scenario_shaman_shock_and_lava_lash_balance_metadata() -> bool:
     assert ABILITIES["chain_lightning"]["target_mode"] == "aoe_enemy", "Chain Lightning should use enemy AoE targeting"
     assert ABILITIES["chain_lightning"]["scaling"]["int"] == 0.6, "Chain Lightning should scale with Intellect at 0.6x"
     assert ABILITIES["chain_lightning"]["dice"]["type"] == "d6", "Chain Lightning should use d6"
+    assert ABILITIES["lightning_bolt"]["scaling"]["int"] == 0.3, "Lightning Bolt should scale with Intellect at 0.3x"
+    assert ABILITIES["lightning_bolt"]["dice"]["type"] == "d4", "Lightning Bolt should use d4"
+    assert ABILITIES["lightning_bolt"]["cost"]["mp"] == 5, "Lightning Bolt should cost 5 mana"
+    assert ABILITIES["lightning_bolt"]["cooldown"] == 0, "Lightning Bolt should have no cooldown"
+    assert ABILITIES["corruption"]["scaling"]["int"] == 0.2, "Corruption should scale with Intellect at 0.2x"
+    assert CLASSES["warlock"]["resources"]["hp"] == 100, "Warlock HP should be 100"
     return True
 
 
@@ -4059,6 +4065,14 @@ def scenario_shaman_lava_lash_empowered_damage_and_consume() -> bool:
     submit_turn(match_flame_dance, "lava_lash", _DEF_PASS)
     flame_dance_turn = _turn_lines(match_flame_dance, 2)
     assert any("Empowered by Flame Dance!" in line for line in flame_dance_turn), "Next qualifying fire spell should be empowered by Flame Dance"
+    roll_line = next((line for line in flame_dance_turn if "Roll d4 =" in line), "")
+    dealt_line = next((line for line in flame_dance_turn if "Deals " in line and "damage" in line), "")
+    roll_match = re.search(r"Roll d4 = (\d+)", roll_line)
+    dealt_match = re.search(r"Deals (\d+) damage", dealt_line)
+    assert roll_match and dealt_match, "Flame Dance empowered logs should include both d4 roll and dealt damage"
+    roll_value = int(roll_match.group(1))
+    dealt_value = int(dealt_match.group(1))
+    assert dealt_value == int((dance_shaman.stats["int"] * 0.2 + roll_value) * 1.5), "Flame Dance should increase the next Fire spell by 50%"
     assert not effects.has_effect(dance_shaman, "flame_dance"), "Flame Dance should be consumed by the next qualifying fire spell"
     assert dance_enemy.res.hp < hp_after_flame_shock, "Flame Dance empowered fire spell should deal damage"
     return True
@@ -4091,18 +4105,23 @@ def scenario_shaman_chain_lightning_aoe_and_docs_and_effect_panel() -> bool:
     flame_dance_entry = next((entry for entry in panel.get("buffs_magical", []) if entry.get("name") == "Flame Dance"), None)
     assert "Lava Surge" in magical_names, "Lava Surge should appear in magical buffs effect panel"
     assert lava_surge_entry and lava_surge_entry.get("description") == "Lava Lash empowered.", "Lava Surge effect panel description should match"
-    assert flame_dance_entry and flame_dance_entry.get("description") == "Next Fire spell’s damage increased by 100%.", "Flame Dance effect panel entry/description should match"
+    assert flame_dance_entry and flame_dance_entry.get("description") == "Next Fire spell’s damage increased by 50%.", "Flame Dance effect panel entry/description should match"
 
     enemy_panel = effects.build_effect_panel_payload(hunter)
     frost_shock_entry = next((entry for entry in enemy_panel.get("debuffs_magical", []) if entry.get("name") == "Frost Shock"), None)
     assert frost_shock_entry and frost_shock_entry.get("description") == "Frozen and cannot act. Breaks on damage.", "Frost Shock effect panel entry/description should match"
 
     duel_html_text = _detect_duel_html_path().read_text(encoding="utf-8")
+    shaman_docs_start = duel_html_text.index('<h4 class="doc-subtitle" style="color: var(--shaman-color);">Shaman</h4>')
+    first_shaman_lightning_idx = duel_html_text.find('<h4>Lightning Bolt</h4>', shaman_docs_start)
+    first_shaman_earth_idx = duel_html_text.find('<h4>Earth Shock</h4>', shaman_docs_start)
+    assert first_shaman_lightning_idx != -1 and first_shaman_earth_idx != -1 and first_shaman_lightning_idx < first_shaman_earth_idx, "Lightning Bolt docs box should be the first Shaman ability entry"
     assert '<h4>Lava Lash</h4>' in duel_html_text, "Lava Lash docs entry should exist"
     assert '<h4>Chain Lightning</h4>' in duel_html_text, "Chain Lightning docs entry should exist"
-    assert '"Lava Lash"' in duel_html_text and '"Chain Lightning"' in duel_html_text, "Tooltip/doc-driven ability lists should include Lava Lash and Chain Lightning"
-    assert '"Magical Attack": [' in duel_html_text and '"Lava Lash"' in duel_html_text and '"Chain Lightning"' in duel_html_text, "Icon source should classify Lava Lash and Chain Lightning as magical attacks"
-    assert '"Single Target": [' in duel_html_text and '"Lava Lash"' in duel_html_text, "Icon source should classify Lava Lash as single target"
+    assert '<h4>Lightning Bolt</h4>' in duel_html_text, "Lightning Bolt docs entry should exist"
+    assert '"Lava Lash"' in duel_html_text and '"Chain Lightning"' in duel_html_text and '"Lightning Bolt"' in duel_html_text, "Tooltip/doc-driven ability lists should include Lava Lash, Chain Lightning, and Lightning Bolt"
+    assert '"Magical Attack": [' in duel_html_text and '"Lava Lash"' in duel_html_text and '"Chain Lightning"' in duel_html_text and '"Lightning Bolt"' in duel_html_text, "Icon source should classify Lava Lash, Chain Lightning, and Lightning Bolt as magical attacks"
+    assert '"Single Target": [' in duel_html_text and '"Lava Lash"' in duel_html_text and '"Lightning Bolt"' in duel_html_text, "Icon source should classify Lava Lash and Lightning Bolt as single target"
     assert '"AoE": [' in duel_html_text and '"Chain Lightning"' in duel_html_text, "Icon source should classify Chain Lightning as AoE"
     assert '<p><span class="stat">Cost: 5 Mana</span> | <span class="stat">Type: Magic (Nature)</span> | <span class="stat">Cooldown: 5</span></p>' in duel_html_text, "Earth Shock docs should list 5 cooldown"
     assert "Deals [Intellect (0.4x) + d4] Nature damage." in duel_html_text, "Earth Shock docs should list 0.4x Intellect scaling with d4"
@@ -4112,8 +4131,11 @@ def scenario_shaman_chain_lightning_aoe_and_docs_and_effect_panel() -> bool:
     assert "Deals [Intellect (0.4x) + d4] Frost damage." in duel_html_text, "Frost Shock docs should list 0.4x Intellect scaling with d4"
     assert "Lava Lash is empowered to [Intellect (1.5x) + d6]" in duel_html_text, "Lava Lash docs should list 1.5x empowered scaling with d6"
     assert "On hit, applies <span class=\"stat\">Earth Shock</span> for 1 turn" in duel_html_text, "Earth Shock docs should describe the 1-turn rider"
-    assert "On hit, grants <span class=\"stat\">Flame Dance</span> for 5 turns" in duel_html_text, "Flame Shock docs should describe Flame Dance"
+    assert "On hit, grants <span class=\"stat\">Flame Dance</span> for 5 turns (next Fire spell’s damage increased by 50%)" in duel_html_text, "Flame Shock docs should describe Flame Dance at 50%"
+    assert "Deals [Intellect (0.3x) + d4] Nature damage." in duel_html_text, "Lightning Bolt docs should list 0.3x Intellect scaling with d4"
     assert "On hit, freezes the target for 2 turns (breaks on damage)" in duel_html_text, "Frost Shock docs should describe freeze rider"
+    assert "Only usable below 50% HP." in duel_html_text, "Astral Shift docs should include the below-50% HP requirement"
+    assert "restore 3% of max HP and permanently gain +3% Intellect" in duel_html_text, "Ancestral Knowledge docs should include 3% max HP healing"
     return True
 
 
@@ -4137,10 +4159,15 @@ def scenario_shaman_ancestral_guidance_and_knowledge() -> bool:
     shaman_sid, _ = match.players
     shaman = match.state[shaman_sid]
     base_int = int(shaman.stats.get("int", 0))
-    shaman.res.hp = 60
+    shaman.res.hp = 50
+    expected_heal = int(shaman.res.hp_max * 0.03)
+    hp_before = shaman.res.hp
     submit_turn(match, "ancestral_guidance", _DEF_PASS)
     assert effects.absorb_total(shaman) > 0, "Ancestral Guidance should grant an end-of-turn shield"
     assert effects.has_effect(shaman, "ancestral_guidance_shield"), "Ancestral Guidance Shield should be present"
+    assert shaman.res.hp == hp_before + expected_heal, "Ancestral Knowledge should heal for 3% max HP"
+    totals = match.combat_totals.get(shaman_sid, {})
+    assert int(totals.get("healing", 0) or 0) >= expected_heal, "Ancestral Knowledge healing should contribute to combat healing totals"
     assert shaman.stats["int"] >= base_int + 1, "Ancestral Knowledge should grant at least +1 permanent Int"
     return True
 
@@ -4151,9 +4178,75 @@ def scenario_shaman_astral_shift_conversion() -> bool:
     shaman = match.state[shaman_sid]
     shaman.res.hp = 40
     submit_turn(match, "astral_shift", _DEF_PASS)
+    cast_turn = _turn_lines(match, 1)
+    assert any("can use Astral Shift!" in line for line in cast_turn), "Shaman should get Astral Shift can-use reminder when below 50% HP"
     assert shaman.res.hp >= 1, "Astral Shift should never reduce the caster below 1 HP"
     assert effects.absorb_total(shaman) >= 39, "Astral Shift should convert HP into absorb"
     assert effects.has_effect(shaman, "astral_shield"), "Astral Shift should apply Astral Shield"
+
+    blocked_match = make_match("shaman", "warrior", seed=7014)
+    blocked_sid, _ = blocked_match.players
+    blocked_shaman = blocked_match.state[blocked_sid]
+    blocked_shaman.res.hp = blocked_shaman.res.hp_max
+    submit_turn(blocked_match, "astral_shift", _DEF_PASS)
+    blocked_turn = _turn_lines(blocked_match, 1)
+    assert any("Astral Shift can only be used below 50% HP." in line for line in blocked_turn), "Astral Shift should be blocked at or above 50% HP with the correct fail message"
+    assert not effects.has_effect(blocked_shaman, "astral_shield"), "Astral Shift should not apply shield when blocked by HP requirement"
+    return True
+
+
+def scenario_shaman_lightning_bolt_damage_and_shock_resets() -> bool:
+    match = make_match("shaman", "warrior", seed=7016)
+    shaman_sid, enemy_sid = match.players
+    shaman = match.state[shaman_sid]
+    enemy = match.state[enemy_sid]
+    shaman.stats["acc"] = 999
+    shaman.stats["crit"] = 0
+    shaman.stats["int"] = 20
+    enemy.stats["eva"] = 0
+    enemy.stats["def"] = 0
+    enemy.stats["mres"] = 0
+    submit_turn(match, "lightning_bolt", _DEF_PASS)
+    turn_lines = _turn_lines(match, 1)
+    roll_line = next((line for line in turn_lines if "Roll d4 =" in line), "")
+    dealt_line = next((line for line in turn_lines if "Deals " in line and "damage" in line), "")
+    roll_match = re.search(r"Roll d4 = (\d+)", roll_line)
+    dealt_match = re.search(r"Deals (\d+) damage", dealt_line)
+    assert roll_match and dealt_match, "Lightning Bolt logs should include both d4 roll and dealt damage"
+    assert int(dealt_match.group(1)) == int(shaman.stats["int"] * 0.3 + int(roll_match.group(1))), "Lightning Bolt damage should be [Intellect * 0.3 + d4]"
+
+    def _find_reset_seed(shock_ability: str, log_text: str) -> int:
+        for seed in range(7200, 7800):
+            reset_match = make_match("shaman", "warrior", seed=seed)
+            sid, _ = reset_match.players
+            sham = reset_match.state[sid]
+            foe = reset_match.state[reset_match.players[1]]
+            sham.stats["acc"] = 999
+            sham.stats["crit"] = 0
+            foe.stats["eva"] = 0
+            foe.stats["def"] = 0
+            foe.stats["mres"] = 0
+            submit_turn(reset_match, shock_ability, _DEF_PASS)
+            submit_turn(reset_match, "lightning_bolt", _DEF_PASS)
+            if not sham.cooldowns.get(shock_ability) and any(log_text in line for line in _turn_lines(reset_match, 2)):
+                return seed
+        raise AssertionError(f"Unable to find deterministic seed for {shock_ability} reset path")
+
+    earth_seed = _find_reset_seed("earth_shock", "Earth Shock's cooldown has been reset!")
+    flame_seed = _find_reset_seed("flame_shock", "Flame Shock's cooldown has been reset!")
+    frost_seed = _find_reset_seed("frost_shock", "Frost Shock's cooldown has been reset!")
+    assert earth_seed != flame_seed or flame_seed != frost_seed, "Cooldown reset path seeds should be independently discovered"
+
+    miss_match = make_match("shaman", "warrior", seed=7022)
+    miss_sid, _ = miss_match.players
+    miss_shaman = miss_match.state[miss_sid]
+    miss_shaman.stats["acc"] = 0
+    miss_match.state[miss_match.players[1]].stats["eva"] = 100
+    submit_turn(miss_match, "earth_shock", _DEF_PASS)
+    assert miss_shaman.cooldowns.get("earth_shock"), "Earth Shock should be on cooldown before miss-path validation"
+    submit_turn(miss_match, "lightning_bolt", _DEF_PASS)
+    assert miss_shaman.cooldowns.get("earth_shock"), "Missed Lightning Bolt should not reset Shock cooldowns"
+    assert not any("cooldown has been reset!" in line for line in _turn_lines(miss_match, 2)), "Missed Lightning Bolt should not emit cooldown reset logs"
     return True
 
 
@@ -4177,6 +4270,7 @@ def scenario_shaman_totems_and_astral_explosion() -> bool:
     assert not any(p.template_id == "capacitor_totem" for p in match.state[shaman_sid].pets.values()), "Capacitor Totem should disappear after discharging"
 
     shaman.res.mp = max(shaman.res.mp, 100)
+    shaman.res.hp = max(1, int(shaman.res.hp_max * 0.4))
     submit_turn(match, "astral_shift", _DEF_PASS)
     warlock_hp_before = warlock.res.hp
     imp_ids = sorted(warlock.pets.keys())
@@ -4194,6 +4288,7 @@ def scenario_shaman_astral_explosion_no_pet_consumes_absorb() -> bool:
     match = make_match("shaman", "warrior", seed=7006)
     shaman_sid, _ = match.players
     shaman = match.state[shaman_sid]
+    shaman.res.hp = max(1, int(shaman.res.hp_max * 0.4))
     submit_turn(match, "astral_shift", _DEF_PASS)
     submit_turn(match, "astral_explosion", _DEF_PASS)
     assert effects.absorb_total(shaman) == 0, "Astral Explosion should consume absorb even when no enemy pets are present"
@@ -4202,10 +4297,12 @@ def scenario_shaman_astral_explosion_no_pet_consumes_absorb() -> bool:
 
 def scenario_shaman_and_rogue_docs_and_stats() -> bool:
     assert CLASSES["rogue"]["base_stats"]["eva"] == 9, "Rogue evasion should be 9"
+    assert CLASSES["warlock"]["resources"]["hp"] == 100, "Warlock HP should be 100"
     duel_html_text = _detect_duel_html_path().read_text(encoding="utf-8")
     for class_name in ("Warrior", "Mage", "Rogue", "Druid", "Warlock", "Paladin", "Priest", "Hunter", "Shaman"):
         assert f"<h4 style=" in duel_html_text and class_name in duel_html_text, f"{class_name} docs should be present"
     assert "Evasion: 9%" in duel_html_text, "Rogue docs should show Evasion: 9%"
+    assert "HP: 100" in duel_html_text, "Warlock docs should show HP: 100"
     assert duel_html_text.count("Evasion:") >= 9, "Class docs should show Evasion for each class"
     return True
 
@@ -5106,6 +5203,7 @@ SCENARIOS = [
     scenario_shaman_healing_stream_hot,
     scenario_shaman_ancestral_guidance_and_knowledge,
     scenario_shaman_astral_shift_conversion,
+    scenario_shaman_lightning_bolt_damage_and_shock_resets,
     scenario_shaman_totems_and_astral_explosion,
     scenario_shaman_astral_explosion_no_pet_consumes_absorb,
     scenario_shaman_and_rogue_docs_and_stats,

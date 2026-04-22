@@ -2173,7 +2173,7 @@
           <div class="doc-item">
             <h4 style="color: var(--warlock-color);">Warlock</h4>
             <p><span class="stat">Attack: 3</span> | <span class="stat">Intellect: 15</span> | <span class="stat">Defense: 7</span></p>
-            <p><span class="stat">HP: 110</span> | <span class="stat">Mana: 100</span> | Speed: 9 | Crit: 4% | Accuracy: 96% | Evasion: 2%</p>
+            <p><span class="stat">HP: 100</span> | <span class="stat">Mana: 100</span> | Speed: 9 | Crit: 4% | Accuracy: 96% | Evasion: 2%</p>
             <p>Master of curses and demons. Uses Mana only and specializes in magical afflictions.</p>
           </div>
 
@@ -2719,7 +2719,7 @@
             <h4>Corruption</h4>
             <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Cooldown: 8</span></p>
             <p><span class="stat">Command: <span class="kbd">corruption</span></span></p>
-            <p>Magical DoT over 8 turns. Deals [Intellect (0.4x) + d4] damage per turn and refreshes (no stacking).</p>
+            <p>Magical DoT over 8 turns. Deals [Intellect (0.2x) + d4] damage per turn and refreshes (no stacking).</p>
           </div>
           <div class="doc-item">
             <h4>Unstable Affliction</h4>
@@ -3012,6 +3012,12 @@
         <h4 class="doc-subtitle" style="color: var(--shaman-color);">Shaman</h4>
         <div class="doc-grid">
           <div class="doc-item">
+            <h4>Lightning Bolt</h4>
+            <p><span class="stat">Cost: 5 Mana</span> | <span class="stat">Type: Magic (Nature)</span> | <span class="stat">Cooldown: 0</span></p>
+            <p><span class="stat">Command: <span class="kbd">lightning_bolt</span></span></p>
+            <p>Deals [Intellect (0.3x) + d4] Nature damage. On hit, has a 15% chance to reset <span class="stat">Earth Shock</span>, a 10% chance to reset <span class="stat">Flame Shock</span>, and a 5% chance to reset <span class="stat">Frost Shock</span>.</p>
+          </div>
+          <div class="doc-item">
             <h4>Earth Shock</h4>
             <p><span class="stat">Cost: 5 Mana</span> | <span class="stat">Type: Magic (Nature)</span> | <span class="stat">Cooldown: 5</span></p>
             <p><span class="stat">Command: <span class="kbd">earth_shock</span></span></p>
@@ -3021,7 +3027,7 @@
             <h4>Flame Shock</h4>
             <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Type: Magic (Fire)</span> | <span class="stat">Cooldown: 6</span></p>
             <p><span class="stat">Command: <span class="kbd">flame_shock</span></span></p>
-            <p>Deals [Intellect (0.8x) + d4] Fire damage. On hit, grants <span class="stat">Flame Dance</span> for 5 turns (next Fire spell’s damage increased by 100%) and has a 30% chance to grant <span class="stat">Lava Surge</span>.</p>
+            <p>Deals [Intellect (0.8x) + d4] Fire damage. On hit, grants <span class="stat">Flame Dance</span> for 5 turns (next Fire spell’s damage increased by 50%) and has a 30% chance to grant <span class="stat">Lava Surge</span>.</p>
           </div>
           <div class="doc-item">
             <h4>Frost Shock</h4>
@@ -3055,13 +3061,13 @@
           </div>
           <div class="doc-item">
             <h4>Ancestral Knowledge (Passive)</h4>
-            <p>At the end of each turn, if you have absorb, restore [Intellect (0.4x) + d2] HP and permanently gain +3% Intellect (minimum +1).</p>
+            <p>At the end of each turn, if you have absorb, restore 3% of max HP and permanently gain +3% Intellect (minimum +1).</p>
           </div>
           <div class="doc-item">
             <h4>Astral Shift</h4>
             <p><span class="stat">Cost: 20 Mana</span> | <span class="stat">Cooldown: 15</span></p>
             <p><span class="stat">Command: <span class="kbd">astral_shift</span></span></p>
-            <p>Converts all available HP into absorb while leaving 1 HP. The Astral Shield lasts 50 turns.</p>
+            <p>Only usable below 50% HP. Converts all available HP into absorb while leaving 1 HP. The Astral Shield lasts 50 turns.</p>
           </div>
           <div class="doc-item">
             <h4>Mana Tide Totem</h4>
@@ -3286,6 +3292,7 @@
         "Earth Shock",
         "Flame Shock",
         "Frost Shock",
+        "Lightning Bolt",
         "Lava Lash",
         "Chain Lightning",
         "Healing Stream",
@@ -3497,8 +3504,8 @@
 
       const abilityIconCategories = {
         "Physical Attack": ["Overpower", "Victory Rush", "Rampage", "Mortal Strike", "Execute", "Dragon Roar", "Cleave", "Eviscerate", "Shadowstrike", "Ambush", "Maul", "Swipe", "Claw", "Shred", "Rip", "Crusader Strike", "Final Verdict", "Aimed Shot", "Raptor Strike", "Multi-Shot"],
-        "Magical Attack": ["Fireball", "Fire Blast", "Arcane Barrage", "Pyroblast", "Wrath", "Starfire", "Agony", "Corruption", "Unstable Affliction", "Drain Life", "Judgment", "Shield of Vengeance", "Mind Flay", "Mind Blast", "Vampiric Touch", "Devouring Plague", "Penance", "Mindgames", "Shadow Word: Death", "Wildfire Bomb", "Arcane Shot", "Earth Shock", "Flame Shock", "Frost Shock", "Lava Lash", "Chain Lightning", "Astral Explosion"],
-        "Single Target": ["Overpower", "Victory Rush", "Rampage", "Mortal Strike", "Execute", "Fireball", "Fire Blast", "Arcane Barrage", "Pyroblast", "Ring of Ice", "Eviscerate", "Shadowstrike", "Ambush", "Maul", "Claw", "Shred", "Rip", "Cheap Shot", "Kidney Shot", "Maim", "Wrath", "Starfire", "Cyclone", "Typhoon", "Agony", "Corruption", "Unstable Affliction", "Drain Life", "Fear", "Crusader Strike", "Judgment", "Final Verdict", "Hammer of Justice", "Mind Flay", "Mind Blast", "Vampiric Touch", "Devouring Plague", "Penance", "Shadow Word: Death", "Wildfire Bomb", "Arcane Shot", "Freezing Trap", "Aimed Shot", "Raptor Strike", "Earth Shock", "Flame Shock", "Frost Shock", "Lava Lash"],
+        "Magical Attack": ["Fireball", "Fire Blast", "Arcane Barrage", "Pyroblast", "Wrath", "Starfire", "Agony", "Corruption", "Unstable Affliction", "Drain Life", "Judgment", "Shield of Vengeance", "Mind Flay", "Mind Blast", "Vampiric Touch", "Devouring Plague", "Penance", "Mindgames", "Shadow Word: Death", "Wildfire Bomb", "Arcane Shot", "Earth Shock", "Flame Shock", "Frost Shock", "Lightning Bolt", "Lava Lash", "Chain Lightning", "Astral Explosion"],
+        "Single Target": ["Overpower", "Victory Rush", "Rampage", "Mortal Strike", "Execute", "Fireball", "Fire Blast", "Arcane Barrage", "Pyroblast", "Ring of Ice", "Eviscerate", "Shadowstrike", "Ambush", "Maul", "Claw", "Shred", "Rip", "Cheap Shot", "Kidney Shot", "Maim", "Wrath", "Starfire", "Cyclone", "Typhoon", "Agony", "Corruption", "Unstable Affliction", "Drain Life", "Fear", "Crusader Strike", "Judgment", "Final Verdict", "Hammer of Justice", "Mind Flay", "Mind Blast", "Vampiric Touch", "Devouring Plague", "Penance", "Shadow Word: Death", "Wildfire Bomb", "Arcane Shot", "Freezing Trap", "Aimed Shot", "Raptor Strike", "Earth Shock", "Flame Shock", "Frost Shock", "Lightning Bolt", "Lava Lash"],
         "AoE": ["Dragon Roar", "Cleave", "Swipe", "Shield of Vengeance", "Psychic Scream", "Multi-Shot", "Chain Lightning", "Astral Explosion"],
         "Crowd Control": ["Ring of Ice", "Cheap Shot", "Kidney Shot", "Maim", "Cyclone", "Typhoon", "Fear", "Hammer of Justice", "Freezing Trap", "Capacitor Totem"],
         "Immunity": ["Ice Block", "Unending Resolve", "Divine Shield"],
@@ -4154,6 +4161,7 @@
         if (
           textWithoutFx.includes("has Flame Dance!")
           || textWithoutFx.includes("has Lava Lash empowered!")
+          || textWithoutFx.includes("can use Astral Shift!")
         ) {
           return applyFxTokensToHtml(`<span class="log-class-shaman logLineShamanProc">${renderTextWithFxTags(textWithoutFx)}</span>`, fxTokens);
         }
@@ -4305,6 +4313,7 @@
         if (
           msg.includes("has Flame Dance!")
           || msg.includes("has Lava Lash empowered!")
+          || msg.includes("can use Astral Shift!")
         ) {
           classes.push("logLineShamanProc");
         }

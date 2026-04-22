@@ -24,7 +24,7 @@ CLASSES = {
     "warlock": {
         "name": "Warlock",
         "base_stats": {"atk": 3, "int": 15, "def": 7, "spd": 9, "crit": 4, "acc": 96, "eva": 2},
-        "resources": {"hp": 110, "mp": 100, "energy": 0, "rage": 0, "rage_max": 0},
+        "resources": {"hp": 100, "mp": 100, "energy": 0, "rage": 0, "rage_max": 0},
         "resource_display": {"primary": {"id": "mp", "label": "Mana", "color": "var(--mana-blue)"}},
     },
     "druid": {

@@ -1146,13 +1146,15 @@ def resolve_end_of_turn_stage(
                 match.log.append(f"{sid_token(sid)} gains {guidance_absorb} absorb from Ancestral Guidance.")
         if absorb_total(ps) > 0:
             current_int = max(0, int(ps.stats.get("int", 0) or 0))
-            heal_value = int(modify_stat(ps, "int", current_int) * 0.4) + int(roll("d2", rng))
+            heal_value = int(ps.res.hp_max * 0.03)
             if heal_value > 0 and ps.res.hp > 0:
                 before_hp = ps.res.hp
                 ps.res.hp = min(ps.res.hp + heal_value, ps.res.hp_max)
                 gained = ps.res.hp - before_hp
                 if gained > 0:
                     match.log.append(f"{sid_token(sid)} restores {gained} HP from Ancestral Knowledge.")
+                    totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
+                    totals["healing"] += int(gained)
             int_gain = max(1, int(current_int * 0.03))
             ps.stats["int"] = current_int + int_gain
             match.log.append(f"{sid_token(sid)} gains +{int_gain} Intellect from Ancestral Knowledge.")
@@ -1391,6 +1393,16 @@ def resolve_action_selection_modifiers(
                 "log": f"{ability['name']} can only be used as an execute.",
             }
 
+    actor_hp_threshold = ability.get("requires_actor_hp_below")
+    if actor_hp_threshold is not None:
+        if actor.res.hp / max(1, actor.res.hp_max) >= float(actor_hp_threshold):
+            return {
+                "resolved": True,
+                "damage": 0,
+                "healing": 0,
+                "log": str(ability.get("requires_actor_hp_below_log") or f"{ability['name']} cannot be used right now."),
+            }
+
     if ability.get("requires_circle") and not has_circle(actor):
         return {"resolved": True, "damage": 0, "healing": 0, "log": "Demonic Circle is required."}
 
@@ -1453,6 +1465,22 @@ def resolve_turn(match: MatchState) -> None:
         submitted_actions={sids[0]: a1, sids[1]: a2},
     )
     match.log.append(f"Turn {match.turn + 1}")
+    astral_shift_ability = ABILITIES.get("astral_shift", {})
+    for sid in (sids[0], sids[1]):
+        ps = match.state[sid]
+        if (ps.build.class_id or "").strip().lower() != "shaman":
+            continue
+        if ps.res.hp <= 0:
+            continue
+        if ps.res.hp / max(1, ps.res.hp_max) >= 0.5:
+            continue
+        if is_on_cooldown(ps, "astral_shift", astral_shift_ability):
+            continue
+        if cannot_act(ps):
+            continue
+        can_pay, _ = can_pay_costs(ps, astral_shift_ability.get("cost", {}))
+        if can_pay:
+            match.log.append(f"{sid_token(sid)} can use Astral Shift!")
 
     def break_on_damage_effect_name(effect: Dict[str, Any]) -> str:
         source_ability_name = effect.get("source_ability_name")
@@ -1486,6 +1514,9 @@ def resolve_turn(match: MatchState) -> None:
             if not linked_ability_id or linked_ability_id == ability_id:
                 continue
             ps.cooldowns[linked_ability_id] = list(applied_slots)
+
+    def reset_cooldown(ps: PlayerState, ability_id: str) -> None:
+        ps.cooldowns.pop(ability_id, None)
 
     def tick_cooldowns(ps: PlayerState) -> None:
         updated = {}
@@ -2449,7 +2480,7 @@ def resolve_turn(match: MatchState) -> None:
             elif "int" in local_scaling:
                 raw = base_damage(modify_stat(actor, "int", actor.stats.get("int", 0)), local_scaling["int"], roll_power)
             if is_empowered_flame_dance and raw > 0:
-                raw = int(raw * 2)
+                raw = int(raw * 1.5)
                 log_parts.append(f"{prefix}Empowered by Flame Dance!")
 
             # Apply critical hit
@@ -2561,7 +2592,6 @@ def resolve_turn(match: MatchState) -> None:
                     gained = grant_resource(actor, resource, amount)
                     if gained > 0 and gain.get("log"):
                         log_parts.append(f"{prefix}{gain['log']}")
-
             heal_on_hit = int(ability.get("heal_on_hit", 0) or 0)
             heal_scaling = ability.get("heal_scaling", {}) or {}
             heal_dice = ability.get("heal_dice")
@@ -2624,7 +2654,6 @@ def resolve_turn(match: MatchState) -> None:
             if passive_logs:
                 extra_logs.extend(passive_logs)
             queue_passive_damage_events(passive_damage_events)
-
         # Strike-again passives can proc per successful damaging strike.
         for strike_damage in per_hit_damage_values:
             strike_bonus_damage, strike_logs, _, strike_damage_events = trigger_on_hit_passives(
@@ -2657,6 +2686,19 @@ def resolve_turn(match: MatchState) -> None:
                     grant_resource(actor, resource, gain_value)
 
         mindgames_flip_damage = bool(has_effect(actor, "mindgames") and total_damage > 0)
+
+        if ability_id == "lightning_bolt" and total_damage > 0:
+            for reset_entry in ability.get("on_hit_cooldown_resets", []) or []:
+                reset_ability_id = str(reset_entry.get("ability_id") or "")
+                if not reset_ability_id:
+                    continue
+                chance = float(reset_entry.get("chance", 0) or 0)
+                if chance <= 0 or r.random() > chance:
+                    continue
+                reset_cooldown(actor, reset_ability_id)
+                reset_ability = ABILITIES.get(reset_ability_id, {})
+                reset_name = str(reset_ability.get("name") or effect_name(reset_ability_id))
+                log_parts.append(f"{reset_name}'s cooldown has been reset!")
 
         if ability.get("consume_effect"):
             remove_effect(actor, ability["consume_effect"])
