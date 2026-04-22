@@ -597,6 +597,92 @@
         font-size: 0.95rem;
         font-weight: 600;
         color: var(--text-light);
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .effect-stacks {
+        display: flex;
+        align-items: center;
+        gap: 2px;
+        flex-shrink: 0;
+        padding: 1px 4px;
+        border-radius: 3px;
+        border: 1px solid;
+        font-family: "Cinzel", serif;
+      }
+
+      .stacks-pips {
+        display: flex;
+        gap: 2px;
+        align-items: center;
+      }
+
+      .stack-pip {
+        width: 3px;
+        height: 8px;
+        border-radius: 1.5px;
+        opacity: 0.8;
+      }
+
+      .stacks-number {
+        font-size: 0.7rem;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        line-height: 1;
+      }
+
+      .effect-row.buff .effect-stacks {
+        background: rgba(68, 221, 102, 0.1);
+        border-color: rgba(68, 221, 102, 0.38);
+      }
+
+      .effect-row.buff .effect-stacks .stacks-number {
+        color: var(--buff-green);
+      }
+
+      .effect-row.buff .stack-pip {
+        background: var(--buff-green);
+      }
+
+      .effect-row.buff-magic .effect-stacks {
+        background: rgba(0, 112, 221, 0.12);
+        border-color: rgba(0, 112, 221, 0.4);
+      }
+
+      .effect-row.buff-magic .effect-stacks .stacks-number {
+        color: #5aadff;
+      }
+
+      .effect-row.buff-magic .stack-pip {
+        background: #5aadff;
+      }
+
+      .effect-row.debuff .effect-stacks {
+        background: rgba(255, 68, 68, 0.1);
+        border-color: rgba(255, 68, 68, 0.38);
+      }
+
+      .effect-row.debuff .effect-stacks .stacks-number {
+        color: var(--debuff-red);
+      }
+
+      .effect-row.debuff .stack-pip {
+        background: var(--debuff-red);
+      }
+
+      .effect-row.debuff-magic .effect-stacks {
+        background: rgba(163, 53, 238, 0.12);
+        border-color: rgba(163, 53, 238, 0.42);
+      }
+
+      .effect-row.debuff-magic .effect-stacks .stacks-number {
+        color: #c670ff;
+      }
+
+      .effect-row.debuff-magic .stack-pip {
+        background: #c670ff;
       }
 
       .effect-duration {
@@ -4525,6 +4611,28 @@
                 : (section.rowClass === "debuff-magic" ? "Magical Debuff" : "Physical Debuff"));
             }
             row.appendChild(name);
+
+            const stackCount = Number(entry?.stacks);
+            if (entry?.stackable && Number.isFinite(stackCount) && stackCount > 1) {
+              const stacks = document.createElement("div");
+              stacks.className = "effect-stacks";
+
+              const pips = document.createElement("div");
+              pips.className = "stacks-pips";
+              for (let i = 0; i < stackCount; i += 1) {
+                const pip = document.createElement("div");
+                pip.className = "stack-pip";
+                pips.appendChild(pip);
+              }
+              stacks.appendChild(pips);
+
+              const number = document.createElement("span");
+              number.className = "stacks-number";
+              number.textContent = `${stackCount}`;
+              stacks.appendChild(number);
+
+              row.appendChild(stacks);
+            }
 
             const duration = document.createElement("span");
             duration.className = "effect-duration";
