@@ -87,6 +87,7 @@ from .effects import (
     effect_has_tag,
     is_magical_harmful_effect,
     normalize_school,
+    consume_effect_stack,
 )
 
 
@@ -2707,7 +2708,7 @@ def resolve_turn(match: MatchState) -> None:
         if ability_id == "mind_blast" and has_effect(actor, "mind_blast_empowered"):
             remove_effect(actor, "mind_blast_empowered")
         if ability_id == "lava_lash" and has_effect(actor, "lava_surge"):
-            remove_effect(actor, "lava_surge")
+            consume_effect_stack(actor, "lava_surge", amount=1)
         if had_flame_dance_at_cast_start and has_effect(actor, "flame_dance") and str(ability_subschool or "").lower() == "fire" and ability_hit_landed:
             remove_effect(actor, "flame_dance")
 

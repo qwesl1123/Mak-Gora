@@ -787,6 +787,8 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "type": "status",
         "name": "Lava Surge",
         "duration": 3,
+        "stackable": True,
+        "max_stacks": 3,
         "flags": {"lava_lash_empowered": True},
         "tags": ["proc"],
         "resolution_layer": "action_selection_modifiers",
@@ -1190,14 +1192,24 @@ def build_effect_panel_payload(ps: PlayerState) -> Dict[str, List[Dict[str, Any]
         )
         duration_raw = effect.get("duration")
         duration = int(duration_raw) if duration_raw is not None else None
+        stackable = is_effect_stackable(effect)
+        stack_count = effect_stack_count(effect) if stackable else 0
+        max_stacks = effect_max_stacks(effect)
         existing = merged[bucket].get(display_name)
         if not existing:
-            merged[bucket][display_name] = {
+            entry = {
                 "name": display_name,
                 "duration": duration,
                 "description": _effect_panel_description(display_name),
             }
+            if stackable:
+                entry["stackable"] = True
+                entry["stacks"] = stack_count
+            merged[bucket][display_name] = entry
             continue
+        if stackable:
+            existing["stackable"] = True
+            existing["stacks"] = min(max_stacks, int(existing.get("stacks", 1) or 1) + stack_count)
         if duration is None:
             continue
         prior_duration = existing.get("duration")
@@ -1339,9 +1351,25 @@ def apply_effect_by_id(
     effect = build_effect(effect_id, overrides=overrides)
     if not effect:
         return
-    if effect.get("category") == "absorb":
-        remove_effect(target, effect_id)
-    target.effects.append(effect)
+    if is_effect_stackable(effect):
+        max_stacks = effect_max_stacks(effect)
+        existing = get_effect(target, effect_id)
+        if existing:
+            existing_stacks = effect_stack_count(existing)
+            existing["stacks"] = min(max_stacks, existing_stacks + 1)
+            if "duration" in effect:
+                existing["duration"] = effect.get("duration")
+            for key, value in effect.items():
+                if key in {"id", "stacks", "duration"}:
+                    continue
+                existing[key] = value
+        else:
+            effect["stacks"] = max(1, min(max_stacks, int(effect.get("stacks", 1) or 1)))
+            target.effects.append(effect)
+    else:
+        if effect.get("category") == "absorb":
+            remove_effect(target, effect_id)
+        target.effects.append(effect)
     if log is not None and log_message:
         prefix = f"{label} " if label else ""
         log.append(f"{prefix}{log_message}")
@@ -1737,6 +1765,62 @@ def get_effect(target: PlayerState, effect_id: str) -> Optional[Dict[str, Any]]:
         if effect.get("id") == effect_id:
             return effect
     return None
+
+
+def is_effect_stackable(effect_or_id: Dict[str, Any] | str) -> bool:
+    if isinstance(effect_or_id, str):
+        effect = effect_template(effect_or_id)
+    else:
+        effect = effect_or_id
+    if not isinstance(effect, dict):
+        return False
+    if "stackable" in effect:
+        return bool(effect.get("stackable"))
+    effect_id = str(effect.get("id") or "")
+    if not effect_id:
+        return False
+    return bool(effect_template(effect_id).get("stackable"))
+
+
+def effect_max_stacks(effect_or_id: Dict[str, Any] | str) -> int:
+    if isinstance(effect_or_id, str):
+        effect = effect_template(effect_or_id)
+    else:
+        effect = effect_or_id
+    if not is_effect_stackable(effect):
+        return 1
+    max_stacks_raw = effect.get("max_stacks")
+    if max_stacks_raw is None:
+        effect_id = str(effect.get("id") or "")
+        max_stacks_raw = effect_template(effect_id).get("max_stacks") if effect_id else 1
+    return max(1, int(max_stacks_raw or 1))
+
+
+def effect_stack_count(effect_or_id: Dict[str, Any] | str) -> int:
+    if isinstance(effect_or_id, str):
+        return 1
+    if not isinstance(effect_or_id, dict):
+        return 1
+    if not is_effect_stackable(effect_or_id):
+        return 1
+    return max(1, min(effect_max_stacks(effect_or_id), int(effect_or_id.get("stacks", 1) or 1)))
+
+
+def consume_effect_stack(target: PlayerState, effect_id: str, amount: int = 1) -> bool:
+    if amount <= 0:
+        return has_effect(target, effect_id)
+    effect = get_effect(target, effect_id)
+    if not effect:
+        return False
+    if not is_effect_stackable(effect):
+        remove_effect(target, effect_id)
+        return False
+    next_stacks = effect_stack_count(effect) - int(amount)
+    if next_stacks > 0:
+        effect["stacks"] = next_stacks
+        return True
+    remove_effect(target, effect_id)
+    return False
 
 
 def outgoing_damage_multiplier(target: PlayerState) -> float:

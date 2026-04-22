@@ -4046,7 +4046,7 @@ def scenario_shaman_lava_lash_empowered_damage_and_consume() -> bool:
     roll_value = int(roll_match.group(1))
     dealt_value = int(dealt_match.group(1))
     assert dealt_value == int(shaman.stats["int"] * 1.5 + roll_value), "Empowered Lava Lash damage should be [Intellect * 1.5 + d6] under zero-mitigation setup"
-    assert not effects.has_effect(shaman, "lava_surge"), "Empowered Lava Lash should consume Lava Surge"
+    assert not effects.has_effect(shaman, "lava_surge"), "Empowered Lava Lash should consume the only Lava Surge stack"
     assert warrior.res.hp < hp_after_base, "Empowered Lava Lash should deal damage"
 
     match_flame_dance = make_match("shaman", "warrior", seed=7009)
@@ -4075,6 +4075,62 @@ def scenario_shaman_lava_lash_empowered_damage_and_consume() -> bool:
     assert dealt_value == int((dance_shaman.stats["int"] * 0.2 + roll_value) * 1.5), "Flame Dance should increase the next Fire spell by 50%"
     assert not effects.has_effect(dance_shaman, "flame_dance"), "Flame Dance should be consumed by the next qualifying fire spell"
     assert dance_enemy.res.hp < hp_after_flame_shock, "Flame Dance empowered fire spell should deal damage"
+    return True
+
+
+def scenario_shaman_lava_surge_stackable_backend_contract() -> bool:
+    match = make_match("shaman", "warrior", seed=7101)
+    shaman_sid, enemy_sid = match.players
+    shaman = match.state[shaman_sid]
+    enemy = match.state[enemy_sid]
+    shaman.stats["acc"] = 999
+    shaman.stats["crit"] = 0
+    shaman.stats["int"] = 10
+    enemy.stats["eva"] = 0
+    enemy.stats["def"] = 0
+    enemy.stats["mres"] = 0
+    enemy.stats["damage_reduction"] = 0
+    enemy.res.hp = enemy.res.hp_max
+
+    for duration in (1, 2, 3):
+        effects.apply_effect_by_id(shaman, "lava_surge", overrides={"duration": duration})
+    surge_effect = effects.get_effect(shaman, "lava_surge")
+    assert surge_effect is not None, "Lava Surge should exist after being applied"
+    assert effects.is_effect_stackable(surge_effect), "Lava Surge should be marked stackable in backend metadata"
+    assert effects.effect_max_stacks(surge_effect) == 3, "Lava Surge stack cap should be 3"
+    assert effects.effect_stack_count(surge_effect) == 3, "Lava Surge should gain multiple stacks"
+    assert int(surge_effect.get("duration", 0) or 0) == 3, "Lava Surge re-proc should refresh to the latest duration deterministically"
+    assert sum(1 for fx in shaman.effects if fx.get("id") == "lava_surge") == 1, "Re-proc should increment stacks without creating duplicate Lava Surge effects"
+
+    effects.apply_effect_by_id(shaman, "lava_surge", overrides={"duration": 5})
+    surge_after_cap = effects.get_effect(shaman, "lava_surge")
+    assert surge_after_cap is not None and effects.effect_stack_count(surge_after_cap) == 3, "Lava Surge stacks should cap at 3"
+    assert int(surge_after_cap.get("duration", 0) or 0) == 5, "Re-proc at cap should still refresh duration"
+
+    panel = effects.build_effect_panel_payload(shaman)
+    lava_entries = [entry for entry in panel.get("buffs_magical", []) if entry.get("name") == "Lava Surge"]
+    assert len(lava_entries) == 1, "Visible effect payload should include exactly one Lava Surge row"
+    assert lava_entries[0].get("stackable") is True, "Visible effect payload should expose stackable metadata for Lava Surge"
+    assert lava_entries[0].get("stacks") == 3, "Visible effect payload should include current Lava Surge stack count"
+
+    effects.apply_effect_by_id(shaman, "hot_streak", overrides={"duration": 3})
+    panel_with_non_stackable = effects.build_effect_panel_payload(shaman)
+    hot_streak_entry = next((entry for entry in panel_with_non_stackable.get("buffs_magical", []) if entry.get("name") == "Hot Streak"), None)
+    assert hot_streak_entry is not None, "Non-stackable visible effects should remain present as before"
+    assert "stacks" not in hot_streak_entry and "stackable" not in hot_streak_entry, "Non-stackable visible effects should remain unchanged in payload shape"
+
+    for expected_stacks in (2, 1):
+        hp_before = enemy.res.hp
+        submit_turn(match, "lava_lash", _DEF_PASS)
+        hp_after = enemy.res.hp
+        current = effects.get_effect(shaman, "lava_surge")
+        assert current is not None and effects.effect_stack_count(current) == expected_stacks, "Empowered Lava Lash should consume exactly one Lava Surge stack"
+        assert hp_after < hp_before, "Empowered Lava Lash should deal damage while consuming stacks"
+
+    submit_turn(match, "lava_lash", _DEF_PASS)
+    assert not effects.has_effect(shaman, "lava_surge"), "Lava Surge should disappear when stacks reach zero"
+    panel_after_deplete = effects.build_effect_panel_payload(shaman)
+    assert not any(entry.get("name") == "Lava Surge" for entry in panel_after_deplete.get("buffs_magical", [])), "Lava Surge should be removed from payload when stacks reach zero"
     return True
 
 
@@ -4352,6 +4408,7 @@ def scenario_effect_panel_payload_normalization() -> bool:
     all_entries = [entry for bucket in panel.values() for entry in bucket]
 
     assert all("description" in entry for entry in all_entries), "Each visible effect entry should include a description field"
+    assert all("stacks" not in entry for entry in all_entries), "Non-stackable payload entries should not include stack counts"
     assert physical_buffs.count("Die by the Sword") == 1, "Die by the Sword should appear exactly once as a physical buff"
     assert "Killing Frenzy" in physical_buffs, "Raptor Strike proc should render as Killing Frenzy in physical buffs"
     assert "Ambush" in physical_buffs, "Ambush should appear as a physical buff"
@@ -5199,6 +5256,7 @@ SCENARIOS = [
     scenario_shaman_shock_lava_surge_proc_chances,
     scenario_shaman_shock_lava_surge_does_not_proc_on_no_hit,
     scenario_shaman_lava_lash_empowered_damage_and_consume,
+    scenario_shaman_lava_surge_stackable_backend_contract,
     scenario_shaman_chain_lightning_aoe_and_docs_and_effect_panel,
     scenario_shaman_healing_stream_hot,
     scenario_shaman_ancestral_guidance_and_knowledge,
