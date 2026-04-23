@@ -716,6 +716,8 @@ class TurnResolutionContext:
     immediate_contexts: dict[str, dict[str, Any]] = field(default_factory=dict)
     start_of_turn_cant_act: dict[str, bool] = field(default_factory=dict)
     deferred_pet_pre_action_logs: list[str] = field(default_factory=list)
+    committed_action_sids: set[str] = field(default_factory=set)
+    committed_action_protected_effect_ids: dict[str, set[str]] = field(default_factory=dict)
 
 
 @dataclass
@@ -1854,6 +1856,51 @@ def resolve_turn(match: MatchState) -> None:
     def single_target_miss_log() -> str:
         return "Target evades the attack — Miss!"
 
+    def mark_committed_on_hit_rider(target_sid: str, effect_id: str) -> None:
+        if not effect_id:
+            return
+        if target_sid not in turn_ctx.committed_action_sids:
+            return
+        turn_ctx.committed_action_protected_effect_ids.setdefault(target_sid, set()).add(effect_id)
+
+    def has_flag_ignoring_committed_on_hit_riders(target_sid: str, target: PlayerState | PetState, flag_name: str) -> bool:
+        if not has_flag(target, flag_name):
+            return False
+        protected_ids = turn_ctx.committed_action_protected_effect_ids.get(target_sid, set())
+        if not protected_ids:
+            return True
+        for effect in target.effects or []:
+            effect_id = effect.get("id")
+            if not effect_id or effect_id in protected_ids:
+                continue
+            if (effect.get("flags", {}) or {}).get(flag_name):
+                return True
+        return False
+
+    def cant_act_reason_ignoring_committed_on_hit_riders(target_sid: str, target: PlayerState | PetState) -> str | None:
+        protected_ids = turn_ctx.committed_action_protected_effect_ids.get(target_sid, set())
+        reason_priority = {"stunned": 0, "frozen": 1, "feared": 2, "terrified": 3}
+        best: tuple[int, str] | None = None
+        for effect in target.effects or []:
+            effect_id = effect.get("id")
+            if effect_id in protected_ids:
+                continue
+            flags = effect.get("flags", {}) or {}
+            reason = effect.get("cant_act_reason")
+            if not reason and flags.get("stunned"):
+                reason = "stunned"
+            if not reason:
+                continue
+            priority = reason_priority.get(reason, len(reason_priority))
+            if best is None or priority < best[0]:
+                best = (priority, str(reason))
+        return best[1] if best else None
+
+    def cannot_act_ignoring_committed_on_hit_riders(target_sid: str, target: PlayerState | PetState) -> bool:
+        if has_flag(target, "cycloned"):
+            return True
+        return cant_act_reason_ignoring_committed_on_hit_riders(target_sid, target) is not None
+
     def dismiss_pet(actor: PlayerState, pet_id: str, *, remember: bool = False) -> None:
         pet = (actor.pets or {}).get(pet_id)
         if not pet:
@@ -2036,14 +2083,21 @@ def resolve_turn(match: MatchState) -> None:
 
         weapon_name = ITEMS.get(weapon_id, {}).get("name", "their bare hands")
 
-        denial = resolve_action_denial_stage(
-            actor_sid,
-            actor,
-            ability,
-            incoming_cc=False,
-        )
-        if denial:
-            return denial
+        actor_runtime_locked = cannot_act_ignoring_committed_on_hit_riders(actor_sid, actor)
+        if actor_runtime_locked:
+            reason = cant_act_reason_ignoring_committed_on_hit_riders(actor_sid, actor)
+            if not can_cast_while_crowd_control(ability, actor, reason=reason, incoming_cc=False):
+                if has_flag(actor, "cycloned"):
+                    reason_text = "is cycloned and cannot act"
+                elif reason:
+                    reason_text = f"is {reason} and cannot act"
+                else:
+                    reason_text = "cannot act"
+                return {
+                    "damage": 0,
+                    "healing": 0,
+                    "log": f"{sid_token(actor_sid)} tries to use {ability['name']} but {reason_text}.",
+                }
 
         if has_flag(actor, "disable_attacks") and "attack" in (ability.get("tags") or []):
             return {
@@ -2441,7 +2495,7 @@ def resolve_turn(match: MatchState) -> None:
             accuracy_resolution = resolve_accuracy_stage(
                 rng=r,
                 prefix=prefix,
-                has_forced_miss=has_flag(actor, "forced_miss"),
+                has_forced_miss=has_flag_ignoring_committed_on_hit_riders(actor_sid, actor, "forced_miss"),
                 weapon_miss_chance=miss_chance,
                 cannot_miss=bool(ability.get("cannot_miss")),
                 accuracy=int(accuracy),
@@ -2590,6 +2644,12 @@ def resolve_turn(match: MatchState) -> None:
                             "source_ability_name": ability.get("name"),
                         },
                     )
+                    if (
+                        isinstance(target, PlayerState)
+                        and actor_sid in turn_ctx.committed_action_sids
+                        and target.sid in turn_ctx.committed_action_sids
+                    ):
+                        mark_committed_on_hit_rider(target.sid, effect_id)
                     if entry.get("log"):
                         log_parts.append(str(entry["log"]))
                 for gain in ability.get("on_hit_resource_gains", []) or []:
@@ -3042,6 +3102,8 @@ def resolve_turn(match: MatchState) -> None:
     resolve_immediate_effects(sids[0], sids[1], turn_ctx.immediate_contexts[sids[0]])
     resolve_immediate_effects(sids[1], sids[0], turn_ctx.immediate_contexts[sids[1]])
     turn_ctx.stealth_targeting = {sid: is_stealthed(turn_ctx.match.state[sid]) for sid in sids}
+    turn_ctx.committed_action_sids = set(sids)
+    turn_ctx.committed_action_protected_effect_ids = {sid: set() for sid in sids}
 
     def finalize_action(actor_sid: str, target_sid: str, action: Dict[str, Any], ctx: Dict[str, Any]) -> Dict[str, Any]:
         if ctx.get("resolved"):

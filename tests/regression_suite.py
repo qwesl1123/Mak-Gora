@@ -3955,6 +3955,119 @@ def scenario_shaman_shocks_apply_phase1_riders_and_lava_surge() -> bool:
     return True
 
 
+def scenario_shaman_same_turn_on_hit_rider_commitment_fairness() -> bool:
+    # 1) Earth Shock mirror: both committed equal-tier actions should still execute.
+    earth_mirror = make_match("shaman", "shaman", seed=8121)
+    p1_sid, p2_sid = earth_mirror.players
+    p1 = earth_mirror.state[p1_sid]
+    p2 = earth_mirror.state[p2_sid]
+    for ps in (p1, p2):
+        ps.stats["acc"] = 999
+        ps.stats["eva"] = 0
+        ps.stats["crit"] = 0
+        ps.stats["int"] = 20
+    p1_hp_before = p1.res.hp
+    p2_hp_before = p2.res.hp
+    submit_turn(earth_mirror, "earth_shock", "earth_shock")
+    assert p1.res.hp < p1_hp_before and p2.res.hp < p2_hp_before, "Earth Shock mirror should land both hits on the cast turn"
+    earth_turn_lines = _turn_lines(earth_mirror, 1)
+    assert sum(1 for line in earth_turn_lines if "shakes the target's aim." in line) == 2, "Earth Shock mirror should apply both outgoing-miss rider logs on the cast turn"
+
+    # 2) Frost Shock mirror: both committed equal-tier actions should still execute and both freezes should apply.
+    frost_mirror = make_match("shaman", "shaman", seed=8122)
+    f1_sid, f2_sid = frost_mirror.players
+    f1 = frost_mirror.state[f1_sid]
+    f2 = frost_mirror.state[f2_sid]
+    for ps in (f1, f2):
+        ps.stats["acc"] = 999
+        ps.stats["eva"] = 0
+        ps.stats["crit"] = 0
+        ps.stats["int"] = 20
+    f1_hp_before = f1.res.hp
+    f2_hp_before = f2.res.hp
+    submit_turn(frost_mirror, "frost_shock", "frost_shock")
+    assert f1.res.hp < f1_hp_before and f2.res.hp < f2_hp_before, "Frost Shock mirror should land both hits on the cast turn"
+    assert effects.has_effect(f1, "frost_shock_freeze"), "Frost Shock mirror should apply freeze to p1"
+    assert effects.has_effect(f2, "frost_shock_freeze"), "Frost Shock mirror should apply freeze to p2"
+
+    # 3) Blink-like protection still wins pre-hit.
+    blink_match = make_match("mage", "shaman", seed=8123)
+    mage_sid, shaman_sid = blink_match.players
+    shaman = blink_match.state[shaman_sid]
+    mage = blink_match.state[mage_sid]
+    shaman.stats["acc"] = 999
+    shaman.stats["eva"] = 0
+    mage_hp_before = mage.res.hp
+    submit_turn(blink_match, "blink", "earth_shock")
+    assert mage.res.hp == mage_hp_before, "Blink should still cause Earth Shock to miss"
+
+    # 4) Turtle forced miss still wins pre-hit.
+    turtle_match = make_match("hunter", "shaman", seed=8124)
+    hunter_sid, tshaman_sid = turtle_match.players
+    tshaman = turtle_match.state[tshaman_sid]
+    hunter = turtle_match.state[hunter_sid]
+    tshaman.stats["acc"] = 999
+    tshaman.stats["eva"] = 0
+    hunter_hp_before = hunter.res.hp
+    submit_turn(turtle_match, "turtle", "frost_shock")
+    assert hunter.res.hp == hunter_hp_before, "Aspect of the Turtle should still cause Frost Shock to miss"
+    assert not effects.has_effect(hunter, "frost_shock_freeze"), "Frost Shock freeze should not apply through Turtle miss protection"
+
+    # 5) Die by the Sword remains mitigation-only versus Frost Shock.
+    dbts_match = make_match("shaman", "warrior", seed=8125)
+    d_shaman_sid, warrior_sid = dbts_match.players
+    d_shaman = dbts_match.state[d_shaman_sid]
+    warrior = dbts_match.state[warrior_sid]
+    d_shaman.stats["acc"] = 999
+    d_shaman.stats["eva"] = 0
+    submit_turn(dbts_match, "frost_shock", _DEF_PASS)
+    baseline_damage = warrior.res.hp_max - warrior.res.hp
+    dbts_match = make_match("shaman", "warrior", seed=8125)
+    d_shaman_sid, warrior_sid = dbts_match.players
+    d_shaman = dbts_match.state[d_shaman_sid]
+    warrior = dbts_match.state[warrior_sid]
+    d_shaman.stats["acc"] = 999
+    d_shaman.stats["eva"] = 0
+    submit_turn(dbts_match, "frost_shock", "die_by_sword")
+    reduced_damage = warrior.res.hp_max - warrior.res.hp
+    assert reduced_damage < baseline_damage, "Die by the Sword should still reduce Frost Shock damage"
+    assert effects.has_effect(warrior, "frost_shock_freeze"), "Die by the Sword should not block Frost Shock freeze rider"
+
+    # 6) Pain Suppression remains mitigation-only versus Frost Shock.
+    ps_match = make_match("shaman", "priest", seed=8126)
+    p_shaman_sid, priest_sid = ps_match.players
+    p_shaman = ps_match.state[p_shaman_sid]
+    priest = ps_match.state[priest_sid]
+    p_shaman.stats["acc"] = 999
+    p_shaman.stats["eva"] = 0
+    submit_turn(ps_match, "frost_shock", _DEF_PASS)
+    ps_baseline_damage = priest.res.hp_max - priest.res.hp
+    ps_match = make_match("shaman", "priest", seed=8126)
+    p_shaman_sid, priest_sid = ps_match.players
+    p_shaman = ps_match.state[p_shaman_sid]
+    priest = ps_match.state[priest_sid]
+    p_shaman.stats["acc"] = 999
+    p_shaman.stats["eva"] = 0
+    submit_turn(ps_match, "frost_shock", "pain_supp")
+    ps_reduced_damage = priest.res.hp_max - priest.res.hp
+    assert ps_reduced_damage < ps_baseline_damage, "Pain Suppression should still reduce Frost Shock damage"
+    assert effects.has_effect(priest, "frost_shock_freeze"), "Pain Suppression should not block Frost Shock freeze rider"
+
+    # 7) Non-mirror baseline: Shock rider should still affect future turns normally.
+    followup_match = make_match("shaman", "warrior", seed=8127)
+    fsid, wsid = followup_match.players
+    fshaman = followup_match.state[fsid]
+    warrior = followup_match.state[wsid]
+    fshaman.stats["acc"] = 999
+    fshaman.stats["eva"] = 0
+    submit_turn(followup_match, "frost_shock", _DEF_PASS)
+    assert effects.has_effect(warrior, "frost_shock_freeze"), "Frost Shock freeze should still apply in non-mirror baseline flow"
+    submit_turn(followup_match, _DEF_PASS, "basic_attack")
+    turn_two_lines = _turn_lines(followup_match, 2)
+    assert any("is frozen and cannot act." in line for line in turn_two_lines), "Frost Shock freeze should still deny action on the following turn in non-mirror flow"
+    return True
+
+
 def scenario_shaman_shock_and_lava_lash_balance_metadata() -> bool:
     assert ABILITIES["earth_shock"]["cooldown"] == 5, "Earth Shock cooldown should be 5"
     assert ABILITIES["earth_shock"]["scaling"]["int"] == 0.4, "Earth Shock should scale with Intellect at 0.4x"
@@ -5302,6 +5415,7 @@ SCENARIOS = [
     scenario_balance_metadata_updates_and_shadowstrike_rename,
     scenario_duel_html_agony_docs_updated,
     scenario_shaman_shocks_apply_phase1_riders_and_lava_surge,
+    scenario_shaman_same_turn_on_hit_rider_commitment_fairness,
     scenario_shaman_shock_and_lava_lash_balance_metadata,
     scenario_shaman_shock_lava_surge_proc_chances,
     scenario_shaman_shock_lava_surge_does_not_proc_on_no_hit,
