@@ -4246,7 +4246,7 @@
         }
         if (
           textWithoutFx.includes("has Flame Dance!")
-          || textWithoutFx.includes("has Lava Lash empowered!")
+          || textWithoutFx.includes("has Lava Surge!")
           || textWithoutFx.includes("can use Astral Shift!")
         ) {
           return applyFxTokensToHtml(`<span class="log-class-shaman logLineShamanProc">${renderTextWithFxTags(textWithoutFx)}</span>`, fxTokens);
@@ -4360,7 +4360,7 @@
       function stampAbilityTips(html) {
         if (
           html.includes("has Flame Dance!")
-          || html.includes("has Lava Lash empowered!")
+          || html.includes("has Lava Surge!")
         ) {
           return html;
         }
@@ -4398,7 +4398,7 @@
         }
         if (
           msg.includes("has Flame Dance!")
-          || msg.includes("has Lava Lash empowered!")
+          || msg.includes("has Lava Surge!")
           || msg.includes("can use Astral Shift!")
         ) {
           classes.push("logLineShamanProc");

@@ -1294,7 +1294,7 @@ ABILITIES = {
             {"id": "earth_shock", "duration": 1, "log": "shakes the target's aim."}
         ],
         "on_hit_effects": [
-            {"id": "lava_surge", "chance": 0.3, "log": "{actor} has Lava Lash empowered!", "separate_log": True}
+            {"id": "lava_surge", "chance": 0.3, "log": "{actor} has Lava Surge!", "separate_log": True}
         ],
     },
     "flame_shock": {
@@ -1313,7 +1313,7 @@ ABILITIES = {
             {"id": "flame_dance", "duration": 5, "log": "{actor} has Flame Dance!", "separate_log": True}
         ],
         "on_hit_effects": [
-            {"id": "lava_surge", "chance": 0.3, "log": "{actor} has Lava Lash empowered!", "separate_log": True}
+            {"id": "lava_surge", "chance": 0.3, "log": "{actor} has Lava Surge!", "separate_log": True}
         ],
     },
     "frost_shock": {
@@ -1332,7 +1332,7 @@ ABILITIES = {
             {"id": "frost_shock_freeze", "duration": 2, "log": "freezes the enemy in place."}
         ],
         "on_hit_effects": [
-            {"id": "lava_surge", "chance": 0.3, "log": "{actor} has Lava Lash empowered!", "separate_log": True}
+            {"id": "lava_surge", "chance": 0.3, "log": "{actor} has Lava Surge!", "separate_log": True}
         ],
     },
     "lava_lash": {

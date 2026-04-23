@@ -3914,7 +3914,7 @@ def scenario_shaman_shocks_apply_phase1_riders_and_lava_surge() -> bool:
     earth_debuff = next((fx for fx in enemy.effects if fx.get("id") == "earth_shock"), None)
     assert earth_debuff is None, "Earth Shock should expire on the same turn when applied as a 1-turn effect"
     earth_turn = _turn_lines(earth_match, 1)
-    assert any("has Lava Lash empowered!" in line for line in earth_turn), "Lava Surge proc reminder should reference Lava Lash"
+    assert any("has Lava Surge!" in line for line in earth_turn), "Lava Surge proc reminder should reference Lava Lash"
     assert not any("has Lava Surge empowered!" in line for line in earth_turn), "Legacy Lava Surge empowered reminder text should not appear"
     assert effects.has_effect(shaman, "lava_surge"), "Earth Shock hit should be able to grant Lava Surge at the 30% proc path"
     enemy_panel_after_earth = effects.build_effect_panel_payload(enemy)
@@ -3989,7 +3989,7 @@ def scenario_shaman_shock_lava_surge_proc_chances() -> bool:
         lava_surge = next((entry for entry in effects_list if entry.get("id") == "lava_surge"), None)
         assert lava_surge is not None, f"{ability_id} should be able to grant Lava Surge"
         assert float(lava_surge.get("chance", 0)) == chance, f"{ability_id} should use {int(chance * 100)}% Lava Surge proc chance"
-        assert lava_surge.get("log") == "{actor} has Lava Lash empowered!", f"{ability_id} Lava Surge proc log should reference Lava Lash"
+        assert lava_surge.get("log") == "{actor} has Lava Surge!", f"{ability_id} Lava Surge proc log should reference Lava Lash"
     return True
 
 
@@ -4024,7 +4024,7 @@ def scenario_shaman_repeated_shock_lava_surge_stacks_and_logs() -> bool:
                 {
                     "id": "lava_surge",
                     "chance": 1.0,
-                    "log": "{actor} has Lava Lash empowered!",
+                    "log": "{actor} has Lava Surge!",
                     "separate_log": True,
                 }
             ]
@@ -4050,10 +4050,10 @@ def scenario_shaman_repeated_shock_lava_surge_stacks_and_logs() -> bool:
             row_count = sum(1 for fx in shaman.effects if fx.get("id") == "lava_surge")
             assert row_count == 1, "Stackable Lava Surge should stay as one effect row instead of duplicates"
             if turn_no <= 3:
-                assert any("has Lava Lash empowered!" in line for line in turn_lines), "A successful Lava Surge stack gain should log the proc message again"
+                assert any("has Lava Surge!" in line for line in turn_lines), "A successful Lava Surge stack gain should log the proc message again"
 
         capped_turn_lines = _turn_lines(match, 4)
-        assert not any("has Lava Lash empowered!" in line for line in capped_turn_lines), "Lava Surge proc log should not repeat when already at stack cap with no new stack gained"
+        assert not any("has Lava Surge!" in line for line in capped_turn_lines), "Lava Surge proc log should not repeat when already at stack cap with no new stack gained"
 
         panel = effects.build_effect_panel_payload(shaman)
         lava_entry = next((entry for entry in panel.get("buffs_magical", []) if entry.get("name") == "Lava Surge"), None)
