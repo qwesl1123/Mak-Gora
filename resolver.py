@@ -88,6 +88,7 @@ from .effects import (
     is_magical_harmful_effect,
     normalize_school,
     consume_effect_stack,
+    effect_stack_count,
 )
 
 
@@ -127,6 +128,12 @@ def _can_reapply_effect(target: PlayerState | PetState, effect_id: str) -> bool:
     if template.get("stackable"):
         return True
     return not has_effect(target, effect_id)
+
+
+def _is_rage_spending_damaging_ability(ability: Dict[str, Any], has_damage: bool) -> bool:
+    if not has_damage:
+        return False
+    return int(((ability.get("cost") or {}).get("rage", 0) or 0)) > 0
 
 
 def _apply_damage_application_stage(
@@ -2136,6 +2143,12 @@ def resolve_turn(match: MatchState) -> None:
                 log_parts.append(stealth_log)
 
         has_damage = any(value for value in (dice_data, scaling, flat_damage))
+        consumes_onslaught = _is_rage_spending_damaging_ability(ability, has_damage)
+        onslaught_stacks = 0
+        if consumes_onslaught and has_effect(actor, "onslaught"):
+            onslaught_effect = get_effect(actor, "onslaught")
+            if onslaught_effect:
+                onslaught_stacks = effect_stack_count(onslaught_effect)
         aoe_skip_champion = False
         aoe_champion_log_override: str | None = None
 
@@ -2153,6 +2166,8 @@ def resolve_turn(match: MatchState) -> None:
                     remove_effect(actor, ability["consume_effect"])
                 if offensive_action and turn_ctx.stealth_start_at_turn_begin.get(actor_sid, False):
                     remove_stealth(actor)
+                if consumes_onslaught and onslaught_stacks > 0:
+                    remove_effect(actor, "onslaught")
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
             missed, miss_log, skip_aoe_champion, aoe_immune_log = resolve_action_hit_resolution(
                 target,
@@ -2170,6 +2185,8 @@ def resolve_turn(match: MatchState) -> None:
                     remove_effect(actor, ability["consume_effect"])
                 if offensive_action and turn_ctx.stealth_start_at_turn_begin.get(actor_sid, False):
                     remove_stealth(actor)
+                if consumes_onslaught and onslaught_stacks > 0:
+                    remove_effect(actor, "onslaught")
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts)}
 
         effect_application_result = resolve_effect_application(
@@ -2463,7 +2480,7 @@ def resolve_turn(match: MatchState) -> None:
         empower_multiplier = 1.0
         consume_empower = False
         empower_logged = False
-        outgoing_mult = outgoing_damage_multiplier(actor)
+        outgoing_mult = outgoing_damage_multiplier(actor) * (1.0 + (0.04 * onslaught_stacks))
         if offensive_action and has_damage:
             for effect in actor.effects:
                 if effect.get("flags", {}).get("empower_next_offense"):
@@ -2784,6 +2801,8 @@ def resolve_turn(match: MatchState) -> None:
 
         if consume_empower and empower_multiplier != 1.0:
             remove_effect(actor, "crusader_empower")
+        if consumes_onslaught and onslaught_stacks > 0:
+            remove_effect(actor, "onslaught")
 
         if ability.get("pet_command"):
             actor.pending_pet_command = ability["pet_command"]

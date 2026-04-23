@@ -793,6 +793,15 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "tags": ["proc"],
         "resolution_layer": "action_selection_modifiers",
     },
+    "onslaught": {
+        "type": "status",
+        "name": "Onslaught",
+        "duration": 3,
+        "stackable": True,
+        "max_stacks": 3,
+        "tags": ["proc"],
+        "resolution_layer": "action_selection_modifiers",
+    },
     "healing_stream": {
         "type": "status",
         "name": "Healing Stream",
@@ -954,6 +963,7 @@ EFFECT_PANEL_BUCKET_ORDER: tuple[str, ...] = (
 _EFFECT_PANEL_PHYSICAL_BUFF_NAMES = {
     "Die by the Sword",
     "Ignore Pain",
+    "Onslaught",
     "Stealth",
     "Evasion",
     "Frenzied Regeneration",
@@ -1098,6 +1108,7 @@ _EFFECT_PANEL_DESCRIPTION_BY_NAME: Dict[str, str] = {
     "Flame Dance": "Next Fire spell’s damage increased by 50%.",
     "Frost Shock": "Frozen and cannot act. Breaks on damage.",
     "Lava Surge": "Lava Lash empowered.",
+    "Onslaught": "Next rage-spending damaging ability deals 4% more damage per stack.",
     "Healing Stream": "Healing over time every turn (can be dispelled).",
     "Ancestral Guidance Shield": "Absorb shield (can be dispelled).",
     "Astral Shield": "Absorb shield (can be dispelled).",

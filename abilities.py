@@ -70,6 +70,9 @@ ABILITIES = {
         "cooldown": 1,
         "classes": ["warrior"],
         "resource_gain": {"rage": "damage"},
+        "self_effects": [
+            {"id": "onslaught", "duration": 3}
+        ],
     },
     "victory_rush": {
         "name": "Victory Rush",

@@ -4297,6 +4297,112 @@ def scenario_shaman_lava_surge_stackable_backend_contract() -> bool:
     return True
 
 
+def scenario_warrior_onslaught_stackable_contract() -> bool:
+    match = make_match("warrior", "mage", seed=7301)
+    warrior_sid, enemy_sid = match.players
+    warrior = match.state[warrior_sid]
+    enemy = match.state[enemy_sid]
+    warrior.stats["acc"] = 999
+    warrior.stats["crit"] = 0
+    enemy.stats["eva"] = 0
+    enemy.stats["def"] = 0
+    enemy.stats["damage_reduction"] = 0
+
+    submit_turn(match, "overpower", _DEF_PASS)
+    onslaught = effects.get_effect(warrior, "onslaught")
+    assert onslaught is not None and effects.effect_stack_count(onslaught) == 1, "Overpower should grant 1 stack of Onslaught"
+
+    submit_turn(match, "overpower", _DEF_PASS)
+    submit_turn(match, "overpower", _DEF_PASS)
+    onslaught = effects.get_effect(warrior, "onslaught")
+    assert onslaught is not None and effects.effect_stack_count(onslaught) == 3, "Repeated Overpower should stack Onslaught up to 3"
+    assert sum(1 for fx in warrior.effects if fx.get("id") == "onslaught") == 1, "Onslaught should remain a single stackable effect row"
+
+    refresh_probe = make_match("warrior", "mage", seed=7310)
+    refresh_warrior = refresh_probe.state[refresh_probe.players[0]]
+    effects.apply_effect_by_id(refresh_warrior, "onslaught", overrides={"duration": 1})
+    effects.apply_effect_by_id(refresh_warrior, "onslaught", overrides={"duration": 3})
+    refreshed = effects.get_effect(refresh_warrior, "onslaught")
+    assert refreshed is not None and effects.effect_stack_count(refreshed) == 2 and int(refreshed.get("duration", 0) or 0) == 3, "Gaining another Onslaught stack should refresh duration to 3"
+
+    submit_turn(match, "overpower", _DEF_PASS)
+    onslaught = effects.get_effect(warrior, "onslaught")
+    assert onslaught is not None and effects.effect_stack_count(onslaught) == 3, "Onslaught should not exceed 3 stacks"
+
+    panel = effects.build_effect_panel_payload(warrior)
+    onslaught_entries = [entry for entry in panel.get("buffs_physical", []) if entry.get("name") == "Onslaught"]
+    assert len(onslaught_entries) == 1, "Visible payload should contain one Onslaught row"
+    assert onslaught_entries[0].get("stackable") is True and onslaught_entries[0].get("stacks") == 3, "Onslaught payload row should expose stackable metadata and stack count"
+    assert onslaught_entries[0].get("description") == "Next rage-spending damaging ability deals 4% more damage per stack.", "Onslaught payload should expose the expected description"
+
+    ignore_match = make_match("warrior", "mage", seed=7302)
+    ignore_warrior_sid, ignore_enemy_sid = ignore_match.players
+    ignore_warrior = ignore_match.state[ignore_warrior_sid]
+    ignore_enemy = ignore_match.state[ignore_enemy_sid]
+    ignore_warrior.stats["acc"] = 999
+    ignore_warrior.stats["crit"] = 0
+    ignore_enemy.stats["eva"] = 0
+    ignore_warrior.res.rage = ignore_warrior.res.rage_max
+    effects.apply_effect_by_id(ignore_warrior, "onslaught", overrides={"duration": 3})
+    effects.apply_effect_by_id(ignore_warrior, "onslaught", overrides={"duration": 3})
+    submit_turn(ignore_match, "ignore_pain", _DEF_PASS)
+    onslaught_after_ignore = effects.get_effect(ignore_warrior, "onslaught")
+    assert onslaught_after_ignore is not None and effects.effect_stack_count(onslaught_after_ignore) == 2, "Ignore Pain should not consume Onslaught"
+
+    baseline_match = make_match("warrior", "mage", seed=7303)
+    baseline_warrior_sid, baseline_enemy_sid = baseline_match.players
+    baseline_warrior = baseline_match.state[baseline_warrior_sid]
+    baseline_enemy = baseline_match.state[baseline_enemy_sid]
+    baseline_warrior.stats["acc"] = 999
+    baseline_warrior.stats["crit"] = 0
+    baseline_warrior.stats["atk"] = 40
+    baseline_enemy.stats["eva"] = 0
+    baseline_enemy.stats["def"] = 0
+    baseline_enemy.stats["damage_reduction"] = 0
+    baseline_warrior.res.rage = baseline_warrior.res.rage_max
+    hp_before = baseline_enemy.res.hp
+    submit_turn(baseline_match, "mortal_strike", _DEF_PASS)
+    base_damage = hp_before - baseline_enemy.res.hp
+
+    buffed_match = make_match("warrior", "mage", seed=7303)
+    buffed_warrior_sid, buffed_enemy_sid = buffed_match.players
+    buffed_warrior = buffed_match.state[buffed_warrior_sid]
+    buffed_enemy = buffed_match.state[buffed_enemy_sid]
+    buffed_warrior.stats["acc"] = 999
+    buffed_warrior.stats["crit"] = 0
+    buffed_warrior.stats["atk"] = 40
+    buffed_enemy.stats["eva"] = 0
+    buffed_enemy.stats["def"] = 0
+    buffed_enemy.stats["damage_reduction"] = 0
+    buffed_warrior.res.rage = buffed_warrior.res.rage_max
+    for _ in range(3):
+        effects.apply_effect_by_id(buffed_warrior, "onslaught", overrides={"duration": 3})
+    hp_before = buffed_enemy.res.hp
+    submit_turn(buffed_match, "mortal_strike", _DEF_PASS)
+    boosted_damage = hp_before - buffed_enemy.res.hp
+    assert boosted_damage == int(base_damage * 1.12), "3-stack Onslaught should grant +12% damage to the next qualifying rage spender"
+    assert not effects.has_effect(buffed_warrior, "onslaught"), "All Onslaught stacks should be consumed at once by the next qualifying rage spender"
+
+    execute_match = make_match("warrior", "mage", seed=7304)
+    execute_warrior_sid, execute_enemy_sid = execute_match.players
+    execute_warrior = execute_match.state[execute_warrior_sid]
+    execute_enemy = execute_match.state[execute_enemy_sid]
+    execute_warrior.stats["acc"] = 999
+    execute_warrior.stats["crit"] = 0
+    execute_enemy.stats["eva"] = 0
+    execute_enemy.stats["def"] = 100
+    execute_enemy.stats["damage_reduction"] = 0
+    execute_warrior.res.rage = execute_warrior.res.rage_max
+    execute_enemy.res.hp = max(1, int(execute_enemy.res.hp_max * 0.15))
+    effects.apply_effect_by_id(execute_warrior, "onslaught", overrides={"duration": 3})
+    submit_turn(execute_match, "execute", _DEF_PASS)
+    assert not effects.has_effect(execute_warrior, "onslaught"), "Execute should qualify and consume all Onslaught stacks"
+
+    duel_html_text = _detect_duel_html_path().read_text(encoding="utf-8")
+    assert "grants <span class=\"stat\">Onslaught</span>" in duel_html_text, "Overpower docs should mention Onslaught grant"
+    return True
+
+
 def scenario_shaman_chain_lightning_aoe_and_docs_and_effect_panel() -> bool:
     match = make_match("shaman", "hunter", seed=7008)
     shaman_sid, hunter_sid = match.players
@@ -5422,6 +5528,7 @@ SCENARIOS = [
     scenario_shaman_repeated_shock_lava_surge_stacks_and_logs,
     scenario_shaman_lava_lash_empowered_damage_and_consume,
     scenario_shaman_lava_surge_stackable_backend_contract,
+    scenario_warrior_onslaught_stackable_contract,
     scenario_shaman_chain_lightning_aoe_and_docs_and_effect_panel,
     scenario_shaman_healing_stream_hot,
     scenario_shaman_ancestral_guidance_and_knowledge,
