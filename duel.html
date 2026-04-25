@@ -5419,7 +5419,7 @@
       // Stamp data-tip-pet onto class spans for known pet names
       function stampPetTips(html) {
         return html.replace(
-          /<span class="(log-class-hunter|log-class-warlock)">([^<]+)<\/span>/g,
+          /<span class="(log-class-hunter|log-class-warlock|log-class-shaman)">([^<]+)<\/span>/g,
           (match, cls, name) => {
             if (petTipData[name]) {
               return `<span class="${cls}" data-tip-pet="${name.replace(/"/g, '&quot;')}">${name}</span>`;
