@@ -765,7 +765,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
     "earth_shock": {
         "type": "status",
         "name": "Earth Shock",
-        "duration": 1,
+        "duration": 2,
         "school": "magical",
         "subschool": "nature",
         "harmful": True,
@@ -1104,7 +1104,7 @@ _EFFECT_PANEL_DESCRIPTION_BY_NAME: Dict[str, str] = {
     "Shield of Vengeance": "Absorb shield that deals damage when it explodes.",
     "Avenging Wrath": "Increases outgoing damage by 20%. Also empowers Crusader Strike and Judgment.",
     "Power Word: Shield": "Absorb shield (can be dispelled).",
-    "Earth Shock": "Incoming attacks from this target will miss.",
+    "Earth Shock": "Outgoing attacks will miss.",
     "Flame Dance": "Next Fire spell’s damage increased by 50%.",
     "Frost Shock": "Frozen and cannot act. Breaks on damage.",
     "Lava Surge": "Lava Lash empowered.",

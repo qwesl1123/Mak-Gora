@@ -3912,14 +3912,19 @@ def scenario_shaman_shocks_apply_phase1_riders_and_lava_surge() -> bool:
     enemy.stats["damage_reduction"] = 0
     submit_turn(earth_match, "earth_shock", _DEF_PASS)
     earth_debuff = next((fx for fx in enemy.effects if fx.get("id") == "earth_shock"), None)
-    assert earth_debuff is None, "Earth Shock should expire on the same turn when applied as a 1-turn effect"
+    assert earth_debuff is not None, "Earth Shock should apply on hit"
+    assert int(earth_debuff.get("duration", 0) or 0) == 1, "Earth Shock should leave exactly one miss window after the application turn resolves"
     earth_turn = _turn_lines(earth_match, 1)
     assert any("has Lava Surge!" in line for line in earth_turn), "Lava Surge proc reminder should reference Lava Lash"
     assert not any("has Lava Surge empowered!" in line for line in earth_turn), "Legacy Lava Surge empowered reminder text should not appear"
     assert effects.has_effect(shaman, "lava_surge"), "Earth Shock hit should be able to grant Lava Surge at the 30% proc path"
     enemy_panel_after_earth = effects.build_effect_panel_payload(enemy)
     earth_shock_entry = next((entry for entry in enemy_panel_after_earth.get("debuffs_magical", []) if entry.get("name") == "Earth Shock"), None)
-    assert earth_shock_entry is None, "Earth Shock should not remain visible in effect panel after the cast turn resolves"
+    assert earth_shock_entry and earth_shock_entry.get("description") == "Outgoing attacks will miss.", "Earth Shock effect panel entry/description should match"
+    shaman_hp_before = shaman.res.hp
+    submit_turn(earth_match, _DEF_PASS, "basic_attack")
+    assert shaman.res.hp == shaman_hp_before, "Earth Shock should cause the target's next eligible attack to miss"
+    assert not effects.has_effect(enemy, "earth_shock"), "Earth Shock should expire after consuming the next attack miss window"
 
     flame_match = make_match("shaman", "warrior", seed=7004)
     shaman_sid, enemy_sid = flame_match.players
@@ -4455,12 +4460,28 @@ def scenario_shaman_chain_lightning_aoe_and_docs_and_effect_panel() -> bool:
     assert '<p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Type: Magic (Frost)</span> | <span class="stat">Cooldown: 7</span></p>' in duel_html_text, "Frost Shock docs should list 7 cooldown"
     assert "Deals [Intellect (0.4x) + d4] Frost damage." in duel_html_text, "Frost Shock docs should list 0.4x Intellect scaling with d4"
     assert "Lava Lash is empowered to [Intellect (1.5x) + d6]" in duel_html_text, "Lava Lash docs should list 1.5x empowered scaling with d6"
-    assert "On hit, applies <span class=\"stat\">Earth Shock</span> for 1 turn" in duel_html_text, "Earth Shock docs should describe the 1-turn rider"
+    assert "On hit, enemy's attacks next turn will miss, and has a 30% chance to grant <span class=\"stat\">Lava Surge</span>" in duel_html_text, "Earth Shock docs should describe next-turn miss behavior"
     assert "On hit, grants <span class=\"stat\">Flame Dance</span> for 5 turns (next Fire spell’s damage increased by 50%)" in duel_html_text, "Flame Shock docs should describe Flame Dance at 50%"
     assert "Deals [Intellect (0.3x) + d4] Nature damage." in duel_html_text, "Lightning Bolt docs should list 0.3x Intellect scaling with d4"
-    assert "On hit, freezes the target for 2 turns (breaks on damage)" in duel_html_text, "Frost Shock docs should describe freeze rider"
+    assert "On hit, freezes the target next turn (breaks on damage)" in duel_html_text, "Frost Shock docs should describe next-turn freeze rider"
     assert "Only usable below 50% HP." in duel_html_text, "Astral Shift docs should include the below-50% HP requirement"
     assert "restore 3% of max HP and permanently gain +3% Intellect" in duel_html_text, "Ancestral Knowledge docs should include 3% max HP healing"
+    return True
+
+
+def scenario_earth_shock_duration_update_does_not_change_global_duration_semantics() -> bool:
+    assert ABILITIES["earth_shock"]["target_effects_on_hit"][0]["duration"] == 2, "Earth Shock rider duration should be 2 at ability definition level"
+    assert effects.effect_template("earth_shock").get("duration") == 2, "Earth Shock effect template duration should be 2"
+
+    ring_match = make_match("mage", "warrior", seed=9131)
+    mage_sid, warrior_sid = ring_match.players
+    mage = ring_match.state[mage_sid]
+    warrior = ring_match.state[warrior_sid]
+    mage.stats["acc"] = 999
+    warrior.stats["eva"] = 0
+    submit_turn(ring_match, "ring_of_ice", _DEF_PASS)
+    ring_freeze = next((fx for fx in warrior.effects if fx.get("id") == "ring_of_ice_freeze"), None)
+    assert ring_freeze is not None and int(ring_freeze.get("duration", 0) or 0) == 1, "Ring of Ice duration semantics should remain unchanged for unrelated effects"
     return True
 
 
@@ -5530,6 +5551,7 @@ SCENARIOS = [
     scenario_shaman_lava_surge_stackable_backend_contract,
     scenario_warrior_onslaught_stackable_contract,
     scenario_shaman_chain_lightning_aoe_and_docs_and_effect_panel,
+    scenario_earth_shock_duration_update_does_not_change_global_duration_semantics,
     scenario_shaman_healing_stream_hot,
     scenario_shaman_ancestral_guidance_and_knowledge,
     scenario_shaman_astral_shift_conversion,

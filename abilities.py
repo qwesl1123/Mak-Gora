@@ -1294,7 +1294,7 @@ ABILITIES = {
         "cooldown": 5,
         "classes": ["shaman"],
         "target_effects_on_hit": [
-            {"id": "earth_shock", "duration": 1, "log": "shakes the target's aim."}
+            {"id": "earth_shock", "duration": 2, "log": "shakes the target's aim."}
         ],
         "on_hit_effects": [
             {"id": "lava_surge", "chance": 0.3, "log": "{actor} has Lava Surge!", "separate_log": True}
