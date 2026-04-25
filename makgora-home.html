@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <title>Mak'Gora — Home</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link
+    href="https://fonts.googleapis.com/css2?family=Cinzel:wght@400;600;700;800;900&family=Crimson+Text:wght@400;600;700&display=swap"
+    rel="stylesheet" />
+
+  <style>
+    :root {
+      --stone-dark: #1a1410;
+      --stone-med: #2d2620;
+      --stone-light: #4a423a;
+      --gold: #ffd700;
+      --gold-dark: #d4af37;
+      --bronze: #cd7f32;
+      --text-light: #f4e4c1;
+      --text-dark: #c9b896;
+      --border-gold: #8b7355;
+      --warrior-color: #C69B6D;
+      --mage-color: #3FC7EB;
+      --druid-color: #FF7C0A;
+      --warlock-color: #8788EE;
+      --item-green: #1eff00;
+      --item-blue: #0070dd;
+      --item-purple: #a335ee;
+      --item-orange: #ff8000;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background:
+        radial-gradient(ellipse at 50% 20%, rgba(60, 30, 15, 0.45) 0%, transparent 60%),
+        linear-gradient(180deg, rgba(15, 10, 6, 0.35) 0%, rgba(26, 15, 8, 0.45) 40%, rgba(10, 6, 4, 0.7) 100%),
+        url("/static/art/mak-home-art.webp");
+      background-size: cover;
+      background-position: center;
+      background-attachment: fixed;
+      background-repeat: no-repeat;
+      color: var(--text-light);
+      font-family: 'Crimson Text', serif;
+      min-height: 100vh;
+      min-width: 1280px;
+      padding: 16px 40px 24px;
+      overflow-x: auto;
+      overflow-y: hidden;
+    }
+
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(ellipse at 50% 25%, rgba(0, 0, 0, 0.0) 0%, rgba(0, 0, 0, 0.35) 60%, rgba(0, 0, 0, 0.75) 100%);
+      z-index: 0;
+    }
+
+    .page {
+      position: relative;
+      z-index: 1;
+      max-width: 1600px;
+      margin: 0 auto;
+    }
+
+    /* ═══════════════════════════════════════════════════════
+       HERO — MAK'GORA title
+       ═══════════════════════════════════════════════════════ */
+    .hero {
+      text-align: center;
+      padding: 18px 20px 22px;
+      position: relative;
+    }
+
+    .hero::before {
+      content: '';
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      width: 110%;
+      height: 200px;
+      background: radial-gradient(ellipse at center,
+          rgba(10, 6, 3, 0.85) 0%,
+          rgba(10, 6, 3, 0.55) 40%,
+          rgba(10, 6, 3, 0) 75%);
+      z-index: -1;
+    }
+
+    @keyframes glow-pulse {
+
+      0%,
+      100% {
+        opacity: 0.35;
+      }
+
+      50% {
+        opacity: 0.9;
+      }
+    }
+
+    .hero-title {
+      font-family: 'Cinzel', serif;
+      font-weight: 900;
+      font-size: clamp(3rem, 7.5vw, 6.2rem);
+      letter-spacing: 0.28em;
+      line-height: 1;
+      margin: 0;
+      background: linear-gradient(180deg,
+          #fffbe0 0%,
+          #ffd700 25%,
+          #e8a800 55%,
+          #c87800 80%,
+          #6b3800 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      position: relative;
+      display: inline-block;
+    }
+
+    .hero-title-glow {
+      position: absolute;
+      inset: 0;
+      font-family: 'Cinzel', serif;
+      font-weight: 900;
+      letter-spacing: 0.28em;
+      line-height: 1;
+      color: #ffd700;
+      -webkit-text-fill-color: #ffd700;
+      filter: blur(14px);
+      opacity: 0.35;
+      animation: glow-pulse 4s ease-in-out infinite;
+      pointer-events: none;
+      user-select: none;
+      will-change: opacity;
+    }
+
+    /* flanking ornament lines */
+    .hero-title::before,
+    .hero-title::after {
+      content: '';
+      position: absolute;
+      top: 50%;
+      width: 100px;
+      height: 2px;
+      background: linear-gradient(90deg,
+          transparent 0%,
+          rgba(160, 110, 30, 0.5) 12%,
+          rgba(212, 175, 55, 0.9) 35%,
+          rgba(255, 225, 100, 1) 50%,
+          rgba(212, 175, 55, 0.9) 65%,
+          rgba(160, 110, 30, 0.5) 88%,
+          transparent 100%);
+      -webkit-text-fill-color: initial;
+    }
+
+    .hero-title::before {
+      right: 100%;
+      margin-right: 28px;
+      transform: translateY(-50%);
+    }
+
+    .hero-title::after {
+      left: 100%;
+      margin-left: 28px;
+      transform: translateY(-50%);
+    }
+
+    /* rune row above/below title */
+    .hero-runes {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+      margin-bottom: 6px;
+      opacity: 0.55;
+      letter-spacing: 0.35em;
+      font-family: 'Cinzel', serif;
+      font-size: 0.75rem;
+      color: var(--gold-dark);
+      user-select: none;
+    }
+
+    .hero-runes span {
+      display: inline-block;
+    }
+
+    .hero-runes .sep {
+      width: 40px;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, var(--gold-dark), transparent);
+    }
+
+    .hero-tagline {
+      margin-top: 10px;
+      font-family: 'Cinzel', serif;
+      font-size: 0.85rem;
+      color: var(--text-dark);
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      font-weight: 400;
+      text-shadow: 0 2px 6px rgba(0, 0, 0, 0.9);
+      opacity: 0.8;
+    }
+
+    /* ═══════════════════════════════════════════════════════
+       MODE GRID
+       ═══════════════════════════════════════════════════════ */
+    .mode-grid {
+      display: flex;
+      gap: 16px;
+      margin-top: 250px;
+      margin-bottom: 20px;
+    }
+
+    .mode-card {
+      flex: 1;
+    }
+
+    .mode-card {
+      position: relative;
+      height: 270px;
+      border: 3px solid var(--bronze);
+      border-radius: 8px;
+      overflow: visible;
+      cursor: pointer;
+      text-decoration: none;
+      color: inherit;
+      display: block;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.7);
+      transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+    }
+
+    /* Clip the card art/content but not the glow pseudo-element */
+    .mode-art,
+    .mode-label,
+    .lock-icon {
+      border-radius: 6px;
+    }
+
+    .mode-art {
+      position: absolute;
+      inset: 0;
+      border-radius: 5px;
+      overflow: hidden;
+    }
+
+    @keyframes golden-breathe {
+      0% {
+        opacity: 0.7;
+        transform: scale(1.01) translate(-2px, 3px);
+      }
+
+      25% {
+        opacity: 1.0;
+        transform: scale(1.03) translate(3px, -1px);
+      }
+
+      55% {
+        opacity: 0.6;
+        transform: scale(1.02) translate(-1px, 5px);
+      }
+
+      80% {
+        opacity: 0.9;
+        transform: scale(1.04) translate(2px, 1px);
+      }
+
+      100% {
+        opacity: 0.7;
+        transform: scale(1.01) translate(-2px, 3px);
+      }
+    }
+
+    .mode-card:hover:not(.locked) {
+      border-color: var(--gold);
+    }
+
+    .mode-card:not(.locked)::after {
+      content: '';
+      position: absolute;
+      inset: -18px;
+      z-index: -1;
+      border-radius: 12px;
+      opacity: 0;
+      transition: opacity 0.35s ease;
+      pointer-events: none;
+      background: linear-gradient(180deg,
+          rgba(255, 200, 0, 0.60) 0%,
+          rgba(255, 170, 0, 0.55) 50%,
+          rgba(220, 140, 0, 0.55) 100%);
+      filter: blur(16px);
+      animation: none;
+    }
+
+    .mode-card:hover:not(.locked)::after {
+      opacity: 1;
+      animation: golden-breathe 3.2s ease-in-out infinite;
+    }
+
+    .mode-card-pvp {
+      --card-art:
+        linear-gradient(180deg, rgba(0, 0, 0, 0.08) 0%, rgba(0, 0, 0, 0.2) 100%),
+        url("/static/art/home-pvp-card.webp");
+      --card-accent: var(--item-orange);
+    }
+
+    .mode-card-dungeon {
+      --card-art:
+        radial-gradient(circle at 35% 30%, rgba(60, 110, 50, 0.35) 0%, transparent 50%),
+        radial-gradient(circle at 75% 75%, rgba(30, 55, 30, 0.4) 0%, transparent 55%),
+        linear-gradient(160deg, #0f1f10 0%, #08120a 50%, #0a1a0c 100%);
+      --card-accent: var(--item-green);
+    }
+
+    .mode-card-raid {
+      --card-art:
+        radial-gradient(circle at 40% 30%, rgba(120, 50, 180, 0.4) 0%, transparent 50%),
+        radial-gradient(circle at 70% 70%, rgba(60, 20, 90, 0.45) 0%, transparent 55%),
+        linear-gradient(160deg, #1a0a2a 0%, #0a0414 50%, #14081e 100%);
+      --card-accent: var(--item-purple);
+    }
+
+    .mode-card-more {
+      --card-art:
+        radial-gradient(circle at 35% 35%, rgba(40, 90, 160, 0.35) 0%, transparent 50%),
+        radial-gradient(circle at 70% 70%, rgba(20, 40, 90, 0.4) 0%, transparent 55%),
+        linear-gradient(160deg, #0a1228 0%, #04081a 50%, #080f24 100%);
+      --card-accent: var(--item-blue);
+    }
+
+    .mode-art {
+      position: absolute;
+      inset: 0;
+      background: var(--card-art);
+      background-size: cover;
+      background-position: center;
+      z-index: 0;
+      border-radius: 5px;
+      overflow: hidden;
+    }
+
+    .mode-art::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(180deg,
+          rgba(0, 0, 0, 0.0) 0%,
+          rgba(0, 0, 0, 0.1) 40%,
+          rgba(0, 0, 0, 0.75) 80%,
+          rgba(0, 0, 0, 0.92) 100%);
+    }
+
+    .mode-label {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      padding: 16px 16px 18px;
+      z-index: 1;
+      text-align: center;
+    }
+
+    .mode-label h2 {
+      font-family: 'Cinzel', serif;
+      font-weight: 700;
+      font-size: 1.5rem;
+      letter-spacing: 0.08em;
+      color: var(--gold);
+      text-transform: uppercase;
+      text-shadow:
+        0 2px 6px rgba(0, 0, 0, 0.95),
+        0 0 20px rgba(0, 0, 0, 0.9);
+      margin-bottom: 3px;
+    }
+
+    .mode-label p {
+      font-family: 'Crimson Text', serif;
+      font-size: 0.88rem;
+      color: var(--text-dark);
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      text-shadow: 0 1px 4px rgba(0, 0, 0, 0.95);
+    }
+
+    .mode-label::before {
+      content: '';
+      display: block;
+      width: 50px;
+      height: 2px;
+      margin: 0 auto 10px;
+      background: linear-gradient(90deg,
+          transparent 0%,
+          var(--card-accent) 50%,
+          transparent 100%);
+      box-shadow: 0 0 10px var(--card-accent);
+    }
+
+    .mode-card.active {
+      border-color: var(--gold-dark);
+    }
+
+    .mode-card.active::before {
+      content: 'LIVE';
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 2;
+      font-family: 'Cinzel', serif;
+      font-size: 0.65rem;
+      font-weight: 700;
+      letter-spacing: 0.15em;
+      color: #0a0604;
+      background: linear-gradient(180deg, #ffe070 0%, #d4af37 100%);
+      padding: 3px 8px;
+      border-radius: 3px;
+      box-shadow: 0 0 12px rgba(255, 215, 0, 0.7);
+    }
+
+    .mode-card.locked {
+      cursor: not-allowed;
+    }
+
+    .mode-card.locked .mode-art {
+      filter: grayscale(0.7) brightness(0.6);
+    }
+
+    .mode-card.locked .mode-label h2 {
+      color: var(--text-dark);
+    }
+
+    .mode-card.locked::before {
+      content: 'COMING SOON';
+      position: absolute;
+      top: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 2;
+      font-family: 'Cinzel', serif;
+      font-size: 0.65rem;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      color: var(--text-dark);
+      background: rgba(10, 6, 3, 0.85);
+      border: 1px solid var(--border-gold);
+      padding: 4px 10px;
+      border-radius: 3px;
+    }
+
+    .lock-icon {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -80%);
+      z-index: 2;
+      width: 36px;
+      height: 36px;
+      opacity: 0.5;
+    }
+
+    /* ═══════════════════════════════════════════════════════
+       FOOTER
+       ═══════════════════════════════════════════════════════ */
+    .footer {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 20px;
+      padding: 16px 0 10px;
+      border-top: 1px solid rgba(139, 115, 85, 0.3);
+    }
+
+    .footer-link {
+      font-family: 'Cinzel', serif;
+      font-size: 0.9rem;
+      font-weight: 600;
+      letter-spacing: 0.15em;
+      text-transform: uppercase;
+      color: var(--text-dark);
+      text-decoration: none;
+      padding: 8px 20px;
+      border: 1px solid transparent;
+      border-radius: 4px;
+      transition: all 0.18s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .footer-link:hover {
+      color: var(--gold);
+      border-color: var(--border-gold);
+      background: rgba(10, 6, 3, 0.5);
+      text-shadow: 0 0 10px rgba(255, 215, 0, 0.4);
+    }
+
+    .footer-link.primary {
+      color: var(--gold-dark);
+      border-color: var(--border-gold);
+      background: rgba(10, 6, 3, 0.5);
+    }
+
+    .trophy-icon {
+      width: 16px;
+      height: 16px;
+      display: inline-block;
+    }
+  </style>
+</head>
+
+<body>
+
+  <div class="page">
+
+    <!-- ─── HERO ─── -->
+    <div class="hero">
+      <div class="hero-runes">
+        <span class="sep"></span>
+        <span>⚔</span>
+        <span>ᚠ ᚢ ᚦ ᚨ ᚱ ᚲ</span>
+        <span>⚔</span>
+        <span class="sep"></span>
+      </div>
+      <h1 class="hero-title"><span class="hero-title-glow" aria-hidden="true">MAK'GORA</span>MAK'GORA</h1>
+      <p class="hero-tagline">Duel to the Death</p>
+    </div>
+
+    <!-- ─── MODE GRID ─── -->
+    <div class="mode-grid">
+
+      <!-- Mak'Gora PvP (ACTIVE) -->
+      <a href="/duel" class="mode-card active mode-card-pvp">
+        <div class="mode-art"></div>
+        <div class="mode-label">
+          <h2>Mak'Gora</h2>
+          <p>Challenge your friends!</p>
+        </div>
+      </a>
+
+      <!-- Dungeons (LOCKED) -->
+      <div class="mode-card locked mode-card-dungeon">
+        <div class="mode-art"></div>
+        <svg class="lock-icon" viewBox="0 0 28 32" xmlns="http://www.w3.org/2000/svg">
+          <path d="M7 14 V10 C7 5, 10 2, 14 2 C18 2, 21 5, 21 10 V14" fill="none" stroke="#c9b896" stroke-width="2.5"
+            stroke-linecap="round" />
+          <rect x="4" y="14" width="20" height="16" rx="2" fill="#1a1410" stroke="#c9b896" stroke-width="2" />
+          <circle cx="14" cy="22" r="2" fill="#c9b896" />
+          <rect x="13" y="22" width="2" height="5" fill="#c9b896" />
+        </svg>
+        <div class="mode-label">
+          <h2>Dungeons</h2>
+          <p>Single-Player PvE</p>
+        </div>
+      </div>
+
+      <!-- Raids (LOCKED) -->
+      <div class="mode-card locked mode-card-raid">
+        <div class="mode-art"></div>
+        <svg class="lock-icon" viewBox="0 0 28 32" xmlns="http://www.w3.org/2000/svg">
+          <path d="M7 14 V10 C7 5, 10 2, 14 2 C18 2, 21 5, 21 10 V14" fill="none" stroke="#c9b896" stroke-width="2.5"
+            stroke-linecap="round" />
+          <rect x="4" y="14" width="20" height="16" rx="2" fill="#1a1410" stroke="#c9b896" stroke-width="2" />
+          <circle cx="14" cy="22" r="2" fill="#c9b896" />
+          <rect x="13" y="22" width="2" height="5" fill="#c9b896" />
+        </svg>
+        <div class="mode-label">
+          <h2>Raids</h2>
+          <p>Epic Encounters</p>
+        </div>
+      </div>
+
+      <!-- More Modes (LOCKED) -->
+      <div class="mode-card locked mode-card-more">
+        <div class="mode-art"></div>
+        <svg class="lock-icon" viewBox="0 0 28 32" xmlns="http://www.w3.org/2000/svg">
+          <path d="M7 14 V10 C7 5, 10 2, 14 2 C18 2, 21 5, 21 10 V14" fill="none" stroke="#c9b896" stroke-width="2.5"
+            stroke-linecap="round" />
+          <rect x="4" y="14" width="20" height="16" rx="2" fill="#1a1410" stroke="#c9b896" stroke-width="2" />
+          <circle cx="14" cy="22" r="2" fill="#c9b896" />
+          <rect x="13" y="22" width="2" height="5" fill="#c9b896" />
+        </svg>
+        <div class="mode-label">
+          <h2>More Modes</h2>
+          <p>Uncharted Realms</p>
+        </div>
+      </div>
+
+    </div>
+
+
+
+  </div>
+
+</body>
+
+</html>
