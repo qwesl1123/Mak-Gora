@@ -5,31 +5,31 @@ from typing import Optional
 CLASSES = {
     "warrior": {
         "name": "Warrior",
-        "base_stats": {"atk": 12, "int": 2, "def": 8, "spd": 8, "crit": 5, "acc": 90, "eva": 5},
+        "base_stats": {"atk": 12, "int": 2, "def": 8, "spd": 8, "crit": 5, "acc": 90, "eva": 5, "spirit": 0},
         "resources": {"hp": 110, "mp": 0, "energy": 0, "rage": 0, "rage_max": 100},
         "resource_display": {"primary": {"id": "rage", "label": "Rage", "color": "var(--rage-red)"}},
     },
     "mage": {
         "name": "Mage",
-        "base_stats": {"atk": 4, "int": 14, "def": 4, "spd": 9, "crit": 8, "acc": 95, "eva": 6},
+        "base_stats": {"atk": 4, "int": 14, "def": 4, "spd": 9, "crit": 8, "acc": 95, "eva": 6, "spirit": 0},
         "resources": {"hp": 90, "mp": 80, "energy": 0, "rage": 0, "rage_max": 0},
         "resource_display": {"primary": {"id": "mp", "label": "Mana", "color": "var(--mana-blue)"}},
     },
     "rogue": {
         "name": "Rogue",
-        "base_stats": {"atk": 10, "int": 1, "def": 4, "spd": 9, "crit": 8, "acc": 97, "eva": 9},
+        "base_stats": {"atk": 10, "int": 1, "def": 4, "spd": 9, "crit": 8, "acc": 97, "eva": 9, "spirit": 0},
         "resources": {"hp": 95, "mp": 0, "energy": 100, "rage": 0, "rage_max": 0},
         "resource_display": {"primary": {"id": "energy", "label": "Energy", "color": "#FFF468"}},
     },
     "warlock": {
         "name": "Warlock",
-        "base_stats": {"atk": 3, "int": 15, "def": 7, "spd": 9, "crit": 4, "acc": 96, "eva": 2},
+        "base_stats": {"atk": 3, "int": 15, "def": 7, "spd": 9, "crit": 4, "acc": 96, "eva": 2, "spirit": 0},
         "resources": {"hp": 100, "mp": 100, "energy": 0, "rage": 0, "rage_max": 0},
         "resource_display": {"primary": {"id": "mp", "label": "Mana", "color": "var(--mana-blue)"}},
     },
     "druid": {
         "name": "Druid",
-        "base_stats": {"atk": 6, "int": 6, "def": 5, "spd": 8, "crit": 8, "acc": 95, "eva": 5},
+        "base_stats": {"atk": 6, "int": 6, "def": 5, "spd": 8, "crit": 8, "acc": 95, "eva": 5, "spirit": 0},
         "resources": {"hp": 100, "mp": 80, "energy": 100, "rage": 0, "rage_max": 100},
         "resource_display": {"primary": {"id": "mp", "label": "Mana", "color": "var(--mana-blue)"}},
         "resource_notes": {
@@ -42,27 +42,27 @@ CLASSES = {
     },
     "paladin": {
         "name": "Paladin",
-        "base_stats": {"atk": 10, "int": 7, "def": 6, "spd": 7, "crit": 5, "acc": 90, "eva": 3},
+        "base_stats": {"atk": 10, "int": 7, "def": 6, "spd": 7, "crit": 5, "acc": 90, "eva": 3, "spirit": 10},
         "resources": {"hp": 100, "mp": 70, "energy": 0, "rage": 0, "rage_max": 0},
         "resource_display": {"primary": {"id": "mp", "label": "Mana", "color": "var(--mana-blue)"}},
     },
     "priest": {
         "name": "Priest",
-        "base_stats": {"atk": 3, "int": 12, "def": 5, "spd": 8, "crit": 7, "acc": 95, "eva": 4},
+        "base_stats": {"atk": 3, "int": 12, "def": 5, "spd": 8, "crit": 7, "acc": 95, "eva": 4, "spirit": 20},
         "resources": {"hp": 95, "mp": 110, "energy": 0, "rage": 0, "rage_max": 0},
         "resource_display": {"primary": {"id": "mp", "label": "Mana", "color": "var(--mana-blue)"}},
     },
     "hunter": {
         "name": "Hunter",
         "color": "#AAD372",
-        "base_stats": {"atk": 12, "int": 0, "def": 5, "spd": 9, "crit": 7, "acc": 96, "eva": 10},
+        "base_stats": {"atk": 12, "int": 0, "def": 5, "spd": 9, "crit": 7, "acc": 96, "eva": 10, "spirit": 0},
         "resources": {"hp": 95, "mp": 50, "energy": 0, "rage": 0, "rage_max": 0},
         "resource_display": {"primary": {"id": "mp", "label": "Mana", "color": "var(--mana-blue)"}},
     },
     "shaman": {
         "name": "Shaman",
         "color": "#0070DD",
-        "base_stats": {"atk": 3, "int": 7, "def": 5, "spd": 9, "crit": 8, "acc": 95, "eva": 3},
+        "base_stats": {"atk": 3, "int": 7, "def": 5, "spd": 9, "crit": 8, "acc": 95, "eva": 3, "spirit": 5},
         "resources": {"hp": 95, "mp": 100, "energy": 0, "rage": 0, "rage_max": 0},
         "resource_display": {"primary": {"id": "mp", "label": "Mana", "color": "var(--mana-blue)"}},
     },

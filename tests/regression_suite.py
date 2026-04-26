@@ -4641,6 +4641,57 @@ def scenario_shaman_astral_explosion_no_pet_consumes_absorb() -> bool:
     return True
 
 
+def scenario_spirit_mana_regen_formula_and_class_baselines() -> bool:
+    mage_match = make_match("mage", "warrior", seed=9101)
+    shaman_match = make_match("shaman", "warrior", seed=9102)
+    paladin_match = make_match("paladin", "warrior", seed=9103)
+    priest_match = make_match("priest", "warrior", seed=9104)
+    custom_match = make_match("mage", "warrior", seed=9105)
+    assert effects.mana_regen_from_spirit(mage_match.state[mage_match.players[0]]) == 0, "Mage should have 0 Spirit regen"
+    assert effects.mana_regen_from_spirit(shaman_match.state[shaman_match.players[0]]) == 1, "Shaman should have 1 Spirit regen"
+    assert effects.mana_regen_from_spirit(paladin_match.state[paladin_match.players[0]]) == 2, "Paladin should have 2 Spirit regen"
+    assert effects.mana_regen_from_spirit(priest_match.state[priest_match.players[0]]) == 4, "Priest should have 4 Spirit regen"
+    custom = custom_match.state[custom_match.players[0]]
+    custom.stats["spirit"] = 0
+    assert effects.mana_regen_from_spirit(custom) == 0, "0 Spirit should produce 0 mana regen"
+    custom.stats["spirit"] = 5
+    assert effects.mana_regen_from_spirit(custom) == 1, "5 Spirit should produce 1 mana regen"
+    custom.stats["spirit"] = 10
+    assert effects.mana_regen_from_spirit(custom) == 2, "10 Spirit should produce 2 mana regen"
+    custom.stats["spirit"] = 20
+    assert effects.mana_regen_from_spirit(custom) == 4, "20 Spirit should produce 4 mana regen"
+    return True
+
+
+def scenario_spirit_end_of_turn_regen_is_silent_and_clamped() -> bool:
+    baseline = make_match("warrior", "rogue", seed=9106)
+    warrior_sid, rogue_sid = baseline.players
+    warrior = baseline.state[warrior_sid]
+    rogue = baseline.state[rogue_sid]
+    warrior_mp_before = warrior.res.mp
+    rogue_mp_before = rogue.res.mp
+    submit_turn(baseline, _DEF_PASS, _DEF_PASS)
+    assert baseline.state[warrior_sid].res.mp == warrior_mp_before, "Non-mana classes with 0 Spirit should remain unchanged"
+    assert baseline.state[rogue_sid].res.mp == rogue_mp_before, "Non-mana classes with 0 Spirit should remain unchanged"
+
+    spirit_match = make_match("paladin", "warrior", seed=9107)
+    paladin_sid, _ = spirit_match.players
+    paladin = spirit_match.state[paladin_sid]
+    paladin.res.mp = 0
+    submit_turn(spirit_match, _DEF_PASS, _DEF_PASS)
+    assert spirit_match.state[paladin_sid].res.mp == 4, "Paladin should gain base 2 + spirit 2 mana at end of turn"
+    turn_lines = _turn_lines(spirit_match, 1)
+    assert not any("recovers 2 Mana" in line or "recovers 4 Mana" in line for line in turn_lines), "Spirit mana regen should remain silent in combat log"
+
+    clamp_match = make_match("priest", "warrior", seed=9108)
+    priest_sid, _ = clamp_match.players
+    priest = clamp_match.state[priest_sid]
+    priest.res.mp = priest.res.mp_max - 1
+    submit_turn(clamp_match, _DEF_PASS, _DEF_PASS)
+    assert clamp_match.state[priest_sid].res.mp == priest.res.mp_max, "Spirit mana regen should clamp at mp_max"
+    return True
+
+
 def scenario_shaman_and_rogue_docs_and_stats() -> bool:
     assert CLASSES["rogue"]["base_stats"]["eva"] == 9, "Rogue evasion should be 9"
     assert CLASSES["warlock"]["resources"]["hp"] == 100, "Warlock HP should be 100"
@@ -4650,6 +4701,17 @@ def scenario_shaman_and_rogue_docs_and_stats() -> bool:
     assert "Evasion: 9%" in duel_html_text, "Rogue docs should show Evasion: 9%"
     assert "HP: 100" in duel_html_text, "Warlock docs should show HP: 100"
     assert duel_html_text.count("Evasion:") >= 9, "Class docs should show Evasion for each class"
+    assert "Spirit: 0" in duel_html_text and "Spirit: 5" in duel_html_text and "Spirit: 10" in duel_html_text and "Spirit: 20" in duel_html_text, "Class docs should include Spirit base stat values"
+    assert duel_html_text.count("Spirit:") >= 9, "Class docs should show Spirit for each class"
+    assert CLASSES["mage"]["base_stats"]["spirit"] == 0, "Mage Spirit should be 0"
+    assert CLASSES["druid"]["base_stats"]["spirit"] == 0, "Druid Spirit should be 0"
+    assert CLASSES["warlock"]["base_stats"]["spirit"] == 0, "Warlock Spirit should be 0"
+    assert CLASSES["paladin"]["base_stats"]["spirit"] == 10, "Paladin Spirit should be 10"
+    assert CLASSES["priest"]["base_stats"]["spirit"] == 20, "Priest Spirit should be 20"
+    assert CLASSES["hunter"]["base_stats"]["spirit"] == 0, "Hunter Spirit should be 0"
+    assert CLASSES["shaman"]["base_stats"]["spirit"] == 5, "Shaman Spirit should be 5"
+    assert CLASSES["warrior"]["base_stats"]["spirit"] == 0, "Warrior Spirit should be 0"
+    assert CLASSES["rogue"]["base_stats"]["spirit"] == 0, "Rogue Spirit should be 0"
     return True
 
 
@@ -5558,6 +5620,8 @@ SCENARIOS = [
     scenario_shaman_lightning_bolt_damage_and_shock_resets,
     scenario_shaman_totems_and_astral_explosion,
     scenario_shaman_astral_explosion_no_pet_consumes_absorb,
+    scenario_spirit_mana_regen_formula_and_class_baselines,
+    scenario_spirit_end_of_turn_regen_is_silent_and_clamped,
     scenario_shaman_and_rogue_docs_and_stats,
     scenario_effect_panel_payload_normalization,
     scenario_proc_and_burn_duration_cleanup_and_shield_panel_cleanup,

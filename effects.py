@@ -2315,6 +2315,11 @@ def trigger_end_of_turn_effects(ps: PlayerState, log: List[str], label: str) -> 
     return total_healing, pending_mindgames_damage
 
 
+def mana_regen_from_spirit(ps: PlayerState) -> int:
+    spirit = int((ps.stats or {}).get("spirit", 0) or 0)
+    return max(0, (spirit + 3) // 5)
+
+
 def end_of_turn(ps: PlayerState, log: List[str], label: str) -> dict[str, Any]:
     """End-of-turn pipeline: DoTs, passives, duration tick, regen."""
     if not ps.res:
@@ -2330,7 +2335,8 @@ def end_of_turn(ps: PlayerState, log: List[str], label: str) -> dict[str, Any]:
     total_healing += effect_healing
 
     if ps.res.hp > 0:
-        ps.res.mp = min(ps.res.mp + DEFAULTS["mp_regen_per_turn"], ps.res.mp_max)
+        passive_mp_regen = DEFAULTS["mp_regen_per_turn"] + mana_regen_from_spirit(ps)
+        ps.res.mp = min(ps.res.mp + passive_mp_regen, ps.res.mp_max)
         ps.res.energy = min(ps.res.energy + DEFAULTS["energy_regen_per_turn"], ps.res.energy_max)
     return {"damage_sources": damage_sources, "healing_done": total_healing, "self_damage_sources": self_damage_sources}
 
