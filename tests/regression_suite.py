@@ -915,7 +915,11 @@ def scenario_iceblock_blocks_same_turn_stun_and_next_turn_attack() -> bool:
 
 def _add_pet(owner, pet_id: str, template_id: str = "imp") -> None:
     template = PETS[template_id]
-    hp = int(template.get("hp", 1) or 1)
+    resources = template.get("resources", {}) or {}
+    hp = int(resources.get("hp", template.get("hp", 1)) or 1)
+    mp_max = int(resources.get("mp", template.get("mana", 0)) or 0)
+    energy_max = int(resources.get("energy", 0) or 0)
+    rage_max = int(resources.get("rage", 0) or 0)
     owner.pets[pet_id] = PetState(
         id=pet_id,
         template_id=template_id,
@@ -923,8 +927,16 @@ def _add_pet(owner, pet_id: str, template_id: str = "imp") -> None:
         owner_sid=owner.sid,
         hp=hp,
         hp_max=hp,
+        mp=mp_max,
+        mp_max=mp_max,
+        energy=energy_max,
+        energy_max=energy_max,
+        rage=0,
+        rage_max=rage_max,
+        stats={k: int(v or 0) for k, v in ((template.get("stats", {}) or {}).items())},
         effects=[],
         duration=None,
+        entity_type=template.get("entity_type"),
     )
 
 
@@ -1132,6 +1144,125 @@ def scenario_pet_totem_runtime_normalization_phase1() -> bool:
     submit_turn(control_match, "fireball", _DEF_PASS)
     assert control_match.state[control_match.players[1]].res.hp < warrior_hp_before, "Non-pet class behavior should remain unchanged in this phase"
     return True
+
+
+def scenario_pet_totem_runtime_normalization_phase2b() -> bool:
+    original_roll = PET_AI.roll
+    original_reduction = PET_AI._damage_after_reduction
+    original_hit_chance = PET_AI.hit_chance
+    original_frostsaber_chance = PETS["frostsaber"]["special_chance"]
+    original_serpent_chance = PETS["emerald_serpent"]["special_chance"]
+    original_boar_chance = PETS["barrens_boar"]["special_chance"]
+    PETS["frostsaber"]["special_chance"] = 0.0
+    PETS["emerald_serpent"]["special_chance"] = 0.0
+    PETS["barrens_boar"]["special_chance"] = 0.0
+    PET_AI.hit_chance = lambda acc, eva: 100
+    PET_AI._damage_after_reduction = lambda raw, enemy, school: raw
+    PET_AI.roll = lambda die, rng: {"d4": 2, "d6": 4}.get(die, original_roll(die, rng))
+    try:
+        # Shadowfiend explicit stats + melee formula + mana restore identity.
+        fiend_match = make_match("priest", "warrior", seed=700)
+        priest_sid, warrior_sid = fiend_match.players
+        priest = fiend_match.state[priest_sid]
+        warrior = fiend_match.state[warrior_sid]
+        priest.stats["int"] = 999
+        hp_before = warrior.res.hp
+        submit_turn(fiend_match, "shadowfiend", _DEF_PASS)
+        assert hp_before - warrior.res.hp == 10, "Shadowfiend should use [Attack * 1.0 + d4] with explicit pet attack"
+        fiend = _active_pet(priest, "shadowfiend")
+        assert fiend is not None and fiend.stats == {"acc": 98, "atk": 8, "crit": 7, "def": 8, "eva": 0, "int": 0, "spd": 8, "spirit": 0}, "Shadowfiend runtime stats should be normalized and explicit"
+        assert fiend.entity_type == "demon", "Shadowfiend should remain a demon entity"
+        assert any("Shadowfiend restores 13 mana" in line for line in fiend_match.log), "Shadowfiend should still restore owner mana on hit"
+
+        # Frostsaber energy model + basic + bite costs/formulas.
+        saber_match = make_match("hunter", "warrior", seed=701)
+        hunter_sid, warrior_sid = saber_match.players
+        hunter = saber_match.state[hunter_sid]
+        warrior = saber_match.state[warrior_sid]
+        submit_turn(saber_match, "call_saber", _DEF_PASS)
+        saber = _active_pet(hunter, "frostsaber")
+        assert saber is not None, "Frostsaber should summon"
+        assert (saber.energy_max, saber.energy) == (30, 25), "Frostsaber should have 30 max energy and spend 5 on basic attack"
+        hp_before = warrior.res.hp
+        hunter.pending_pet_command = "special"
+        submit_turn(saber_match, _DEF_PASS, _DEF_PASS)
+        assert hp_before - warrior.res.hp == 16, "Frostsaber Bite should use [Attack * 2.0 + d6]"
+        assert saber.energy == 20, "Forced Bite should still pay energy cost after per-turn regen"
+
+        # Emerald Serpent mana model + Lightning Breath scaling/heal-from-actual-damage.
+        serpent_match = make_match("hunter", "warrior", seed=702)
+        hunter_sid, warrior_sid = serpent_match.players
+        hunter = serpent_match.state[hunter_sid]
+        warrior = serpent_match.state[warrior_sid]
+        hunter.res.hp -= 20
+        submit_turn(serpent_match, "call_serpent", _DEF_PASS)
+        serpent = _active_pet(hunter, "emerald_serpent")
+        assert serpent is not None and serpent.mp_max == 40, "Emerald Serpent should use explicit 40 mana pool"
+        assert serpent.mp == 40, "Emerald Serpent passive mana regen should clamp at max when already full"
+        serpent.hp = 5
+        warrior_hp_before = warrior.res.hp
+        hunter_hp_before = hunter.res.hp
+        hunter.pending_pet_command = "special"
+        submit_turn(serpent_match, _DEF_PASS, _DEF_PASS)
+        assert warrior_hp_before - warrior.res.hp == 19, "Lightning Breath should use [Intellect * 1.5 + d6]"
+        assert serpent.hp == 14 and hunter.res.hp == hunter_hp_before + 9, "Lightning Breath healing should be 50% of actual HP damage dealt"
+        assert serpent.mp == 25, "Lightning Breath should spend 15 mana; per-turn mana regen should still respect max-mana clamping"
+
+        # Barrens Boar rage model + no immediate special + fallback to basic with required log style.
+        boar_match = make_match("hunter", "warrior", seed=703)
+        hunter_sid, warrior_sid = boar_match.players
+        hunter = boar_match.state[hunter_sid]
+        warrior = boar_match.state[warrior_sid]
+        submit_turn(boar_match, "call_boar", _DEF_PASS)
+        boar = _active_pet(hunter, "barrens_boar")
+        assert boar is not None and boar.rage_max == 20, "Barrens Boar should use explicit 20 max rage"
+        assert boar.rage == 5, "Barrens Boar should gain rage only from basic attack"
+        boar.rage = 0
+        hunter.pending_pet_command = "special"
+        warrior_hp_before = warrior.res.hp
+        submit_turn(boar_match, _DEF_PASS, _DEF_PASS)
+        assert warrior_hp_before - warrior.res.hp == 8, "Insufficient-rage special should fall back to basic attack"
+        assert boar.rage == 5, "Fallback basic attack should still grant boar rage"
+        assert not _has_effect(hunter, "blocking_defence"), "Boar should not apply Blocking Defence without enough rage"
+        assert any("Hunter's Barrens Boar tried to use braces to intercept attacks but didn't have enough rage" in line for line in boar_match.log), "Fallback log should include requested resource-failure wording style"
+
+        # Mana Tide Totem and Capacitor Totem utility should not use hit/accuracy rolls; totems remain entity_type=totem.
+        totem_match = make_match("shaman", "rogue", seed=704)
+        shaman_sid, rogue_sid = totem_match.players
+        shaman = totem_match.state[shaman_sid]
+        rogue = totem_match.state[rogue_sid]
+        rogue.stats["eva"] = 999
+        shaman.res.mp = max(0, shaman.res.mp - 30)
+        mp_before = shaman.res.mp
+        submit_turn(totem_match, "mana_tide_totem", _DEF_PASS)
+        mana_tide = _active_pet(shaman, "mana_tide_totem")
+        assert mana_tide is not None and mana_tide.entity_type == "totem", "Mana Tide should remain a totem entity"
+        assert shaman.res.mp > mp_before, "Mana Tide restore should not depend on accuracy rolls"
+        assert mana_tide.stats == {"acc": 0, "atk": 0, "crit": 0, "def": 0, "eva": 0, "int": 0, "spd": 0, "spirit": 0}, "Mana Tide should use explicit totem stats"
+
+        cap_match = make_match("shaman", "rogue", seed=705)
+        shaman_sid, rogue_sid = cap_match.players
+        rogue = cap_match.state[rogue_sid]
+        rogue.stats["eva"] = 999
+        submit_turn(cap_match, "capacitor_totem", _DEF_PASS)
+        assert any("is charging" in line for line in _turn_lines(cap_match, 1)), "Capacitor should charge on the first pet phase"
+        submit_turn(cap_match, _DEF_PASS, _DEF_PASS)
+        assert _has_effect(rogue, "capacitor_totem_stun"), "Capacitor discharge stun should occur without hit/accuracy checks"
+        assert any(pet.template_id == "capacitor_totem" for pet in cap_match.state[shaman_sid].pets.values()) is False, "Capacitor Totem should disappear after discharging"
+
+        # Broad no-unrelated-class sanity check.
+        control_match = make_match("mage", "warrior", seed=706)
+        hp_before = control_match.state[control_match.players[1]].res.hp
+        submit_turn(control_match, "fireball", _DEF_PASS)
+        assert control_match.state[control_match.players[1]].res.hp < hp_before, "Unrelated class combat behavior should remain unchanged"
+        return True
+    finally:
+        PET_AI.roll = original_roll
+        PET_AI._damage_after_reduction = original_reduction
+        PET_AI.hit_chance = original_hit_chance
+        PETS["frostsaber"]["special_chance"] = original_frostsaber_chance
+        PETS["emerald_serpent"]["special_chance"] = original_serpent_chance
+        PETS["barrens_boar"]["special_chance"] = original_boar_chance
 
 
 def _active_pet(owner, template_id: str | None = None):
@@ -1609,15 +1740,10 @@ def scenario_hunter_boar_redirect_same_turn_brace() -> bool:
     boar = _active_pet(hunter, "barrens_boar")
     assert boar is not None, "Boar should be active"
     latest_turn = _turn_lines(match, 1)
-    assert any("Barrens Boar braces to intercept attacks." in line for line in latest_turn), "Boar should brace on its summon turn when the pre-action special fires"
-    assert any("Barrens Boar intercepts Drain Life" in line for line in latest_turn), "Intercept log should reference the redirected Drain Life"
-    brace_idx = next((i for i, line in enumerate(latest_turn) if "Barrens Boar braces to intercept attacks." in line), -1)
-    action_idx = next((i for i, line in enumerate(latest_turn) if "uses their bare hands to cast Drain Life." in line), -1)
-    intercept_idx = next((i for i, line in enumerate(latest_turn) if "Barrens Boar intercepts Drain Life" in line), -1)
-    assert brace_idx != -1 and action_idx != -1 and intercept_idx != -1, "Brace, incoming action, and intercept logs should all be present"
-    assert brace_idx < action_idx < intercept_idx, "Brace log should appear before actions; intercept log should appear at the redirect point"
-    assert hunter.res.hp == hunter_hp_before, "Same-turn Blocking Defence should keep Drain Life off the Hunter"
-    assert boar.hp < boar.hp_max, "Same-turn Blocking Defence should route Drain Life damage into the boar"
+    assert not any("Barrens Boar braces to intercept attacks." in line for line in latest_turn), "Boar should not brace on summon turn without enough rage"
+    assert not any("Barrens Boar intercepts Drain Life" in line for line in latest_turn), "Intercept should not happen when summon-turn rage is insufficient"
+    assert hunter.res.hp < hunter_hp_before, "Without enough rage, same-turn Drain Life should still hit the Hunter"
+    assert boar.rage >= 0, "Boar should keep explicit rage tracking even when same-turn brace fails"
     return True
 
 
@@ -1719,6 +1845,7 @@ def scenario_hunter_raptor_strike_forces_boar_redirect() -> bool:
         submit_turn(match, "aimed_shot", _DEF_PASS)
         assert match.turn < 10, "Aimed Shot should proc Raptor Strike within a few deterministic turns"
 
+    boar.rage = max(5, int(getattr(boar, "rage", 0) or 0))
     hunter_hp_before = hunter.res.hp
     boar_hp_before = boar.hp
     submit_turn(match, "raptor_strike", "drain_life")
@@ -5549,6 +5676,7 @@ SCENARIOS = [
     scenario_absorb_layering,
     scenario_pet_summon_data_driven,
     scenario_pet_totem_runtime_normalization_phase1,
+    scenario_pet_totem_runtime_normalization_phase2b,
     scenario_hunter_pet_summon_swap_memory,
     scenario_hunter_only_one_active_pet,
     scenario_hunter_companion_calls_have_no_cooldown,

@@ -34,6 +34,10 @@ class PetState:
     hp_max: int
     mp: int = 0
     mp_max: int = 0
+    energy: int = 0
+    energy_max: int = 0
+    rage: int = 0
+    rage_max: int = 0
     stats: Dict[str, int] = field(default_factory=dict)
     effects: List[Dict[str, Any]] = field(default_factory=list)
     duration: Optional[int] = None

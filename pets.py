@@ -33,6 +33,17 @@ PETS = {
         "name": "Shadowfiend",
         "entity_type": "demon",
         "hp": 20,
+        "mana": 0,
+        "stats": {
+            "atk": 8,
+            "int": 0,
+            "def": 8,
+            "spirit": 0,
+            "spd": 8,
+            "crit": 7,
+            "acc": 98,
+            "eva": 0,
+        },
         "school": "physical",
         "duration": 5,
         "max_count": 1,
@@ -52,16 +63,26 @@ PETS = {
         "name": "Frostsaber",
         "entity_type": "beast",
         "hp": 20,
-        "atk": 6,
-        "int": 2,
+        "mana": 0,
+        "stats": {
+            "atk": 6,
+            "int": 2,
+            "def": 3,
+            "spirit": 0,
+            "spd": 8,
+            "crit": 7,
+            "acc": 98,
+            "eva": 0,
+        },
         "school": "physical",
         "max_count": 1,
         "behavior_id": "hunter_basic_plus_special",
         "summon_group": "hunter_companion",
         "persistent_owner_memory": True,
         "permanent_death": True,
-        "basic_attack": {"school": "physical", "stat": "atk", "scaling": 1.0, "dice": "d4", "action_text": "melees the target"},
-        "specials": {"bite": {"action_text": "bites the target"}},
+        "resources": {"energy": 30, "energy_regen": 5},
+        "basic_attack": {"school": "physical", "stat": "atk", "scaling": 1.0, "dice": "d4", "action_text": "melees the target", "cost": {"energy": 5}},
+        "specials": {"bite": {"action_text": "bites the target", "cost": {"energy": 10}}},
         "special_id": "bite",
         "special_chance": 0.30,
         "display": {
@@ -77,8 +98,17 @@ PETS = {
         "name": "Emerald Serpent",
         "entity_type": "beast",
         "hp": 15,
-        "atk": 4,
-        "int": 10,
+        "mana": 40,
+        "stats": {
+            "atk": 4,
+            "int": 10,
+            "def": 3,
+            "spirit": 0,
+            "spd": 8,
+            "crit": 3,
+            "acc": 98,
+            "eva": 0,
+        },
         "school": "magical",
         "subschool": "nature",
         "max_count": 1,
@@ -86,8 +116,9 @@ PETS = {
         "summon_group": "hunter_companion",
         "persistent_owner_memory": True,
         "permanent_death": True,
+        "resources": {"mp": 40, "mp_regen": 2},
         "basic_attack": {"school": "physical", "stat": "atk", "scaling": 1.0, "dice": "d4", "action_text": "melees the target"},
-        "specials": {"lightning_breath": {"action_text": "breathes lightning", "school": "magical", "subschool": "nature"}},
+        "specials": {"lightning_breath": {"action_text": "breathes lightning", "school": "magical", "subschool": "nature", "cost": {"mp": 15}}},
         "special_id": "lightning_breath",
         "special_chance": 0.30,
         "display": {
@@ -103,19 +134,30 @@ PETS = {
         "name": "Barrens Boar",
         "entity_type": "beast",
         "hp": 30,
-        "atk": 4,
-        "int": 0,
+        "mana": 0,
+        "stats": {
+            "atk": 4,
+            "int": 0,
+            "def": 10,
+            "spirit": 0,
+            "spd": 8,
+            "crit": 1,
+            "acc": 98,
+            "eva": 0,
+        },
         "school": "physical",
         "max_count": 1,
         "behavior_id": "hunter_basic_plus_special",
         "summon_group": "hunter_companion",
         "persistent_owner_memory": True,
         "permanent_death": True,
+        "resources": {"rage": 20},
         "basic_attack": {"school": "physical", "stat": "atk", "scaling": 1.0, "dice": "d6", "action_text": "melees the target"},
         "specials": {
             "blocking_defence": {
                 "action_text": "braces to intercept attacks",
                 "timing": "pre_action",
+                "cost": {"rage": 5},
                 "effect_id": "blocking_defence",
                 "effect_overrides": {"duration": 1, "redirect_to_pet_id": "self.id"},
             }
@@ -135,6 +177,17 @@ PETS = {
         "name": "Mana Tide Totem",
         "entity_type": "totem",
         "hp": 15,
+        "mana": 0,
+        "stats": {
+            "atk": 0,
+            "int": 0,
+            "def": 0,
+            "spirit": 0,
+            "spd": 0,
+            "crit": 0,
+            "acc": 0,
+            "eva": 0,
+        },
         "duration": 4,
         "max_count": 1,
         "behavior_id": "mana_tide_totem_regen",
@@ -151,6 +204,17 @@ PETS = {
         "name": "Capacitor Totem",
         "entity_type": "totem",
         "hp": 5,
+        "mana": 0,
+        "stats": {
+            "atk": 0,
+            "int": 0,
+            "def": 0,
+            "spirit": 0,
+            "spd": 0,
+            "crit": 0,
+            "acc": 0,
+            "eva": 0,
+        },
         "max_count": 1,
         "behavior_id": "capacitor_totem_discharge",
         "display": {
@@ -177,15 +241,29 @@ DEFAULT_PET_STATS = {
 def _normalize_pet_template(template: dict) -> None:
     stats = dict(DEFAULT_PET_STATS)
     stats.update(template.get("stats", {}) or {})
-    stats["atk"] = int(template.get("atk", stats["atk"]) or 0)
-    stats["int"] = int(template.get("int", stats["int"]) or 0)
+    for stat_key in ("atk", "int", "def", "spirit", "spd", "crit", "acc", "eva"):
+        stats[stat_key] = int(template.get(stat_key, stats.get(stat_key, 0)) or 0)
     template["stats"] = stats
 
-    hp_max = int(template.get("hp", 1) or 1)
-    mana_max = int(template.get("mana", 0) or 0)
+    base_resources = {
+        "hp": int(template.get("hp", 1) or 1),
+        "mp": int(template.get("mana", 0) or 0),
+        "energy": 0,
+        "rage": 0,
+        "mp_regen": 0,
+        "energy_regen": 0,
+    }
+    existing_resources = dict(template.get("resources", {}) or {})
+    if "mana" in existing_resources and "mp" not in existing_resources:
+        existing_resources["mp"] = existing_resources.get("mana")
+    base_resources.update({k: int(v or 0) for k, v in existing_resources.items()})
     template["resources"] = {
-        "hp": hp_max,
-        "mp": mana_max,
+        "hp": base_resources["hp"],
+        "mp": base_resources["mp"],
+        "energy": base_resources["energy"],
+        "rage": base_resources["rage"],
+        "mp_regen": base_resources["mp_regen"],
+        "energy_regen": base_resources["energy_regen"],
     }
 
 

@@ -1940,6 +1940,10 @@ def resolve_turn(match: MatchState) -> None:
             existing.hp_max = int(resources.get("hp", template.get("hp", existing.hp_max)) or existing.hp_max)
             existing.mp_max = int(resources.get("mp", template.get("mana", existing.mp_max)) or 0)
             existing.mp = existing.mp_max
+            existing.energy_max = int(resources.get("energy", 0) or 0)
+            existing.energy = existing.energy_max
+            existing.rage_max = int(resources.get("rage", 0) or 0)
+            existing.rage = 0
             existing.stats = {k: int(v or 0) for k, v in ((template.get("stats", {}) or {}).items())}
             duration = template.get("duration")
             existing.duration = int(duration) if duration is not None else None
@@ -1979,6 +1983,8 @@ def resolve_turn(match: MatchState) -> None:
         resources = template.get("resources", {}) or {}
         hp_max = int(resources.get("hp", template.get("hp", 1)) or 1)
         mp_max = int(resources.get("mp", template.get("mana", 0)) or 0)
+        energy_max = int(resources.get("energy", 0) or 0)
+        rage_max = int(resources.get("rage", 0) or 0)
         remembered_hp = actor.hunter_pet_memory.get(template_id)
         summon_hp = hp_max
         if template.get("persistent_owner_memory") and remembered_hp is not None:
@@ -1992,6 +1998,10 @@ def resolve_turn(match: MatchState) -> None:
             hp_max=hp_max,
             mp=mp_max,
             mp_max=mp_max,
+            energy=energy_max,
+            energy_max=energy_max,
+            rage=0,
+            rage_max=rage_max,
             stats={k: int(v or 0) for k, v in ((template.get("stats", {}) or {}).items())},
             effects=[],
             duration=int(duration) if duration is not None else None,

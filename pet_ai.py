@@ -67,6 +67,47 @@ def _append_pet_log(match, line: str, deferred_logs: list[str] | None = None) ->
         match.log.append(line)
 
 
+def _pet_resource_name(resource_key: str) -> str:
+    if resource_key == "mp":
+        return "mana"
+    return str(resource_key or "resource").replace("_", " ").lower()
+
+
+def _pet_resource_failure_log(owner, pet, ability_name: str, resource_key: str) -> str:
+    class_name = str((getattr(getattr(owner, "build", None), "class_id", None) or "Unknown")).capitalize()
+    return f"{class_name}'s {pet.name} tried to use {ability_name} but didn't have enough {_pet_resource_name(resource_key)}"
+
+
+def _can_pay_pet_cost(pet, costs: dict | None) -> tuple[bool, str]:
+    for key, amount in (costs or {}).items():
+        cost = int(amount or 0)
+        if cost <= 0:
+            continue
+        if int(getattr(pet, key, 0) or 0) < cost:
+            return False, str(key)
+    return True, ""
+
+
+def _pay_pet_cost(pet, costs: dict | None) -> None:
+    for key, amount in (costs or {}).items():
+        cost = int(amount or 0)
+        if cost <= 0:
+            continue
+        current = int(getattr(pet, key, 0) or 0)
+        setattr(pet, key, max(0, current - cost))
+
+
+def _apply_pet_resource_regen(pet) -> None:
+    template = PETS.get(pet.template_id, {})
+    resources = template.get("resources", {}) or {}
+    mp_regen = int(resources.get("mp_regen", 0) or 0)
+    if mp_regen > 0 and int(getattr(pet, "mp_max", 0) or 0) > 0:
+        pet.mp = min(int(getattr(pet, "mp", 0) or 0) + mp_regen, int(getattr(pet, "mp_max", 0) or 0))
+    energy_regen = int(resources.get("energy_regen", 0) or 0)
+    if energy_regen > 0 and int(getattr(pet, "energy_max", 0) or 0) > 0:
+        pet.energy = min(int(getattr(pet, "energy", 0) or 0) + energy_regen, int(getattr(pet, "energy_max", 0) or 0))
+
+
 def _pet_stat(pet, stat_key: str, default: int = 0) -> int:
     stats = getattr(pet, "stats", {}) or {}
     if stat_key in stats:
@@ -103,6 +144,14 @@ def trigger_pre_action_special(owner, pet, owner_sid, match, rng, *, consume_act
     if not use_special:
         return False
 
+    special_name = str(special_data.get("action_text") or str(special_id).replace("_", " ").title())
+    costs = special_data.get("cost") or {}
+    can_pay, fail_resource = _can_pay_pet_cost(pet, costs)
+    if not can_pay:
+        _append_pet_log(match, _pet_resource_failure_log(owner, pet, special_name, fail_resource), deferred_logs)
+        return False
+
+    _pay_pet_cost(pet, costs)
     if not _apply_effect_special(owner, pet, owner_sid, match, str(special_id), deferred_logs=deferred_logs):
         return False
 
@@ -224,7 +273,7 @@ def _run_shadowfiend_melee_mana(
         return
 
     fiend_roll = roll("d4", rng)
-    raw = base_damage(modify_stat(pet, "int", _pet_stat(pet, "int")), 0.6, fiend_roll)
+    raw = base_damage(modify_stat(pet, "atk", _pet_stat(pet, "atk")), 1.0, fiend_roll)
     reduced = _damage_after_reduction(raw, enemy, "physical")
     dealt = apply_damage(owner, enemy, reduced, enemy_sid, "Shadowfiend melee", school="physical")
     remaining = int(dealt.get("hp_damage", 0) or 0)
@@ -274,27 +323,41 @@ def _run_hunter_basic_plus_special(
         use_special = rng.random() <= float(template.get("special_chance", 0) or 0)
 
     if use_special and special_id:
-        _run_pet_special(
-            special_id,
-            owner,
-            enemy,
-            pet,
-            owner_sid,
-            enemy_sid,
-            match,
-            rng,
-            apply_damage,
-            absorb_suffix,
-            stealth_targeting,
-            should_miss_due_to_stealth,
-            untargetable_miss_log,
-            can_evasion_force_miss,
-            single_target_miss_active,
-            single_target_miss_log,
-        )
-        return
+        special_name = str(special_data.get("action_text") or str(special_id).replace("_", " ").title())
+        special_costs = special_data.get("cost") or {}
+        can_pay_special, fail_resource = _can_pay_pet_cost(pet, special_costs)
+        if can_pay_special:
+            _pay_pet_cost(pet, special_costs)
+            _run_pet_special(
+                special_id,
+                owner,
+                enemy,
+                pet,
+                owner_sid,
+                enemy_sid,
+                match,
+                rng,
+                apply_damage,
+                absorb_suffix,
+                stealth_targeting,
+                should_miss_due_to_stealth,
+                untargetable_miss_log,
+                can_evasion_force_miss,
+                single_target_miss_active,
+                single_target_miss_log,
+            )
+            return
+        match.log.append(_pet_resource_failure_log(owner, pet, special_name, fail_resource))
 
     profile = template.get("basic_attack", {}) or {}
+    basic_costs = profile.get("cost") or {}
+    can_pay_basic, fail_resource = _can_pay_pet_cost(pet, basic_costs)
+    if not can_pay_basic:
+        basic_name = str(profile.get("action_text") or "Basic Attack")
+        match.log.append(_pet_resource_failure_log(owner, pet, basic_name, fail_resource))
+        return
+    _pay_pet_cost(pet, basic_costs)
+
     _run_pet_attack(
         owner,
         enemy,
@@ -319,6 +382,8 @@ def _run_hunter_basic_plus_special(
         label=f"{pet.name} attacks",
         action_text=profile.get("action_text", "attacks"),
     )
+    if pet.template_id == "barrens_boar":
+        pet.rage = min(int(getattr(pet, "rage", 0) or 0) + 5, int(getattr(pet, "rage_max", 0) or 0))
 
 
 def _run_mana_tide_totem_regen(
@@ -536,7 +601,7 @@ def _run_pet_special(
                 line = f"{line} {absorb_suffix(absorbed, breakdown).strip()}"
             match.log.append(line)
         if remaining > 0:
-            heal_value = max(1, remaining // 2)
+            heal_value = remaining // 2
             before_pet = pet.hp
             pet.hp = min(pet.hp + heal_value, pet.hp_max)
             before_owner = owner.res.hp
@@ -589,6 +654,7 @@ def run_pet_phase(
             pet = owner.pets.get(pet_id)
             if not pet or pet.hp <= 0:
                 continue
+            _apply_pet_resource_regen(pet)
             if pet.action_consumed:
                 pet.action_consumed = False
                 continue
