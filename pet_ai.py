@@ -67,6 +67,14 @@ def _append_pet_log(match, line: str, deferred_logs: list[str] | None = None) ->
         match.log.append(line)
 
 
+def _pet_stat(pet, stat_key: str, default: int = 0) -> int:
+    stats = getattr(pet, "stats", {}) or {}
+    if stat_key in stats:
+        return int(stats.get(stat_key, default) or default)
+    template = PETS.get(pet.template_id, {})
+    return int(template.get(stat_key, default) or default)
+
+
 def _apply_effect_special(owner, pet, owner_sid, match, special_id: str, *, deferred_logs: list[str] | None = None) -> bool:
     template = PETS.get(pet.template_id, {})
     special_data = ((template.get("specials") or {}).get(special_id) or {})
@@ -140,7 +148,7 @@ def _run_imp_firebolt(
         return
 
     fire_roll = roll("d4", rng)
-    raw_fire = base_damage(modify_stat(owner, "int", owner.stats.get("int", 0)), 0.2, fire_roll)
+    raw_fire = base_damage(modify_stat(pet, "int", _pet_stat(pet, "int")), 0.7, fire_roll)
     reduced = _damage_after_reduction(raw_fire, enemy, "magical")
     dealt_data = apply_damage(
         owner,
@@ -205,7 +213,7 @@ def _run_shadowfiend_melee_mana(
         misses = True
     else:
         accuracy = hit_chance(
-            modify_stat(owner, "acc", owner.stats.get("acc", 0)),
+            modify_stat(pet, "acc", _pet_stat(pet, "acc", 95)),
             modify_stat(enemy, "eva", enemy.stats.get("eva", 0)),
         )
         if rng.randint(1, 100) > accuracy:
@@ -216,7 +224,7 @@ def _run_shadowfiend_melee_mana(
         return
 
     fiend_roll = roll("d4", rng)
-    raw = base_damage(modify_stat(owner, "int", owner.stats.get("int", 0)), 0.6, fiend_roll)
+    raw = base_damage(modify_stat(pet, "int", _pet_stat(pet, "int")), 0.6, fiend_roll)
     reduced = _damage_after_reduction(raw, enemy, "physical")
     dealt = apply_damage(owner, enemy, reduced, enemy_sid, "Shadowfiend melee", school="physical")
     remaining = int(dealt.get("hp_damage", 0) or 0)
@@ -416,14 +424,14 @@ def _run_pet_attack(
         return
 
     accuracy = hit_chance(
-        modify_stat(owner, "acc", owner.stats.get("acc", 0)),
+        modify_stat(pet, "acc", _pet_stat(pet, "acc", 95)),
         modify_stat(enemy, "eva", enemy.stats.get("eva", 0)),
     )
     if rng.randint(1, 100) > accuracy:
         match.log.append(_pet_log(owner_sid, pet, action_text, "Miss!"))
         return
 
-    stat_value = int((template := PETS.get(pet.template_id, {})).get(stat_key, 0) or 0)
+    stat_value = _pet_stat(pet, str(stat_key), 0)
     rolled = roll(dice, rng) if dice else 0
     raw = base_damage(stat_value, scaling, rolled)
     reduced = _damage_after_reduction(raw, enemy, school)
@@ -507,7 +515,7 @@ def _run_pet_special(
         if is_immune_all(enemy):
             match.log.append(_pet_log(owner_sid, pet, action_text, "Immune!"))
             return
-        raw = base_damage(int(PETS.get(pet.template_id, {}).get("int", 0) or 0), 1.5, roll("d6", rng))
+        raw = base_damage(modify_stat(pet, "int", _pet_stat(pet, "int")), 1.5, roll("d6", rng))
         reduced = _damage_after_reduction(raw, enemy, "magical")
         dealt = apply_damage(
             owner,

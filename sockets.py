@@ -248,6 +248,9 @@ def snapshot_for(match, viewer_sid):
                 "name": pet.name,
                 "hp": int(pet.hp),
                 "hp_max": int(pet.hp_max),
+                "mp": int(getattr(pet, "mp", 0) or 0),
+                "mp_max": int(getattr(pet, "mp_max", 0) or 0),
+                "stats": {k: int(v or 0) for k, v in sorted((getattr(pet, "stats", {}) or {}).items())},
                 "entity_type": pet.entity_type,
                 "statuses": pet_statuses_for(pet),
             })

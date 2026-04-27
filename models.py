@@ -32,9 +32,13 @@ class PetState:
     owner_sid: str
     hp: int
     hp_max: int
+    mp: int = 0
+    mp_max: int = 0
+    stats: Dict[str, int] = field(default_factory=dict)
     effects: List[Dict[str, Any]] = field(default_factory=list)
     duration: Optional[int] = None
     action_consumed: bool = False
+    action_state: str = "ready"
     entity_type: Optional[str] = None
 
 @dataclass

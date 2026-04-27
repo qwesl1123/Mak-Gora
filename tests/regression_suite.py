@@ -169,6 +169,9 @@ def state_extract(match) -> Dict[str, Any]:
                 "entity_type": pet.entity_type,
                 "hp": pet.hp,
                 "hp_max": pet.hp_max,
+                "mp": getattr(pet, "mp", 0),
+                "mp_max": getattr(pet, "mp_max", 0),
+                "stats": dict(sorted((getattr(pet, "stats", {}) or {}).items())),
                 "duration": pet.duration,
                 "effects": [
                     {"id": fx.get("id"), "duration": fx.get("duration")}
@@ -1070,6 +1073,64 @@ def scenario_pet_summon_data_driven() -> bool:
 
     recent = "\n".join((warlock_match.log[-30:] + priest_match.log[-30:]))
     assert "casts Firebolt" in recent or "melees the target" in recent, "Summoned pets should act in pet phase"
+    return True
+
+
+def scenario_pet_totem_runtime_normalization_phase1() -> bool:
+    rules = sys.modules["games.duel.engine.rules"]
+    expected_imp_firebolt = rules.base_damage(5, 0.7, 3)
+
+    def _run_imp_damage(owner_int: int) -> tuple[int, Any]:
+        match = make_match("warlock", "warrior", seed=222)
+        warlock_sid, warrior_sid = match.players
+        warlock = match.state[warlock_sid]
+        warrior = match.state[warrior_sid]
+        warlock.stats["int"] = owner_int
+        hp_before = warrior.res.hp
+
+        original_roll = PET_AI.roll
+        original_reduction = PET_AI._damage_after_reduction
+        PET_AI.roll = lambda die, rng: 3 if die == "d4" else original_roll(die, rng)
+        PET_AI._damage_after_reduction = lambda raw, enemy, school: raw
+        try:
+            submit_turn(match, "summon_imp", _DEF_PASS)
+        finally:
+            PET_AI.roll = original_roll
+            PET_AI._damage_after_reduction = original_reduction
+
+        imp = next(iter(warlock.pets.values()))
+        dmg = hp_before - warrior.res.hp
+        return dmg, imp
+
+    low_owner_damage, low_owner_imp = _run_imp_damage(owner_int=1)
+    high_owner_damage, high_owner_imp = _run_imp_damage(owner_int=500)
+    assert low_owner_damage == expected_imp_firebolt, "Imp Firebolt should use [Intellect * 0.7 + d4] with Imp intellect"
+    assert high_owner_damage == expected_imp_firebolt, "Imp Firebolt should not scale from owner intellect"
+
+    imp_stats = high_owner_imp.stats
+    assert imp_stats == {"acc": 98, "atk": 1, "crit": 7, "def": 5, "eva": 0, "int": 5, "spd": 8, "spirit": 0}, "Imp runtime stats should be fully explicit and normalized"
+    assert high_owner_imp.mp == 10 and high_owner_imp.mp_max == 10, "Imp mana runtime values should be explicit"
+    assert high_owner_imp.entity_type == "demon", "Imp should keep demon entity_type"
+
+    hunter_match = make_match("hunter", "warrior", seed=333)
+    submit_turn(hunter_match, "call_saber", _DEF_PASS)
+    hunter = hunter_match.state[hunter_match.players[0]]
+    saber = _active_pet(hunter, "frostsaber")
+    assert saber is not None and isinstance(saber.stats, dict), "Hunter pets should still summon with normalized runtime stats"
+    assert saber.hp > 0 and saber.hp_max > 0, "Hunter pet behavior should remain functional after normalization"
+
+    totem_match = make_match("shaman", "warrior", seed=334)
+    submit_turn(totem_match, "mana_tide_totem", _DEF_PASS)
+    shaman = totem_match.state[totem_match.players[0]]
+    totem = _active_pet(shaman, "mana_tide_totem")
+    assert totem is not None, "Totem should still summon"
+    assert totem.entity_type == "totem", "Totems should keep totem entity_type"
+    assert isinstance(totem.stats, dict) and {"atk", "int", "def", "spirit", "spd", "crit", "acc", "eva"} <= set(totem.stats.keys()), "Totem runtime should include normalized stat shape"
+
+    control_match = make_match("mage", "warrior", seed=335)
+    warrior_hp_before = control_match.state[control_match.players[1]].res.hp
+    submit_turn(control_match, "fireball", _DEF_PASS)
+    assert control_match.state[control_match.players[1]].res.hp < warrior_hp_before, "Non-pet class behavior should remain unchanged in this phase"
     return True
 
 
@@ -5487,6 +5548,7 @@ SCENARIOS = [
     scenario_rage_crystal_increases_all_rage_gain_sources,
     scenario_absorb_layering,
     scenario_pet_summon_data_driven,
+    scenario_pet_totem_runtime_normalization_phase1,
     scenario_hunter_pet_summon_swap_memory,
     scenario_hunter_only_one_active_pet,
     scenario_hunter_companion_calls_have_no_cooldown,

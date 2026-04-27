@@ -1936,11 +1936,16 @@ def resolve_turn(match: MatchState) -> None:
         existing_ids = [pid for pid, pet in (actor.pets or {}).items() if pet.template_id == template_id]
         if existing_ids and max_count <= 1:
             existing = actor.pets[existing_ids[0]]
-            existing.hp_max = int(template.get("hp", existing.hp_max))
+            resources = template.get("resources", {}) or {}
+            existing.hp_max = int(resources.get("hp", template.get("hp", existing.hp_max)) or existing.hp_max)
+            existing.mp_max = int(resources.get("mp", template.get("mana", existing.mp_max)) or 0)
+            existing.mp = existing.mp_max
+            existing.stats = {k: int(v or 0) for k, v in ((template.get("stats", {}) or {}).items())}
             duration = template.get("duration")
             existing.duration = int(duration) if duration is not None else None
             existing.name = template.get("name", existing.name)
             existing.entity_type = template.get("entity_type", existing.entity_type)
+            existing.action_state = "ready"
             actor.active_pet_id = existing.id
             return existing, True, None
 
@@ -1971,7 +1976,9 @@ def resolve_turn(match: MatchState) -> None:
                 pet_id = f"{pet_id}_{next_idx}"
 
         duration = template.get("duration")
-        hp_max = int(template.get("hp", 1))
+        resources = template.get("resources", {}) or {}
+        hp_max = int(resources.get("hp", template.get("hp", 1)) or 1)
+        mp_max = int(resources.get("mp", template.get("mana", 0)) or 0)
         remembered_hp = actor.hunter_pet_memory.get(template_id)
         summon_hp = hp_max
         if template.get("persistent_owner_memory") and remembered_hp is not None:
@@ -1983,6 +1990,9 @@ def resolve_turn(match: MatchState) -> None:
             owner_sid=actor.sid,
             hp=summon_hp,
             hp_max=hp_max,
+            mp=mp_max,
+            mp_max=mp_max,
+            stats={k: int(v or 0) for k, v in ((template.get("stats", {}) or {}).items())},
             effects=[],
             duration=int(duration) if duration is not None else None,
             entity_type=template.get("entity_type"),

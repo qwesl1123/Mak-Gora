@@ -4,6 +4,17 @@ PETS = {
         "name": "Imp",
         "entity_type": "demon",
         "hp": 5,
+        "mana": 10,
+        "stats": {
+            "atk": 1,
+            "int": 5,
+            "def": 5,
+            "spirit": 0,
+            "spd": 8,
+            "crit": 7,
+            "acc": 98,
+            "eva": 0,
+        },
         "school": "magical",
         "subschool": "fire",
         "max_count": 3,
@@ -150,3 +161,33 @@ PETS = {
         },
     },
 }
+
+DEFAULT_PET_STATS = {
+    "atk": 0,
+    "int": 0,
+    "def": 0,
+    "spirit": 0,
+    "spd": 0,
+    "crit": 0,
+    "acc": 95,
+    "eva": 0,
+}
+
+
+def _normalize_pet_template(template: dict) -> None:
+    stats = dict(DEFAULT_PET_STATS)
+    stats.update(template.get("stats", {}) or {})
+    stats["atk"] = int(template.get("atk", stats["atk"]) or 0)
+    stats["int"] = int(template.get("int", stats["int"]) or 0)
+    template["stats"] = stats
+
+    hp_max = int(template.get("hp", 1) or 1)
+    mana_max = int(template.get("mana", 0) or 0)
+    template["resources"] = {
+        "hp": hp_max,
+        "mp": mana_max,
+    }
+
+
+for _template in PETS.values():
+    _normalize_pet_template(_template)
