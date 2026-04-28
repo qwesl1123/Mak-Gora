@@ -1186,11 +1186,12 @@ def scenario_pet_totem_runtime_normalization_phase2b() -> bool:
         saber.energy = 7
         submit_turn(saber_match, _DEF_PASS, _DEF_PASS)
         assert saber.energy == 12, "Frostsaber basic attacks should not consume energy; passive regen should add 5 each turn"
+        saber.energy = 20
         hp_before = warrior.res.hp
         hunter.pending_pet_command = "special"
         submit_turn(saber_match, _DEF_PASS, _DEF_PASS)
         assert hp_before - warrior.res.hp == 16, "Frostsaber Bite should use [Attack * 2.0 + d6]"
-        assert saber.energy == 7, "Forced Bite should pay 10 and still receive +5 passive end-of-turn regen"
+        assert saber.energy == 5, "Forced Bite should pay 20 and still receive +5 passive end-of-turn regen"
 
         # Emerald Serpent mana model + Lightning Breath scaling/heal-from-actual-damage.
         serpent_match = make_match("hunter", "warrior", seed=702)
@@ -5686,6 +5687,60 @@ def scenario_phase0_pet_legality_and_protection_contract_lock() -> bool:
     return True
 
 
+def scenario_pet_attack_logs_on_miss_and_immune_consistently() -> bool:
+    original_boar_chance = PETS["barrens_boar"]["special_chance"]
+    original_saber_chance = PETS["frostsaber"]["special_chance"]
+    original_serpent_chance = PETS["emerald_serpent"]["special_chance"]
+    PETS["barrens_boar"]["special_chance"] = 0.0
+    PETS["frostsaber"]["special_chance"] = 0.0
+    PETS["emerald_serpent"]["special_chance"] = 0.0
+    try:
+        boar_immune = make_match("hunter", "mage", seed=9061)
+        submit_turn(boar_immune, "call_boar", "iceblock")
+        submit_turn(boar_immune, _DEF_PASS, _DEF_PASS)
+        boar_immune_turn = _turn_lines(boar_immune, 2)
+        assert any("Barrens Boar melees the target. Immune!" in line for line in boar_immune_turn), "Barrens Boar should keep a readable action log when champion target is immune"
+
+        boar_miss = make_match("hunter", "rogue", seed=9062)
+        submit_turn(boar_miss, "call_boar", "vanish")
+        submit_turn(boar_miss, _DEF_PASS, _DEF_PASS)
+        assert any("Barrens Boar melees the target." in line and "Target is stealthed — Miss!" in line for line in _turn_lines(boar_miss, 2)), "Barrens Boar should keep action text on miss outcomes"
+
+        saber_immune = make_match("hunter", "mage", seed=9063)
+        submit_turn(saber_immune, "call_saber", "iceblock")
+        hunter = saber_immune.state[saber_immune.players[0]]
+        saber = _active_pet(hunter, "frostsaber")
+        assert saber is not None, "Frostsaber should be active for forced-special immunity logging"
+        saber.energy = 20
+        hunter.pending_pet_command = "special"
+        submit_turn(saber_immune, _DEF_PASS, _DEF_PASS)
+        assert any("Frostsaber bites the target. Immune!" in line for line in _turn_lines(saber_immune, 2)), "Frostsaber special should log immune outcomes with action text"
+
+        serpent_immune = make_match("hunter", "rogue", seed=9064)
+        effects.remove_effect(serpent_immune.state[serpent_immune.players[1]], "stealth")
+        submit_turn(serpent_immune, "call_serpent", "cloak")
+        serpent_owner = serpent_immune.state[serpent_immune.players[0]]
+        serpent = _active_pet(serpent_owner, "emerald_serpent")
+        assert serpent is not None, "Emerald Serpent should be active for forced-special immunity logging"
+        serpent_owner.pending_pet_command = "special"
+        submit_turn(serpent_immune, _DEF_PASS, _DEF_PASS)
+        assert any("Emerald Serpent breathes lightning. Immune!" in line for line in _turn_lines(serpent_immune, 2)), "Emerald Serpent special should log cloak/magic immunity outcomes"
+
+        fiend_immune = make_match("priest", "paladin", seed=9065)
+        submit_turn(fiend_immune, "shadowfiend", "divine_shield")
+        submit_turn(fiend_immune, _DEF_PASS, _DEF_PASS)
+        assert any("Shadowfiend melees the target. Immune!" in line for line in _turn_lines(fiend_immune, 2)), "Shadowfiend should keep melee action logs on immune outcomes"
+
+        imp_miss = make_match("mage", "warlock", seed=9066)
+        submit_turn(imp_miss, "blink", "summon_imp")
+        assert any("Imp casts Firebolt" in line and "Target blinks away — Miss." in line for line in _turn_lines(imp_miss, 1)), "Imp should keep casting action logs on miss outcomes"
+    finally:
+        PETS["barrens_boar"]["special_chance"] = original_boar_chance
+        PETS["frostsaber"]["special_chance"] = original_saber_chance
+        PETS["emerald_serpent"]["special_chance"] = original_serpent_chance
+    return True
+
+
 def scenario_phase0_normal_vs_immediate_parity_ordering_lock() -> bool:
     normal_unknown = make_match("warrior", "mage", seed=9051)
     submit_turn(normal_unknown, "totally_fake_ability", _DEF_PASS)
@@ -5901,6 +5956,7 @@ SCENARIOS = [
     scenario_phase0_absorb_shield_contract_lock,
     scenario_phase0_end_of_turn_ordering_contract_lock,
     scenario_phase0_pet_legality_and_protection_contract_lock,
+    scenario_pet_attack_logs_on_miss_and_immune_consistently,
     scenario_phase0_normal_vs_immediate_parity_ordering_lock,
     scenario_invalid_class_rejected,
     scenario_valid_class_id_is_normalized_before_build,

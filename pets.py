@@ -84,7 +84,7 @@ PETS = {
         "permanent_death": True,
         "resources": {"energy": 30, "energy_regen": 5},
         "basic_attack": {"school": "physical", "stat": "atk", "scaling": 1.0, "dice": "d4", "action_text": "melees the target"},
-        "specials": {"bite": {"action_text": "bites the target", "cost": {"energy": 10}}},
+        "specials": {"bite": {"action_text": "bites the target", "cost": {"energy": 20}}},
         "special_id": "bite",
         "special_chance": 0.30,
         "display": {

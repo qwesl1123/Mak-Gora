@@ -265,6 +265,9 @@ def _run_shadowfiend_melee_mana(
 
     if misses:
         return
+    if is_immune_all(enemy) or is_damage_immune(enemy, "physical"):
+        match.log.append(_pet_log(owner_sid, pet, action_text, "Immune!"))
+        return
 
     fiend_roll = roll("d4", rng)
     raw = base_damage(modify_stat(pet, "atk", _pet_stat(pet, "atk")), 1.0, fiend_roll)
@@ -486,6 +489,15 @@ def _run_pet_attack(
     if rng.randint(1, 100) > accuracy:
         match.log.append(_pet_log(owner_sid, pet, action_text, "Miss!"))
         return
+    if is_immune_all(enemy):
+        match.log.append(_pet_log(owner_sid, pet, action_text, "Immune!"))
+        return
+    if school == "physical" and is_damage_immune(enemy, "physical"):
+        match.log.append(_pet_log(owner_sid, pet, action_text, "Immune!"))
+        return
+    if school != "physical" and (is_damage_immune(enemy, "magic") or has_effect(enemy, "cloak_of_shadows")):
+        match.log.append(_pet_log(owner_sid, pet, action_text, "Immune!"))
+        return
 
     stat_value = _pet_stat(pet, str(stat_key), 0)
     rolled = roll(dice, rng) if dice else 0
@@ -569,6 +581,9 @@ def _run_pet_special(
             match.log.append(_pet_log(owner_sid, pet, action_text, single_target_miss_log()))
             return
         if is_immune_all(enemy):
+            match.log.append(_pet_log(owner_sid, pet, action_text, "Immune!"))
+            return
+        if is_damage_immune(enemy, "magic") or has_effect(enemy, "cloak_of_shadows"):
             match.log.append(_pet_log(owner_sid, pet, action_text, "Immune!"))
             return
         raw = base_damage(modify_stat(pet, "int", _pet_stat(pet, "int")), 1.5, roll("d6", rng))
