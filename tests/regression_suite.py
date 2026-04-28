@@ -3120,6 +3120,56 @@ def scenario_shadowfiend_pet_box_hides_turn_counter_badge() -> bool:
     return True
 
 
+def scenario_pet_primary_resource_snapshot_contract() -> bool:
+    hunter_match = make_match("hunter", "warrior", seed=151)
+    submit_turn(hunter_match, "call_saber", _DEF_PASS)
+    saber_snapshot = SOCKETS.snapshot_for(hunter_match, hunter_match.players[0])
+    saber = next((pet for pet in saber_snapshot.get("you_pets", []) if pet.get("name") == "Frostsaber"), None)
+    assert saber is not None, "Frostsaber should appear in snapshot payload"
+    assert saber.get("primary_resource", {}).get("id") == "energy", "Frostsaber should expose Energy as pet primary resource"
+    assert int(saber.get("primary_resource", {}).get("max", 0) or 0) > 0, "Frostsaber Energy max should be positive"
+
+    submit_turn(hunter_match, "call_serpent", _DEF_PASS)
+    serpent_snapshot = SOCKETS.snapshot_for(hunter_match, hunter_match.players[0])
+    serpent = next((pet for pet in serpent_snapshot.get("you_pets", []) if pet.get("name") == "Emerald Serpent"), None)
+    assert serpent is not None, "Emerald Serpent should appear in snapshot payload"
+    assert serpent.get("primary_resource", {}).get("id") == "mp", "Emerald Serpent should expose Mana as pet primary resource"
+    assert int(serpent.get("primary_resource", {}).get("max", 0) or 0) > 0, "Emerald Serpent Mana max should be positive"
+
+    submit_turn(hunter_match, "call_boar", _DEF_PASS)
+    boar_snapshot = SOCKETS.snapshot_for(hunter_match, hunter_match.players[0])
+    boar = next((pet for pet in boar_snapshot.get("you_pets", []) if pet.get("name") == "Barrens Boar"), None)
+    assert boar is not None, "Barrens Boar should appear in snapshot payload"
+    assert boar.get("primary_resource", {}).get("id") == "rage", "Barrens Boar should expose Rage as pet primary resource"
+    assert int(boar.get("primary_resource", {}).get("max", 0) or 0) > 0, "Barrens Boar Rage max should be positive"
+
+    priest_match = make_match("priest", "warrior", seed=152)
+    submit_turn(priest_match, "shadowfiend", _DEF_PASS)
+    priest_snapshot = SOCKETS.snapshot_for(priest_match, priest_match.players[0])
+    fiend = next((pet for pet in priest_snapshot.get("you_pets", []) if pet.get("name") == "Shadowfiend"), None)
+    assert fiend is not None, "Shadowfiend should appear in snapshot payload"
+    assert fiend.get("primary_resource") is None, "Shadowfiend should not expose a pet resource row payload"
+
+    shaman_match = make_match("shaman", "warrior", seed=153)
+    submit_turn(shaman_match, "mana_tide_totem", _DEF_PASS)
+    submit_turn(shaman_match, "capacitor_totem", _DEF_PASS)
+    shaman_snapshot = SOCKETS.snapshot_for(shaman_match, shaman_match.players[0])
+    mana_tide = next((pet for pet in shaman_snapshot.get("you_pets", []) if pet.get("name") == "Mana Tide Totem"), None)
+    capacitor = next((pet for pet in shaman_snapshot.get("you_pets", []) if pet.get("name") == "Capacitor Totem"), None)
+    assert mana_tide is not None, "Mana Tide Totem should appear in snapshot payload"
+    assert capacitor is not None, "Capacitor Totem should appear in snapshot payload"
+    assert mana_tide.get("primary_resource") is None, "Mana Tide Totem should not expose a pet resource row payload"
+    assert capacitor.get("primary_resource") is None, "Capacitor Totem should not expose a pet resource row payload"
+
+    mixed_match = make_match("hunter", "shaman", seed=154)
+    submit_turn(mixed_match, "call_saber", "mana_tide_totem")
+    mixed_snapshot = SOCKETS.snapshot_for(mixed_match, mixed_match.players[0])
+    assert len(mixed_snapshot.get("you_pets", [])) == 1 and len(mixed_snapshot.get("enemy_pets", [])) == 1, "Snapshot should remain stable with pets on both sides"
+    assert mixed_snapshot["you_pets"][0].get("primary_resource", {}).get("id") == "energy", "Friendly pet resource should remain intact in mixed-pet snapshots"
+    assert mixed_snapshot["enemy_pets"][0].get("primary_resource") is None, "Enemy totem should remain resource-less in mixed-pet snapshots"
+    return True
+
+
 def scenario_immediate_path_denial_precedes_selection_failures() -> bool:
     match = make_match("warlock", "warrior", seed=615)
     warlock = match.state[match.players[0]]
@@ -5759,6 +5809,7 @@ SCENARIOS = [
     scenario_redirect_and_blink_like_coexist_without_cross_regression,
     scenario_pet_specials_are_blocked_while_pet_is_ccd,
     scenario_shadowfiend_pet_box_hides_turn_counter_badge,
+    scenario_pet_primary_resource_snapshot_contract,
     scenario_mindgames_still_allows_direct_damage_dots,
     scenario_devouring_plague_heals_for_full_tick_damage,
     scenario_passive_secondary_damage_logs_own_absorb_suffix,

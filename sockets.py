@@ -236,6 +236,29 @@ def snapshot_for(match, viewer_sid):
             statuses.append({"label": f"{int(pet.duration)}T", "color": "#FFFFFF", "priority": 100})
         return statuses
 
+    def pet_primary_resource_for(pet):
+        template = PETS.get(getattr(pet, "template_id", ""), {})
+        template_resources = template.get("resources", {}) if isinstance(template, dict) else {}
+        resource_order = ("mp", "energy", "rage")
+        labels = {"mp": "Mana", "energy": "Energy", "rage": "Rage"}
+        colors = {"mp": "var(--mana-blue)", "energy": "#FFF468", "rage": "var(--rage-red)"}
+
+        for resource_id in resource_order:
+            template_value = template_resources.get(resource_id, 0) if isinstance(template_resources, dict) else 0
+            max_key = f"{resource_id}_max"
+            max_value = int(getattr(pet, max_key, 0) or 0)
+            if int(template_value or 0) > 0 or max_value > 0:
+                if max_value <= 0:
+                    continue
+                return {
+                    "id": resource_id,
+                    "label": labels[resource_id],
+                    "color": colors[resource_id],
+                    "value": int(getattr(pet, resource_id, 0) or 0),
+                    "max": max_value,
+                }
+        return None
+
     def pets_for(sid):
         ps = match.state.get(sid)
         if not ps:
@@ -243,6 +266,7 @@ def snapshot_for(match, viewer_sid):
         packed = []
         for pet_id in sorted((ps.pets or {}).keys()):
             pet = ps.pets[pet_id]
+            primary_resource = pet_primary_resource_for(pet)
             packed.append({
                 "id": pet.id,
                 "name": pet.name,
@@ -257,6 +281,7 @@ def snapshot_for(match, viewer_sid):
                 "stats": {k: int(v or 0) for k, v in sorted((getattr(pet, "stats", {}) or {}).items())},
                 "entity_type": pet.entity_type,
                 "statuses": pet_statuses_for(pet),
+                "primary_resource": primary_resource,
             })
         return packed
 

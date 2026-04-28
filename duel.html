@@ -4831,6 +4831,26 @@
         return petNameColors[(name || "").toLowerCase()] || null;
       }
 
+      function petResourceFromSnapshot(pet) {
+        const resource = pet?.primary_resource;
+        if (!resource) {
+          return null;
+        }
+        const resourceId = (resource.id || "").toString().toLowerCase();
+        const allowed = new Set(["mp", "energy", "rage"]);
+        const resourceMax = Number(resource.max);
+        if (!allowed.has(resourceId) || !Number.isFinite(resourceMax) || resourceMax <= 0) {
+          return null;
+        }
+        return {
+          id: resourceId,
+          label: resource.label || ({ mp: "Mana", energy: "Energy", rage: "Rage" }[resourceId] || "Resource"),
+          color: resource.color || "var(--mana-blue)",
+          value: Number(resource.value) || 0,
+          max: resourceMax,
+        };
+      }
+
       function renderPetList(container, pets) {
         if (!container) {
           return 0;
@@ -4896,6 +4916,24 @@
             hpWrap.appendChild(hpText);
             hpWrap.appendChild(hpBar);
             row.appendChild(hpWrap);
+          }
+
+          const petResource = petResourceFromSnapshot(pet);
+          if (petResource) {
+            const resourceLine = document.createElement("div");
+            resourceLine.className = "pet-status-line";
+
+            const resourceLabel = document.createElement("span");
+            resourceLabel.textContent = `${petResource.label}:`;
+            resourceLine.appendChild(resourceLabel);
+
+            const resourceValue = document.createElement("strong");
+            resourceValue.className = "pet-status-val";
+            resourceValue.style.color = petResource.color;
+            resourceValue.textContent = `${petResource.value} / ${petResource.max}`;
+            resourceLine.appendChild(resourceValue);
+
+            row.appendChild(resourceLine);
           }
 
           const badges = normalizePetBadges(pet?.statuses || pet?.effects, pet?.name || pet?.id);
