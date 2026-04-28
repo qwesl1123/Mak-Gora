@@ -1121,7 +1121,7 @@ def scenario_pet_totem_runtime_normalization_phase1() -> bool:
 
     imp_stats = high_owner_imp.stats
     assert imp_stats == {"acc": 98, "atk": 1, "crit": 7, "def": 5, "eva": 0, "int": 5, "spd": 8, "spirit": 0}, "Imp runtime stats should be fully explicit and normalized"
-    assert high_owner_imp.mp == 10 and high_owner_imp.mp_max == 10, "Imp mana runtime values should be explicit"
+    assert high_owner_imp.mp == 9 and high_owner_imp.mp_max == 10, "Imp mana runtime values should be explicit and reflect Firebolt cost with passive regen"
     assert high_owner_imp.entity_type == "demon", "Imp should keep demon entity_type"
 
     hunter_match = make_match("hunter", "warrior", seed=333)
@@ -1182,12 +1182,15 @@ def scenario_pet_totem_runtime_normalization_phase2b() -> bool:
         submit_turn(saber_match, "call_saber", _DEF_PASS)
         saber = _active_pet(hunter, "frostsaber")
         assert saber is not None, "Frostsaber should summon"
-        assert (saber.energy_max, saber.energy) == (30, 25), "Frostsaber should have 30 max energy and spend 5 on basic attack"
+        assert (saber.energy_max, saber.energy) == (30, 30), "Frostsaber should passively regen 5 energy each turn and clamp at max"
+        saber.energy = 7
+        submit_turn(saber_match, _DEF_PASS, _DEF_PASS)
+        assert saber.energy == 12, "Frostsaber basic attacks should not consume energy; passive regen should add 5 each turn"
         hp_before = warrior.res.hp
         hunter.pending_pet_command = "special"
         submit_turn(saber_match, _DEF_PASS, _DEF_PASS)
         assert hp_before - warrior.res.hp == 16, "Frostsaber Bite should use [Attack * 2.0 + d6]"
-        assert saber.energy == 20, "Forced Bite should still pay energy cost after per-turn regen"
+        assert saber.energy == 7, "Forced Bite should pay 10 and still receive +5 passive end-of-turn regen"
 
         # Emerald Serpent mana model + Lightning Breath scaling/heal-from-actual-damage.
         serpent_match = make_match("hunter", "warrior", seed=702)
@@ -1206,7 +1209,10 @@ def scenario_pet_totem_runtime_normalization_phase2b() -> bool:
         submit_turn(serpent_match, _DEF_PASS, _DEF_PASS)
         assert warrior_hp_before - warrior.res.hp == 19, "Lightning Breath should use [Intellect * 1.5 + d6]"
         assert serpent.hp == 14 and hunter.res.hp == hunter_hp_before + 9, "Lightning Breath healing should be 50% of actual HP damage dealt"
-        assert serpent.mp == 25, "Lightning Breath should spend 15 mana; per-turn mana regen should still respect max-mana clamping"
+        assert serpent.mp == 27, "Lightning Breath should spend 15 mana and still receive +2 passive end-of-turn mana regen"
+        serpent.mp = 39
+        submit_turn(serpent_match, _DEF_PASS, _DEF_PASS)
+        assert serpent.mp == 40, "Pet mana regen should clamp to max"
 
         # Barrens Boar rage model + no immediate special + fallback to basic with required log style.
         boar_match = make_match("hunter", "warrior", seed=703)
@@ -1224,7 +1230,7 @@ def scenario_pet_totem_runtime_normalization_phase2b() -> bool:
         assert warrior_hp_before - warrior.res.hp == 8, "Insufficient-rage special should fall back to basic attack"
         assert boar.rage == 5, "Fallback basic attack should still grant boar rage"
         assert not _has_effect(hunter, "blocking_defence"), "Boar should not apply Blocking Defence without enough rage"
-        assert any("Hunter's Barrens Boar tried to use braces to intercept attacks but didn't have enough rage" in line for line in boar_match.log), "Fallback log should include requested resource-failure wording style"
+        assert not any("tried to use braces to intercept attacks but didn't have enough rage" in line for line in boar_match.log), "Insufficient-resource fallback log line should be removed"
 
         # Mana Tide Totem and Capacitor Totem utility should not use hit/accuracy rolls; totems remain entity_type=totem.
         totem_match = make_match("shaman", "rogue", seed=704)
@@ -3160,6 +3166,8 @@ def scenario_pet_primary_resource_snapshot_contract() -> bool:
     assert capacitor is not None, "Capacitor Totem should appear in snapshot payload"
     assert mana_tide.get("primary_resource") is None, "Mana Tide Totem should not expose a pet resource row payload"
     assert capacitor.get("primary_resource") is None, "Capacitor Totem should not expose a pet resource row payload"
+    mana_tide_status_labels = [status.get("label") for status in mana_tide.get("statuses", []) if isinstance(status, dict)]
+    assert not any(isinstance(label, str) and label.endswith("T") for label in mana_tide_status_labels), "Mana Tide Totem should not expose XT duration status text"
 
     mixed_match = make_match("hunter", "shaman", seed=154)
     submit_turn(mixed_match, "call_saber", "mana_tide_totem")
@@ -3167,6 +3175,18 @@ def scenario_pet_primary_resource_snapshot_contract() -> bool:
     assert len(mixed_snapshot.get("you_pets", [])) == 1 and len(mixed_snapshot.get("enemy_pets", [])) == 1, "Snapshot should remain stable with pets on both sides"
     assert mixed_snapshot["you_pets"][0].get("primary_resource", {}).get("id") == "energy", "Friendly pet resource should remain intact in mixed-pet snapshots"
     assert mixed_snapshot["enemy_pets"][0].get("primary_resource") is None, "Enemy totem should remain resource-less in mixed-pet snapshots"
+    return True
+
+
+def scenario_imp_firebolt_mana_cost_is_three() -> bool:
+    match = make_match("warlock", "warrior", seed=992)
+    submit_turn(match, "summon_imp", _DEF_PASS)
+    warlock = match.state[match.players[0]]
+    imp = _active_pet(warlock, "imp")
+    assert imp is not None, "Imp should be active for Firebolt mana-cost validation"
+    assert imp.mp == 9, "Imp Firebolt should cost 3 mana per cast and passively regen 2 mana per turn"
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+    assert imp.mp == 8, "Imp should continue regening 2 mana per turn while spending 3 mana per Firebolt"
     return True
 
 
@@ -5810,6 +5830,7 @@ SCENARIOS = [
     scenario_pet_specials_are_blocked_while_pet_is_ccd,
     scenario_shadowfiend_pet_box_hides_turn_counter_badge,
     scenario_pet_primary_resource_snapshot_contract,
+    scenario_imp_firebolt_mana_cost_is_three,
     scenario_mindgames_still_allows_direct_damage_dots,
     scenario_devouring_plague_heals_for_full_tick_damage,
     scenario_passive_secondary_damage_logs_own_absorb_suffix,

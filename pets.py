@@ -21,6 +21,8 @@ PETS = {
         "behavior_id": "imp_firebolt",
         "behavior": "imp_firebolt",
         "action_text": "casts Firebolt",
+        "resources": {"mp": 10, "mp_regen": 2},
+        "basic_attack": {"cost": {"mp": 3}},
         "display": {
             "war_council": True,
             "label": "Imp",
@@ -81,7 +83,7 @@ PETS = {
         "persistent_owner_memory": True,
         "permanent_death": True,
         "resources": {"energy": 30, "energy_regen": 5},
-        "basic_attack": {"school": "physical", "stat": "atk", "scaling": 1.0, "dice": "d4", "action_text": "melees the target", "cost": {"energy": 5}},
+        "basic_attack": {"school": "physical", "stat": "atk", "scaling": 1.0, "dice": "d4", "action_text": "melees the target"},
         "specials": {"bite": {"action_text": "bites the target", "cost": {"energy": 10}}},
         "special_id": "bite",
         "special_chance": 0.30,

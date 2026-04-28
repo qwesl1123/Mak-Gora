@@ -67,17 +67,6 @@ def _append_pet_log(match, line: str, deferred_logs: list[str] | None = None) ->
         match.log.append(line)
 
 
-def _pet_resource_name(resource_key: str) -> str:
-    if resource_key == "mp":
-        return "mana"
-    return str(resource_key or "resource").replace("_", " ").lower()
-
-
-def _pet_resource_failure_log(owner, pet, ability_name: str, resource_key: str) -> str:
-    class_name = str((getattr(getattr(owner, "build", None), "class_id", None) or "Unknown")).capitalize()
-    return f"{class_name}'s {pet.name} tried to use {ability_name} but didn't have enough {_pet_resource_name(resource_key)}"
-
-
 def _can_pay_pet_cost(pet, costs: dict | None) -> tuple[bool, str]:
     for key, amount in (costs or {}).items():
         cost = int(amount or 0)
@@ -97,7 +86,7 @@ def _pay_pet_cost(pet, costs: dict | None) -> None:
         setattr(pet, key, max(0, current - cost))
 
 
-def _apply_pet_resource_regen(pet) -> None:
+def apply_pet_resource_regen(pet) -> None:
     template = PETS.get(pet.template_id, {})
     resources = template.get("resources", {}) or {}
     mp_regen = int(resources.get("mp_regen", 0) or 0)
@@ -144,11 +133,9 @@ def trigger_pre_action_special(owner, pet, owner_sid, match, rng, *, consume_act
     if not use_special:
         return False
 
-    special_name = str(special_data.get("action_text") or str(special_id).replace("_", " ").title())
     costs = special_data.get("cost") or {}
-    can_pay, fail_resource = _can_pay_pet_cost(pet, costs)
+    can_pay, _ = _can_pay_pet_cost(pet, costs)
     if not can_pay:
-        _append_pet_log(match, _pet_resource_failure_log(owner, pet, special_name, fail_resource), deferred_logs)
         return False
 
     _pay_pet_cost(pet, costs)
@@ -180,6 +167,13 @@ def _run_imp_firebolt(
     single_target_miss_log,
 ):
     action_text = _template_action_text(pet, fallback="casts Firebolt")
+    template = PETS.get(pet.template_id, {})
+    firebolt_cost = ((template.get("basic_attack") or {}).get("cost") or {})
+    can_pay_cost, _ = _can_pay_pet_cost(pet, firebolt_cost)
+    if not can_pay_cost:
+        return
+    _pay_pet_cost(pet, firebolt_cost)
+
     if should_miss_due_to_stealth(owner, enemy, {"requires_target": True}, stealth_targeting):
         match.log.append(_pet_log(owner_sid, pet, action_text, "Target is stealthed — Miss!"))
         return
@@ -323,9 +317,8 @@ def _run_hunter_basic_plus_special(
         use_special = rng.random() <= float(template.get("special_chance", 0) or 0)
 
     if use_special and special_id:
-        special_name = str(special_data.get("action_text") or str(special_id).replace("_", " ").title())
         special_costs = special_data.get("cost") or {}
-        can_pay_special, fail_resource = _can_pay_pet_cost(pet, special_costs)
+        can_pay_special, _ = _can_pay_pet_cost(pet, special_costs)
         if can_pay_special:
             _pay_pet_cost(pet, special_costs)
             _run_pet_special(
@@ -347,14 +340,12 @@ def _run_hunter_basic_plus_special(
                 single_target_miss_log,
             )
             return
-        match.log.append(_pet_resource_failure_log(owner, pet, special_name, fail_resource))
+        use_special = False
 
     profile = template.get("basic_attack", {}) or {}
     basic_costs = profile.get("cost") or {}
-    can_pay_basic, fail_resource = _can_pay_pet_cost(pet, basic_costs)
+    can_pay_basic, _ = _can_pay_pet_cost(pet, basic_costs)
     if not can_pay_basic:
-        basic_name = str(profile.get("action_text") or "Basic Attack")
-        match.log.append(_pet_resource_failure_log(owner, pet, basic_name, fail_resource))
         return
     _pay_pet_cost(pet, basic_costs)
 
@@ -654,7 +645,6 @@ def run_pet_phase(
             pet = owner.pets.get(pet_id)
             if not pet or pet.hp <= 0:
                 continue
-            _apply_pet_resource_regen(pet)
             if pet.action_consumed:
                 pet.action_consumed = False
                 continue

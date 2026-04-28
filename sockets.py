@@ -232,7 +232,7 @@ def snapshot_for(match, viewer_sid):
                     "color": effect_display.get("color"),
                     "priority": int(effect_display.get("priority", 0) or 0),
                 })
-        if pet.template_id != "shadowfiend" and pet.duration is not None and pet.duration > 0:
+        if pet.template_id != "shadowfiend" and pet.entity_type != "totem" and pet.duration is not None and pet.duration > 0:
             statuses.append({"label": f"{int(pet.duration)}T", "color": "#FFFFFF", "priority": 100})
         return statuses
 

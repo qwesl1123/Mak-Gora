@@ -4920,20 +4920,20 @@
 
           const petResource = petResourceFromSnapshot(pet);
           if (petResource) {
-            const resourceLine = document.createElement("div");
-            resourceLine.className = "pet-status-line";
+            const resourceWrap = document.createElement("div");
+            resourceWrap.className = "bar-container pet-hpbar";
 
-            const resourceLabel = document.createElement("span");
-            resourceLabel.textContent = `${petResource.label}:`;
-            resourceLine.appendChild(resourceLabel);
+            const resourceText = document.createElement("div");
+            resourceText.className = "bar-text";
+            resourceText.textContent = `${petResource.value} / ${petResource.max}`;
 
-            const resourceValue = document.createElement("strong");
-            resourceValue.className = "pet-status-val";
-            resourceValue.style.color = petResource.color;
-            resourceValue.textContent = `${petResource.value} / ${petResource.max}`;
-            resourceLine.appendChild(resourceValue);
+            const resourceBar = document.createElement("div");
+            resourceBar.className = `bar-fill ${petResource.id === "energy" ? "energy" : petResource.id === "rage" ? "rage" : "mana"}`;
+            resourceBar.style.width = `${barPercent(petResource.value, petResource.max)}%`;
 
-            row.appendChild(resourceLine);
+            resourceWrap.appendChild(resourceText);
+            resourceWrap.appendChild(resourceBar);
+            row.appendChild(resourceWrap);
           }
 
           const badges = normalizePetBadges(pet?.statuses || pet?.effects, pet?.name || pet?.id);

@@ -47,7 +47,7 @@ def is_entity_type(target: PlayerState | PetState | None, entity_type: str) -> b
         return False
     return entity_type_of(target) == expected
 
-from .pet_ai import run_pet_phase, cleanup_pets, prepare_pet_pre_action_effects, trigger_pre_action_special
+from .pet_ai import run_pet_phase, cleanup_pets, prepare_pet_pre_action_effects, trigger_pre_action_special, apply_pet_resource_regen
 
 # Centralized mechanics (passives/DoTs/mitigation/regen) live here.
 from .effects import (
@@ -1106,6 +1106,7 @@ def resolve_end_of_turn_stage(
             if not pet or pet.hp <= 0:
                 continue
             pet_summary = end_of_turn_pet(pet, match.log, pet.name)
+            apply_pet_resource_regen(pet)
             for source in pet_summary.get("damage_sources", []):
                 source_sid = source.get("source_sid")
                 source_ps = match.state.get(source_sid)
