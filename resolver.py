@@ -1909,13 +1909,30 @@ def resolve_turn(match: MatchState) -> None:
             return True
         return cant_act_reason_ignoring_committed_on_hit_riders(target_sid, target) is not None
 
+    def _normalized_hunter_pet_memory_entry(memory_value: Any) -> dict[str, int]:
+        if isinstance(memory_value, dict):
+            hp_value = max(0, int(memory_value.get("hp", 0) or 0))
+            return {
+                "hp": hp_value,
+                "mp": max(0, int(memory_value.get("mp", 0) or 0)),
+                "energy": max(0, int(memory_value.get("energy", 0) or 0)),
+                "rage": max(0, int(memory_value.get("rage", 0) or 0)),
+            }
+        hp_value = max(0, int(memory_value or 0))
+        return {"hp": hp_value, "mp": 0, "energy": 0, "rage": 0}
+
     def dismiss_pet(actor: PlayerState, pet_id: str, *, remember: bool = False) -> None:
         pet = (actor.pets or {}).get(pet_id)
         if not pet:
             return
         template = PETS.get(pet.template_id, {})
         if remember and template.get("persistent_owner_memory"):
-            actor.hunter_pet_memory[pet.template_id] = max(0, int(pet.hp))
+            actor.hunter_pet_memory[pet.template_id] = {
+                "hp": max(0, int(pet.hp)),
+                "mp": max(0, int(getattr(pet, "mp", 0) or 0)),
+                "energy": max(0, int(getattr(pet, "energy", 0) or 0)),
+                "rage": max(0, int(getattr(pet, "rage", 0) or 0)),
+            }
         if actor.active_pet_id == pet_id:
             actor.active_pet_id = None
         del actor.pets[pet_id]
@@ -1924,7 +1941,7 @@ def resolve_turn(match: MatchState) -> None:
         template = PETS.get(pet.template_id, {})
         if template.get("permanent_death"):
             owner.dead_hunter_pets[pet.template_id] = True
-            owner.hunter_pet_memory[pet.template_id] = 0
+            owner.hunter_pet_memory[pet.template_id] = {"hp": 0, "mp": 0, "energy": 0, "rage": 0}
         if owner.active_pet_id == pet.id:
             owner.active_pet_id = None
         if pet.id in owner.pets:
@@ -1986,10 +2003,17 @@ def resolve_turn(match: MatchState) -> None:
         mp_max = int(resources.get("mp", template.get("mana", 0)) or 0)
         energy_max = int(resources.get("energy", 0) or 0)
         rage_max = int(resources.get("rage", 0) or 0)
-        remembered_hp = actor.hunter_pet_memory.get(template_id)
+        remembered = _normalized_hunter_pet_memory_entry(actor.hunter_pet_memory.get(template_id))
         summon_hp = hp_max
-        if template.get("persistent_owner_memory") and remembered_hp is not None:
-            summon_hp = hp_max if int(remembered_hp) <= 0 else min(hp_max, int(remembered_hp))
+        summon_mp = mp_max
+        summon_energy = energy_max
+        summon_rage = 0
+        if template.get("persistent_owner_memory") and template_id in actor.hunter_pet_memory:
+            remembered_hp = int(remembered.get("hp", 0) or 0)
+            summon_hp = hp_max if remembered_hp <= 0 else min(hp_max, remembered_hp)
+            summon_mp = min(mp_max, max(0, int(remembered.get("mp", 0) or 0)))
+            summon_energy = min(energy_max, max(0, int(remembered.get("energy", 0) or 0)))
+            summon_rage = min(rage_max, max(0, int(remembered.get("rage", 0) or 0)))
         summoned = PetState(
             id=pet_id,
             template_id=template_id,
@@ -1997,11 +2021,11 @@ def resolve_turn(match: MatchState) -> None:
             owner_sid=actor.sid,
             hp=summon_hp,
             hp_max=hp_max,
-            mp=mp_max,
+            mp=summon_mp,
             mp_max=mp_max,
-            energy=energy_max,
+            energy=summon_energy,
             energy_max=energy_max,
-            rage=0,
+            rage=summon_rage,
             rage_max=rage_max,
             stats={k: int(v or 0) for k, v in ((template.get("stats", {}) or {}).items())},
             effects=[],

@@ -727,7 +727,7 @@ def cleanup_pets(match):
                 template = PETS.get(pet.template_id, {})
                 if pet.hp <= 0 and template.get("permanent_death"):
                     ps.dead_hunter_pets[pet.template_id] = True
-                    ps.hunter_pet_memory[pet.template_id] = 0
+                    ps.hunter_pet_memory[pet.template_id] = {"hp": 0, "mp": 0, "energy": 0, "rage": 0}
                 if ps.active_pet_id == pet_id:
                     ps.active_pet_id = None
                 match.log.append(f"{pet.name} dies.")

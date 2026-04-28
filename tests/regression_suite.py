@@ -1294,7 +1294,7 @@ def scenario_hunter_pet_summon_swap_memory() -> bool:
 
     submit_turn(match, "call_serpent", _DEF_PASS)
     assert _active_pet(hunter, "frostsaber") is None, "Frostsaber should be dismissed when serpent is summoned"
-    assert hunter.hunter_pet_memory.get("frostsaber") == 12, "Dismissed Frostsaber HP should be remembered"
+    assert (hunter.hunter_pet_memory.get("frostsaber") or {}).get("hp") == 12, "Dismissed Frostsaber HP should be remembered"
     assert any("calls for Emerald Serpent." in line for line in _turn_lines(match, 2)), "Hunter summon log should say calls for Emerald Serpent"
 
     assert not hunter.cooldowns.get("call_saber"), "Companion calls should not go on cooldown"
@@ -1310,7 +1310,7 @@ def scenario_hunter_only_one_active_pet() -> bool:
     run_turns(match, [("call_saber", _DEF_PASS), ("call_boar", _DEF_PASS)])
     active_templates = sorted(pet.template_id for pet in hunter.pets.values())
     assert active_templates == ["barrens_boar"], "Hunter should have exactly one active pet at a time"
-    assert hunter.hunter_pet_memory.get("frostsaber", 0) > 0, "Dismissed saber HP should be stored"
+    assert ((hunter.hunter_pet_memory.get("frostsaber") or {}).get("hp") or 0) > 0, "Dismissed saber HP should be stored"
     return True
 
 
@@ -2431,7 +2431,9 @@ def scenario_hunter_pet_permanent_death() -> bool:
     assert any("Dragon Roar hits" in line and "Emerald Serpent" in line for line in latest_turn), "AoE should hit the active hunter pet"
     assert any(line == "Emerald Serpent dies." for line in latest_turn), "Lethal AoE damage should kill the pet immediately"
     assert hunter.dead_hunter_pets.get("emerald_serpent"), "Dead hunter pet should be marked permanently dead"
-    assert hunter.hunter_pet_memory.get("emerald_serpent") == 0, "Permanent pet death should zero remembered HP"
+    serpent_memory = hunter.hunter_pet_memory.get("emerald_serpent") or {}
+    assert serpent_memory.get("hp") == 0, "Permanent pet death should zero remembered HP"
+    assert serpent_memory.get("mp") == 0 and serpent_memory.get("energy") == 0 and serpent_memory.get("rage") == 0, "Permanent pet death should zero remembered resources"
     assert not any(pet.template_id == "emerald_serpent" for pet in hunter.pets.values()), "Dead Emerald Serpent should be removed from active pets"
 
     hunter.cooldowns.clear()
@@ -2453,7 +2455,9 @@ def scenario_hunter_pet_permanent_death_resummon_blocked() -> bool:
     saber.hp = 0
     resolver.cleanup_pets(match)
     assert hunter.dead_hunter_pets.get("frostsaber"), "Dead hunter pet should be marked permanently dead"
-    assert hunter.hunter_pet_memory.get("frostsaber") == 0, "Permanent pet death should zero remembered HP"
+    saber_memory = hunter.hunter_pet_memory.get("frostsaber") or {}
+    assert saber_memory.get("hp") == 0, "Permanent pet death should zero remembered HP"
+    assert saber_memory.get("mp") == 0 and saber_memory.get("energy") == 0 and saber_memory.get("rage") == 0, "Permanent pet death should zero remembered resources"
     assert not any(pet.template_id == "frostsaber" for pet in hunter.pets.values()), "Dead Frostsaber should be removed from active pets"
 
     hunter.cooldowns.clear()
@@ -2500,10 +2504,10 @@ def scenario_hunter_dismissed_pet_clears_runtime_effects() -> bool:
     remembered_hp = saber.hp
 
     submit_turn(match, "call_serpent", _DEF_PASS)
-    assert hunter.hunter_pet_memory.get("frostsaber") == remembered_hp, "Dismiss should store current HP before removing the pet"
+    assert (hunter.hunter_pet_memory.get("frostsaber") or {}).get("hp") == remembered_hp, "Dismiss should store current HP before removing the pet"
     dismissed_turn = match.turn
     run_turns(match, [(_DEF_PASS, _DEF_PASS), (_DEF_PASS, _DEF_PASS)])
-    assert hunter.hunter_pet_memory.get("frostsaber") == remembered_hp, "Dismissed pet should not keep taking DoT ticks"
+    assert (hunter.hunter_pet_memory.get("frostsaber") or {}).get("hp") == remembered_hp, "Dismissed pet should not keep taking DoT ticks"
     idle_turn_logs = _turn_lines(match, dismissed_turn + 1) + _turn_lines(match, dismissed_turn + 2)
     assert not any("Frostsaber" in line for line in idle_turn_logs), "Dismissed pet should not keep acting or logging runtime effects while inactive"
 
@@ -2528,21 +2532,21 @@ def scenario_hunter_multi_pet_memory_swap_cycle() -> bool:
     submit_turn(match, "call_serpent", _DEF_PASS)
     serpent = _active_pet(hunter, "emerald_serpent")
     assert serpent is not None, "Emerald Serpent should summon"
-    assert hunter.hunter_pet_memory.get("frostsaber") == 12, "Frostsaber HP should be remembered on dismissal"
+    assert (hunter.hunter_pet_memory.get("frostsaber") or {}).get("hp") == 12, "Frostsaber HP should be remembered on dismissal"
     serpent.hp = 9
 
     hunter.cooldowns.clear()
     submit_turn(match, "call_boar", _DEF_PASS)
     boar = _active_pet(hunter, "barrens_boar")
     assert boar is not None, "Barrens Boar should summon"
-    assert hunter.hunter_pet_memory.get("emerald_serpent") == 9, "Serpent HP should be remembered on dismissal"
+    assert (hunter.hunter_pet_memory.get("emerald_serpent") or {}).get("hp") == 9, "Serpent HP should be remembered on dismissal"
     boar.hp = 7
 
     hunter.cooldowns.clear()
     submit_turn(match, "call_saber", _DEF_PASS)
     saber_returned = _active_pet(hunter, "frostsaber")
     assert saber_returned is not None and saber_returned.hp == 12, "Frostsaber should return at its remembered HP after multiple swaps"
-    assert hunter.hunter_pet_memory.get("barrens_boar") == 7, "Boar HP should be remembered when it is dismissed"
+    assert (hunter.hunter_pet_memory.get("barrens_boar") or {}).get("hp") == 7, "Boar HP should be remembered when it is dismissed"
     assert sorted(pet.template_id for pet in hunter.pets.values()) == ["frostsaber"], "Only one Hunter pet should remain active after repeated swaps"
 
     hunter.cooldowns.clear()
@@ -2554,6 +2558,78 @@ def scenario_hunter_multi_pet_memory_swap_cycle() -> bool:
     submit_turn(match, "call_boar", _DEF_PASS)
     boar_returned = _active_pet(hunter, "barrens_boar")
     assert boar_returned is not None and boar_returned.hp == 7, "Barrens Boar should return at its remembered HP after multiple swaps"
+    return True
+
+
+def scenario_hunter_pet_resource_memory_and_clamp() -> bool:
+    original_serpent_chance = PETS["emerald_serpent"].get("special_chance")
+    original_saber_chance = PETS["frostsaber"].get("special_chance")
+    original_boar_chance = PETS["barrens_boar"].get("special_chance")
+    PETS["emerald_serpent"]["special_chance"] = 0
+    PETS["frostsaber"]["special_chance"] = 0
+    PETS["barrens_boar"]["special_chance"] = 0
+    try:
+        match = make_match("hunter", "warrior", seed=8129)
+        hunter = match.state[match.players[0]]
+
+        submit_turn(match, "call_serpent", _DEF_PASS)
+        serpent = _active_pet(hunter, "emerald_serpent")
+        assert serpent is not None, "Emerald Serpent should summon"
+        serpent.hp = 9
+        serpent.mp = 7
+
+        submit_turn(match, "call_saber", _DEF_PASS)
+        serpent_memory = hunter.hunter_pet_memory.get("emerald_serpent") or {}
+        assert serpent_memory.get("hp") == 9, "Emerald Serpent HP should be remembered on swap"
+        assert serpent_memory.get("mp") == 7, "Emerald Serpent mana should be remembered on swap"
+        saber = _active_pet(hunter, "frostsaber")
+        assert saber is not None, "Frostsaber should summon after swapping from serpent"
+        saber.hp = 12
+        saber.energy = 11
+
+        submit_turn(match, "call_boar", _DEF_PASS)
+        saber_memory = hunter.hunter_pet_memory.get("frostsaber") or {}
+        assert saber_memory.get("hp") == 12, "Frostsaber HP should be remembered on swap"
+        assert saber_memory.get("energy") == 11, "Frostsaber energy should be remembered on swap"
+        boar = _active_pet(hunter, "barrens_boar")
+        assert boar is not None, "Barrens Boar should summon after swapping from saber"
+        boar.hp = 6
+        boar.rage = 4
+
+        submit_turn(match, "call_serpent", _DEF_PASS)
+        boar_memory = hunter.hunter_pet_memory.get("barrens_boar") or {}
+        assert boar_memory.get("hp") == 6, "Barrens Boar HP should be remembered on swap"
+        assert boar_memory.get("rage") == 4, "Barrens Boar rage should be remembered on swap"
+        serpent_returned = _active_pet(hunter, "emerald_serpent")
+        assert serpent_returned is not None, "Emerald Serpent should be resummoned"
+        assert serpent_returned.hp == 9, "Emerald Serpent should restore remembered HP"
+        assert serpent_returned.mp >= 7, "Emerald Serpent should restore remembered mana before normal turn-end regen"
+
+        submit_turn(match, "call_boar", _DEF_PASS)
+        hunter.hunter_pet_memory["emerald_serpent"] = {"hp": 99, "mp": 999, "energy": 9, "rage": 9}
+        submit_turn(match, "call_serpent", _DEF_PASS)
+        clamped_serpent = _active_pet(hunter, "emerald_serpent")
+        assert clamped_serpent is not None, "Emerald Serpent should summon for clamp coverage"
+        assert clamped_serpent.hp == clamped_serpent.hp_max, "Remembered HP should clamp to current max HP"
+        assert clamped_serpent.mp == clamped_serpent.mp_max, "Remembered mana should clamp to current max mana"
+        assert clamped_serpent.energy == 0 and clamped_serpent.rage == 0, "Unsupported serpent resources should remain at max-valid values"
+        return True
+    finally:
+        PETS["emerald_serpent"]["special_chance"] = original_serpent_chance
+        PETS["frostsaber"]["special_chance"] = original_saber_chance
+        PETS["barrens_boar"]["special_chance"] = original_boar_chance
+
+
+def scenario_non_persistent_pet_memory_unchanged() -> bool:
+    match = make_match("warlock", "warrior", seed=8130)
+    warlock = match.state[match.players[0]]
+    submit_turn(match, "summon_imp", _DEF_PASS)
+    imp = _active_pet(warlock, "imp")
+    assert imp is not None, "Imp should summon for non-persistent baseline coverage"
+    imp.hp = 0
+    resolver.cleanup_pets(match)
+    assert not warlock.hunter_pet_memory, "Non-persistent pets should not populate hunter companion memory"
+    assert not warlock.dead_hunter_pets, "Non-persistent pet defeat should not set permanent-death hunter companion flags"
     return True
 
 
@@ -5873,6 +5949,8 @@ SCENARIOS = [
     scenario_hunter_dead_pet_type_does_not_block_other_pet_types,
     scenario_hunter_dismissed_pet_clears_runtime_effects,
     scenario_hunter_multi_pet_memory_swap_cycle,
+    scenario_hunter_pet_resource_memory_and_clamp,
+    scenario_non_persistent_pet_memory_unchanged,
     scenario_hunter_redirect_removed_on_pet_dismiss,
     scenario_hunter_pet_recall_uses_calls_for_wording,
     scenario_negative_non_damage_effect_does_not_break_frozen,
