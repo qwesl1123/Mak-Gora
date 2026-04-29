@@ -86,6 +86,90 @@ def _pay_pet_cost(pet, costs: dict | None) -> None:
         setattr(pet, key, max(0, current - cost))
 
 
+def _build_pet_attack_ability(*, school: str, include_spell_tag: bool = False) -> dict:
+    damage_type = "magic" if school != "physical" else "physical"
+    tags = ["attack", damage_type]
+    if include_spell_tag:
+        tags.append("spell")
+    return {"requires_target": True, "damage_type": damage_type, "tags": tags, "flat_damage": 1}
+
+
+def _resolve_pet_targeting_and_hit(
+    *,
+    owner,
+    enemy,
+    pet,
+    owner_sid,
+    action_text: str,
+    ability: dict,
+    rng,
+    match,
+    stealth_targeting,
+    should_miss_due_to_stealth,
+    untargetable_miss_log,
+    can_evasion_force_miss,
+    single_target_miss_active,
+    single_target_miss_log,
+) -> bool:
+    if should_miss_due_to_stealth(owner, enemy, ability, stealth_targeting):
+        match.log.append(_pet_log(owner_sid, pet, action_text, "Target is stealthed — Miss!"))
+        return False
+    if has_flag(enemy, "untargetable"):
+        match.log.append(_pet_log(owner_sid, pet, action_text, untargetable_miss_log(enemy)))
+        return False
+    if single_target_miss_active(enemy, ability):
+        match.log.append(_pet_log(owner_sid, pet, action_text, single_target_miss_log()))
+        return False
+    if has_flag(enemy, "evade_all") and can_evasion_force_miss(ability, True):
+        match.log.append(_pet_log(owner_sid, pet, action_text, "Target evades the attack — Miss!"))
+        return False
+    accuracy = hit_chance(modify_stat(pet, "acc", _pet_stat(pet, "acc", 95)), modify_stat(enemy, "eva", enemy.stats.get("eva", 0)))
+    if rng.randint(1, 100) > accuracy:
+        match.log.append(_pet_log(owner_sid, pet, action_text, "Miss!"))
+        return False
+    return True
+
+
+def _resolve_pet_damage_and_log(
+    *,
+    owner,
+    enemy,
+    pet,
+    owner_sid,
+    enemy_sid,
+    label: str,
+    action_text: str,
+    school: str,
+    subschool: str | None,
+    raw_damage: int,
+    match,
+    apply_damage,
+    absorb_suffix,
+) -> dict:
+    normalized_school = "magical" if school == "magic" else school
+    if is_immune_all(enemy):
+        match.log.append(_pet_log(owner_sid, pet, action_text, "Immune!"))
+        return {"hp_damage": 0, "absorbed": 0, "total_incoming": 0}
+    if normalized_school == "physical" and is_damage_immune(enemy, "physical"):
+        match.log.append(_pet_log(owner_sid, pet, action_text, "Immune!"))
+        return {"hp_damage": 0, "absorbed": 0, "total_incoming": 0}
+    if normalized_school != "physical" and (is_damage_immune(enemy, "magic") or has_effect(enemy, "cloak_of_shadows")):
+        match.log.append(_pet_log(owner_sid, pet, action_text, "Immune!"))
+        return {"hp_damage": 0, "absorbed": 0, "total_incoming": 0}
+    reduced = _damage_after_reduction(raw_damage, enemy, normalized_school)
+    dealt = apply_damage(owner, enemy, reduced, enemy_sid, label, school=normalized_school, subschool=subschool)
+    remaining = int(dealt.get("hp_damage", 0) or 0)
+    absorbed = int(dealt.get("absorbed", 0) or 0)
+    breakdown = dealt.get("absorbed_breakdown", [])
+    total_incoming = remaining + absorbed
+    if total_incoming > 0:
+        line = _pet_log(owner_sid, pet, action_text, f"for {total_incoming} damage.")
+        if absorbed > 0:
+            line = f"{line} {absorb_suffix(absorbed, breakdown).strip()}"
+        match.log.append(line)
+    return {"hp_damage": remaining, "absorbed": absorbed, "total_incoming": total_incoming}
+
+
 def apply_pet_resource_regen(pet) -> None:
     template = PETS.get(pet.template_id, {})
     resources = template.get("resources", {}) or {}
@@ -174,43 +258,33 @@ def _run_imp_firebolt(
         return
     _pay_pet_cost(pet, firebolt_cost)
 
-    if should_miss_due_to_stealth(owner, enemy, {"requires_target": True}, stealth_targeting):
-        match.log.append(_pet_log(owner_sid, pet, action_text, "Target is stealthed — Miss!"))
-        return
-    if has_flag(enemy, "untargetable"):
-        match.log.append(_pet_log(owner_sid, pet, action_text, untargetable_miss_log(enemy)))
-        return
-    if single_target_miss_active(enemy, {"requires_target": True, "tags": ["spell", "attack", "magic"], "flat_damage": 1}):
-        match.log.append(_pet_log(owner_sid, pet, action_text, single_target_miss_log()))
-        return
-    if is_immune_all(enemy):
-        match.log.append(_pet_log(owner_sid, pet, action_text, "Immune!"))
-        return
-    if is_damage_immune(enemy, "magic") or has_effect(enemy, "cloak_of_shadows"):
-        match.log.append(_pet_log(owner_sid, pet, action_text, "Immune!"))
+    ability = _build_pet_attack_ability(school="magic", include_spell_tag=True)
+    if not _resolve_pet_targeting_and_hit(
+        owner=owner,
+        enemy=enemy,
+        pet=pet,
+        owner_sid=owner_sid,
+        action_text=action_text,
+        ability=ability,
+        rng=rng,
+        match=match,
+        stealth_targeting=stealth_targeting,
+        should_miss_due_to_stealth=should_miss_due_to_stealth,
+        untargetable_miss_log=untargetable_miss_log,
+        can_evasion_force_miss=can_evasion_force_miss,
+        single_target_miss_active=single_target_miss_active,
+        single_target_miss_log=single_target_miss_log,
+    ):
         return
 
     fire_roll = roll("d4", rng)
     raw_fire = base_damage(modify_stat(pet, "int", _pet_stat(pet, "int")), 0.7, fire_roll)
-    reduced = _damage_after_reduction(raw_fire, enemy, "magical")
-    dealt_data = apply_damage(
-        owner,
-        enemy,
-        reduced,
-        enemy_sid,
-        "Imp Firebolt",
-        school="magical",
-        subschool=(PETS.get(pet.template_id, {}) or {}).get("subschool"),
+    dealt_data = _resolve_pet_damage_and_log(
+        owner=owner, enemy=enemy, pet=pet, owner_sid=owner_sid, enemy_sid=enemy_sid, label="Imp Firebolt",
+        action_text=action_text, school="magical", subschool=(PETS.get(pet.template_id, {}) or {}).get("subschool"),
+        raw_damage=raw_fire, match=match, apply_damage=apply_damage, absorb_suffix=absorb_suffix,
     )
     remaining = int(dealt_data.get("hp_damage", 0) or 0)
-    absorbed = int(dealt_data.get("absorbed", 0) or 0)
-    breakdown = dealt_data.get("absorbed_breakdown", [])
-    if absorbed > 0 or remaining > 0:
-        total_incoming = remaining + absorbed
-        line = _pet_log(owner_sid, pet, action_text, f"for {total_incoming} damage.")
-        if absorbed > 0:
-            line = f"{line} {absorb_suffix(absorbed, breakdown).strip()}"
-        match.log.append(line)
     if remaining > 0:
         totals = match.combat_totals.setdefault(owner_sid, {"damage": 0, "healing": 0})
         totals["damage"] += remaining
@@ -234,12 +308,7 @@ def _run_shadowfiend_melee_mana(
     single_target_miss_active,
     single_target_miss_log,
 ):
-    ability = {
-        "requires_target": True,
-        "damage_type": "physical",
-        "tags": ["attack", "physical"],
-        "flat_damage": 1,
-    }
+    ability = _build_pet_attack_ability(school="physical")
     action_text = _template_action_text(pet, fallback="melees the target")
     misses = False
     if should_miss_due_to_stealth(owner, enemy, ability, stealth_targeting):
@@ -265,23 +334,15 @@ def _run_shadowfiend_melee_mana(
 
     if misses:
         return
-    if is_immune_all(enemy) or is_damage_immune(enemy, "physical"):
-        match.log.append(_pet_log(owner_sid, pet, action_text, "Immune!"))
-        return
-
     fiend_roll = roll("d4", rng)
     raw = base_damage(modify_stat(pet, "atk", _pet_stat(pet, "atk")), 1.0, fiend_roll)
-    reduced = _damage_after_reduction(raw, enemy, "physical")
-    dealt = apply_damage(owner, enemy, reduced, enemy_sid, "Shadowfiend melee", school="physical")
+    dealt = _resolve_pet_damage_and_log(
+        owner=owner, enemy=enemy, pet=pet, owner_sid=owner_sid, enemy_sid=enemy_sid, label="Shadowfiend melee",
+        action_text=action_text, school="physical", subschool=None, raw_damage=raw, match=match, apply_damage=apply_damage,
+        absorb_suffix=absorb_suffix,
+    )
     remaining = int(dealt.get("hp_damage", 0) or 0)
-    absorbed = int(dealt.get("absorbed", 0) or 0)
-    breakdown = dealt.get("absorbed_breakdown", [])
-    total_incoming = remaining + absorbed
-    if total_incoming > 0:
-        line = _pet_log(owner_sid, pet, action_text, f"for {total_incoming} damage.")
-        if absorbed > 0:
-            line = f"{line} {absorb_suffix(absorbed, breakdown).strip()}"
-        match.log.append(line)
+    total_incoming = int(dealt.get("total_incoming", 0) or 0)
     if total_incoming > 0:
         owner.res.mp = min(owner.res.mp + 13, owner.res.mp_max)
         match.log.append(f"Shadowfiend restores 13 mana for {_owner_label(owner_sid)}.")
@@ -463,56 +524,23 @@ def _run_pet_attack(
     label: str,
     action_text: str = "attacks",
 ):
-    ability = {
-        "requires_target": True,
-        "damage_type": school,
-        "tags": ["attack", school],
-        "flat_damage": 1,
-    }
-    if should_miss_due_to_stealth(owner, enemy, ability, stealth_targeting):
-        match.log.append(_pet_log(owner_sid, pet, action_text, "Target is stealthed — Miss!"))
-        return
-    if has_flag(enemy, "untargetable"):
-        match.log.append(_pet_log(owner_sid, pet, action_text, untargetable_miss_log(enemy)))
-        return
-    if single_target_miss_active(enemy, ability):
-        match.log.append(_pet_log(owner_sid, pet, action_text, single_target_miss_log()))
-        return
-    if has_flag(enemy, "evade_all") and can_evasion_force_miss(ability, True):
-        match.log.append(_pet_log(owner_sid, pet, action_text, "Target evades the attack — Miss!"))
-        return
-
-    accuracy = hit_chance(
-        modify_stat(pet, "acc", _pet_stat(pet, "acc", 95)),
-        modify_stat(enemy, "eva", enemy.stats.get("eva", 0)),
-    )
-    if rng.randint(1, 100) > accuracy:
-        match.log.append(_pet_log(owner_sid, pet, action_text, "Miss!"))
-        return
-    if is_immune_all(enemy):
-        match.log.append(_pet_log(owner_sid, pet, action_text, "Immune!"))
-        return
-    if school == "physical" and is_damage_immune(enemy, "physical"):
-        match.log.append(_pet_log(owner_sid, pet, action_text, "Immune!"))
-        return
-    if school != "physical" and (is_damage_immune(enemy, "magic") or has_effect(enemy, "cloak_of_shadows")):
-        match.log.append(_pet_log(owner_sid, pet, action_text, "Immune!"))
+    ability = _build_pet_attack_ability(school=school)
+    if not _resolve_pet_targeting_and_hit(
+        owner=owner, enemy=enemy, pet=pet, owner_sid=owner_sid, action_text=action_text, ability=ability, rng=rng, match=match,
+        stealth_targeting=stealth_targeting, should_miss_due_to_stealth=should_miss_due_to_stealth,
+        untargetable_miss_log=untargetable_miss_log, can_evasion_force_miss=can_evasion_force_miss,
+        single_target_miss_active=single_target_miss_active, single_target_miss_log=single_target_miss_log,
+    ):
         return
 
     stat_value = _pet_stat(pet, str(stat_key), 0)
     rolled = roll(dice, rng) if dice else 0
     raw = base_damage(stat_value, scaling, rolled)
-    reduced = _damage_after_reduction(raw, enemy, school)
-    dealt = apply_damage(owner, enemy, reduced, enemy_sid, label, school=school, subschool=subschool)
+    dealt = _resolve_pet_damage_and_log(
+        owner=owner, enemy=enemy, pet=pet, owner_sid=owner_sid, enemy_sid=enemy_sid, label=label, action_text=action_text,
+        school=school, subschool=subschool, raw_damage=raw, match=match, apply_damage=apply_damage, absorb_suffix=absorb_suffix,
+    )
     remaining = int(dealt.get("hp_damage", 0) or 0)
-    absorbed = int(dealt.get("absorbed", 0) or 0)
-    breakdown = dealt.get("absorbed_breakdown", [])
-    total_incoming = remaining + absorbed
-    if total_incoming > 0:
-        line = _pet_log(owner_sid, pet, action_text, f"for {total_incoming} damage.")
-        if absorbed > 0:
-            line = f"{line} {absorb_suffix(absorbed, breakdown).strip()}"
-        match.log.append(line)
     if remaining > 0:
         totals = match.combat_totals.setdefault(owner_sid, {"damage": 0, "healing": 0})
         totals["damage"] += remaining
@@ -564,48 +592,23 @@ def _run_pet_special(
         )
 
     if special_id == "lightning_breath":
-        ability = {
-            "requires_target": True,
-            "damage_type": "magic",
-            "tags": ["attack", "magic"],
-            "flat_damage": 1,
-        }
+        ability = _build_pet_attack_ability(school="magic")
         action_text = _template_action_text(pet, special_id=special_id, fallback="breathes lightning")
-        if should_miss_due_to_stealth(owner, enemy, ability, stealth_targeting):
-            match.log.append(_pet_log(owner_sid, pet, action_text, "Target is stealthed — Miss!"))
-            return
-        if has_flag(enemy, "untargetable"):
-            match.log.append(_pet_log(owner_sid, pet, action_text, untargetable_miss_log(enemy)))
-            return
-        if single_target_miss_active(enemy, ability):
-            match.log.append(_pet_log(owner_sid, pet, action_text, single_target_miss_log()))
-            return
-        if is_immune_all(enemy):
-            match.log.append(_pet_log(owner_sid, pet, action_text, "Immune!"))
-            return
-        if is_damage_immune(enemy, "magic") or has_effect(enemy, "cloak_of_shadows"):
-            match.log.append(_pet_log(owner_sid, pet, action_text, "Immune!"))
+        if not _resolve_pet_targeting_and_hit(
+            owner=owner, enemy=enemy, pet=pet, owner_sid=owner_sid, action_text=action_text, ability=ability, rng=rng, match=match,
+            stealth_targeting=stealth_targeting, should_miss_due_to_stealth=should_miss_due_to_stealth,
+            untargetable_miss_log=untargetable_miss_log, can_evasion_force_miss=can_evasion_force_miss,
+            single_target_miss_active=single_target_miss_active, single_target_miss_log=single_target_miss_log,
+        ):
             return
         raw = base_damage(modify_stat(pet, "int", _pet_stat(pet, "int")), 1.5, roll("d6", rng))
-        reduced = _damage_after_reduction(raw, enemy, "magical")
-        dealt = apply_damage(
-            owner,
-            enemy,
-            reduced,
-            enemy_sid,
-            "Lightning Breath",
+        dealt = _resolve_pet_damage_and_log(
+            owner=owner, enemy=enemy, pet=pet, owner_sid=owner_sid, enemy_sid=enemy_sid, label="Lightning Breath", action_text=action_text,
             school="magical",
             subschool=((PETS.get(pet.template_id, {}).get("specials", {}) or {}).get("lightning_breath", {}) or {}).get("subschool"),
+            raw_damage=raw, match=match, apply_damage=apply_damage, absorb_suffix=absorb_suffix,
         )
         remaining = int(dealt.get("hp_damage", 0) or 0)
-        absorbed = int(dealt.get("absorbed", 0) or 0)
-        breakdown = dealt.get("absorbed_breakdown", [])
-        total_incoming = remaining + absorbed
-        if total_incoming > 0:
-            line = _pet_log(owner_sid, pet, action_text, f"for {total_incoming} damage.")
-            if absorbed > 0:
-                line = f"{line} {absorb_suffix(absorbed, breakdown).strip()}"
-            match.log.append(line)
         if remaining > 0:
             heal_value = remaining // 2
             before_pet = pet.hp
