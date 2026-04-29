@@ -9,6 +9,7 @@ PETS = {
             "atk": 1,
             "int": 5,
             "def": 5,
+            "magic_resist": 0,
             "spirit": 0,
             "spd": 8,
             "crit": 7,
@@ -40,6 +41,7 @@ PETS = {
             "atk": 8,
             "int": 0,
             "def": 8,
+            "magic_resist": 0,
             "spirit": 0,
             "spd": 8,
             "crit": 7,
@@ -70,6 +72,7 @@ PETS = {
             "atk": 6,
             "int": 2,
             "def": 3,
+            "magic_resist": 0,
             "spirit": 0,
             "spd": 8,
             "crit": 7,
@@ -105,6 +108,7 @@ PETS = {
             "atk": 4,
             "int": 10,
             "def": 3,
+            "magic_resist": 0,
             "spirit": 0,
             "spd": 8,
             "crit": 3,
@@ -141,6 +145,7 @@ PETS = {
             "atk": 4,
             "int": 0,
             "def": 10,
+            "magic_resist": 0,
             "spirit": 0,
             "spd": 8,
             "crit": 1,
@@ -184,6 +189,7 @@ PETS = {
             "atk": 0,
             "int": 0,
             "def": 0,
+            "magic_resist": 0,
             "spirit": 0,
             "spd": 0,
             "crit": 0,
@@ -211,6 +217,7 @@ PETS = {
             "atk": 0,
             "int": 0,
             "def": 0,
+            "magic_resist": 0,
             "spirit": 0,
             "spd": 0,
             "crit": 0,
@@ -232,6 +239,7 @@ DEFAULT_PET_STATS = {
     "atk": 0,
     "int": 0,
     "def": 0,
+    "magic_resist": 0,
     "spirit": 0,
     "spd": 0,
     "crit": 0,
@@ -243,7 +251,7 @@ DEFAULT_PET_STATS = {
 def _normalize_pet_template(template: dict) -> None:
     stats = dict(DEFAULT_PET_STATS)
     stats.update(template.get("stats", {}) or {})
-    for stat_key in ("atk", "int", "def", "spirit", "spd", "crit", "acc", "eva"):
+    for stat_key in ("atk", "int", "def", "magic_resist", "spirit", "spd", "crit", "acc", "eva"):
         stats[stat_key] = int(template.get(stat_key, stats.get(stat_key, 0)) or 0)
     template["stats"] = stats
 

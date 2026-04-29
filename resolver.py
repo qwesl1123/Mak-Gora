@@ -87,6 +87,7 @@ from .effects import (
     effect_has_tag,
     is_magical_harmful_effect,
     normalize_school,
+    resolve_incoming_damage,
     consume_effect_stack,
     effect_stack_count,
 )
@@ -3274,7 +3275,22 @@ def resolve_turn(match: MatchState) -> None:
                 damage_school=normalized_school,
             ):
                 return _empty_damage_result(school=normalized_school, subschool=subschool, redirect_log=redirect_log)
-        instance_values = _build_damage_instance_values(incoming, damage_instances)
+        if is_player_target:
+            instance_values = _build_damage_instance_values(incoming, damage_instances)
+        else:
+            if damage_instances:
+                instance_values = [
+                    resolve_incoming_damage(int(value or 0), target, normalized_school)
+                    for value in damage_instances
+                    if int(value or 0) > 0
+                ]
+                instance_values = [value for value in instance_values if value > 0]
+                incoming = sum(instance_values)
+            else:
+                incoming = resolve_incoming_damage(incoming, target, normalized_school)
+                instance_values = [incoming] if incoming > 0 else []
+            if incoming <= 0 or not instance_values:
+                return _empty_damage_result(school=normalized_school, subschool=subschool, redirect_log=redirect_log)
 
         if is_player_target and mindgames_flip_damage and source.sid != target.sid:
             _apply_heal_with_clamp(target, incoming)

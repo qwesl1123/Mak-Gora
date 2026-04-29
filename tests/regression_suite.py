@@ -1120,7 +1120,7 @@ def scenario_pet_totem_runtime_normalization_phase1() -> bool:
     assert high_owner_damage == expected_imp_firebolt, "Imp Firebolt should not scale from owner intellect"
 
     imp_stats = high_owner_imp.stats
-    assert imp_stats == {"acc": 98, "atk": 1, "crit": 7, "def": 5, "eva": 0, "int": 5, "spd": 8, "spirit": 0}, "Imp runtime stats should be fully explicit and normalized"
+    assert imp_stats == {"acc": 98, "atk": 1, "crit": 7, "def": 5, "eva": 0, "int": 5, "magic_resist": 0, "spd": 8, "spirit": 0}, "Imp runtime stats should be fully explicit and normalized"
     assert high_owner_imp.mp == 9 and high_owner_imp.mp_max == 10, "Imp mana runtime values should be explicit and reflect Firebolt cost with passive regen"
     assert high_owner_imp.entity_type == "demon", "Imp should keep demon entity_type"
 
@@ -1170,7 +1170,7 @@ def scenario_pet_totem_runtime_normalization_phase2b() -> bool:
         submit_turn(fiend_match, "shadowfiend", _DEF_PASS)
         assert hp_before - warrior.res.hp == 10, "Shadowfiend should use [Attack * 1.0 + d4] with explicit pet attack"
         fiend = _active_pet(priest, "shadowfiend")
-        assert fiend is not None and fiend.stats == {"acc": 98, "atk": 8, "crit": 7, "def": 8, "eva": 0, "int": 0, "spd": 8, "spirit": 0}, "Shadowfiend runtime stats should be normalized and explicit"
+        assert fiend is not None and fiend.stats == {"acc": 98, "atk": 8, "crit": 7, "def": 8, "eva": 0, "int": 0, "magic_resist": 0, "spd": 8, "spirit": 0}, "Shadowfiend runtime stats should be normalized and explicit"
         assert fiend.entity_type == "demon", "Shadowfiend should remain a demon entity"
         assert any("Shadowfiend restores 13 mana" in line for line in fiend_match.log), "Shadowfiend should still restore owner mana on hit"
 
@@ -1245,7 +1245,7 @@ def scenario_pet_totem_runtime_normalization_phase2b() -> bool:
         mana_tide = _active_pet(shaman, "mana_tide_totem")
         assert mana_tide is not None and mana_tide.entity_type == "totem", "Mana Tide should remain a totem entity"
         assert shaman.res.mp > mp_before, "Mana Tide restore should not depend on accuracy rolls"
-        assert mana_tide.stats == {"acc": 0, "atk": 0, "crit": 0, "def": 0, "eva": 0, "int": 0, "spd": 0, "spirit": 0}, "Mana Tide should use explicit totem stats"
+        assert mana_tide.stats == {"acc": 0, "atk": 0, "crit": 0, "def": 0, "eva": 0, "int": 0, "magic_resist": 0, "spd": 0, "spirit": 0}, "Mana Tide should use explicit totem stats"
 
         cap_match = make_match("shaman", "rogue", seed=705)
         shaman_sid, rogue_sid = cap_match.players
@@ -3669,6 +3669,71 @@ def scenario_pet_attacks_use_shared_mitigation_stats() -> bool:
     return True
 
 
+def _redirected_boar_damage_taken(enemy_class: str, enemy_action: str, *, boar_def: int, boar_magic_resist: int, seed: int) -> int:
+    original_boar_special_chance = PETS["barrens_boar"]["special_chance"]
+    PETS["barrens_boar"]["special_chance"] = 1.0
+    try:
+        match = make_match("hunter", enemy_class, seed=seed)
+        submit_turn(match, "call_boar", _DEF_PASS)
+        hunter_sid, enemy_sid = match.players
+        hunter = match.state[hunter_sid]
+        boar = _active_pet(hunter, "barrens_boar")
+        assert boar is not None, "Barrens Boar should be active for redirect mitigation test"
+        boar.stats["def"] = boar_def
+        boar.stats["magic_resist"] = boar_magic_resist
+        hp_before = boar.hp
+        submit_turn(match, _DEF_PASS, enemy_action)
+        return hp_before - boar.hp
+    finally:
+        PETS["barrens_boar"]["special_chance"] = original_boar_special_chance
+
+
+def scenario_pet_incoming_physical_uses_centralized_mitigation_phase3() -> bool:
+    low_def_taken = _redirected_boar_damage_taken("rogue", "shadowstrike", boar_def=0, boar_magic_resist=0, seed=4101)
+    high_def_taken = _redirected_boar_damage_taken("rogue", "shadowstrike", boar_def=80, boar_magic_resist=0, seed=4101)
+    assert low_def_taken > 0, "Physical redirect setup should deal damage to boar"
+    assert high_def_taken < low_def_taken, "Higher boar DEF should reduce redirected physical incoming damage"
+    return True
+
+
+def scenario_pet_incoming_magical_uses_centralized_resist_phase3() -> bool:
+    low_mr_taken = _redirected_boar_damage_taken("mage", "fireball", boar_def=0, boar_magic_resist=0, seed=4102)
+    high_mr_taken = _redirected_boar_damage_taken("mage", "fireball", boar_def=0, boar_magic_resist=80, seed=4102)
+    assert low_mr_taken > 0, "Magical redirect setup should deal damage to boar"
+    assert high_mr_taken < low_mr_taken, "Higher boar magic_resist should reduce redirected magical incoming damage"
+    return True
+
+
+def scenario_imp_and_shadowfiend_incoming_use_centralized_pet_mitigation_phase3() -> bool:
+    imp_match = make_match("warlock", "warrior", seed=4103)
+    submit_turn(imp_match, "summon_imp", _DEF_PASS)
+    imp_owner_sid, _ = imp_match.players
+    imp = next((pet for pet in imp_match.state[imp_owner_sid].pets.values() if pet.template_id == "imp"), None)
+    assert imp is not None, "Imp should summon for centralized incoming mitigation test"
+    imp.stats["def"] = 80
+    hp_before_imp = imp.hp
+    submit_turn(imp_match, _DEF_PASS, "dragon_roar")
+    assert imp.hp > hp_before_imp - 20, "High DEF imp should mitigate incoming physical AoE damage"
+
+    fiend_match = make_match("priest", "shaman", seed=4104)
+    submit_turn(fiend_match, "shadowfiend", _DEF_PASS)
+    fiend_owner_sid, _ = fiend_match.players
+    fiend = next((pet for pet in fiend_match.state[fiend_owner_sid].pets.values() if pet.template_id == "shadowfiend"), None)
+    assert fiend is not None, "Shadowfiend should summon for centralized incoming resist test"
+    fiend.stats["magic_resist"] = 80
+    hp_before_fiend = fiend.hp
+    submit_turn(fiend_match, _DEF_PASS, "chain_lightning")
+    assert fiend.hp > hp_before_fiend - 20, "High magic_resist shadowfiend should mitigate incoming magical AoE damage"
+    return True
+
+
+def scenario_pet_totem_default_magic_resist_zero_phase3() -> bool:
+    assert int(PETS["frostsaber"]["stats"].get("magic_resist", -1)) == 0, "Hunter pets should default magic_resist to 0"
+    assert int(PETS["imp"]["stats"].get("magic_resist", -1)) == 0, "Imp should default magic_resist to 0"
+    assert int(PETS["mana_tide_totem"]["stats"].get("magic_resist", -1)) == 0, "Totems should default magic_resist to 0"
+    return True
+
+
 def scenario_break_on_damage_and_lifesteal_use_post_mitigation_damage() -> bool:
     cc_match = make_match("rogue", "mage", seed=4005)
     rogue_sid, mage_sid = cc_match.players
@@ -5981,6 +6046,10 @@ SCENARIOS = [
     scenario_mitigation_magic_uses_def_plus_magic_resist,
     scenario_ignore_armor_bypasses_only_armor_component,
     scenario_pet_attacks_use_shared_mitigation_stats,
+    scenario_pet_incoming_physical_uses_centralized_mitigation_phase3,
+    scenario_pet_incoming_magical_uses_centralized_resist_phase3,
+    scenario_imp_and_shadowfiend_incoming_use_centralized_pet_mitigation_phase3,
+    scenario_pet_totem_default_magic_resist_zero_phase3,
     scenario_break_on_damage_and_lifesteal_use_post_mitigation_damage,
     scenario_phase_c_prompt2_no_spillover_to_effect_application_or_end_of_turn,
     scenario_phase_c_prompt3_effect_application_stage_preserved,

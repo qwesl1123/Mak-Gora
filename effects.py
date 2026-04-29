@@ -1654,6 +1654,26 @@ def mitigate_damage(
     return int(reduced * mitigation_multiplier(target))
 
 
+def resolve_incoming_damage(
+    raw: int,
+    target: PlayerState,
+    school: str,
+    *,
+    ignore_armor: bool = False,
+    ignore_magic_resist: bool = False,
+) -> int:
+    normalized = normalize_school(school) or "physical"
+    if is_damage_immune(target, "physical" if normalized == "physical" else "magic"):
+        return 0
+    return mitigate_damage(
+        raw,
+        target,
+        normalized,
+        ignore_armor=ignore_armor,
+        ignore_magic_resist=ignore_magic_resist,
+    )
+
+
 def mitigation_multiplier(target: PlayerState) -> float:
     """Sum mitigation effects and cap at 80%. Returns multiplier for damage."""
     total = 0.0
