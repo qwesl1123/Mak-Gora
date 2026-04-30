@@ -1252,9 +1252,9 @@ def scenario_pet_totem_runtime_normalization_phase2b() -> bool:
         rogue = cap_match.state[rogue_sid]
         rogue.stats["eva"] = 999
         submit_turn(cap_match, "capacitor_totem", _DEF_PASS)
-        assert any("is charging" in line for line in _turn_lines(cap_match, 1)), "Capacitor should charge on the first pet phase"
+        assert any("is charging" in line for line in _turn_lines(cap_match, 1)), "Capacitor should charge on summon turn"
         submit_turn(cap_match, _DEF_PASS, _DEF_PASS)
-        assert _has_effect(rogue, "capacitor_totem_stun"), "Capacitor discharge stun should occur without hit/accuracy checks"
+        assert any("discharges and stuns" in line for line in _turn_lines(cap_match, 2)), "Capacitor discharge should occur after one-turn delay without hit/accuracy checks"
         assert any(pet.template_id == "capacitor_totem" for pet in cap_match.state[shaman_sid].pets.values()) is False, "Capacitor Totem should disappear after discharging"
 
         # Broad no-unrelated-class sanity check.
@@ -5012,7 +5012,7 @@ def scenario_shaman_totems_and_astral_explosion() -> bool:
     submit_turn(match, "capacitor_totem", _DEF_PASS)
     assert any(p.template_id == "capacitor_totem" for p in match.state[shaman_sid].pets.values()), "Capacitor Totem should be summoned"
     submit_turn(match, _DEF_PASS, _DEF_PASS)
-    assert effects.has_effect(match.state[warlock_sid], "capacitor_totem_stun"), "Capacitor Totem should stun after a one-turn delay"
+    assert any("discharges and stuns" in line for line in _turn_lines(match, 4)), "Capacitor Totem should discharge after a one-turn delay"
     assert not any(p.template_id == "capacitor_totem" for p in match.state[shaman_sid].pets.values()), "Capacitor Totem should disappear after discharging"
 
     shaman.res.mp = max(shaman.res.mp, 100)
@@ -5027,6 +5027,52 @@ def scenario_shaman_totems_and_astral_explosion() -> bool:
     assert warlock.res.hp == warlock_hp_before, "Astral Explosion should not damage the enemy champion"
     assert any(imp_hp_after.get(pid, 0) < hp for pid, hp in imp_hp_before.items()), "Astral Explosion should damage enemy pets"
     assert effects.absorb_total(shaman) == 0, "Astral Explosion should consume all absorb when valid targets exist"
+    return True
+
+
+def scenario_capacitor_totem_aoe_timing_and_duration() -> bool:
+    match = make_match("shaman", "warlock", seed=7012)
+    shaman_sid, warlock_sid = match.players
+    shaman = match.state[shaman_sid]
+    warlock = match.state[warlock_sid]
+
+    submit_turn(match, "capacitor_totem", "summon_imp")
+    assert not effects.has_effect(warlock, "capacitor_totem_stun"), "Capacitor should not stun on summon turn"
+    imp_ids = sorted(warlock.pets.keys())
+    assert imp_ids, "Warlock should have pet targets for Capacitor AoE stun"
+    assert all(not effects.has_effect(warlock.pets[pid], "capacitor_totem_stun") for pid in imp_ids), "Capacitor should not stun enemy pets on summon turn"
+
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+    assert any("discharges and stuns" in line for line in _turn_lines(match, 2)), "Capacitor should discharge after one-turn delay"
+    assert not any(p.template_id == "capacitor_totem" for p in match.state[shaman_sid].pets.values()), "Capacitor Totem should disappear after discharging"
+
+    hp_before_t7 = warlock.res.hp
+    imp_hp_before_t7 = {pid: warlock.pets[pid].hp for pid in imp_ids if pid in warlock.pets}
+    submit_turn(match, _DEF_PASS, "shadow_bolt")
+    assert warlock.res.hp == hp_before_t7, "Enemy champion should lose first action window while stunned"
+    for pid, hp in imp_hp_before_t7.items():
+        if pid in warlock.pets:
+            assert warlock.pets[pid].hp == hp, "Enemy pets should lose first action window while stunned"
+
+    hp_before_t8 = warlock.res.hp
+    imp_hp_before_t8 = {pid: warlock.pets[pid].hp for pid in imp_ids if pid in warlock.pets}
+    submit_turn(match, _DEF_PASS, "shadow_bolt")
+    assert warlock.res.hp == hp_before_t8, "Enemy champion should lose second action window while stunned"
+    for pid, hp in imp_hp_before_t8.items():
+        if pid in warlock.pets:
+            assert warlock.pets[pid].hp == hp, "Enemy pets should lose second action window while stunned"
+
+    submit_turn(match, _DEF_PASS, "shadow_bolt")
+    assert not effects.has_effect(warlock, "capacitor_totem_stun"), "Enemy champion stun should expire after two denied action windows"
+
+    mana_match = make_match("shaman", "warrior", seed=7013)
+    mana_shaman_sid, _ = mana_match.players
+    mana_shaman = mana_match.state[mana_shaman_sid]
+    mana_shaman.res.mp = 0
+    submit_turn(mana_match, "mana_tide_totem", _DEF_PASS)
+    mana_before = mana_shaman.res.mp
+    submit_turn(mana_match, _DEF_PASS, _DEF_PASS)
+    assert mana_shaman.res.mp > mana_before, "Mana Tide Totem behavior should remain unchanged"
     return True
 
 
@@ -6083,6 +6129,7 @@ SCENARIOS = [
     scenario_shaman_astral_shift_conversion,
     scenario_shaman_lightning_bolt_damage_and_shock_resets,
     scenario_shaman_totems_and_astral_explosion,
+    scenario_capacitor_totem_aoe_timing_and_duration,
     scenario_shaman_astral_explosion_no_pet_consumes_absorb,
     scenario_spirit_mana_regen_formula_and_class_baselines,
     scenario_spirit_end_of_turn_regen_is_silent_and_clamped,

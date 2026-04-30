@@ -484,6 +484,13 @@ def _run_capacitor_totem_discharge(
     single_target_miss_active,
     single_target_miss_log,
 ):
+    if bool(getattr(pet, "_capacitor_primed", False)):
+        return
+    setattr(pet, "_capacitor_primed", True)
+    match.log.append(f"{_owner_label(owner_sid)}'s Capacitor Totem is charging.")
+
+
+def _resolve_capacitor_totem_discharge(owner, enemy, pet, owner_sid, enemy_sid, match) -> None:
     if not bool(getattr(pet, "_capacitor_primed", False)):
         setattr(pet, "_capacitor_primed", True)
         match.log.append(f"{_owner_label(owner_sid)}'s Capacitor Totem is charging.")
@@ -493,7 +500,16 @@ def _run_capacitor_totem_discharge(
         "capacitor_totem_stun",
         overrides={"duration": 2, "source_ability_name": "Capacitor Totem Stun"},
     )
-    match.log.append(f"{_owner_label(owner_sid)}'s Capacitor Totem discharges and stuns {_owner_label(enemy_sid)}.")
+    for enemy_pet_id in sorted((enemy.pets or {}).keys()):
+        enemy_pet = enemy.pets.get(enemy_pet_id)
+        if not enemy_pet or enemy_pet.hp <= 0:
+            continue
+        apply_effect_by_id(
+            enemy_pet,
+            "capacitor_totem_stun",
+            overrides={"duration": 2, "source_ability_name": "Capacitor Totem Stun"},
+        )
+    match.log.append(f"{_owner_label(owner_sid)}'s Capacitor Totem discharges and stuns {_owner_label(enemy_sid)}'s team.")
     pet.hp = 0
 
 
@@ -711,6 +727,9 @@ def prepare_pet_pre_action_effects(match, rng) -> list[str]:
         for pet_id in sorted((owner.pets or {}).keys()):
             pet = owner.pets.get(pet_id)
             if not pet or pet.hp <= 0:
+                continue
+            if pet.template_id == "capacitor_totem":
+                _resolve_capacitor_totem_discharge(owner, enemy, pet, owner_sid, enemy_sid, match)
                 continue
 
             trigger_pre_action_special(owner, pet, owner_sid, match, rng, consume_action=True, deferred_logs=deferred_logs)
