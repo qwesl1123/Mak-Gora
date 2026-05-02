@@ -509,7 +509,7 @@ def _resolve_capacitor_totem_discharge(owner, enemy, pet, owner_sid, enemy_sid, 
             "capacitor_totem_stun",
             overrides={"duration": 2, "source_ability_name": "Capacitor Totem Stun"},
         )
-    match.log.append(f"{_owner_label(owner_sid)}'s Capacitor Totem discharges and stuns {_owner_label(enemy_sid)}'s team.")
+    match.log.append(f"{_owner_label(owner_sid)}'s Capacitor Totem discharges!")
     pet.hp = 0
 
 
