@@ -373,17 +373,6 @@
         position: relative;
       }
 
-      .champion-entity-type {
-        position: absolute;
-        right: 36px;
-        top: 2px;
-        font-size: 0.58em;
-        letter-spacing: 0.08em;
-        color: #b08a4a;
-        text-transform: uppercase;
-        font-weight: 600;
-      }
-
       .champion-flipper {
         perspective: 1200px;
         margin-bottom: 15px;
@@ -3542,7 +3531,6 @@
         if (!element) {
           return;
         }
-        const typeText = formatEntityType(entityType);
         if (!label) {
           element.textContent = "--";
           return;
@@ -3552,13 +3540,11 @@
         const classKey = classKeyFromLabel(displayLabel);
         const safeClassName = escapeHtml(className);
         const safeSuffix = escapeHtml(suffix);
-        const safeType = escapeHtml(typeText);
-        const typeMarkup = safeType ? `<span class="champion-entity-type">${safeType}</span>` : "";
         if (!isStyledChampionClass(classKey)) {
-          element.innerHTML = `${escapeHtml(displayLabel)}${typeMarkup}`;
+          element.innerHTML = escapeHtml(displayLabel);
           return;
         }
-        element.innerHTML = `<span class="champion-name-class ${classKey}">${safeClassName}</span>${safeSuffix}${typeMarkup}`;
+        element.innerHTML = `<span class="champion-name-class ${classKey}">${safeClassName}</span>${safeSuffix}`;
       }
 
       function applyDocumentationItemRarityColors(root = document) {

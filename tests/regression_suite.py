@@ -4043,8 +4043,13 @@ def scenario_champion_mouseover_payload_contract() -> bool:
     assert you_payload.get("entity_type") == "beast", "Mouseover payload should expose live champion entity_type"
     expected_stats = ("atk", "int", "def", "spd", "crit", "acc", "eva", "spirit")
     for stat in expected_stats:
-        assert stat in (you_payload.get("stats") or {}), f"Mouseover payload must include stat '{stat}'"
-    assert you_payload.get("stats", {}).get("atk") == p1.stats.get("atk", 0) + 4, "Mouseover stats should reflect runtime stat_mod changes"
+        stat_payload = (you_payload.get("stats") or {}).get(stat)
+        assert isinstance(stat_payload, dict), f"Mouseover stat '{stat}' must use structured payload"
+        assert {"value", "base", "is_increased"} <= set(stat_payload.keys()), f"Mouseover stat '{stat}' must include value/base/is_increased"
+    atk_payload = you_payload.get("stats", {}).get("atk") or {}
+    assert atk_payload.get("value") == p1.stats.get("atk", 0) + 4, "Mouseover stats should reflect runtime stat_mod changes"
+    assert atk_payload.get("base") == CLASSES[p1.build.class_id]["base_stats"]["atk"], "Mouseover stat base should come from class baseline"
+    assert atk_payload.get("is_increased") is True, "Mouseover stat should flag increases above class baseline"
 
     you_mitigations = you_payload.get("mitigations") or {}
     assert "physical_reduction" in you_mitigations and "magic_resist" in you_mitigations, "Mouseover payload must include mitigation fields"

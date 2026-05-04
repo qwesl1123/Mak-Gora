@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from .models import PlayerState
 from ..content.balance import DEFAULTS
-from ..content.classes import class_display_name
+from ..content.classes import CLASSES, class_display_name
 from .dice import roll
 from .rules import base_damage as calc_base_damage, mitigate
 
@@ -1239,6 +1239,7 @@ def build_champion_mouseover_payload(ps: PlayerState) -> Dict[str, Any]:
     """Build a live runtime champion mouseover payload from current PlayerState."""
     stat_fields = ("atk", "int", "def", "spd", "crit", "acc", "eva", "spirit")
     subschools = ("fire", "frost", "shadow", "arcane", "nature", "holy")
+    class_base_stats = dict((CLASSES.get((ps.build.class_id if ps.build else "") or "", {}) or {}).get("base_stats", {}) or {})
     payload: Dict[str, Any] = {
         "entity_type": ps.entity_type,
         "stats": {},
@@ -1246,7 +1247,13 @@ def build_champion_mouseover_payload(ps: PlayerState) -> Dict[str, Any]:
         "subschool_resist": {},
     }
     for stat in stat_fields:
-        payload["stats"][stat] = modify_stat(ps, stat, ps.stats.get(stat, 0))
+        live_value = modify_stat(ps, stat, ps.stats.get(stat, 0))
+        base_value = int(class_base_stats.get(stat, 0) or 0)
+        payload["stats"][stat] = {
+            "value": live_value,
+            "base": base_value,
+            "is_increased": live_value > base_value,
+        }
     payload["mitigations"]["physical_reduction"] = modify_stat(ps, "physical_reduction", ps.stats.get("physical_reduction", 0))
     payload["mitigations"]["magic_resist"] = modify_stat(ps, "magic_resist", ps.stats.get("magic_resist", 0))
     for subschool in subschools:
