@@ -1235,6 +1235,26 @@ def build_effect_panel_payload(ps: PlayerState) -> Dict[str, List[Dict[str, Any]
     return panel
 
 
+def build_champion_mouseover_payload(ps: PlayerState) -> Dict[str, Any]:
+    """Build a live runtime champion mouseover payload from current PlayerState."""
+    stat_fields = ("atk", "int", "def", "spd", "crit", "acc", "eva", "spirit")
+    subschools = ("fire", "frost", "shadow", "arcane", "nature", "holy")
+    payload: Dict[str, Any] = {
+        "entity_type": ps.entity_type,
+        "stats": {},
+        "mitigations": {},
+        "subschool_resist": {},
+    }
+    for stat in stat_fields:
+        payload["stats"][stat] = modify_stat(ps, stat, ps.stats.get(stat, 0))
+    payload["mitigations"]["physical_reduction"] = modify_stat(ps, "physical_reduction", ps.stats.get("physical_reduction", 0))
+    payload["mitigations"]["magic_resist"] = modify_stat(ps, "magic_resist", ps.stats.get("magic_resist", 0))
+    for subschool in subschools:
+        stat_name = f"{subschool}_resist"
+        payload["subschool_resist"][subschool] = modify_stat(ps, stat_name, ps.stats.get(stat_name, 0))
+    return payload
+
+
 def is_permanent(effect: Dict[str, Any]) -> bool:
     """Effects we do not tick down with durations (until you add cleanse/removal)."""
     return effect.get("type") == "item_passive" or effect.get("id") == "demonic_circle"

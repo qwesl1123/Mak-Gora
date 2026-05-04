@@ -1254,7 +1254,7 @@ def scenario_pet_totem_runtime_normalization_phase2b() -> bool:
         submit_turn(cap_match, "capacitor_totem", _DEF_PASS)
         assert any("is charging" in line for line in _turn_lines(cap_match, 1)), "Capacitor should charge on summon turn"
         submit_turn(cap_match, _DEF_PASS, _DEF_PASS)
-        assert any("discharges and stuns" in line for line in _turn_lines(cap_match, 2)), "Capacitor discharge should occur after one-turn delay without hit/accuracy checks"
+        assert any("discharges!" in line for line in _turn_lines(cap_match, 2)), "Capacitor discharge should occur after one-turn delay without hit/accuracy checks"
         assert any(pet.template_id == "capacitor_totem" for pet in cap_match.state[shaman_sid].pets.values()) is False, "Capacitor Totem should disappear after discharging"
 
         # Broad no-unrelated-class sanity check.
@@ -4024,6 +4024,45 @@ def scenario_entity_type_phase3_completeness_audit() -> bool:
     return True
 
 
+def scenario_champion_mouseover_payload_contract() -> bool:
+    match = make_match("warrior", "mage", seed=7101)
+    p1_sid, p2_sid = match.players
+    p1 = match.state[p1_sid]
+    p2 = match.state[p2_sid]
+    p1.entity_type = "beast"
+
+    p1.effects.append({"id": "test_atk_boost", "type": "stat_mod", "stat": "atk", "flat": 4})
+    p1.effects.append({"id": "test_armor_boost", "type": "stat_mods", "mods": {"physical_reduction": 3, "fire_resist": 2}})
+    p2.effects.append({"id": "test_magic_boost", "type": "stat_mods", "mods": {"magic_resist": 2, "arcane_resist": 1}})
+
+    viewer_snapshot = SOCKETS.snapshot_for(match, p1_sid)
+    enemy_snapshot = SOCKETS.snapshot_for(match, p2_sid)
+    you_payload = viewer_snapshot.get("you_champion_mouseover") or {}
+    enemy_payload = viewer_snapshot.get("enemy_champion_mouseover") or {}
+
+    assert you_payload.get("entity_type") == "beast", "Mouseover payload should expose live champion entity_type"
+    expected_stats = ("atk", "int", "def", "spd", "crit", "acc", "eva", "spirit")
+    for stat in expected_stats:
+        assert stat in (you_payload.get("stats") or {}), f"Mouseover payload must include stat '{stat}'"
+    assert you_payload.get("stats", {}).get("atk") == p1.stats.get("atk", 0) + 4, "Mouseover stats should reflect runtime stat_mod changes"
+
+    you_mitigations = you_payload.get("mitigations") or {}
+    assert "physical_reduction" in you_mitigations and "magic_resist" in you_mitigations, "Mouseover payload must include mitigation fields"
+    assert you_mitigations.get("physical_reduction") == p1.stats.get("physical_reduction", 0) + 3, "Physical reduction should be live runtime value"
+
+    subschool = you_payload.get("subschool_resist") or {}
+    for school in ("fire", "frost", "shadow", "arcane", "nature", "holy"):
+        assert school in subschool, f"Mouseover payload must include subschool '{school}' resist value"
+    assert subschool.get("fire") == 2, "Subschool resist values should be raw numeric runtime values"
+
+    assert enemy_payload.get("mitigations", {}).get("magic_resist") == p2.stats.get("magic_resist", 0) + 2, "Enemy mouseover should expose live runtime magic resist"
+    assert enemy_payload.get("subschool_resist", {}).get("arcane") == 1, "Enemy mouseover should expose live runtime subschool resist"
+
+    enemy_view_you_payload = enemy_snapshot.get("enemy_champion_mouseover") or {}
+    assert enemy_view_you_payload == you_payload, "Mouseover payload contract should stay stable across friendly/enemy viewer snapshots"
+    return True
+
+
 def scenario_subschool_event_plumbing_for_dots_and_passives() -> bool:
     match = make_match("hunter", "warrior", p1_items={"weapon": "thunderfury"}, seed=5001)
     hunter_sid, warrior_sid = match.players
@@ -5012,7 +5051,7 @@ def scenario_shaman_totems_and_astral_explosion() -> bool:
     submit_turn(match, "capacitor_totem", _DEF_PASS)
     assert any(p.template_id == "capacitor_totem" for p in match.state[shaman_sid].pets.values()), "Capacitor Totem should be summoned"
     submit_turn(match, _DEF_PASS, _DEF_PASS)
-    assert any("discharges and stuns" in line for line in _turn_lines(match, 4)), "Capacitor Totem should discharge after a one-turn delay"
+    assert any("discharges!" in line for line in _turn_lines(match, 4)), "Capacitor Totem should discharge after a one-turn delay"
     assert not any(p.template_id == "capacitor_totem" for p in match.state[shaman_sid].pets.values()), "Capacitor Totem should disappear after discharging"
 
     shaman.res.mp = max(shaman.res.mp, 100)
@@ -5043,7 +5082,7 @@ def scenario_capacitor_totem_aoe_timing_and_duration() -> bool:
     assert all(not effects.has_effect(warlock.pets[pid], "capacitor_totem_stun") for pid in imp_ids), "Capacitor should not stun enemy pets on summon turn"
 
     submit_turn(match, _DEF_PASS, _DEF_PASS)
-    assert any("discharges and stuns" in line for line in _turn_lines(match, 2)), "Capacitor should discharge after one-turn delay"
+    assert any("discharges!" in line for line in _turn_lines(match, 2)), "Capacitor should discharge after one-turn delay"
     assert not any(p.template_id == "capacitor_totem" for p in match.state[shaman_sid].pets.values()), "Capacitor Totem should disappear after discharging"
 
     hp_before_t7 = warlock.res.hp
@@ -6102,6 +6141,7 @@ SCENARIOS = [
     scenario_phase_d_end_of_turn_stage_preserved,
     scenario_entity_type_phase3_validation_suite,
     scenario_entity_type_phase3_completeness_audit,
+    scenario_champion_mouseover_payload_contract,
     scenario_subschool_metadata_and_templates,
     scenario_subschool_event_plumbing_for_dots_and_passives,
     scenario_direct_damage_dot_inherits_ability_subschool,

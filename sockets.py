@@ -6,6 +6,7 @@ import time
 from . import state
 from .engine import resolver
 from .engine.effects import (
+    build_champion_mouseover_payload,
     build_effect_panel_payload,
     current_form_id,
     effect_template,
@@ -176,6 +177,12 @@ def snapshot_for(match, viewer_sid):
         if not ps:
             return None
         return ps.entity_type
+
+    def champion_mouseover_for(sid):
+        ps = match.state.get(sid)
+        if not ps:
+            return None
+        return build_champion_mouseover_payload(ps)
 
     def effects_for(sid):
         ps = match.state.get(sid)
@@ -356,6 +363,8 @@ def snapshot_for(match, viewer_sid):
         "enemy_form": form_for(enemy),
         "you_entity_type": entity_type_for(you),
         "enemy_entity_type": entity_type_for(enemy),
+        "you_champion_mouseover": champion_mouseover_for(you),
+        "enemy_champion_mouseover": champion_mouseover_for(enemy),
         "you_effects": effects_for(you),
         "enemy_effects": effects_for(enemy),
         "you_effect_panel": effect_panel_for(you),
