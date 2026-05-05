@@ -5873,18 +5873,21 @@
 
           appendSeparator();
 
-          // Mitigations — raw values; backend has no is_increased flag for these
+          // Mitigations — structured values (value/base/is_increased)
           const mit = payload.mitigations || {};
+          const armor = mit.physical_reduction || {};
+          const mr = mit.magic_resist || {};
           appendStatEntry('Armor',
-            (mit.physical_reduction != null) ? mit.physical_reduction : 0, false);
+            (armor.value != null) ? armor.value : 0, !!armor.is_increased);
           appendStatEntry('Magic Resist',
-            (mit.magic_resist != null) ? mit.magic_resist : 0, false);
+            (mr.value != null) ? mr.value : 0, !!mr.is_increased);
 
           // Subschool resists — only when value > 0
           const sub = payload.subschool_resist || {};
           SUBSCHOOL_LABELS.forEach(([key, label]) => {
-            const v = sub[key];
-            if (typeof v === 'number' && v > 0) appendStatEntry(label, v, false);
+            const s = sub[key] || {};
+            const val = (s.value != null) ? s.value : 0;
+            if (val > 0) appendStatEntry(label, val, !!s.is_increased);
           });
 
           // Flavor description — class-keyed, falsy keys hide the row
