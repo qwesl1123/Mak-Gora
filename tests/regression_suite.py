@@ -4053,15 +4053,15 @@ def scenario_champion_mouseover_payload_contract() -> bool:
 
     you_mitigations = you_payload.get("mitigations") or {}
     assert "physical_reduction" in you_mitigations and "magic_resist" in you_mitigations, "Mouseover payload must include mitigation fields"
-    assert you_mitigations.get("physical_reduction") == p1.stats.get("physical_reduction", 0) + 3, "Physical reduction should be live runtime value"
+    assert you_mitigations.get("physical_reduction") == {"value": p1.stats.get("physical_reduction", 0) + 3, "base": 0, "is_increased": True}, "Physical reduction should be structured and compared against normalized base"
 
     subschool = you_payload.get("subschool_resist") or {}
     for school in ("fire", "frost", "shadow", "arcane", "nature", "holy"):
         assert school in subschool, f"Mouseover payload must include subschool '{school}' resist value"
-    assert subschool.get("fire") == 2, "Subschool resist values should be raw numeric runtime values"
+    assert subschool.get("fire") == {"value": 2, "base": 0, "is_increased": True}, "Subschool resist values should be structured and compared against normalized base"
 
-    assert enemy_payload.get("mitigations", {}).get("magic_resist") == p2.stats.get("magic_resist", 0) + 2, "Enemy mouseover should expose live runtime magic resist"
-    assert enemy_payload.get("subschool_resist", {}).get("arcane") == 1, "Enemy mouseover should expose live runtime subschool resist"
+    assert enemy_payload.get("mitigations", {}).get("magic_resist") == {"value": p2.stats.get("magic_resist", 0) + 2, "base": 0, "is_increased": True}, "Enemy mouseover should expose structured runtime magic resist"
+    assert enemy_payload.get("subschool_resist", {}).get("arcane") == {"value": 1, "base": 0, "is_increased": True}, "Enemy mouseover should expose structured runtime subschool resist"
 
     enemy_view_you_payload = enemy_snapshot.get("enemy_champion_mouseover") or {}
     assert enemy_view_you_payload == you_payload, "Mouseover payload contract should stay stable across friendly/enemy viewer snapshots"

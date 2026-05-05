@@ -1941,6 +1941,143 @@
         color: #c8bb9a;
         line-height: 1.5;
       }
+
+      /* ── Champion mouseover tooltip (scoped to #mkgChampionTip) ─────── */
+      .champion-name-class {
+        cursor: help;
+        transition: filter 0.15s ease;
+      }
+      .champion-name-class:hover {
+        filter: brightness(1.25);
+      }
+      #mkgChampionTip {
+        position: fixed;
+        z-index: 9999;
+        pointer-events: none;
+        width: 310px;
+        opacity: 0;
+        transform: translateY(4px);
+        transition: opacity 0.15s ease, transform 0.15s ease;
+        border-radius: 3px;
+        border: 3px solid transparent;
+        background:
+          linear-gradient(160deg,
+            rgba(30, 22,  8, 0.90) 0%,
+            rgba(18, 12,  4, 0.87) 45%,
+            rgba(10,  8,  3, 0.85) 100%) padding-box,
+          linear-gradient(135deg,
+            #f5dc82  0%, #c89a2a 14%, #5a3d0a 30%,
+            #a87a1a 48%, #ecc958 62%, #6b4c10 80%, #f5dc82 100%) border-box;
+        backdrop-filter: blur(8px) saturate(1.1);
+        -webkit-backdrop-filter: blur(8px) saturate(1.1);
+        overflow: visible;
+        box-shadow:
+          0 0 0 1px rgba(0, 0, 0, 0.85),
+          inset 0 0 0 1px rgba(255, 232, 160, 0.38),
+          inset 0 0 0 2px rgba(0, 0, 0, 0.55),
+          0 14px 34px rgba(0, 0, 0, 0.88),
+          0 4px 10px rgba(0, 0, 0, 0.75);
+        font-family: 'Crimson Text', serif;
+        color: var(--text-light);
+      }
+      #mkgChampionTip.tip-visible { opacity: 1; transform: translateY(0); }
+      #mkgChampionTip .tip-dragon {
+        position: absolute;
+        top: -25px;
+        right: -14px;
+        width: 220px;
+        height: auto;
+        pointer-events: none;
+        user-select: none;
+        z-index: 3;
+        filter: drop-shadow(0 2px 4px rgba(0,0,0,0.85))
+                drop-shadow(0 0 3px rgba(0,0,0,0.6));
+      }
+      #mkgChampionTip .tip-corner {
+        position: absolute;
+        width: 22px;
+        height: 22px;
+        pointer-events: none;
+        z-index: 2;
+        filter: drop-shadow(0 1px 1.5px rgba(0, 0, 0, 0.8));
+      }
+      #mkgChampionTip .tip-corner.tl { top: -2px;    left:  -2px; }
+      #mkgChampionTip .tip-corner.tr { top: -2px;    right: -2px; transform: scaleX(-1); }
+      #mkgChampionTip .tip-corner.bl { bottom: -2px; left:  -2px; transform: scaleY(-1); }
+      #mkgChampionTip .tip-corner.br { bottom: -2px; right: -2px; transform: scale(-1, -1); }
+      #mkgChampionTip .tip-inner { padding: 18px 14px 13px; }
+      #mkgChampionTip .tip-name {
+        font-family: 'Cinzel', serif;
+        font-size: 0.84rem;
+        font-weight: 600;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        margin-bottom: 0;
+        padding-bottom: 4px;
+        text-align: center;
+        border-bottom: none;
+        box-shadow: none;
+        text-shadow: 0 1px 3px rgba(0,0,0,0.9);
+      }
+      #mkgChampionTip .tip-sep {
+        height: 2px;
+        background: linear-gradient(90deg,
+          transparent 0%,
+          rgba(212,175,55,0.55) 50%,
+          transparent 100%);
+        margin: 4px 0 10px;
+      }
+      #mkgChampionTip .tip-meta {
+        font-family: 'Crimson Text', serif;
+        font-size: 0.78rem;
+        font-style: italic;
+        color: #c9a557;
+        text-align: center;
+        margin: -4px 0 10px;
+        letter-spacing: 0.02em;
+        text-shadow: 0 1px 2px rgba(0, 0, 0, 0.85);
+      }
+      #mkgChampionTip .tip-stat-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 3px 10px;
+      }
+      #mkgChampionTip .tip-stat-entry {
+        font-size: 0.84rem;
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 4px;
+      }
+      #mkgChampionTip .tip-stat-label {
+        color: #9a8250;
+        white-space: nowrap;
+      }
+      #mkgChampionTip .tip-stat-val {
+        color: var(--text-light);
+        font-weight: 600;
+        font-family: 'Cinzel', serif;
+        font-size: 0.78rem;
+      }
+      #mkgChampionTip .tip-stat-val.increased { color: #88d458; }
+      #mkgChampionTip .tip-stat-sep {
+        grid-column: 1 / -1;
+        height: 1px;
+        background: linear-gradient(90deg,
+          transparent 0%,
+          rgba(212,175,55,0.45) 50%,
+          transparent 100%);
+        margin: 3px 0;
+      }
+      #mkgChampionTip .tip-desc {
+        font-size: 0.88rem;
+        color: #d0c296;
+        line-height: 1.5;
+        padding-top: 8px;
+        margin-top: 8px;
+        border-top: 1px solid rgba(212,175,55,0.25);
+        font-style: normal;
+      }
     </style>
   </head>
 
@@ -1955,6 +2092,55 @@
         <div id="tipLines"></div>
         <div class="tip-desc"  id="tipDesc"></div>
         <div class="tip-flavor" id="tipFlavor"></div>
+      </div>
+    </div>
+    <!-- Champion mouseover tooltip -->
+    <div id="mkgChampionTip">
+      <svg class="tip-corner tl" viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="cmpCornerGold" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0%"  stop-color="#ffeaa0"/>
+            <stop offset="35%" stop-color="#d8a638"/>
+            <stop offset="100%" stop-color="#5c3e0c"/>
+          </linearGradient>
+          <radialGradient id="cmpCornerGem" cx="30%" cy="30%" r="70%">
+            <stop offset="0%"  stop-color="#fff4c4"/>
+            <stop offset="50%" stop-color="#f2c742"/>
+            <stop offset="100%" stop-color="#5a3a08"/>
+          </radialGradient>
+        </defs>
+        <path fill="url(#cmpCornerGold)" stroke="#0f0701" stroke-width="0.55" stroke-linejoin="round"
+              d="M 1 1 L 15 1 L 15 3 L 11 3 L 11 5 L 5 5 L 5 11 L 3 11 L 3 15 L 1 15 Z"/>
+        <circle cx="3.2" cy="3.2" r="1.55" fill="url(#cmpCornerGem)" stroke="#2a1806" stroke-width="0.35"/>
+        <circle cx="2.7" cy="2.7" r="0.42" fill="#fff6d4"/>
+      </svg>
+      <svg class="tip-corner tr" viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">
+        <path fill="url(#cmpCornerGold)" stroke="#0f0701" stroke-width="0.55" stroke-linejoin="round"
+              d="M 1 1 L 15 1 L 15 3 L 11 3 L 11 5 L 5 5 L 5 11 L 3 11 L 3 15 L 1 15 Z"/>
+        <circle cx="3.2" cy="3.2" r="1.55" fill="url(#cmpCornerGem)" stroke="#2a1806" stroke-width="0.35"/>
+        <circle cx="2.7" cy="2.7" r="0.42" fill="#fff6d4"/>
+      </svg>
+      <svg class="tip-corner bl" viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">
+        <path fill="url(#cmpCornerGold)" stroke="#0f0701" stroke-width="0.55" stroke-linejoin="round"
+              d="M 1 1 L 15 1 L 15 3 L 11 3 L 11 5 L 5 5 L 5 11 L 3 11 L 3 15 L 1 15 Z"/>
+        <circle cx="3.2" cy="3.2" r="1.55" fill="url(#cmpCornerGem)" stroke="#2a1806" stroke-width="0.35"/>
+        <circle cx="2.7" cy="2.7" r="0.42" fill="#fff6d4"/>
+      </svg>
+      <svg class="tip-corner br" viewBox="0 0 22 22" xmlns="http://www.w3.org/2000/svg">
+        <path fill="url(#cmpCornerGold)" stroke="#0f0701" stroke-width="0.55" stroke-linejoin="round"
+              d="M 1 1 L 15 1 L 15 3 L 11 3 L 11 5 L 5 5 L 5 11 L 3 11 L 3 15 L 1 15 Z"/>
+        <circle cx="3.2" cy="3.2" r="1.55" fill="url(#cmpCornerGem)" stroke="#2a1806" stroke-width="0.35"/>
+        <circle cx="2.7" cy="2.7" r="0.42" fill="#fff6d4"/>
+      </svg>
+      <!-- Dragon crest (uploaded PNG, black bg keyed to transparent) -->
+    <img class="tip-dragon" alt=""
+         src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAQQAAABKCAMAAABq89qQAAADAFBMVEVHcEwRDggNCgUXEwgbGg8eFQYREAkKAAAKAwIYFgwVEwsOCwYJCAUQDQYNCwYiIA8KBwQJBgULBwUXBAEMCAZKFAIQCAUJBgSkPgQPCQVnNwgMBgMUBgMOBgRnZyhGIgZ5bBQXBgIVBAETCQVVLAcSAwEWBAKrcA8ZBwPo2VaLYxeSbRotEQRWNw6aeR9lRBQ6HQgpDwSoli8PAwPGlheFTg0UBgOxfBTPoh0sEgU5JAs5GgS+ojIlGQnl3ms+IAh3SQ0zIgw3IAvgqxXcxDkuFAmohSBuUReKeyewkSVOLAuWiTNxVRzPriBOLwxSJQX//3BgPA5TNQ2BWRSPeysvHQi+skZEMQ2AbiqpmT53Zx9LNxNkThk6Hgk4IQtIMg/55jehZA6QeyPQwlpMLQ5INxRbSBjd1WHf0kqciSjg21SlnkspDQS7r0y4q0nJvlRqRBFlQQ06IQp3aScvGAdpUx1MLQrXzmCNdSx6XBtrTBSbiCvKtDlzXiXHsSWlljM6LhE9KAtYOxCahzbEqCGoNAPq43JyLQdUQBRnTRTKvUtaRxq1mia1pjdsUxy3YgprKwZWOhGUgi6LMQZ+aiGFXRRhURmshxRuVBjb023//qyNbhiFQQd9aiamfBHSxEdSFQK4oCfq6Hy3qD1VGgV8ZRnGtlrayzM2JBJVFgNkTxhmFwE2BwGEdCecXw7a0F58KgaOMgaNbBP17m2CTg2LTw+3jhm0pkmVYRCtTAmqpD2HgCRc1dVZGgJoHgEvDAE4DwGeOQJCEgJSFwF+KQJhHQKvQwJ3JQEjCAH//46HLAKVNALUZATBOgFuIgLrzjTjuyK5SgPDUQPNWQOSKgLhbwPRSwL//3WNMwTx2jf0hwPqZgT1egP+9WN0Pwj8pQT0bQOHIQGhLQJ0HQGWWAr671D9zAu0MwHykQT/8CzcVALifAa+iRfTiwv+2BD25lr7mgTlXQLcmg3//krQQgLDegz8rAX+5Bv8tAf++Yn//1+XTAn//Tf9wAfAQQP274E/fOy1AAABAHRSTlMAIDsHDwQcAQITFy81KSMMQUdV/WT+bE7+XP52n4AI/QPQ7ov+qt/+uf3+/OH8/fzt+dCQ/v7C/v2yqfz+TPe8/nzW/v6c/vui/sqOWfyIogGsuf69adRjePaqVZyQyJX+/tj963fBzfO7A+HsufHT6svkjsyt9uXw9Nrn/dnmpTdE2fnL/f76RIPqkbqs6/3j623cyuVo08L3/tr99OPb2uXole66/un2sXfLykntpMbtlPzxzvJ+xPJqHwP////////////////////////////////////////////////////////////////////////////////+//////7+urmqcwAAH8VJREFUeNrUlwtQE3cexzeb3U1289hksySGPHgEFASkB0rlFeVEmxYQVISAMuKTgMboYYkWBVFBFDmr9jzpVcEXPUUHrTfnTOdQQaDIK6Ao4Mg5SvFRa/EK2sGq3H838TXtnDM3xTt/bCDLJP/9/z6/3+/7+/0haASN5/jD4734F5qhJRFCC+EYFxEJcAgiCY5YLOaIEYgEv7X/wDgIhCMZpDYj4+U6ryzwDtrz3buiWgRBcBKHOCQHwVAeLpJwRLAyPC+vkLW8PAUMi8Q4jmBCMYZDGI6IxMxXtFptxutrvWP+k1woDkSeIBEuiiAkgWCSOceNyfG55gRLmrVErx8eGrpgt6Gh4eECvb5koTVteZK58uDp5MzoQgHMITg4jpOARYbruwbCnr+uOIGQGAJiCofvNkYVJ5SWFDx3+sLQ8KkC/QFrWppladJScCVYLGkHWBsefvGRgpI0i/m0MToPFgsEJIeMe1c4OPaoJXEME1OLjadzK616u189/abShG3phuTMonnTQ0JCJsUeiY09UuZ0qOx8WUVFxZEj4DY2dtJH84rmzc1MNuQerLQsX3igoKBAb7UERBnzJAIERwFc3v+Jj/9BA3goouUQfExyNL5UD1zvfNxv2mopzv1qRshUT69jx45VlB061PoNsNraxsbGrq6upqam6lEOq7a/Tp48uevEiRMVZWWxMz/1X7N3Y1J5eXnY0qjjAiCcEO9/o2wOAPw3lUCcFsRKLBEUGvbb7j7u7DftX3B4ZopGo/MMcnOXNZytOV9Vdwb81NVV1TF25kxra6sDR6MdRzW4AIl6YKNGfbHr0xNbpk+fqlPq1BFzDenmgPTMFMlbpfBLnzPIX/8guyutFschAk6Myo754adbMX8+PCNEp/NUe7qNlsncZDJ3mazhnJPTeXABFAAGsFZHQnQxntfXt7e3X7zY3s74v/lEilLA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" />
+      <div class="tip-inner">
+        <div class="tip-name" id="cmpTipName"></div>
+        <div class="tip-meta" id="cmpTipMeta"></div>
+        <div class="tip-sep"></div>
+        <div class="tip-stat-grid" id="cmpTipStatGrid"></div>
+        <div class="tip-desc" id="cmpTipDesc"></div>
       </div>
     </div>
     <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
@@ -2228,7 +2414,7 @@
             <h4 style="color: var(--mage-color);">Mage</h4>
             <p><span class="stat">Attack: 4</span> | <span class="stat">Intellect: 14</span> | <span class="stat">Defense: 4</span></p>
             <p><span class="stat">HP: 90</span> | <span class="stat">Mana: 80</span> | Spirit: 0 | Speed: 9 | Crit: 8% | Accuracy: 95% | Evasion: 6%</p>
-            <p>Master of arcane magic. Weak physical attacks but devastating spells. Uses Mana for powerful abilities.</p>
+            <p>Master of magic. Weak physical attacks but devastating spells. Uses Mana for powerful abilities.</p>
           </div>
 
           <div class="doc-item">
@@ -5574,6 +5760,208 @@
         });
       });
       // ── End Item Tooltip System ──────────────────────────────────────────────
+
+      // ── Champion mouseover tooltip ───────────────────────────────────────────
+      (function () {
+        const tip = document.getElementById('mkgChampionTip');
+        const tipName = document.getElementById('cmpTipName');
+        const tipMeta = document.getElementById('cmpTipMeta');
+        const tipGrid = document.getElementById('cmpTipStatGrid');
+        const tipDesc = document.getElementById('cmpTipDesc');
+        if (!tip || !tipName || !tipMeta || !tipGrid) return;
+
+        const TIP_OFFSET_X = 14;
+        const TIP_OFFSET_Y = 56;
+
+        const cache = { you: null, enemy: null, youClass: '', enemyClass: '' };
+        let currentSide = null;
+
+        const STAT_LABELS = [
+          ['atk',    'Attack'],
+          ['int',    'Intellect'],
+          ['def',    'Defense'],
+          ['spd',    'Speed'],
+          ['crit',   'Crit'],
+          ['acc',    'Accuracy'],
+          ['eva',    'Evasion'],
+          ['spirit', 'Spirit'],
+        ];
+        const SUBSCHOOL_LABELS = [
+          ['fire',   'Fire Res'],
+          ['frost',  'Frost Res'],
+          ['shadow', 'Shadow Res'],
+          ['arcane', 'Arcane Res'],
+          ['nature', 'Nature Res'],
+          ['holy',   'Holy Res'],
+        ];
+        const CLASS_COLOR_VAR = {
+          warrior: 'var(--warrior-color)',
+          mage:    'var(--mage-color)',
+          rogue:   'var(--rogue-color)',
+          druid:   'var(--druid-color)',
+          warlock: 'var(--warlock-color)',
+          paladin: 'var(--paladin-color)',
+          priest:  'var(--priest-color)',
+          hunter:  'var(--hunter-color)',
+          shaman:  'var(--shaman-color)',
+        };
+        const CLASS_FLAVOR_TEXT = {
+          warrior: "Master of physical combat. Excels at melee attacks and tanking damage. High HP and physical damage output.",
+          mage:    "Master of magic. Weak physical attacks but devastating spells. Uses Mana for powerful abilities.",
+          rogue:   "Elusive striker with exceptional evasion. Uses Energy and excels at stealthy burst damage.",
+          druid:   "Adaptive shapeshifter. Switches forms to access different resources and roles.",
+          warlock: "Master of curses and demons. Uses Mana only and specializes in magical afflictions.",
+          paladin: "Holy warrior of the Light. Mixes weapon strikes, shielding, and support magic for balanced offense and defense.",
+          priest:  "Faith-driven spellcaster. Balances direct holy casts, shadow damage-over-time pressure, and powerful healing to outlast foes.",
+          hunter:  "Agile ranged predator. Uses mana-fueled shots, anti-stealth utility, and one persistent animal companion at a time.",
+          shaman:  "Elemental mystic who chains shocks, shields with ancestral power, and summons totems.",
+        };
+
+        function formatEntityTypeText(entityType) {
+          const raw = String(entityType || '').trim();
+          if (!raw) return '';
+          return raw.toLowerCase()
+            .split(/[_\s-]+/).filter(Boolean)
+            .map(p => p.charAt(0).toUpperCase() + p.slice(1))
+            .join(' ');
+        }
+
+        function appendStatEntry(label, value, increased) {
+          const entry = document.createElement('div');
+          entry.className = 'tip-stat-entry';
+          const lbl = document.createElement('span');
+          lbl.className = 'tip-stat-label';
+          lbl.textContent = label + ':';
+          const v = document.createElement('span');
+          v.className = 'tip-stat-val' + (increased ? ' increased' : '');
+          v.textContent = String(value);
+          entry.appendChild(lbl);
+          entry.appendChild(v);
+          tipGrid.appendChild(entry);
+        }
+
+        function appendSeparator() {
+          const sep = document.createElement('div');
+          sep.className = 'tip-stat-sep';
+          tipGrid.appendChild(sep);
+        }
+
+        function buildContent(side) {
+          const payload = cache[side];
+          if (!payload) return false;
+          const classKey = (side === 'you' ? cache.youClass : cache.enemyClass) || '';
+
+          // Title — class name, colored via inline style (no leak from .champion-name-class)
+          tipName.textContent = classKey
+            ? classKey.charAt(0).toUpperCase() + classKey.slice(1)
+            : '';
+          tipName.style.color = CLASS_COLOR_VAR[classKey] || '';
+
+          // Meta — entity type from backend payload
+          const entityText = formatEntityTypeText(payload.entity_type);
+          tipMeta.textContent = entityText ? ('Entity Type: ' + entityText) : '';
+          tipMeta.style.display = entityText ? '' : 'none';
+
+          // Core stats grid (raw values; green when is_increased)
+          tipGrid.innerHTML = '';
+          const stats = payload.stats || {};
+          STAT_LABELS.forEach(([key, label]) => {
+            const s = stats[key] || {};
+            const val = (s.value != null) ? s.value : 0;
+            appendStatEntry(label, val, !!s.is_increased);
+          });
+
+          appendSeparator();
+
+          // Mitigations — raw values; backend has no is_increased flag for these
+          const mit = payload.mitigations || {};
+          appendStatEntry('Armor',
+            (mit.physical_reduction != null) ? mit.physical_reduction : 0, false);
+          appendStatEntry('Magic Resist',
+            (mit.magic_resist != null) ? mit.magic_resist : 0, false);
+
+          // Subschool resists — only when value > 0
+          const sub = payload.subschool_resist || {};
+          SUBSCHOOL_LABELS.forEach(([key, label]) => {
+            const v = sub[key];
+            if (typeof v === 'number' && v > 0) appendStatEntry(label, v, false);
+          });
+
+          // Flavor description — class-keyed, falsy keys hide the row
+          if (tipDesc) {
+            const flavor = CLASS_FLAVOR_TEXT[classKey] || '';
+            tipDesc.textContent = flavor;
+            tipDesc.style.display = flavor ? '' : 'none';
+          }
+
+          return true;
+        }
+
+        function positionTip(e) {
+          const tw = tip.offsetWidth;
+          const th = tip.offsetHeight;
+          const vw = window.innerWidth;
+          const vh = window.innerHeight;
+          let x = e.clientX + TIP_OFFSET_X;
+          let y = e.clientY + TIP_OFFSET_Y;
+          if (x + tw > vw - 8) x = e.clientX - tw - TIP_OFFSET_X;
+          if (y + th > vh - 8) y = e.clientY - th - TIP_OFFSET_X;
+          if (y < 60) y = 60;
+          tip.style.left = x + 'px';
+          tip.style.top  = y + 'px';
+        }
+
+        function showTipFor(side, e) {
+          if (!buildContent(side)) return;
+          currentSide = side;
+          positionTip(e);
+          tip.classList.add('tip-visible');
+        }
+        function hideTip() {
+          currentSide = null;
+          tip.classList.remove('tip-visible');
+        }
+
+        function wireLabel(labelEl, side) {
+          if (!labelEl) return;
+          labelEl.addEventListener('mouseover', (e) => {
+            const span = e.target.closest && e.target.closest('.champion-name-class');
+            if (!span || !labelEl.contains(span)) return;
+            showTipFor(side, e);
+          });
+          labelEl.addEventListener('mousemove', (e) => {
+            const span = e.target.closest && e.target.closest('.champion-name-class');
+            if (!span || !labelEl.contains(span)) return;
+            if (tip.classList.contains('tip-visible')) positionTip(e);
+          });
+          labelEl.addEventListener('mouseout', (e) => {
+            const span = e.target.closest && e.target.closest('.champion-name-class');
+            if (!span || !labelEl.contains(span)) return;
+            if (e.relatedTarget && span.contains(e.relatedTarget)) return;
+            hideTip();
+          });
+        }
+
+        wireLabel(document.getElementById('friendlyLabel'), 'you');
+        wireLabel(document.getElementById('enemyLabel'),    'enemy');
+
+        if (typeof socket !== 'undefined' && socket && typeof socket.on === 'function') {
+          socket.on('duel_snapshot', (data) => {
+            if (!data) return;
+            cache.you   = data.you_champion_mouseover   || null;
+            cache.enemy = data.enemy_champion_mouseover || null;
+            cache.youClass   = (typeof classKeyFromLabel === 'function')
+              ? classKeyFromLabel(data.you_class)   : '';
+            cache.enemyClass = (typeof classKeyFromLabel === 'function')
+              ? classKeyFromLabel(data.enemy_class) : '';
+            // Refresh tooltip in place if currently open
+            if (currentSide && tip.classList.contains('tip-visible')) {
+              buildContent(currentSide);
+            }
+          });
+        }
+      })();
+      // ── End Champion Mouseover Tooltip ───────────────────────────────────────
     </script>
   </body>
 </html>
