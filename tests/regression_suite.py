@@ -1027,6 +1027,49 @@ def scenario_rage_crystal_increases_all_rage_gain_sources() -> bool:
     submit_turn(baseline_druid, "fireball", _DEF_PASS)
     submit_turn(crystal_druid, "fireball", _DEF_PASS)
     assert crystal_bear.res.rage == int(baseline_bear.res.rage * 1.25), "Rage Crystal should grant 25% more rage from damage taken in Bear Form"
+
+    crystal_warrior.res.hp = max(1, int(crystal_warrior.res.hp_max * 0.2))
+    assert effects.damage_multiplier_from_passives(crystal_warrior) == 1.15, "Rage Crystal should grant 15% more damage below 30% HP"
+    crystal_warrior.res.hp = int(crystal_warrior.res.hp_max * 0.5)
+    assert effects.damage_multiplier_from_passives(crystal_warrior) == 1.0, "Rage Crystal damage bonus should not apply at or above 30% HP"
+    return True
+
+
+def scenario_item_passive_effect_panel_labels_and_descriptions() -> bool:
+    focus_match = make_match("mage", "warrior", p1_items={"trinket": "focus_charm"}, seed=6107)
+    focus_owner = focus_match.state[focus_match.players[0]]
+    focus_effect = next(effect for effect in focus_owner.effects if effect.get("source_item_id") == "focus_charm")
+    assert focus_effect.get("school") == "magical", "Focus Charm item passive should remain in the magical buff bucket"
+    assert focus_effect.get("dispellable") is False, "Focus Charm item passive should remain non-dispellable"
+
+    focus_owner.res.hp = int(focus_owner.res.hp_max * 0.8)
+    focus_panel_high = effects.build_effect_panel_payload(focus_owner)
+    focus_entries_high = {entry.get("name"): entry for entry in focus_panel_high["buffs_magical"]}
+    assert focus_entries_high.get("Focus Charm", {}).get("description") == "Deal 10% more damage", "Focus Charm tooltip text should stay separate from its row label"
+    assert all(entry.get("name") != "Focus Charm - Deal 10% more damage" for entry in focus_panel_high["buffs_magical"]), "Focus Charm row label must not combine name and description"
+
+    focus_owner.res.hp = int(focus_owner.res.hp_max * 0.7)
+    focus_panel_threshold = effects.build_effect_panel_payload(focus_owner)
+    assert not any(entry.get("name") == "Focus Charm" for entry in focus_panel_threshold["buffs_magical"]), "Focus Charm should only be visible above 70% HP"
+
+    rage_match = make_match("warrior", "mage", p1_items={"trinket": "rage_crystal"}, seed=6108)
+    rage_owner = rage_match.state[rage_match.players[0]]
+    rage_effect = next(effect for effect in rage_owner.effects if effect.get("source_item_id") == "rage_crystal")
+    assert rage_effect.get("school") == "magical", "Rage Crystal item passive should remain in the magical buff bucket"
+    assert rage_effect.get("dispellable") is False, "Rage Crystal item passive should remain non-dispellable"
+
+    rage_owner.res.hp = int(rage_owner.res.hp_max * 0.5)
+    rage_panel_mid = effects.build_effect_panel_payload(rage_owner)
+    rage_mid_entries = {entry.get("name"): entry for entry in rage_panel_mid["buffs_magical"]}
+    assert "Rage Crystal" not in rage_mid_entries, "Rage Crystal damage buff should only be visible below 30% HP"
+    assert rage_mid_entries.get("Crystalized Rage", {}).get("description") == "Gain 15% more rage from all sources", "Crystalized Rage should always show while Rage Crystal is equipped"
+
+    rage_owner.res.hp = max(1, int(rage_owner.res.hp_max * 0.2))
+    rage_panel_low = effects.build_effect_panel_payload(rage_owner)
+    rage_low_entries = {entry.get("name"): entry for entry in rage_panel_low["buffs_magical"]}
+    assert rage_low_entries.get("Rage Crystal", {}).get("description") == "Deal 15% more damage", "Rage Crystal tooltip text should stay separate from its row label"
+    assert rage_low_entries.get("Crystalized Rage", {}).get("description") == "Gain 15% more rage from all sources", "Crystalized Rage tooltip text should match exact copy"
+    assert all(" - " not in str(entry.get("name") or "") for entry in rage_panel_low["buffs_magical"] if entry.get("name") in {"Rage Crystal", "Crystalized Rage"}), "Item passive row labels must remain short labels only"
     return True
 
 
@@ -6029,6 +6072,7 @@ SCENARIOS = [
     scenario_iceblock_blocks_same_turn_stun_and_next_turn_attack,
     scenario_aoe_hits_pets_with_immune_champion,
     scenario_rage_crystal_increases_all_rage_gain_sources,
+    scenario_item_passive_effect_panel_labels_and_descriptions,
     scenario_absorb_layering,
     scenario_pet_summon_data_driven,
     scenario_pet_totem_runtime_normalization_phase1,

@@ -165,6 +165,8 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "type": "item_passive",
         "name": "Item Passive",
         "duration": 999,
+        "school": "magical",
+        "dispellable": False,
     },
     "burn": {
         "type": "burn",
@@ -999,6 +1001,9 @@ _EFFECT_PANEL_MAGICAL_BUFF_NAMES = {
     "Healing Stream",
     "Ancestral Guidance Shield",
     "Astral Shield",
+    "Focus Charm",
+    "Rage Crystal",
+    "Crystalized Rage",
 }
 _EFFECT_PANEL_PHYSICAL_DEBUFF_NAMES = {
     "Dragon Roar",
@@ -1121,7 +1126,62 @@ _EFFECT_PANEL_DESCRIPTION_BY_NAME: Dict[str, str] = {
     "Psychic Scream": "Feared and cannot act.",
     "Aspect of the Turtle": "Incoming crowd control, single-target attacks, and spells will miss. Incoming damage is reduced by 30%. The Hunter cannot attack for the duration.",
     "Freezing Trap": "Frozen and cannot act. Breaks on damage.",
+    "Focus Charm": "Deal 10% more damage",
+    "Rage Crystal": "Deal 15% more damage",
+    "Crystalized Rage": "Gain 15% more rage from all sources",
 }
+
+_ITEM_PASSIVE_PANEL_EFFECTS_BY_ITEM_ID: Dict[str, tuple[Dict[str, Any], ...]] = {
+    "focus_charm": (
+        {
+            "name": "Focus Charm",
+            "description": "Deal 10% more damage",
+            "bucket": "buffs_magical",
+            "visibility": "hp_above",
+            "threshold": 0.7,
+        },
+    ),
+    "rage_crystal": (
+        {
+            "name": "Rage Crystal",
+            "description": "Deal 15% more damage",
+            "bucket": "buffs_magical",
+            "visibility": "hp_below",
+            "threshold": 0.3,
+        },
+        {
+            "name": "Crystalized Rage",
+            "description": "Gain 15% more rage from all sources",
+            "bucket": "buffs_magical",
+            "visibility": "always",
+        },
+    ),
+}
+
+
+def _item_passive_panel_effects(effect: Dict[str, Any], owner: PlayerState) -> tuple[Dict[str, Any], ...]:
+    if effect.get("type") != "item_passive":
+        return ()
+    item_id = str(effect.get("source_item_id") or "").strip()
+    if not item_id:
+        item_name = str(effect.get("source_item") or effect.get("name") or "").strip()
+        item_id = _effect_panel_name_key(item_name).replace(" ", "_")
+    candidates = _ITEM_PASSIVE_PANEL_EFFECTS_BY_ITEM_ID.get(item_id, ())
+    if not candidates:
+        return ()
+    hp_pct = 0.0
+    if getattr(owner, "res", None):
+        hp_pct = owner.res.hp / max(1, owner.res.hp_max)
+    visible: list[Dict[str, Any]] = []
+    for candidate in candidates:
+        visibility = str(candidate.get("visibility") or "always")
+        threshold = float(candidate.get("threshold", 0) or 0)
+        if visibility == "hp_above" and hp_pct <= threshold:
+            continue
+        if visibility == "hp_below" and hp_pct >= threshold:
+            continue
+        visible.append(candidate)
+    return tuple(visible)
 
 _EFFECT_PANEL_INTERNAL_EFFECT_IDS = {
     "die_by_sword_mitigation",
@@ -1179,6 +1239,17 @@ def build_effect_panel_payload(ps: PlayerState) -> Dict[str, List[Dict[str, Any]
         bucket: {} for bucket in EFFECT_PANEL_BUCKET_ORDER
     }
     for effect in list(getattr(ps, "effects", []) or []):
+        for passive_entry in _item_passive_panel_effects(effect, ps):
+            bucket = str(passive_entry.get("bucket") or "")
+            display_name = str(passive_entry.get("name") or "").strip()
+            if bucket in merged and display_name and display_name not in merged[bucket]:
+                merged[bucket][display_name] = {
+                    "name": display_name,
+                    "duration": None,
+                    "description": str(passive_entry.get("description") or ""),
+                }
+        if effect.get("type") == "item_passive":
+            continue
         if _is_internal_panel_effect(effect):
             continue
         if effect_has_tag(effect, "blink_like"):

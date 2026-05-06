@@ -161,10 +161,18 @@ ITEMS = {
         "name": "Rage Crystal",
         "slot": "trinket",
         "mods": {"rage_max": 20},
-        "passive": {
-            "type": "resource_gain_multiplier",
-            "resource": "rage",
-            "multiplier": 1.25,
-        },
+        "passive": [
+            {
+                "type": "damage_bonus_below_hp",
+                "threshold": 0.3,
+                "multiplier": 1.15,
+                "trigger": "on_damage",
+            },
+            {
+                "type": "resource_gain_multiplier",
+                "resource": "rage",
+                "multiplier": 1.25,
+            },
+        ],
     },
 }

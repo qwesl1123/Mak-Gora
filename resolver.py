@@ -633,7 +633,7 @@ def apply_prep_build(match: MatchState) -> None:
             if allowed_classes and build.class_id not in allowed_classes:
                 continue
             
-            equipped_items.append(item)
+            equipped_items.append((item_id, item))
             
             for stat, delta in item.get("mods", {}).items():
                 if stat in ("hp", "hp_max"):
@@ -668,7 +668,7 @@ def apply_prep_build(match: MatchState) -> None:
             apply_effect_by_id(ps, "stealth")
         
         # Store item references for passive effects
-        for item in equipped_items:
+        for item_id, item in equipped_items:
             passives = item.get("passive")
             if not passives:
                 continue
@@ -684,7 +684,10 @@ def apply_prep_build(match: MatchState) -> None:
                         "type": "item_passive",
                         "name": item["name"],
                         "source_item": item["name"],
+                        "source_item_id": item_id,
                         "passive": passive,
+                        "school": "magical",
+                        "dispellable": False,
                         "duration": 999,
                     },
                 )
