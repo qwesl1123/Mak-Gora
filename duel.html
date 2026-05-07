@@ -3022,8 +3022,8 @@
             <h4>Summon Imp</h4>
             <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Cooldown: 3</span></p>
             <p><span class="stat">Command: <span class="kbd">summon_imp</span></span></p>
-            <p><span class="stat">HP: 5</span> | <span class="stat">Attack: N/A</span> | <span class="stat">Intellect: Imp Uses Warlock Intellect</span></p>
-            <p>Summon an Imp to cast Firebolt that deals [Warlock Intellect (0.2x) + d4] magic (Fire) damage at the end of the Warlock's turn.</p>
+            <p><span class="stat">HP: 5</span> | <span class="stat">Mana: 10</span> | <span class="stat">Attack: 1</span> | <span class="stat">Intellect: 5</span> | <span class="stat">Defence: 5</span></p>
+            <p>Summon up to 3 Imps. Each Imp spends 3 of its own Mana to cast Firebolt at the end of the turn, dealing [Intellect (0.7x) + d4] magic (Fire) damage.</p>
           </div>
           <div class="doc-item">
             <h4>Demonic Gateway</h4>
@@ -3181,7 +3181,8 @@
             <h4>Shadowfiend</h4>
             <p><span class="stat">Cost: 20 Mana</span> | <span class="stat">Cooldown: 50</span></p>
             <p><span class="stat">Command: <span class="kbd">shadowfiend</span></span></p>
-            <p>Summons a Shadowfiend for 5 turns. It attacks each turn for [Intellect (0.6x) + d4] physical damage and restores 13 mana on successful hits. If enemies kill it, Priest gains 40 mana and heals 15% max HP.</p>
+            <p><span class="stat">HP: 20</span> | <span class="stat">Attack: 8</span> | <span class="stat">Intellect: 0</span> | <span class="stat">Defence: 8</span></p>
+            <p>Summons a Shadowfiend for 5 turns. It melees each turn for [Attack (1.0x) + d4] physical damage and restores 13 mana to the Priest when the hit lands.</p>
           </div>
         </div>
 
@@ -3250,23 +3251,23 @@
           <div class="doc-item">
             <h4>Frostsaber</h4>
             <p><span class="stat">Command: <span class="kbd">call_saber</span></span></p>
-            <p><span class="stat">HP: 20</span> | <span class="stat">Attack: 6</span> | <span class="stat">Intellect: 2</span></p>
-            <p><span class="stat">Basic Attack:</span> [Pet Attack (1.0x) + d4] physical damage.</p>
-            <p><span class="stat">Special — Bite:</span> 30% chance each pet phase, or forced by <span class="stat">Raptor Strike</span>, to deal [Pet Attack (2.0x) + d6] physical damage.</p>
+            <p><span class="stat">HP: 20</span> | <span class="stat">Energy: 30</span> | <span class="stat">Attack: 6</span> | <span class="stat">Intellect: 2</span> | <span class="stat">Defence: 3</span></p>
+            <p><span class="stat">Basic Attack:</span> [Attack (1.0x) + d4] physical damage.</p>
+            <p><span class="stat">Special — Bite:</span> Costs 20 Energy; 30% chance each pet phase, or forced by <span class="stat">Raptor Strike</span>, to deal [Attack (2.0x) + d6] physical damage.</p>
           </div>
           <div class="doc-item">
             <h4>Emerald Serpent</h4>
             <p><span class="stat">Command: <span class="kbd">call_serpent</span></span></p>
-            <p><span class="stat">HP: 15</span> | <span class="stat">Attack: 4</span> | <span class="stat">Intellect: 10</span></p>
-            <p><span class="stat">Basic Attack:</span> [Pet Attack (1.0x) + d4] physical damage.</p>
-            <p><span class="stat">Special — Lightning Breath:</span> 30% chance each pet phase, or forced by <span class="stat">Raptor Strike</span>, to deal [Pet Intellect (1.5x) + d6] magic damage and heal both the serpent and Hunter for 50% of damage dealt.</p>
+            <p><span class="stat">HP: 15</span> | <span class="stat">Mana: 40</span> | <span class="stat">Attack: 4</span> | <span class="stat">Intellect: 10</span> | <span class="stat">Defence: 3</span></p>
+            <p><span class="stat">Basic Attack:</span> [Attack (1.0x) + d4] physical damage.</p>
+            <p><span class="stat">Special — Lightning Breath:</span> Costs 15 Mana; 30% chance each pet phase, or forced by <span class="stat">Raptor Strike</span>, to deal [Intellect (1.5x) + d6] magic (Nature) damage and heal both the serpent and Hunter for 50% of actual HP damage dealt.</p>
           </div>
           <div class="doc-item">
             <h4>Barrens Boar</h4>
             <p><span class="stat">Command: <span class="kbd">call_boar</span></span></p>
-            <p><span class="stat">HP: 30</span> | <span class="stat">Attack: 4</span> | <span class="stat">Intellect: 0</span></p>
-            <p><span class="stat">Basic Attack:</span> [Pet Attack (1.0x) + d6] physical damage.</p>
-            <p><span class="stat">Special — Blocking Defence:</span> 30% chance each pet phase, or forced by <span class="stat">Raptor Strike</span>, to redirect incoming single-target attacks, spells, and crowd control from the Hunter to the boar for the current turn.</p>
+            <p><span class="stat">HP: 30</span> | <span class="stat">Attack: 4</span> | <span class="stat">Intellect: 0</span> | <span class="stat">Defence: 10</span></p>
+            <p><span class="stat">Basic Attack:</span> [Attack (1.0x) + d6] physical damage and grants 5 Rage.</p>
+            <p><span class="stat">Special — Blocking Defence:</span> Costs 5 Rage; 30% chance before actions, or forced by <span class="stat">Raptor Strike</span>, to redirect incoming single-target attacks, spells, and crowd control from the Hunter to the boar for the current turn. A newly summoned boar starts with no Rage and cannot use Blocking Defence until it has attacked.</p>
           </div>
         </div>
 
@@ -3334,13 +3335,13 @@
             <h4>Mana Tide Totem</h4>
             <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Cooldown: 15</span></p>
             <p><span class="stat">Command: <span class="kbd">mana_tide_totem</span></span></p>
-            <p>Summons a 4-turn totem with 15 HP that restores 10 mana each turn while alive.</p>
+            <p>Summons a 4-turn totem with 15 HP that restores 10 mana to the Shaman each pet phase while alive.</p>
           </div>
           <div class="doc-item">
             <h4>Capacitor Totem</h4>
             <p><span class="stat">Cost: 20 Mana</span> | <span class="stat">Cooldown: 6</span></p>
             <p><span class="stat">Command: <span class="kbd">capacitor_totem</span></span></p>
-            <p>After a 1-turn delay, discharges to stun the entire enemy side (champion + pets/totems) for 2 turns, then disappears.</p>
+            <p>Summons a 5 HP totem that charges after it is placed. On the next pre-action step, it discharges, releasing an AoE stun for 2 turns, then disappears.</p>
           </div>
           <div class="doc-item">
             <h4>Astral Explosion</h4>
