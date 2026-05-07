@@ -1199,7 +1199,7 @@ def resolve_end_of_turn_stage(
 def resolve_damage_modification_stage(
     *,
     raw_damage: int,
-    target: PlayerState | PetState,
+    target: PlayerState | PetState | None,
     ability_school: str,
     ignore_armor: bool,
     ignore_magic_resist: bool,
@@ -1207,15 +1207,17 @@ def resolve_damage_modification_stage(
     empower_multiplier: float,
     outgoing_multiplier: float,
     death_doubled: bool,
+    include_target_mitigation: bool = True,
 ) -> int:
-    reduced_damage = mitigate_damage(
-        raw_damage,
-        target,
-        ability_school,
-        ignore_armor=ignore_armor,
-        ignore_magic_resist=ignore_magic_resist,
-    )
-    modified_damage = reduced_damage
+    modified_damage = raw_damage
+    if include_target_mitigation and target is not None:
+        modified_damage = mitigate_damage(
+            raw_damage,
+            target,
+            ability_school,
+            ignore_armor=ignore_armor,
+            ignore_magic_resist=ignore_magic_resist,
+        )
     if passive_damage_multiplier != 1.0:
         modified_damage = int(modified_damage * passive_damage_multiplier)
     if empower_multiplier != 1.0:
@@ -2525,6 +2527,7 @@ def resolve_turn(match: MatchState) -> None:
         total_damage = 0
         passive_bonus_damage_total = 0
         aoe_incoming_damage = 0
+        aoe_raw_damage = 0
         total_healing = 0
         empower_multiplier = 1.0
         consume_empower = False
@@ -2547,6 +2550,7 @@ def resolve_turn(match: MatchState) -> None:
         on_hit_base_damage = 0
         per_hit_damage_values: list[int] = []
         aoe_damage_instances: list[int] = []
+        aoe_raw_damage_instances: list[int] = []
         death_doubled = (
             ability_id == "death"
             and target.res.hp / max(1, target.res.hp_max) < 0.2
@@ -2619,9 +2623,10 @@ def resolve_turn(match: MatchState) -> None:
                 log_parts.append(f"{prefix}Critical hit!")
 
             # Resolution layer: damage_modification
-            incoming_for_hit = resolve_damage_modification_stage(
+            is_aoe_enemy = ability_target_mode(ability) == "aoe_enemy"
+            raw_for_hit = resolve_damage_modification_stage(
                 raw_damage=raw,
-                target=target,
+                target=None,
                 ability_school=ability_school,
                 ignore_armor=bool(ability.get("ignore_armor") or ability.get("ignore_physical_reduction")),
                 ignore_magic_resist=bool(ability.get("ignore_magic_resist")),
@@ -2629,11 +2634,34 @@ def resolve_turn(match: MatchState) -> None:
                 empower_multiplier=empower_multiplier,
                 outgoing_multiplier=outgoing_mult,
                 death_doubled=death_doubled,
+                include_target_mitigation=False,
             )
-
-            if ability_target_mode(ability) == "aoe_enemy" and incoming_for_hit > 0:
-                aoe_incoming_damage += incoming_for_hit
-                aoe_damage_instances.append(incoming_for_hit)
+            incoming_for_hit = raw_for_hit
+            if not is_aoe_enemy:
+                incoming_for_hit = resolve_damage_modification_stage(
+                    raw_damage=raw,
+                    target=target,
+                    ability_school=ability_school,
+                    ignore_armor=bool(ability.get("ignore_armor") or ability.get("ignore_physical_reduction")),
+                    ignore_magic_resist=bool(ability.get("ignore_magic_resist")),
+                    passive_damage_multiplier=damage_multiplier_from_passives(actor),
+                    empower_multiplier=empower_multiplier,
+                    outgoing_multiplier=outgoing_mult,
+                    death_doubled=death_doubled,
+                )
+            elif raw_for_hit > 0:
+                aoe_raw_damage += raw_for_hit
+                aoe_raw_damage_instances.append(raw_for_hit)
+                incoming_for_hit = resolve_incoming_damage(
+                    raw_for_hit,
+                    target,
+                    ability_school,
+                    ignore_armor=bool(ability.get("ignore_armor") or ability.get("ignore_physical_reduction")),
+                    ignore_magic_resist=bool(ability.get("ignore_magic_resist")),
+                )
+                if incoming_for_hit > 0:
+                    aoe_incoming_damage += incoming_for_hit
+                    aoe_damage_instances.append(incoming_for_hit)
 
             if is_damage_immune(target, "physical" if ability_school == "physical" else "magic"):
                 reduced = 0
@@ -2872,6 +2900,8 @@ def resolve_turn(match: MatchState) -> None:
             "damage": outgoing_damage,
             "damage_instances": outgoing_instances,
             "aoe_incoming_damage": aoe_incoming_damage,
+            "aoe_raw_damage": aoe_raw_damage,
+            "aoe_raw_damage_instances": aoe_raw_damage_instances,
             "damage_type": ability_school,
             "school": ability_school,
             "subschool": ability_subschool,
@@ -3338,6 +3368,11 @@ def resolve_turn(match: MatchState) -> None:
             "subschool": subschool,
         }
 
+    def build_aoe_enemy_target_list(target: PlayerState) -> list[tuple[str, PlayerState | PetState]]:
+        targets: list[tuple[str, PlayerState | PetState]] = [("champion", target)]
+        targets.extend(("pet", target.pets[pid]) for pid in sorted((target.pets or {}).keys()))
+        return targets
+
     def resolve_aoe_enemy_attack(
         actor_sid: str,
         target_sid: str,
@@ -3350,52 +3385,59 @@ def resolve_turn(match: MatchState) -> None:
         champion_log_template: str | None = None,
         champion_immune_log: str | None = None,
         skip_champion: bool = False,
+        damage_instances: list[int] | None = None,
     ) -> Dict[str, Any]:
         actor = match.state[actor_sid]
         target = match.state[target_sid]
         if incoming <= 0:
-            return {"champion": {"hp_damage": 0}, "pet_total_damage": 0}
+            return {"champion": {"hp_damage": 0}, "pet_total_damage": 0, "pet_hits": []}
 
         champion_dealt_data = {"hp_damage": 0, "mindgames_healing": 0}
-        if skip_champion:
-            if champion_immune_log:
-                match.log.append(champion_immune_log)
-        else:
-            champion_dealt_data = apply_damage(
-                actor,
-                target,
-                incoming,
-                target_sid,
-                source_name,
-                bool(mindgames_flip_damage),
-                [incoming],
-                school=school,
-                subschool=subschool,
-                allow_redirect=False,
-            )
-            champion_hp_damage = int(champion_dealt_data.get("hp_damage", 0) or 0)
-            if champion_log_template:
-                flipped_heal = int(champion_dealt_data.get("mindgames_healing", 0) or 0)
-                if champion_hp_damage <= 0 and flipped_heal <= 0 and champion_immune_log:
-                    match.log.append(champion_immune_log)
-                else:
-                    champion_log = format_damage_log(champion_log_template, champion_dealt_data)
-                    if flipped_heal > 0:
-                        champion_log = (
-                            f"{champion_log} Mindgames flips damage into {flipped_heal} healing for the target."
-                        )
-                    match.log.append(champion_log)
-
         pet_total_damage = 0
         pet_hits: list[Dict[str, Any]] = []
-        pet_targets = [target.pets[pid] for pid in sorted(target.pets.keys())]
+        aoe_targets = build_aoe_enemy_target_list(target)
+        pet_targets = [entity for kind, entity in aoe_targets if kind == "pet"]
         alive_imp_ids = [pet.id for pet in pet_targets if pet and pet.hp > 0 and pet.template_id == "imp"]
         imp_ordinal_by_id = {pid: idx + 1 for idx, pid in enumerate(alive_imp_ids)}
         target_owner_name = sid_token(target_sid)
-        for pet in pet_targets:
+        instances = damage_instances or [incoming]
+
+        for target_kind, target_entity in aoe_targets:
+            if target_kind == "champion":
+                if skip_champion:
+                    if champion_immune_log:
+                        match.log.append(champion_immune_log)
+                    continue
+                champion_dealt_data = apply_damage(
+                    actor,
+                    target_entity,
+                    incoming,
+                    target_sid,
+                    source_name,
+                    bool(mindgames_flip_damage),
+                    instances,
+                    school=school,
+                    subschool=subschool,
+                    allow_redirect=False,
+                )
+                champion_hp_damage = int(champion_dealt_data.get("hp_damage", 0) or 0)
+                if champion_log_template:
+                    flipped_heal = int(champion_dealt_data.get("mindgames_healing", 0) or 0)
+                    if champion_hp_damage <= 0 and flipped_heal <= 0 and champion_immune_log:
+                        match.log.append(champion_immune_log)
+                    else:
+                        champion_log = format_damage_log(champion_log_template, champion_dealt_data)
+                        if flipped_heal > 0:
+                            champion_log = (
+                                f"{champion_log} Mindgames flips damage into {flipped_heal} healing for the target."
+                            )
+                        match.log.append(champion_log)
+                continue
+
+            pet = target_entity
             if not pet or pet.hp <= 0:
                 continue
-            pet_result = apply_damage(actor, pet, incoming, pet.name, source_name, school=school, subschool=subschool)
+            pet_result = apply_damage(actor, pet, incoming, pet.name, source_name, school=school, subschool=subschool, damage_instances=instances)
             remaining = int(pet_result.get("hp_damage", 0) or 0)
             absorbed = int(pet_result.get("absorbed", 0) or 0)
             breakdown = pet_result.get("absorbed_breakdown", [])
@@ -3699,9 +3741,10 @@ def resolve_turn(match: MatchState) -> None:
         ability = ABILITIES.get(result.get("ability_id", ""), {})
         if ability_target_mode(ability) != "aoe_enemy":
             continue
-        incoming = int(result.get("aoe_incoming_damage", result.get("damage", 0)) or 0)
+        incoming = int(result.get("aoe_raw_damage", result.get("aoe_incoming_damage", result.get("damage", 0))) or 0)
         if incoming <= 0:
             continue
+        raw_instances = result.get("aoe_raw_damage_instances")
         aoe_result = resolve_aoe_enemy_attack(
             actor_sid,
             target_sid,
@@ -3710,6 +3753,7 @@ def resolve_turn(match: MatchState) -> None:
             result.get("school") or "physical",
             result.get("subschool"),
             skip_champion=True,
+            damage_instances=raw_instances if isinstance(raw_instances, list) else None,
         )
         pet_damage = int(aoe_result.get("pet_total_damage", 0) or 0)
         if pet_damage > 0:

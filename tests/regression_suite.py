@@ -1402,6 +1402,51 @@ def scenario_hunter_multi_shot_aoe() -> bool:
     return True
 
 
+
+def scenario_aoe_resolves_targets_independently() -> bool:
+    # Champion mitigation should not pre-reduce the AoE packet used for pet resolution.
+    mitigation = make_match("hunter", "warlock", seed=4242)
+    hunter_sid, warlock_sid = mitigation.players
+    warlock = mitigation.state[warlock_sid]
+    warlock.stats["def"] = 120
+    _add_pet(warlock, "a_imp")
+    _add_pet(warlock, "b_imp")
+    imp_ids = sorted(warlock.pets.keys())
+    champion_hp_before = warlock.res.hp
+    pet_hp_before = {pid: warlock.pets[pid].hp for pid in imp_ids}
+
+    submit_turn(mitigation, "multi_shot", _DEF_PASS)
+
+    champion_delta = champion_hp_before - warlock.res.hp
+    pet_deltas = {pid: pet_hp_before[pid] - (mitigation.state[warlock_sid].pets[pid].hp if pid in mitigation.state[warlock_sid].pets else 0) for pid in imp_ids}
+    assert champion_delta > 0, "AoE should still resolve and damage the enemy champion"
+    assert pet_deltas and all(delta > champion_delta for delta in pet_deltas.values()), "Pet AoE damage should resolve from the AoE packet with each pet's own mitigation"
+    turn_lines = _turn_lines(mitigation, mitigation.turn)
+    champion_log_index = next(i for i, line in enumerate(turn_lines) if "cast Multi-Shot" in line and "Deals" in line)
+    pet_log_indices = [i for i, line in enumerate(turn_lines) if "Multi-Shot hits" in line and "Imp" in line]
+    assert pet_log_indices and champion_log_index < pet_log_indices[0], "AoE logs should remain champion first, then pets"
+    assert len(pet_log_indices) == len(imp_ids), "AoE should apply exactly once to each active pet"
+
+    # A pet/totem immunity should not short-circuit champion resolution or other pet targets.
+    pet_immune = make_match("hunter", "warlock", seed=4343)
+    _, warlock_sid = pet_immune.players
+    warlock = pet_immune.state[warlock_sid]
+    _add_pet(warlock, "a_imp")
+    _add_pet(warlock, "b_imp")
+    immune_pet = warlock.pets["a_imp"]
+    effects.apply_effect_by_id(immune_pet, "iceblock", overrides={"duration": 1})
+    champion_hp_before = warlock.res.hp
+    immune_hp_before = immune_pet.hp
+    vulnerable_hp_before = warlock.pets["b_imp"].hp
+
+    submit_turn(pet_immune, "multi_shot", _DEF_PASS)
+
+    assert warlock.res.hp < champion_hp_before, "Pet immunity must not block champion AoE damage"
+    assert warlock.pets["a_imp"].hp == immune_hp_before, "The immune pet should resolve independently and take no AoE damage"
+    assert _pet_took_damage_or_died(warlock, "b_imp", vulnerable_hp_before), "Another pet should still take AoE damage when one pet is immune"
+    assert sum(1 for line in _turn_lines(pet_immune, pet_immune.turn) if "Multi-Shot hits" in line and "Imp" in line) == 1, "Only the non-immune pet should emit a damage hit log"
+    return True
+
 def scenario_dragon_roar_cannot_miss_from_accuracy() -> bool:
     match = make_match("warrior", "rogue", seed=123)
     warrior_sid, rogue_sid = match.players
@@ -6081,6 +6126,7 @@ SCENARIOS = [
     scenario_hunter_only_one_active_pet,
     scenario_hunter_companion_calls_have_no_cooldown,
     scenario_hunter_multi_shot_aoe,
+    scenario_aoe_resolves_targets_independently,
     scenario_dragon_roar_cannot_miss_from_accuracy,
     scenario_dragon_roar_bleed_applies_to_pets_with_independent_rolls,
     scenario_dragon_roar_dead_pets_do_not_log_bleed_application,
