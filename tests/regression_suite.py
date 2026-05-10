@@ -1645,25 +1645,143 @@ def scenario_hunter_wildfire_arcane_proc() -> bool:
     hunter = match.state[match.players[0]]
 
     submit_turn(match, "wildfire_bomb", _DEF_PASS)
-    arcane_proc = next((fx for fx in hunter.effects if fx.get("id") == "arcane_shot_proc"), None)
-    assert arcane_proc is not None, "Wildfire Bomb should grant Arcane Shot proc"
-    assert int(arcane_proc.get("duration", 0) or 0) == 1, "Arcane Shot proc should be available for the next turn only after the proc turn resolves"
-    proc_line = f"{match.players[0][:5]} has Arcane Shot!"
+    arcane_proc = next((fx for fx in hunter.effects if fx.get("id") == "arcane_surge"), None)
+    assert arcane_proc is not None, "Wildfire Bomb should grant Arcane Surge"
+    assert int(arcane_proc.get("duration", 0) or 0) == 2, "Arcane Surge should be created from a 3-turn duration and tick after the proc turn resolves"
+    proc_line = f"{match.players[0][:5]} has Arcane Surge!"
     assert proc_line in match.log, "Wildfire Bomb proc log should use the actor sid token so snapshots can render Hunter(you)"
-    assert not any("Wildfire Bomb. has Arcane Shot!" in line or "Wildfire Bomb. Hunter has Arcane Shot!" in line for line in match.log), "Wildfire Bomb action line should not embed the proc sentence"
+    assert not any("Wildfire Bomb. has Arcane Surge!" in line or "Wildfire Bomb. Hunter has Arcane Surge!" in line for line in match.log), "Wildfire Bomb action line should not embed the proc sentence"
 
     submit_turn(match, "arcane_shot", _DEF_PASS)
-    assert not _has_effect(hunter, "arcane_shot_proc"), "Arcane Shot should consume its proc"
+    assert not _has_effect(hunter, "arcane_surge"), "Arcane Shot should consume its proc"
 
     match2 = make_match("hunter", "warrior", seed=123)
     hunter2 = match2.state[match2.players[0]]
     submit_turn(match2, "wildfire_bomb", _DEF_PASS)
-    arcane_proc_2 = next((fx for fx in hunter2.effects if fx.get("id") == "arcane_shot_proc"), None)
-    assert arcane_proc_2 is not None and int(arcane_proc_2.get("duration", 0) or 0) == 1, "Unused Arcane Shot proc should still be present immediately after the proc turn"
+    arcane_proc_2 = next((fx for fx in hunter2.effects if fx.get("id") == "arcane_surge"), None)
+    assert arcane_proc_2 is not None and int(arcane_proc_2.get("duration", 0) or 0) == 2, "Unused Arcane Surge should still be present immediately after the proc turn"
     submit_turn(match2, _DEF_PASS, _DEF_PASS)
-    assert not _has_effect(hunter2, "arcane_shot_proc"), "Arcane Shot proc should expire if unused next turn"
+    assert _has_effect(hunter2, "arcane_surge"), "Arcane Surge should persist beyond one skipped turn"
     return True
 
+
+
+def scenario_hunter_rework_phase1_phase2_regression() -> bool:
+    wildfire = ABILITIES["wildfire_bomb"]
+    assert wildfire.get("scaling") == {"atk": 0.7}, "Wildfire Bomb direct damage should use Attack 0.7x"
+    assert (wildfire.get("dice") or {}).get("type") == "d8", "Wildfire Bomb direct damage should use d8"
+    assert wildfire.get("school") == "magical" and wildfire.get("subschool") == "fire", "Wildfire Bomb should remain magical Fire"
+    assert wildfire.get("cooldown") == 8, "Wildfire Bomb cooldown should be 8"
+    assert wildfire.get("dot") == {"id": "wildfire_burn", "duration": 2, "school": "magical", "subschool": "fire", "scaling": {"atk": 0.5}, "dice": {"type": "d4", "power_on": "roll"}}, "Wildfire Burn DoT formula should remain unchanged"
+
+    aimed = ABILITIES["aimed_shot"]
+    assert aimed.get("scaling") == {"atk": 0.4} and (aimed.get("dice") or {}).get("type") == "d6", "Aimed Shot should use Attack 0.4x + d6"
+    raptor = ABILITIES["raptor_strike"]
+    assert raptor.get("scaling") == {"atk": 1.1} and (raptor.get("dice") or {}).get("type") == "d6", "Raptor Strike should use Attack 1.1x + d6"
+    assert raptor.get("pet_command") == "special", "Raptor Strike should keep current forced-special behavior"
+
+    arcane = ABILITIES["arcane_shot"]
+    assert "requires_effect" not in arcane, "Arcane Shot should no longer require the old proc"
+    assert arcane.get("consume_effect") == "arcane_surge", "Arcane Shot should consume Arcane Surge when present"
+    assert arcane.get("cooldown") == 3, "Arcane Shot cooldown should be 3"
+    assert arcane.get("scaling") == {"atk": 0.5} and (arcane.get("dice") or {}).get("type") == "d6", "Normal Arcane Shot should use Attack 0.5x + d6"
+    assert arcane.get("school") == "magical" and arcane.get("subschool") == "arcane", "Arcane Shot should remain magical Arcane"
+
+    kill = ABILITIES["kill_command"]
+    assert kill.get("cost") == {"mp": 15} and kill.get("cooldown") == 6, "Kill Command should cost 15 mana with 6 cooldown"
+    assert kill.get("requires_active_pet") is True and kill.get("pet_command") == "special", "Kill Command should require and force the current pet special"
+    assert kill.get("pet_heal") == {"scaling": {"atk": 0.4}, "dice": {"type": "d4", "power_on": "roll"}}, "Kill Command should heal current pet from Hunter Attack 0.4x + d4"
+
+    surge = EFFECT_TEMPLATES["arcane_surge"]
+    assert surge.get("name") == "Arcane Surge" and surge.get("duration") == 3, "Arcane Surge template should last 3 turns"
+    assert (wildfire.get("self_effects") or [{}])[0].get("duration") == 3, "Wildfire Bomb should grant Arcane Surge with duration 3"
+    assert effects._EFFECT_PANEL_DESCRIPTION_BY_NAME.get("Arcane Surge") == "Arcane Shot empowered.", "Arcane Surge panel description should match the required mouseover text"
+    assert "arcane_shot_proc" not in EFFECT_TEMPLATES, "Old Arcane Shot proc template should be removed"
+    assert "Charged Quiver" not in effects._EFFECT_PANEL_DESCRIPTION_BY_NAME, "Old Charged Quiver panel description should be removed"
+
+    original_roll = resolver.roll
+    original_hit = resolver.hit_chance
+    try:
+        resolver.hit_chance = lambda acc, eva: 100
+        resolver.roll = lambda die, rng: {"d4": 3, "d6": 4, "d8": 5}.get(die, original_roll(die, rng))
+
+        wildfire_match = make_match("hunter", "warrior", seed=9101)
+        hunter, warrior = _player_states(wildfire_match)
+        hunter.stats["crit"] = 0
+        warrior.stats["def"] = 0
+        warrior.stats["magic_resist"] = 0
+        submit_turn(wildfire_match, "wildfire_bomb", _DEF_PASS)
+        wildfire_turn = _turn_lines(wildfire_match, 1)
+        assert any("cast Wildfire Bomb" in line and "Roll d8 = 5." in line and "Deals 13 damage." in line for line in wildfire_turn), "Wildfire Bomb direct damage should resolve as Attack 0.7x + d8"
+        burn = next((fx for fx in warrior.effects if fx.get("id") == "wildfire_burn"), None)
+        assert burn is not None and int(burn.get("tick_damage", 0) or 0) == 9, "Wildfire Burn tick should still use Attack 0.5x + d4"
+        assert wildfire_match.state[wildfire_match.players[0]].cooldowns.get("wildfire_bomb") == [7], "Wildfire Bomb should enter an 8-turn cooldown, ticked to 7 after turn end"
+        assert _has_effect(hunter, "arcane_surge"), "Wildfire Bomb should grant Arcane Surge"
+        assert not _has_effect(hunter, "arcane_shot_proc"), "Wildfire Bomb should not grant the old Arcane Shot proc"
+
+        normal_match = make_match("hunter", "warrior", seed=9102)
+        normal_hunter, normal_warrior = _player_states(normal_match)
+        normal_hunter.stats["crit"] = 0
+        normal_warrior.stats["def"] = 0
+        normal_warrior.stats["magic_resist"] = 0
+        submit_turn(normal_match, "arcane_shot", _DEF_PASS)
+        normal_turn = _turn_lines(normal_match, 1)
+        assert any("cast Arcane Shot" in line and "Roll d6 = 4." in line and "Deals 10 damage." in line for line in normal_turn), "Arcane Shot should be castable without Charged Quiver/old proc and use Attack 0.5x + d6"
+        assert normal_hunter.cooldowns.get("arcane_shot") == [2], "Arcane Shot should enter a 3-turn cooldown, ticked to 2 after turn end"
+
+        empowered_match = make_match("hunter", "warrior", seed=9103)
+        empowered_hunter, empowered_warrior = _player_states(empowered_match)
+        empowered_hunter.stats["crit"] = 0
+        empowered_warrior.stats["def"] = 0
+        empowered_warrior.stats["magic_resist"] = 0
+        effects.apply_effect_by_id(empowered_hunter, "arcane_surge", overrides={"duration": 3})
+        submit_turn(empowered_match, "arcane_shot", _DEF_PASS)
+        empowered_turn = _turn_lines(empowered_match, 1)
+        assert any("cast Arcane Shot" in line and "Roll d8 = 5." in line and "Empowered by Arcane Surge!" in line and "Deals 17 damage." in line for line in empowered_turn), "Arcane Surge should empower Arcane Shot to Attack 1.0x + d8"
+        assert not _has_effect(empowered_hunter, "arcane_surge"), "Arcane Surge should be consumed on Arcane Shot use"
+
+        kill_match = make_match("hunter", "warrior", seed=9104)
+        kill_hunter = kill_match.state[kill_match.players[0]]
+        mp_before = kill_hunter.res.mp
+        submit_turn(kill_match, "kill_command", _DEF_PASS)
+        assert kill_hunter.res.mp == mp_before, "Kill Command should fail cleanly without an active pet before spending mana"
+        assert not kill_hunter.cooldowns.get("kill_command"), "Kill Command should not go on cooldown when there is no active pet"
+
+        pet_match = make_match("hunter", "warrior", seed=9105)
+        pet_hunter, pet_warrior = _player_states(pet_match)
+        pet_warrior.stats["def"] = 0
+        submit_turn(pet_match, "call_saber", _DEF_PASS)
+        saber = _active_pet(pet_hunter, "frostsaber")
+        assert saber is not None, "Frostsaber should be active for Kill Command coverage"
+        saber.hp = 10
+        saber.energy = 30
+        submit_turn(pet_match, "kill_command", _DEF_PASS)
+        kill_turn = _turn_lines(pet_match, 2)
+        assert saber.hp == 17, "Kill Command should heal current pet by Hunter Attack 0.4x + d4 before the pet special can act"
+        assert any("cast Kill Command" in line and "Roll d4 = 3." in line and "Heals Frostsaber for 7 HP." in line for line in kill_turn), "Kill Command log should show the d4 pet heal"
+        assert any("Frostsaber bites the target" in line for line in kill_turn), "Kill Command should force the same pet special behavior style as Raptor Strike"
+        assert not any("Frostsaber melees the target" in line for line in kill_turn), "Kill Command forced special should replace the normal pet action instead of granting an extra one"
+
+        resource_match = make_match("hunter", "warrior", seed=9106)
+        resource_hunter = resource_match.state[resource_match.players[0]]
+        submit_turn(resource_match, "call_boar", _DEF_PASS)
+        boar = _active_pet(resource_hunter, "barrens_boar")
+        assert boar is not None, "Barrens Boar should be active for resource gating coverage"
+        boar.rage = 0
+        submit_turn(resource_match, "kill_command", "mortal_strike")
+        resource_turn = _turn_lines(resource_match, 2)
+        assert not any("Barrens Boar braces to intercept attacks." in line for line in resource_turn), "Kill Command forced special should still require the pet resource"
+    finally:
+        resolver.roll = original_roll
+        resolver.hit_chance = original_hit
+
+    duel_html_text = _detect_duel_html_path().read_text(encoding="utf-8")
+    assert "<h4>Kill Command</h4>" in duel_html_text and "[Attack (0.4x) + d4] HP" in duel_html_text, "Hunter docs should include Kill Command with the live heal formula"
+    assert "Cooldown: 8" in duel_html_text and "[Attack (0.7x) + d8] Fire damage" in duel_html_text, "Hunter docs should list Wildfire Bomb's new cooldown and formula"
+    assert "Castable whenever off cooldown" in duel_html_text and "[Attack (1.0x) + d8] Arcane damage" in duel_html_text, "Hunter docs should document Arcane Shot normal/empowered behavior"
+    assert "Requires the proc from casting Wildfire Bomb" not in duel_html_text and "Charged Quiver" not in duel_html_text, "Hunter docs should remove old Charged Quiver/Arcane Shot proc wording"
+    assert "[Attack (0.4x) + d6] physical damage" in duel_html_text and "[Attack (1.1x) + d6] physical damage" in duel_html_text, "Hunter docs should list Aimed Shot and Raptor Strike nerfed formulas"
+    return True
 
 def scenario_hunter_wildfire_dot_log_order() -> bool:
     match = make_match("hunter", "warrior", seed=123)
@@ -1698,7 +1816,7 @@ def scenario_hunter_proc_log_stays_at_top_of_turn() -> bool:
     submit_turn(match, _DEF_PASS, "wildfire_bomb")
 
     latest_turn = match.log[match.log.index("Turn 1") + 1:]
-    assert latest_turn[0] == f"{match.players[1][:5]} has Arcane Shot!", "Hunter proc reminder should be the first line of the turn even when the Hunter acts second"
+    assert latest_turn[0] == f"{match.players[1][:5]} has Arcane Surge!", "Hunter proc reminder should be the first line of the turn even when the Hunter acts second"
     warrior_action_idx = next(i for i, line in enumerate(latest_turn) if "uses their bare hands to cast Pass Turn" in line)
     hunter_action_idx = next(i for i, line in enumerate(latest_turn) if "uses their bare hands to cast Wildfire Bomb" in line)
     assert 0 < warrior_action_idx < hunter_action_idx, "Proc reminder should appear before both players' action lines"
@@ -1717,7 +1835,7 @@ def scenario_proc_and_has_reminders_stay_in_expected_order() -> bool:
     submit_turn(match, "wildfire_bomb", _DEF_PASS)
 
     latest_turn = _turn_lines(match, 2)
-    proc_idx = next((i for i, line in enumerate(latest_turn) if "has Arcane Shot!" in line), -1)
+    proc_idx = next((i for i, line in enumerate(latest_turn) if "has Arcane Surge!" in line), -1)
     brace_idx = next((i for i, line in enumerate(latest_turn) if "Barrens Boar braces to intercept attacks." in line), -1)
     hunter_action_idx = next((i for i, line in enumerate(latest_turn) if "uses their bare hands to cast Wildfire Bomb." in line), -1)
     assert proc_idx == 0, "Proc reminder should stay at the top of the turn"
@@ -3922,9 +4040,9 @@ def scenario_phase_c_prompt3_effect_application_stage_preserved() -> bool:
     hunter_sid, _ = hunter_proc_match.players
     hunter = hunter_proc_match.state[hunter_sid]
     submit_turn(hunter_proc_match, "wildfire_bomb", _DEF_PASS)
-    assert _has_effect(hunter, "arcane_shot_proc"), "Proc grant should remain unchanged"
+    assert _has_effect(hunter, "arcane_surge"), "Proc grant should remain unchanged"
     submit_turn(hunter_proc_match, "arcane_shot", _DEF_PASS)
-    assert not _has_effect(hunter, "arcane_shot_proc"), "Proc consume timing should remain unchanged"
+    assert not _has_effect(hunter, "arcane_surge"), "Proc consume timing should remain unchanged"
 
     # summon_application + pet_command_application
     hunter_pet_match = make_match("hunter", "warrior", seed=4013)
@@ -5304,7 +5422,7 @@ def scenario_effect_panel_payload_normalization() -> bool:
     effects.apply_effect_by_id(warrior, "agony", overrides={"duration": 4, "source_sid": warlock_sid})
     effects.apply_effect_by_id(warrior, "dragon_roar_bleed", overrides={"duration": 3, "source_sid": warlock_sid})
     effects.apply_effect_by_id(warrior, "raptor_strike_proc", overrides={"duration": 2})
-    effects.apply_effect_by_id(warrior, "arcane_shot_proc", overrides={"duration": 2})
+    effects.apply_effect_by_id(warrior, "arcane_surge", overrides={"duration": 2})
     effects.apply_effect_by_id(warrior, "rip_ready", overrides={"duration": 2})
     effects.apply_effect_by_id(warrior, "starfire_ready", overrides={"duration": 2})
     effects.apply_effect_by_id(warrior, "mind_blast_empowered", overrides={"duration": 2})
@@ -5343,7 +5461,7 @@ def scenario_effect_panel_payload_normalization() -> bool:
     assert "Killing Frenzy" in physical_buffs, "Raptor Strike proc should render as Killing Frenzy in physical buffs"
     assert "Ambush" in physical_buffs, "Ambush should appear as a physical buff"
     assert "Hot Streak" in magical_buffs, "Hot Streak should appear in magical buffs"
-    assert "Charged Quiver" in magical_buffs, "Arcane Shot proc should render as Charged Quiver in magical buffs"
+    assert "Arcane Surge" in magical_buffs, "Arcane Surge should render as Arcane Surge in magical buffs"
     assert "Astral Surge" in magical_buffs, "Starfire proc should render as Astral Surge in magical buffs"
     assert "Mind Assault" in magical_buffs, "Mind Blast empowerment should render as Mind Assault in magical buffs"
     assert "Crusader's Might" in magical_buffs, "Crusader's Greatsword proc should render as Crusader's Might in magical buffs"
@@ -5804,7 +5922,7 @@ def scenario_high_risk_shared_effect_naming_and_panel_pack() -> bool:
     naming_match = make_match("hunter", "warrior", seed=8503)
     hunter = naming_match.state[naming_match.players[0]]
     warrior = naming_match.state[naming_match.players[1]]
-    effects.apply_effect_by_id(hunter, "arcane_shot_proc", overrides={"duration": 2})
+    effects.apply_effect_by_id(hunter, "arcane_surge", overrides={"duration": 2})
     effects.apply_effect_by_id(hunter, "raptor_strike_proc", overrides={"duration": 2})
     effects.apply_effect_by_id(hunter, "starfire_ready", overrides={"duration": 2})
     effects.apply_effect_by_id(hunter, "rip_ready", overrides={"duration": 2})
@@ -5817,12 +5935,12 @@ def scenario_high_risk_shared_effect_naming_and_panel_pack() -> bool:
     panel_warrior = effects.build_effect_panel_payload(warrior)
     buff_names = [entry.get("name") for bucket in panel_hunter.values() for entry in bucket]
     debuff_names = [entry.get("name") for bucket in panel_warrior.values() for entry in bucket]
-    for expected in ("Charged Quiver", "Killing Frenzy", "Astral Surge", "Sharpened Claws", "Mind Assault"):
+    for expected in ("Arcane Surge", "Killing Frenzy", "Astral Surge", "Sharpened Claws", "Mind Assault"):
         assert expected in buff_names, f"{expected} renamed panel entry should remain stable"
     for expected in ("Rending Roar", "Fire Burn"):
         assert expected in debuff_names, f"{expected} renamed panel entry should remain stable"
     assert "Die by the Sword Mitigation" not in buff_names and "die_by_sword_mitigation" not in buff_names, "Internal helper effects must not leak to the panel"
-    assert buff_names.count("Charged Quiver") == 1, "Merged visible buffs should only render once in panel payload"
+    assert buff_names.count("Arcane Surge") == 1, "Merged visible buffs should only render once in panel payload"
     return True
 
 
@@ -6134,6 +6252,7 @@ SCENARIOS = [
     scenario_hunter_turtle_blocks_pet_spell_debuff_and_failed_cast_state,
     scenario_hunter_turtle_same_turn_psychic_scream_consistency,
     scenario_hunter_wildfire_arcane_proc,
+    scenario_hunter_rework_phase1_phase2_regression,
     scenario_hunter_wildfire_dot_log_order,
     scenario_mass_dispel_removes_same_turn_wildfire_burn,
     scenario_hunter_proc_log_stays_at_top_of_turn,

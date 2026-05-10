@@ -124,6 +124,19 @@ def _apply_heal_with_clamp(target: PlayerState, amount: int) -> int:
     return target.res.hp - before_hp
 
 
+
+def _active_live_pet(owner: PlayerState) -> PetState | None:
+    active_pet_id = getattr(owner, "active_pet_id", None)
+    if active_pet_id:
+        pet = (getattr(owner, "pets", {}) or {}).get(active_pet_id)
+        if pet is not None and int(getattr(pet, "hp", 0) or 0) > 0:
+            return pet
+    for pet_id in sorted((getattr(owner, "pets", {}) or {}).keys()):
+        pet = owner.pets.get(pet_id)
+        if pet is not None and int(getattr(pet, "hp", 0) or 0) > 0:
+            return pet
+    return None
+
 def _can_reapply_effect(target: PlayerState | PetState, effect_id: str) -> bool:
     template = effect_template(effect_id)
     if template.get("stackable"):
@@ -748,6 +761,42 @@ class SpecialAbilityHandlerContext:
     apply_self_inflicted_magical_damage: Callable[[PlayerState, int], int]
 
 
+
+def _handle_kill_command_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, Any]:
+    pet = _active_live_pet(ctx.actor)
+    if pet is None:
+        ctx.log_parts.append("No active pet.")
+        return {"damage": 0, "healing": 0, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
+
+    heal_data = ctx.ability.get("pet_heal") or {}
+    heal_scaling = heal_data.get("scaling") or {}
+    heal_dice = heal_data.get("dice") or {}
+    heal_roll = roll(str(heal_dice.get("type") or "d0"), ctx.rng) if heal_dice.get("type") else 0
+    heal_value = 0
+    if "atk" in heal_scaling:
+        heal_value = base_damage(
+            modify_stat(ctx.actor, "atk", ctx.actor.stats.get("atk", 0)),
+            float(heal_scaling["atk"]),
+            heal_roll,
+        )
+    elif "int" in heal_scaling:
+        heal_value = base_damage(
+            modify_stat(ctx.actor, "int", ctx.actor.stats.get("int", 0)),
+            float(heal_scaling["int"]),
+            heal_roll,
+        )
+    heal_value = max(0, int(heal_value))
+    before_hp = int(pet.hp)
+    pet.hp = min(int(pet.hp_max), int(pet.hp) + heal_value)
+    healed = max(0, int(pet.hp) - before_hp)
+    ctx.log_parts.append(f"Roll d4 = {heal_roll}.")
+    ctx.log_parts.append(f"Heals {pet.name} for {healed} HP.")
+    if healed > 0:
+        totals = ctx.turn_ctx.match.combat_totals.setdefault(ctx.actor_sid, {"damage": 0, "healing": 0})
+        totals["healing"] += healed
+    ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
+    return {"damage": 0, "healing": healed, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
+
 def _handle_healthstone_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, Any]:
     heal_value = max(1, int(ctx.actor.res.hp_max * 0.25))
     if has_effect(ctx.actor, "mindgames"):
@@ -938,6 +987,7 @@ def _handle_healing_stream_special(ctx: SpecialAbilityHandlerContext) -> Dict[st
 
 
 SPECIAL_ABILITY_HANDLERS: dict[str, Callable[[SpecialAbilityHandlerContext], Dict[str, Any]]] = {
+    "kill_command": _handle_kill_command_special,
     "healthstone": _handle_healthstone_special,
     "innervate": _handle_innervate_special,
     "holy_light": _handle_holy_light_special,
@@ -1432,6 +1482,14 @@ def resolve_action_selection_modifiers(
 
     if ability_id == "agony" and has_effect(target, "agony"):
         return {"resolved": True, "damage": 0, "healing": 0, "log": "Agony is not stackable."}
+
+    if ability.get("requires_active_pet") and _active_live_pet(actor) is None:
+        return {
+            "resolved": True,
+            "damage": 0,
+            "healing": 0,
+            "log": f"{ability['name']} requires an active pet.",
+        }
 
     summon_pet_id = ability.get("summon_pet_id")
     if summon_pet_id and summon_cap_reached(actor, summon_pet_id):
@@ -2605,6 +2663,14 @@ def resolve_turn(match: MatchState) -> None:
                 has_effect(actor, "flame_dance")
                 and str(ability_subschool or "").lower() == "fire"
             )
+            is_empowered_arcane_shot = ability_id == "arcane_shot" and has_effect(actor, "arcane_surge")
+            if is_empowered_arcane_shot:
+                local_scaling = {"atk": 1.0}
+                roll_power = roll("d8", r)
+                if dice_data:
+                    log_parts.pop()
+                log_parts.append(f"{prefix}Roll d8 = {roll_power}.")
+                log_parts.append(f"{prefix}Empowered by Arcane Surge!")
             if flat_damage is not None:
                 raw = int(flat_damage)
             elif "atk" in local_scaling:

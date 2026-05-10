@@ -3190,15 +3190,15 @@
         <div class="doc-grid">
           <div class="doc-item">
             <h4>Wildfire Bomb</h4>
-            <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Type: Magic (Fire)</span> | <span class="stat">Cooldown: 13</span></p>
+            <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Type: Magic (Fire)</span> | <span class="stat">Cooldown: 8</span></p>
             <p><span class="stat">Command: <span class="kbd">wildfire_bomb</span></span></p>
-            <p>Deals [Attack (1.5x) + d8] magic damage, applies a 2-turn Wildfire Burn, and enables <span class="stat">Arcane Shot</span> for the next turn.</p>
+            <p>Deals [Attack (0.7x) + d8] Fire damage, applies a 2-turn Wildfire Burn, and grants <span class="stat">Arcane Surge</span> for 3 turns.</p>
           </div>
           <div class="doc-item">
             <h4>Arcane Shot</h4>
-            <p><span class="stat">Cost: 5 Mana</span> | <span class="stat">Type: Magic (Arcane)</span> | <span class="stat">Cooldown: 0</span></p>
+            <p><span class="stat">Cost: 5 Mana</span> | <span class="stat">Type: Magic (Arcane)</span> | <span class="stat">Cooldown: 3</span></p>
             <p><span class="stat">Command: <span class="kbd">arcane_shot</span></span></p>
-            <p>Requires the proc from casting Wildfire Bomb. Proc expires if not used on the very next turn. Fires an arcane blast for [Attack (1.1x) + d6] magic damage.</p>
+            <p>Castable whenever off cooldown. Deals [Attack (0.5x) + d6] Arcane damage, or [Attack (1.0x) + d8] Arcane damage when empowered by <span class="stat">Arcane Surge</span>. Arcane Surge is consumed on use.</p>
           </div>
           <div class="doc-item">
             <h4>Aspect of the Turtle</h4>
@@ -3228,13 +3228,20 @@
             <h4>Aimed Shot</h4>
             <p><span class="stat">Cost: 5 Mana</span> | <span class="stat">Type: Physical</span> | <span class="stat">Cooldown: 0</span></p>
             <p><span class="stat">Command: <span class="kbd">aimed_shot</span></span></p>
-            <p>Deals [Attack (0.6x) + d6] physical damage. On hit, it has a 50% chance to restore 5 mana and a 50% chance to enable <span class="stat">Raptor Strike</span>.</p>
+            <p>Deals [Attack (0.4x) + d6] physical damage. On hit, it has a 50% chance to restore 5 mana and a 50% chance to enable <span class="stat">Raptor Strike</span>.</p>
           </div>
           <div class="doc-item">
             <h4>Raptor Strike</h4>
             <p><span class="stat">Cost: 8 Mana</span> | <span class="stat">Type: Physical</span> | <span class="stat">Cooldown: 8</span></p>
             <p><span class="stat">Command: <span class="kbd">raptor_strike</span></span></p>
-            <p>Requires the proc from casting Aimed Shot. Proc expires if not used on the very next turn. Deals [Attack (1.7x) + d6] physical damage and forces the active pet to use its special attack this turn.</p>
+            <p>Requires the proc from casting Aimed Shot. Proc expires if not used on the very next turn. Deals [Attack (1.1x) + d6] physical damage and forces the active pet to use its special attack this turn.</p>
+          </div>
+
+          <div class="doc-item">
+            <h4>Kill Command</h4>
+            <p><span class="stat">Cost: 15 Mana</span> | <span class="stat">Cooldown: 6</span></p>
+            <p><span class="stat">Command: <span class="kbd">kill_command</span></span></p>
+            <p>Requires an active pet. Heals the current pet for [Attack (0.4x) + d4] HP and forces that pet to use its special attack this turn if it has the required resource.</p>
           </div>
           <div class="doc-item">
             <h4>Multi-Shot</h4>
@@ -3246,28 +3253,28 @@
             <h4>Companion Calls</h4>
             <p><span class="stat">Commands: <span class="kbd">call_saber</span>, <span class="kbd">call_serpent</span>, <span class="kbd">call_boar</span></span></p>
             <p><span class="stat">Cost: Free</span> | <span class="stat">Cooldown: 0</span></p>
-            <p>Call a Frostsaber, Emerald Serpent, or Barrens Boar. Only one companion is active at a time; swaps remember HP and companion resource state (energy/mana/rage), clear old effects, and permanently dead companions cannot return that match. Raptor Strike also forces your active companion to use its special attack that turn.</p>
+            <p>Call a Frostsaber, Emerald Serpent, or Barrens Boar. Only one companion is active at a time; swaps remember HP and companion resource state (energy/mana/rage), clear old effects, and permanently dead companions cannot return that match. Raptor Strike and Kill Command can force your active companion to use its special attack that turn.</p>
           </div>
           <div class="doc-item">
             <h4>Frostsaber</h4>
             <p><span class="stat">Command: <span class="kbd">call_saber</span></span></p>
             <p><span class="stat">HP: 20</span> | <span class="stat">Energy: 30</span> | <span class="stat">Attack: 6</span> | <span class="stat">Intellect: 2</span> | <span class="stat">Defence: 3</span></p>
             <p><span class="stat">Basic Attack:</span> [Attack (1.0x) + d4] physical damage.</p>
-            <p><span class="stat">Special — Bite:</span> Costs 20 Energy; 30% chance each pet phase, or forced by <span class="stat">Raptor Strike</span>, to deal [Attack (2.0x) + d6] physical damage.</p>
+            <p><span class="stat">Special — Bite:</span> Costs 20 Energy; 30% chance each pet phase, or forced by <span class="stat">Raptor Strike</span> / <span class="stat">Kill Command</span>, to deal [Attack (2.0x) + d6] physical damage.</p>
           </div>
           <div class="doc-item">
             <h4>Emerald Serpent</h4>
             <p><span class="stat">Command: <span class="kbd">call_serpent</span></span></p>
             <p><span class="stat">HP: 15</span> | <span class="stat">Mana: 40</span> | <span class="stat">Attack: 4</span> | <span class="stat">Intellect: 10</span> | <span class="stat">Defence: 3</span></p>
             <p><span class="stat">Basic Attack:</span> [Attack (1.0x) + d4] physical damage.</p>
-            <p><span class="stat">Special — Lightning Breath:</span> Costs 15 Mana; 30% chance each pet phase, or forced by <span class="stat">Raptor Strike</span>, to deal [Intellect (1.5x) + d6] magic (Nature) damage and heal both the serpent and Hunter for 50% of actual HP damage dealt.</p>
+            <p><span class="stat">Special — Lightning Breath:</span> Costs 15 Mana; 30% chance each pet phase, or forced by <span class="stat">Raptor Strike</span> / <span class="stat">Kill Command</span>, to deal [Intellect (1.5x) + d6] magic (Nature) damage and heal both the serpent and Hunter for 50% of actual HP damage dealt.</p>
           </div>
           <div class="doc-item">
             <h4>Barrens Boar</h4>
             <p><span class="stat">Command: <span class="kbd">call_boar</span></span></p>
             <p><span class="stat">HP: 30</span> | <span class="stat">Attack: 4</span> | <span class="stat">Intellect: 0</span> | <span class="stat">Defence: 10</span></p>
             <p><span class="stat">Basic Attack:</span> [Attack (1.0x) + d6] physical damage and grants 5 Rage.</p>
-            <p><span class="stat">Special — Blocking Defence:</span> Costs 5 Rage; 30% chance before actions, or forced by <span class="stat">Raptor Strike</span>, to redirect incoming single-target attacks, spells, and crowd control from the Hunter to the boar for the current turn. A newly summoned boar starts with no Rage and cannot use Blocking Defence until it has attacked.</p>
+            <p><span class="stat">Special — Blocking Defence:</span> Costs 5 Rage; 30% chance before actions, or forced by <span class="stat">Raptor Strike</span> / <span class="stat">Kill Command</span>, to redirect incoming single-target attacks, spells, and crowd control from the Hunter to the boar for the current turn. A newly summoned boar starts with no Rage and cannot use Blocking Defence until it has attacked.</p>
           </div>
         </div>
 
@@ -3545,6 +3552,7 @@
         "Disengage",
         "Aimed Shot",
         "Raptor Strike",
+        "Kill Command",
         "Multi-Shot",
         "Call Frostsaber",
         "Call Emerald Serpent",
@@ -4412,7 +4420,7 @@
           return applyFxTokensToHtml(`<span class="log-class-paladin logLinePaladinProc">${renderTextWithFxTags(textWithoutFx)}</span>`, fxTokens);
         }
         if (
-          textWithoutFx.includes("has Arcane Shot!")
+          textWithoutFx.includes("has Arcane Surge!")
           || textWithoutFx.includes("has Raptor Strike!")
         ) {
           return applyFxTokensToHtml(`<span class="log-class-hunter logLineHunterProc">${renderTextWithFxTags(textWithoutFx)}</span>`, fxTokens);
@@ -4564,7 +4572,7 @@
           classes.push("logLinePaladinProc");
         }
         if (
-          msg.includes("has Arcane Shot!")
+          msg.includes("has Arcane Surge!")
           || msg.includes("has Raptor Strike!")
         ) {
           classes.push("logLineHunterProc");

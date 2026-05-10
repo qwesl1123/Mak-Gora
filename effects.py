@@ -756,11 +756,11 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "tags": ["dot"],
         "resolution_layer": "end_of_turn",
     },
-    "arcane_shot_proc": {
+    "arcane_surge": {
         "type": "status",
-        "name": "Arcane Shot",
-        "duration": 2,
-        "flags": {"arcane_shot_ready": True},
+        "name": "Arcane Surge",
+        "duration": 3,
+        "flags": {"arcane_shot_empowered": True},
         "tags": ["proc"],
         "resolution_layer": "action_selection_modifiers",
     },
@@ -993,7 +993,7 @@ _EFFECT_PANEL_MAGICAL_BUFF_NAMES = {
     "Final Verdict empowerment",
     "Shadowy Insight",
     "Pain Suppression",
-    "Arcane Shot proc",
+    "Arcane Surge",
     "Starfire proc",
     "Crusader's Might",
     "Flame Dance",
@@ -1050,7 +1050,7 @@ _EFFECT_PANEL_BUCKET_BY_NAME_KEY[_effect_panel_name_key("Dragon Roar Bleed")] = 
 
 _EFFECT_PANEL_RAW_NAME_BY_ID: Dict[str, str] = {
     "dragon_roar_bleed": "dragon roar bleed",
-    "arcane_shot_proc": "Arcane Shot proc",
+    "arcane_surge": "Arcane Surge",
     "raptor_strike_proc": "Raptor Strike proc",
     "starfire_ready": "Starfire proc",
     "rip_ready": "Rip proc",
@@ -1065,8 +1065,6 @@ _EFFECT_PANEL_DISPLAY_NAMES: Dict[str, str] = {
     _effect_panel_name_key("Final Verdict empowerment"): "Divine Reckoning",
     _effect_panel_name_key("Mind Blast empowerment"): "Mind Assault",
     _effect_panel_name_key("Burn"): "Fire Burn",
-    _effect_panel_name_key("arcaneshot proc"): "Charged Quiver",
-    _effect_panel_name_key("Arcane Shot proc"): "Charged Quiver",
     _effect_panel_name_key("Raptor Strike proc"): "Killing Frenzy",
 }
 
@@ -1075,7 +1073,7 @@ _EFFECT_PANEL_DESCRIPTION_BY_NAME: Dict[str, str] = {
     "Astral Surge": "Able to cast Starfire (if not on cooldown).",
     "Divine Reckoning": "Final Verdict empowered.",
     "Mind Assault": "Mind Blast empowered.",
-    "Charged Quiver": "Able to cast Arcane Shot (if not on cooldown).",
+    "Arcane Surge": "Arcane Shot empowered.",
     "Killing Frenzy": "Able to cast Raptor Strike (if not on cooldown).",
     "Fire Burn": "Damage over time every turn.",
     "Ring of Ice": "Frozen and cannot act. Breaks on damage.",
