@@ -1744,6 +1744,9 @@ def scenario_hunter_rework_phase1_phase2_regression() -> bool:
         kill_hunter = kill_match.state[kill_match.players[0]]
         mp_before = kill_hunter.res.mp
         submit_turn(kill_match, "kill_command", _DEF_PASS)
+        kill_fail_turn = _turn_lines(kill_match, 1)
+        expected_kill_fail_log = f"{kill_match.players[0][:5]} tried to cast Kill Command but had no active pet."
+        assert expected_kill_fail_log in kill_fail_turn, "Kill Command should log the hunter token when cast without an active pet"
         assert kill_hunter.res.mp == mp_before, "Kill Command should fail cleanly without an active pet before spending mana"
         assert not kill_hunter.cooldowns.get("kill_command"), "Kill Command should not go on cooldown when there is no active pet"
 

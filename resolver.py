@@ -1488,7 +1488,7 @@ def resolve_action_selection_modifiers(
             "resolved": True,
             "damage": 0,
             "healing": 0,
-            "log": f"{ability['name']} requires an active pet.",
+            "log": f"{sid_token(actor_sid)} tried to cast {ability['name']} but had no active pet.",
         }
 
     summon_pet_id = ability.get("summon_pet_id")
