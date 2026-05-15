@@ -6264,6 +6264,67 @@ def scenario_paladin_divine_storm_behavior_and_docs() -> bool:
     return True
 
 
+def scenario_shield_of_vengeance_explosion_uses_absorbed_amount_for_pets() -> bool:
+    match = make_match("paladin", "warlock", seed=7310)
+    paladin_sid, warlock_sid = match.players
+    paladin = match.state[paladin_sid]
+    warlock = match.state[warlock_sid]
+    warlock.stats.update({"def": 0, "magic_resist": 0})
+    warlock.pets["p2_imp_1"] = PetState(
+        id="p2_imp_1",
+        template_id="imp",
+        name="Imp",
+        owner_sid=warlock_sid,
+        hp=40,
+        hp_max=40,
+        stats={"def": 80, "magic_resist": 80},
+    )
+
+    effects.apply_effect_by_id(paladin, "shield_of_vengeance", overrides={"duration": 1})
+    effects.add_absorb(paladin, 14, source_name="Shield of Vengeance", effect_id="shield_of_vengeance")
+    absorbed_chunks = []
+    for incoming in (5, 3, 4):
+        remaining, absorbed, _ = effects.consume_absorbs(paladin, incoming)
+        assert remaining == 0, "Shield of Vengeance should fully absorb the regression setup hits"
+        absorbed_chunks.append(absorbed)
+
+    expected_explosion_damage = sum(absorbed_chunks)
+    shield = effects.get_effect(paladin, "shield_of_vengeance")
+    assert expected_explosion_damage == 12, "Regression setup should absorb exactly 12 before exploding"
+    assert shield is not None
+    assert int(shield.get("absorbed", 0) or 0) == expected_explosion_damage, (
+        "Shield of Vengeance should track the absorbed total used for explosion damage"
+    )
+
+    champion_hp_before = warlock.res.hp
+    imp_hp_before = warlock.pets["p2_imp_1"].hp
+
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+
+    champion_damage = champion_hp_before - warlock.res.hp
+    imp_damage = imp_hp_before - warlock.pets["p2_imp_1"].hp
+    turn_lines = _turn_lines(match, 1)
+    champion_line = next(
+        (line for line in turn_lines if line == f"Shield of Vengeance hits p2_si for {expected_explosion_damage} damage."),
+        "",
+    )
+    imp_line = next(
+        (
+            line
+            for line in turn_lines
+            if line == f"Shield of Vengeance hits p2_si's Imp (imp1) for {expected_explosion_damage} damage."
+        ),
+        "",
+    )
+
+    assert champion_damage == expected_explosion_damage, "Shield of Vengeance champion damage should use the tracked absorbed explosion amount"
+    assert imp_damage == expected_explosion_damage, "Shield of Vengeance pet damage should use the same tracked absorbed explosion amount"
+    assert champion_damage == imp_damage, "Champion and pet targets should resolve from the same Shield of Vengeance base amount"
+    assert champion_line, "Shield of Vengeance champion log should match actual champion damage"
+    assert imp_line, "Shield of Vengeance pet log should match actual pet damage"
+    assert not any(effect.get("id") == "shield_of_vengeance" for effect in paladin.effects), "Shield of Vengeance should still be removed after exploding"
+    return True
+
 def scenario_paladin_shield_of_vengeance_reset_and_no_unrelated_changes() -> bool:
     expected_existing_paladin = {
         "crusader_strike": ({"mp": 0}, 0),
@@ -6314,6 +6375,7 @@ def scenario_paladin_shield_of_vengeance_reset_and_no_unrelated_changes() -> boo
 SCENARIOS = [
     scenario_mindgames_lay_on_hands,
     scenario_paladin_divine_storm_behavior_and_docs,
+    scenario_shield_of_vengeance_explosion_uses_absorbed_amount_for_pets,
     scenario_paladin_shield_of_vengeance_reset_and_no_unrelated_changes,
     scenario_special_handler_healthstone_mindgames_parity,
     scenario_special_handler_innervate_mana_and_cooldown,

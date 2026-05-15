@@ -3378,6 +3378,7 @@ def resolve_turn(match: MatchState) -> None:
         school: str = "physical",
         subschool: str | None = None,
         allow_redirect: bool = True,
+        resolve_non_player_mitigation: bool = True,
     ) -> Dict[str, Any]:
         normalized_school = normalize_school(school) or "physical"
         is_player_target = hasattr(target, "res") and target.res is not None
@@ -3396,7 +3397,9 @@ def resolve_turn(match: MatchState) -> None:
                 damage_school=normalized_school,
             ):
                 return _empty_damage_result(school=normalized_school, subschool=subschool, redirect_log=redirect_log)
-        if is_player_target:
+        if is_player_target or not resolve_non_player_mitigation:
+            if not is_player_target and is_damage_immune(target, "physical" if normalized_school == "physical" else "magic"):
+                return _empty_damage_result(school=normalized_school, subschool=subschool, redirect_log=redirect_log)
             instance_values = _build_damage_instance_values(incoming, damage_instances)
         else:
             if damage_instances:
@@ -3475,6 +3478,7 @@ def resolve_turn(match: MatchState) -> None:
         skip_champion: bool = False,
         damage_instances: list[int] | None = None,
         max_targets: int | None = None,
+        resolve_non_player_mitigation: bool = True,
     ) -> Dict[str, Any]:
         actor = match.state[actor_sid]
         target = match.state[target_sid]
@@ -3529,7 +3533,17 @@ def resolve_turn(match: MatchState) -> None:
             pet = target_entity
             if not pet or pet.hp <= 0:
                 continue
-            pet_result = apply_damage(actor, pet, incoming, pet.name, source_name, school=school, subschool=subschool, damage_instances=instances)
+            pet_result = apply_damage(
+                actor,
+                pet,
+                incoming,
+                pet.name,
+                source_name,
+                school=school,
+                subschool=subschool,
+                damage_instances=instances,
+                resolve_non_player_mitigation=resolve_non_player_mitigation,
+            )
             remaining = int(pet_result.get("hp_damage", 0) or 0)
             absorbed = int(pet_result.get("absorbed", 0) or 0)
             breakdown = pet_result.get("absorbed_breakdown", [])
@@ -3586,6 +3600,7 @@ def resolve_turn(match: MatchState) -> None:
             champion_log_template=f"Shield of Vengeance hits {sid_token(enemy_sid)} for __DMG_0__ damage.",
             champion_immune_log=untargetable_log or f"{sid_token(enemy_sid)} is immune to Shield of Vengeance explosion.",
             skip_champion=skip_champion,
+            resolve_non_player_mitigation=False,
         )
         champion_hp_damage = int(aoe_result.get("champion", {}).get("hp_damage", 0) or 0)
         totals = match.combat_totals.setdefault(owner_sid, {"damage": 0, "healing": 0})
