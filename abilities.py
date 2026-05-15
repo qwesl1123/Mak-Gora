@@ -838,6 +838,20 @@ ABILITIES = {
         "cooldown": 6,
         "classes": ["paladin"],
     },
+    "divine_storm": {
+        "name": "Divine Storm",
+        "cost": {"mp": 18},
+        "dice": {"type": "d6", "power_on": "roll"},
+        "scaling": {"atk": 0.7},
+        "damage_type": "magic",
+        "school": "magical",
+        "subschool": "holy",
+        "target_mode": "aoe_enemy",
+        "max_targets": 3,
+        "tags": ["spell", "attack", "magic", "aoe"],
+        "cooldown": 10,
+        "classes": ["paladin"],
+    },
     "holy_light": {
         "name": "Holy Light",
         "cost": {"mp": 30},
@@ -903,6 +917,7 @@ ABILITIES = {
         "subschool": "holy",
         "cooldown": 50,
         "classes": ["paladin"],
+        "cooldown_resets_on_cast": ["shield_of_vengeance"],
     },
 
     "avenging_wrath": {
@@ -914,6 +929,7 @@ ABILITIES = {
         "subschool": "holy",
         "cooldown": 20,
         "classes": ["paladin"],
+        "cooldown_resets_on_cast": ["shield_of_vengeance"],
         "self_effects": [
             {"id": "avenging_wrath", "duration": 4, "log": "Abilities are empowered by Avenging Wrath!"}
         ],

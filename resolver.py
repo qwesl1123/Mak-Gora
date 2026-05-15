@@ -758,8 +758,25 @@ class SpecialAbilityHandlerContext:
     turn_ctx: TurnResolutionContext
     rng: Any
     set_cooldown: Callable[[PlayerState, str, Dict[str, Any]], None]
+    reset_cooldown: Callable[[PlayerState, str], None]
     apply_self_inflicted_magical_damage: Callable[[PlayerState, int], int]
 
+
+
+def _apply_cooldown_resets_on_cast(
+    actor: PlayerState,
+    ability: Dict[str, Any],
+    log_parts: list[str],
+    reset_cooldown: Callable[[PlayerState, str], None],
+) -> None:
+    for reset_ability_id in ability.get("cooldown_resets_on_cast", []) or []:
+        reset_id = str(reset_ability_id or "")
+        if not reset_id:
+            continue
+        reset_cooldown(actor, reset_id)
+        reset_ability = ABILITIES.get(reset_id, {})
+        reset_name = str(reset_ability.get("name") or effect_name(reset_id))
+        log_parts.append(f"{reset_name}'s cooldown has been reset!")
 
 
 def _handle_kill_command_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, Any]:
@@ -856,10 +873,12 @@ def _handle_lay_on_hands_special(ctx: SpecialAbilityHandlerContext) -> Dict[str,
     if has_effect(ctx.actor, "mindgames"):
         ctx.apply_self_inflicted_magical_damage(ctx.actor, missing_hp)
         ctx.log_parts.append(f"Mindgames twists healing into {missing_hp} self-damage.")
+        _apply_cooldown_resets_on_cast(ctx.actor, ctx.ability, ctx.log_parts, ctx.reset_cooldown)
         ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
         return {"damage": 0, "healing": 0, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
     ctx.actor.res.hp = ctx.actor.res.hp_max
     ctx.log_parts.append("Lay on Hands restores health to full.")
+    _apply_cooldown_resets_on_cast(ctx.actor, ctx.ability, ctx.log_parts, ctx.reset_cooldown)
     ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
     return {"damage": 0, "healing": missing_hp, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
 
@@ -2329,6 +2348,7 @@ def resolve_turn(match: MatchState) -> None:
                 turn_ctx=turn_ctx,
                 rng=r,
                 set_cooldown=set_cooldown,
+                reset_cooldown=reset_cooldown,
                 apply_self_inflicted_magical_damage=apply_self_inflicted_magical_damage,
             )
         )
@@ -2573,6 +2593,7 @@ def resolve_turn(match: MatchState) -> None:
             return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
 
         if not has_damage:
+            _apply_cooldown_resets_on_cast(actor, ability, log_parts, reset_cooldown)
             set_cooldown(actor, ability_id, ability)
             if offensive_action and turn_ctx.stealth_start_at_turn_begin.get(actor_sid, False):
                 remove_stealth(actor)
@@ -3255,6 +3276,7 @@ def resolve_turn(match: MatchState) -> None:
                 )
             log_parts.append(f"{ability.get('name', 'Shield')} grants {absorb_value} absorb.")
 
+        _apply_cooldown_resets_on_cast(actor, ability, log_parts, reset_cooldown)
         set_cooldown(actor, ability_id, ability)
         ctx["damage"] = 0
         ctx["log"] = " ".join(log_parts)
@@ -3452,6 +3474,7 @@ def resolve_turn(match: MatchState) -> None:
         champion_immune_log: str | None = None,
         skip_champion: bool = False,
         damage_instances: list[int] | None = None,
+        max_targets: int | None = None,
     ) -> Dict[str, Any]:
         actor = match.state[actor_sid]
         target = match.state[target_sid]
@@ -3462,6 +3485,9 @@ def resolve_turn(match: MatchState) -> None:
         pet_total_damage = 0
         pet_hits: list[Dict[str, Any]] = []
         aoe_targets = build_aoe_enemy_target_list(target)
+        if max_targets is not None:
+            target_cap = max(0, int(max_targets or 0))
+            aoe_targets = aoe_targets[:target_cap]
         pet_targets = [entity for kind, entity in aoe_targets if kind == "pet"]
         alive_imp_ids = [pet.id for pet in pet_targets if pet and pet.hp > 0 and pet.template_id == "imp"]
         imp_ordinal_by_id = {pid: idx + 1 for idx, pid in enumerate(alive_imp_ids)}
@@ -3820,6 +3846,7 @@ def resolve_turn(match: MatchState) -> None:
             result.get("subschool"),
             skip_champion=True,
             damage_instances=raw_instances if isinstance(raw_instances, list) else None,
+            max_targets=ability.get("max_targets"),
         )
         pet_damage = int(aoe_result.get("pet_total_damage", 0) or 0)
         if pet_damage > 0:

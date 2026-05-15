@@ -3066,6 +3066,12 @@
             <p>Deals physical damage [(Attack x 1.1) + d8]. If empowered, deals [(Attack x 2.0) + d8] once.</p>
           </div>
           <div class="doc-item">
+            <h4>Divine Storm</h4>
+            <p><span class="stat">Cost: 18 Mana</span> | <span class="stat">Type: Magic (Holy, capped AoE)</span> | <span class="stat">Cooldown: 10</span></p>
+            <p><span class="stat">Command: <span class="kbd">divine_storm</span></span></p>
+            <p>Unleashes a divine storm, hitting up to 3 enemy targets total (enemy champion plus enemy pets) for [(Attack x 0.7) + d6] Holy magic damage.</p>
+          </div>
+          <div class="doc-item">
             <h4>Holy Light</h4>
             <p><span class="stat">Cost: 30 Mana</span> | <span class="stat">Cooldown: 0</span></p>
             <p><span class="stat">Command: <span class="kbd">holy_light</span></span></p>
@@ -3087,19 +3093,19 @@
             <h4>Shield of Vengeance</h4>
             <p><span class="stat">Cost: 10 Mana</span> | <span class="stat">Cooldown: 15</span></p>
             <p><span class="stat">Command: <span class="kbd">shield_of_vengeance</span></span></p>
-            <p>Gain an absorb shield for 3 turns [(Attack x 0.8) + d6]. On expiry or full consume, explodes for absorbed total as AoE magic damage.</p>
+            <p>Gain an absorb shield for 3 turns [(Attack x 0.8) + d6]. On expiry or full consume, explodes for absorbed total as AoE Holy magic damage. Its cooldown can be reset by Lay on Hands or Avenging Wrath.</p>
           </div>
           <div class="doc-item">
             <h4>Lay on Hands</h4>
             <p><span class="stat">Cost: 20 Mana</span> | <span class="stat">Cooldown: 50</span></p>
             <p><span class="stat">Command: <span class="kbd">lay_on_hands</span></span></p>
-            <p>Restore your HP to full.</p>
+            <p>Restore your HP to full and reset Shield of Vengeance's cooldown.</p>
           </div>
           <div class="doc-item">
             <h4>Avenging Wrath</h4>
             <p><span class="stat">Cost: 20 Mana</span> | <span class="stat">Cooldown: 20</span></p>
             <p><span class="stat">Command: <span class="kbd">avenging_wrath</span></span></p>
-            <p>For 4 turns, increases outgoing damage by 20%. Also empowers Crusader Strike and Judgment multipliers.</p>
+            <p>For 4 turns, increases outgoing damage by 20%. Also empowers Crusader Strike and Judgment multipliers, and resets Shield of Vengeance's cooldown.</p>
           </div>
         </div>
 
@@ -3519,6 +3525,7 @@
         "Crusader Strike",
         "Judgment",
         "Final Verdict",
+        "Divine Storm",
         "Holy Light",
         "Hammer of Justice",
         "Divine Shield",
@@ -3771,9 +3778,9 @@
 
       const abilityIconCategories = {
         "Physical Attack": ["Overpower", "Victory Rush", "Rampage", "Mortal Strike", "Execute", "Dragon Roar", "Cleave", "Eviscerate", "Shadowstrike", "Ambush", "Maul", "Swipe", "Claw", "Shred", "Rip", "Crusader Strike", "Final Verdict", "Aimed Shot", "Raptor Strike", "Multi-Shot"],
-        "Magical Attack": ["Fireball", "Fire Blast", "Arcane Barrage", "Pyroblast", "Wrath", "Starfire", "Agony", "Corruption", "Unstable Affliction", "Drain Life", "Judgment", "Shield of Vengeance", "Mind Flay", "Mind Blast", "Vampiric Touch", "Devouring Plague", "Penance", "Mindgames", "Shadow Word: Death", "Wildfire Bomb", "Arcane Shot", "Earth Shock", "Flame Shock", "Frost Shock", "Lightning Bolt", "Lava Lash", "Chain Lightning", "Astral Explosion"],
+        "Magical Attack": ["Fireball", "Fire Blast", "Arcane Barrage", "Pyroblast", "Wrath", "Starfire", "Agony", "Corruption", "Unstable Affliction", "Drain Life", "Judgment", "Shield of Vengeance", "Mind Flay", "Mind Blast", "Vampiric Touch", "Devouring Plague", "Penance", "Mindgames", "Shadow Word: Death", "Wildfire Bomb", "Arcane Shot", "Earth Shock", "Flame Shock", "Frost Shock", "Lightning Bolt", "Lava Lash", "Chain Lightning", "Astral Explosion", "Divine Storm"],
         "Single Target": ["Overpower", "Victory Rush", "Rampage", "Mortal Strike", "Execute", "Fireball", "Fire Blast", "Arcane Barrage", "Pyroblast", "Ring of Ice", "Eviscerate", "Shadowstrike", "Ambush", "Maul", "Claw", "Shred", "Rip", "Cheap Shot", "Kidney Shot", "Maim", "Wrath", "Starfire", "Cyclone", "Typhoon", "Agony", "Corruption", "Unstable Affliction", "Drain Life", "Fear", "Crusader Strike", "Judgment", "Final Verdict", "Hammer of Justice", "Mind Flay", "Mind Blast", "Vampiric Touch", "Devouring Plague", "Penance", "Shadow Word: Death", "Wildfire Bomb", "Arcane Shot", "Freezing Trap", "Aimed Shot", "Raptor Strike", "Earth Shock", "Flame Shock", "Frost Shock", "Lightning Bolt", "Lava Lash"],
-        "AoE": ["Dragon Roar", "Cleave", "Swipe", "Shield of Vengeance", "Psychic Scream", "Multi-Shot", "Chain Lightning", "Astral Explosion"],
+        "AoE": ["Dragon Roar", "Cleave", "Swipe", "Shield of Vengeance", "Psychic Scream", "Multi-Shot", "Chain Lightning", "Astral Explosion", "Divine Storm"],
         "Crowd Control": ["Ring of Ice", "Cheap Shot", "Kidney Shot", "Maim", "Cyclone", "Typhoon", "Fear", "Hammer of Justice", "Freezing Trap", "Capacitor Totem"],
         "Immunity": ["Ice Block", "Unending Resolve", "Divine Shield"],
         "Defensive": ["Die by the Sword", "Ignore Pain", "Ice Barrier", "Vanish", "Cloak of Shadows", "Evasion", "Frenzied Regeneration", "Barkskin", "Dark Pact", "Shield of Vengeance", "Power Word: Shield", "Pain Suppression", "Mindgames", "Psychic Scream", "Aspect of the Turtle", "Ancestral Guidance"],

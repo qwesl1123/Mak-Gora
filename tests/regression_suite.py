@@ -6210,8 +6210,111 @@ def scenario_phase0_normal_vs_immediate_parity_ordering_lock() -> bool:
     return True
 
 
+def scenario_paladin_divine_storm_behavior_and_docs() -> bool:
+    ability = ABILITIES.get("divine_storm") or {}
+    assert ability.get("cost", {}).get("mp") == 18, "Divine Storm should cost 18 mana"
+    assert ability.get("cooldown") == 10, "Divine Storm cooldown should be 10"
+    assert ability.get("scaling") == {"atk": 0.7}, "Divine Storm should scale from Attack x 0.7"
+    assert ability.get("dice", {}).get("type") == "d6", "Divine Storm should add d6 damage"
+    assert ability.get("school") == "magical" and ability.get("subschool") == "holy", "Divine Storm should be magical holy damage"
+    assert ability.get("target_mode") == "aoe_enemy" and ability.get("max_targets") == 3, "Divine Storm should use capped enemy AoE targeting"
+
+    match = make_match("paladin", "warlock", seed=7301)
+    paladin_sid, warlock_sid = match.players
+    paladin = match.state[paladin_sid]
+    warlock = match.state[warlock_sid]
+    paladin.stats.update({"atk": 20, "acc": 999, "crit": 0, "spirit": 0})
+    warlock.stats.update({"def": 0, "magic_resist": 0, "eva": 0})
+    warlock.pets["p2_imp_1"] = PetState(id="p2_imp_1", template_id="imp", name="Imp", owner_sid=warlock_sid, hp=40, hp_max=40)
+    warlock.pets["p2_imp_2"] = PetState(id="p2_imp_2", template_id="imp", name="Imp", owner_sid=warlock_sid, hp=40, hp_max=40)
+    warlock.pets["p2_imp_3"] = PetState(id="p2_imp_3", template_id="imp", name="Imp", owner_sid=warlock_sid, hp=40, hp_max=40)
+
+    mp_before = paladin.res.mp
+    champion_hp_before = warlock.res.hp
+    pet_hp_before = {pet_id: pet.hp for pet_id, pet in warlock.pets.items()}
+    submit_turn(match, "divine_storm", _DEF_PASS)
+
+    turn_lines = _turn_lines(match, 1)
+    roll_line = next((line for line in turn_lines if "Roll d6 =" in line), "")
+    roll_match = re.search(r"Roll d6 = (\d+)", roll_line)
+    assert roll_match, "Divine Storm should roll d6"
+    expected_raw = int(paladin.stats["atk"] * 0.7) + int(roll_match.group(1))
+    champion_damage = champion_hp_before - warlock.res.hp
+    assert champion_damage == expected_raw, "Divine Storm should deal [Attack x 0.7 + d6] to the champion before mitigation"
+    assert paladin.res.mp == mp_before - 18 + 2, "Divine Storm should spend exactly 18 mana before the baseline end-of-turn mana regen"
+    assert paladin.cooldowns.get("divine_storm") == [9], "Divine Storm should enter a 10-turn cooldown, ticked to 9 after turn end"
+
+    damaged_pets = [pet_id for pet_id, before in pet_hp_before.items() if warlock.pets[pet_id].hp < before]
+    assert warlock.res.hp < champion_hp_before, "Divine Storm should hit the enemy champion"
+    assert damaged_pets == ["p2_imp_1", "p2_imp_2"], "Divine Storm should deterministically hit the first two enemy pets after the champion"
+    assert len(damaged_pets) + int(warlock.res.hp < champion_hp_before) == 3, "Divine Storm should not exceed 3 total targets"
+    assert warlock.pets["p2_imp_3"].hp == pet_hp_before["p2_imp_3"], "Divine Storm should not hit a fourth enemy target"
+    assert sum(1 for line in turn_lines if "Divine Storm hits" in line) == 2, "Divine Storm should only fan out to two pets when the champion is also hit"
+
+    duel_html = _detect_duel_html_path().read_text()
+    assert "Divine Storm" in duel_html and "divine_storm" in duel_html, "duel.html should document Divine Storm and its command"
+    assert "Cost: 18 Mana" in duel_html and "Cooldown: 10" in duel_html, "duel.html should document Divine Storm cost and cooldown"
+    assert "up to 3 enemy targets total" in duel_html and "[(Attack x 0.7) + d6] Holy magic damage" in duel_html, "duel.html should document Divine Storm targeting and damage"
+    paladin_list_match = re.search(r"const paladinAbilities = \[([^\]]+)\];", duel_html)
+    assert paladin_list_match and "Divine Storm" in paladin_list_match.group(1), "Combat log Paladin ability styling should include Divine Storm"
+    assert "paladinAbilities.forEach((ability)" in duel_html and "log-ability-paladin" in duel_html, "Combat log should use existing Paladin ability color wrapping"
+    assert re.search(r'"Magical Attack": \[[^\]]*"Divine Storm"', duel_html), "Divine Storm docs should be categorized as a magical attack for tooltip/icon metadata"
+    assert re.search(r'"AoE": \[[^\]]*"Divine Storm"', duel_html), "Divine Storm docs should be categorized as AoE for tooltip/icon metadata"
+    assert "data-tip-ability" in duel_html, "Combat log ability mouseover stamping should remain enabled"
+    return True
+
+
+def scenario_paladin_shield_of_vengeance_reset_and_no_unrelated_changes() -> bool:
+    expected_existing_paladin = {
+        "crusader_strike": ({"mp": 0}, 0),
+        "judgment": ({"mp": 5}, 3),
+        "final_verdict": ({"mp": 10}, 6),
+        "holy_light": ({"mp": 30}, 0),
+        "hammer_of_justice": ({"mp": 0}, 15),
+        "divine_shield": ({"mp": 0}, 25),
+        "shield_of_vengeance": ({"mp": 10}, 15),
+        "lay_on_hands": ({"mp": 20}, 50),
+        "avenging_wrath": ({"mp": 20}, 20),
+    }
+    for ability_id, (cost, cooldown) in expected_existing_paladin.items():
+        ability = ABILITIES[ability_id]
+        assert ability.get("cost") == cost, f"{ability_id} cost should be unchanged"
+        assert ability.get("cooldown") == cooldown, f"{ability_id} cooldown should be unchanged"
+    assert ABILITIES["lay_on_hands"].get("cooldown_resets_on_cast") == ["shield_of_vengeance"], "Lay on Hands should only reset Shield of Vengeance"
+    assert ABILITIES["avenging_wrath"].get("cooldown_resets_on_cast") == ["shield_of_vengeance"], "Avenging Wrath should only reset Shield of Vengeance"
+
+    lay_match = make_match("paladin", "warrior", seed=7302)
+    paladin = lay_match.state[lay_match.players[0]]
+    paladin.stats["spirit"] = 0
+    paladin.res.hp -= 25
+    paladin.cooldowns["shield_of_vengeance"] = [12]
+    paladin.cooldowns["judgment"] = [2]
+    submit_turn(lay_match, "lay_on_hands", _DEF_PASS)
+    assert "shield_of_vengeance" not in paladin.cooldowns, "Lay on Hands should reset Shield of Vengeance cooldown"
+    assert paladin.cooldowns.get("judgment") == [1], "Lay on Hands should not reset unrelated Paladin cooldowns"
+    assert any("Shield of Vengeance's cooldown has been reset!" in line for line in _turn_lines(lay_match, 1)), "Lay on Hands reset should be logged"
+
+    wrath_match = make_match("paladin", "warrior", seed=7303)
+    paladin = wrath_match.state[wrath_match.players[0]]
+    paladin.stats["spirit"] = 0
+    paladin.cooldowns["shield_of_vengeance"] = [12]
+    paladin.cooldowns["judgment"] = [2]
+    submit_turn(wrath_match, "avenging_wrath", _DEF_PASS)
+    assert "shield_of_vengeance" not in paladin.cooldowns, "Avenging Wrath should reset Shield of Vengeance cooldown"
+    assert paladin.cooldowns.get("judgment") == [1], "Avenging Wrath should not reset unrelated Paladin cooldowns"
+    assert any("Shield of Vengeance's cooldown has been reset!" in line for line in _turn_lines(wrath_match, 1)), "Avenging Wrath reset should be logged"
+
+    duel_html = _detect_duel_html_path().read_text()
+    assert "Restore your HP to full and reset Shield of Vengeance's cooldown." in duel_html, "Lay on Hands docs should mention Shield of Vengeance reset"
+    assert "resets Shield of Vengeance's cooldown" in duel_html, "Avenging Wrath docs should mention Shield of Vengeance reset"
+    assert "Its cooldown can be reset by Lay on Hands or Avenging Wrath." in duel_html, "Shield of Vengeance docs should mention the reset sources"
+    return True
+
+
 SCENARIOS = [
     scenario_mindgames_lay_on_hands,
+    scenario_paladin_divine_storm_behavior_and_docs,
+    scenario_paladin_shield_of_vengeance_reset_and_no_unrelated_changes,
     scenario_special_handler_healthstone_mindgames_parity,
     scenario_special_handler_innervate_mana_and_cooldown,
     scenario_special_handler_non_handler_baseline_path_unchanged,
