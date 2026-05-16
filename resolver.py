@@ -2789,9 +2789,9 @@ def resolve_turn(match: MatchState) -> None:
                 if death_doubled and reduced > 0:
                     log_parts.append(f"{prefix}Damage Doubled!")
                 if reduced > 0:
-                    log_parts.append(f"{prefix}Deals __DMG_{len(per_hit_damage_values)}__ damage.")
+                    log_parts.append(f"Deals __DMG_{len(per_hit_damage_values)}__ damage.")
                 else:
-                    log_parts.append(f"{prefix}Deals 0 damage.")
+                    log_parts.append("Deals 0 damage.")
 
             if reduced > 0 and on_hit_base_damage == 0:
                 on_hit_base_damage = reduced
