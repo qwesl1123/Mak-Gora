@@ -470,6 +470,19 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "tags": ["absorb"],
         "resolution_layer": "damage_application",
     },
+    "clarity_of_mind": {
+        "type": "status",
+        "name": "Clarity of Mind",
+        "duration": 4,
+        "category": "buff",
+        "dispellable": True,
+        "school": "magical",
+        "subschool": "holy",
+        "stackable": True,
+        "max_stacks": 2,
+        "tags": ["proc"],
+        "resolution_layer": "action_selection_modifiers",
+    },
     "ice_barrier": {
         "type": "status",
         "name": "Ice Barrier",
@@ -989,6 +1002,7 @@ _EFFECT_PANEL_MAGICAL_BUFF_NAMES = {
     "Shield of Vengeance",
     "Avenging Wrath",
     "Power Word: Shield",
+    "Clarity of Mind",
     "Mind Blast empowerment",
     "Final Verdict empowerment",
     "Shadowy Insight",
@@ -1056,6 +1070,7 @@ _EFFECT_PANEL_RAW_NAME_BY_ID: Dict[str, str] = {
     "rip_ready": "Rip proc",
     "mind_blast_empowered": "Mind Blast empowerment",
     "paladin_final_verdict_empowered": "Final Verdict empowerment",
+    "clarity_of_mind": "Clarity of Mind",
 }
 
 _EFFECT_PANEL_DISPLAY_NAMES: Dict[str, str] = {
@@ -1107,6 +1122,7 @@ _EFFECT_PANEL_DESCRIPTION_BY_NAME: Dict[str, str] = {
     "Shield of Vengeance": "Absorb shield that deals damage when it explodes.",
     "Avenging Wrath": "Increases outgoing damage by 20%. Also empowers Crusader Strike and Judgment.",
     "Power Word: Shield": "Absorb shield (can be dispelled).",
+    "Clarity of Mind": "Next Flash Heal or Penance increased by 40%.",
     "Earth Shock": "Outgoing attacks will miss.",
     "Flame Dance": "Next Fire spell’s damage increased by 50%.",
     "Frost Shock": "Frozen and cannot act. Breaks on damage.",
@@ -1463,9 +1479,10 @@ def apply_effect_by_id(
     if is_effect_stackable(effect):
         max_stacks = effect_max_stacks(effect)
         existing = get_effect(target, effect_id)
+        grant_stacks = max(1, int(effect.get("stacks", 1) or 1))
         if existing:
             existing_stacks = effect_stack_count(existing)
-            existing["stacks"] = min(max_stacks, existing_stacks + 1)
+            existing["stacks"] = min(max_stacks, existing_stacks + grant_stacks)
             granted_new_stack = effect_stack_count(existing) > existing_stacks
             if "duration" in effect:
                 existing["duration"] = effect.get("duration")

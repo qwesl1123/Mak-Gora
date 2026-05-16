@@ -124,6 +124,25 @@ def _apply_heal_with_clamp(target: PlayerState, amount: int) -> int:
     return target.res.hp - before_hp
 
 
+CLARITY_OF_MIND_EFFECT_ID = "clarity_of_mind"
+CLARITY_OF_MIND_MULTIPLIER = 1.4
+CLARITY_OF_MIND_ABILITY_IDS = {"flash_heal", "penance", "penance_self"}
+
+
+def _consume_clarity_of_mind_on_cast(actor: PlayerState, ability_id: str) -> bool:
+    if ability_id not in CLARITY_OF_MIND_ABILITY_IDS:
+        return False
+    if not has_effect(actor, CLARITY_OF_MIND_EFFECT_ID):
+        return False
+    consume_effect_stack(actor, CLARITY_OF_MIND_EFFECT_ID, amount=1)
+    return True
+
+
+def _apply_clarity_of_mind_bonus(amount: int, consumed: bool) -> int:
+    if not consumed or amount <= 0:
+        return amount
+    return int(amount * CLARITY_OF_MIND_MULTIPLIER)
+
 
 def _active_live_pet(owner: PlayerState) -> PetState | None:
     active_pet_id = getattr(owner, "active_pet_id", None)
@@ -760,6 +779,7 @@ class SpecialAbilityHandlerContext:
     set_cooldown: Callable[[PlayerState, str, Dict[str, Any]], None]
     reset_cooldown: Callable[[PlayerState, str], None]
     apply_self_inflicted_magical_damage: Callable[[PlayerState, int], int]
+    clarity_of_mind_consumed: bool = False
 
 
 
@@ -853,8 +873,9 @@ def _handle_holy_light_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, A
 
 
 def _handle_flash_heal_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, Any]:
+    clarity_consumed = ctx.clarity_of_mind_consumed
     intellect = modify_stat(ctx.actor, "int", ctx.actor.stats.get("int", 0))
-    heal_value = int(intellect * 0.9) + int(roll("d8", ctx.rng))
+    heal_value = _apply_clarity_of_mind_bonus(int(intellect * 1.5) + int(roll("d8", ctx.rng)), clarity_consumed)
     if has_effect(ctx.actor, "mindgames"):
         ctx.apply_self_inflicted_magical_damage(ctx.actor, heal_value)
         ctx.log_parts.append(f"Mindgames twists healing into {heal_value} self-damage.")
@@ -2256,6 +2277,7 @@ def resolve_turn(match: MatchState) -> None:
         offensive_action = is_offensive_action(ability)
 
         consume_costs(actor, ability.get("cost", {}))
+        clarity_consumed = _consume_clarity_of_mind_on_cast(actor, ability_id)
 
         extra_logs: list[Any] = []
         dice_data = ability.get("dice")
@@ -2350,6 +2372,7 @@ def resolve_turn(match: MatchState) -> None:
                 set_cooldown=set_cooldown,
                 reset_cooldown=reset_cooldown,
                 apply_self_inflicted_magical_damage=apply_self_inflicted_magical_damage,
+                clarity_of_mind_consumed=clarity_consumed,
             )
         )
         if special_ability_result is not None:
@@ -2542,7 +2565,7 @@ def resolve_turn(match: MatchState) -> None:
             healing = 0
             for hit_index in range(1, 4):
                 roll_power = roll("d4", r)
-                heal_value = base_damage(intellect, 0.4, roll_power)
+                heal_value = _apply_clarity_of_mind_bonus(base_damage(intellect, 0.4, roll_power), clarity_consumed)
                 if has_effect(actor, "mindgames"):
                     apply_self_inflicted_magical_damage(actor, heal_value)
                     log_parts.append(f"Hit {hit_index}: Mindgames turns healing into {heal_value} self-damage.")
@@ -2612,6 +2635,8 @@ def resolve_turn(match: MatchState) -> None:
         consume_empower = False
         empower_logged = False
         outgoing_mult = outgoing_damage_multiplier(actor) * (1.0 + (0.04 * onslaught_stacks))
+        if clarity_consumed and ability_id == "penance":
+            outgoing_mult *= CLARITY_OF_MIND_MULTIPLIER
         if offensive_action and has_damage:
             for effect in actor.effects:
                 if effect.get("flags", {}).get("empower_next_offense"):
