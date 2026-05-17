@@ -22,6 +22,9 @@ if __name__ == "__main__":
             print(f"FAIL: {name} -> {reason}")
 
     if failed:
+        print(f"{len(failed)} scenarios failed!")
+        for name, _, reason in failed:
+            print(f"FAIL: {name} -> {reason}")
         sys.exit(1)
 
     print(f"All {len(results)} scenarios passed.")
