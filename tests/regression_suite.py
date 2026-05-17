@@ -3589,8 +3589,8 @@ def scenario_passive_secondary_damage_logs_own_absorb_suffix() -> bool:
             continue
         overpower_line = next((line for line in match.log if "cast Overpower." in line), "")
         assert "absorbed by Power Word: Shield" in thunder_line, "Lightning absorb should be appended to the lightning line"
-        lightning_absorb_segment = thunder_line[thunder_line.rfind("("):]
-        assert lightning_absorb_segment not in overpower_line, "Lightning absorb should not be appended to the primary ability line"
+        assert overpower_line.count("absorbed by Power Word: Shield") == 1, "Primary ability line should only include its own absorb suffix"
+        assert "lightning from Thunderfury" not in overpower_line, "Lightning log text should not be appended to the primary ability line"
         return True
     raise AssertionError("Could not find a deterministic Thunderfury lightning proc seed in range")
 
