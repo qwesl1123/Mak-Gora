@@ -124,6 +124,20 @@ def _apply_heal_with_clamp(target: PlayerState, amount: int) -> int:
     return target.res.hp - before_hp
 
 
+def _apply_mindgames_aware_healing(
+    target: PlayerState,
+    amount: int,
+    apply_self_inflicted_magical_damage: Callable[[PlayerState, int], int],
+) -> tuple[int, bool]:
+    heal_value = max(0, int(amount or 0))
+    if heal_value <= 0:
+        return 0, False
+    if has_effect(target, "mindgames"):
+        apply_self_inflicted_magical_damage(target, heal_value)
+        return 0, True
+    return _apply_heal_with_clamp(target, heal_value), False
+
+
 CLARITY_OF_MIND_EFFECT_ID = "clarity_of_mind"
 CLARITY_OF_MIND_MULTIPLIER = 1.4
 CLARITY_OF_MIND_ABILITY_IDS = {"flash_heal", "penance", "penance_self"}
@@ -2889,10 +2903,16 @@ def resolve_turn(match: MatchState) -> None:
                         roll_power,
                     )
             if reduced > 0 and heal_on_hit > 0:
-                before_hp = actor.res.hp
-                actor.res.hp = min(actor.res.hp + heal_on_hit, actor.res.hp_max)
-                total_healing += actor.res.hp - before_hp
-                log_parts.append(f"{prefix}Heals {heal_on_hit} HP.")
+                healed, twisted_by_mindgames = _apply_mindgames_aware_healing(
+                    actor,
+                    heal_on_hit,
+                    apply_self_inflicted_magical_damage,
+                )
+                total_healing += healed
+                if twisted_by_mindgames:
+                    log_parts.append(f"{prefix}Mindgames twists healing into {heal_on_hit} self-damage.")
+                else:
+                    log_parts.append(f"{prefix}Heals {heal_on_hit} HP.")
 
             total_damage += reduced
 

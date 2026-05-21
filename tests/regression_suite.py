@@ -328,6 +328,42 @@ def scenario_special_handler_healthstone_mindgames_parity() -> bool:
     return True
 
 
+def scenario_generic_on_hit_healing_mindgames_backend() -> bool:
+    normal_match = make_match("warrior", "priest", seed=9128)
+    warrior_sid, priest_sid = normal_match.players
+    warrior = normal_match.state[warrior_sid]
+    priest = normal_match.state[priest_sid]
+    warrior.stats["acc"] = 999
+    priest.stats["agi"] = 0
+    warrior.res.hp = max(1, warrior.res.hp - 50)
+    normal_hp_before = warrior.res.hp
+
+    submit_turn(normal_match, "victory_rush", _DEF_PASS)
+
+    assert warrior.res.hp > normal_hp_before, "Victory Rush should preserve normal on-hit healing without Mindgames"
+    assert normal_match.combat_totals[warrior_sid]["healing"] > 0, "Normal Victory Rush healing should count toward healing totals"
+    normal_turn = _turn_lines(normal_match, 1)
+    assert any("Heals" in line for line in normal_turn), "Normal Victory Rush healing log should be preserved"
+
+    mindgames_match = make_match("warrior", "priest", seed=9128)
+    warrior_sid, priest_sid = mindgames_match.players
+    warrior = mindgames_match.state[warrior_sid]
+    priest = mindgames_match.state[priest_sid]
+    warrior.stats["acc"] = 999
+    priest.stats["agi"] = 0
+    warrior.res.hp = max(1, warrior.res.hp - 50)
+    mindgames_hp_before = warrior.res.hp
+
+    submit_turn(mindgames_match, "victory_rush", "mindgames")
+
+    assert warrior.res.hp < mindgames_hp_before, "Mindgames should turn generic on-hit healing into self-damage"
+    assert mindgames_match.combat_totals[warrior_sid]["healing"] == 0, "Mindgames-twisted on-hit healing should report zero healing"
+    mindgames_turn = _turn_lines(mindgames_match, 1)
+    assert any("Mindgames twists healing into" in line for line in mindgames_turn), "Generic on-hit healing should use backend Mindgames twist logging"
+    assert not any("Heals" in line for line in mindgames_turn), "Twisted Victory Rush should not log normal healing"
+    return True
+
+
 def scenario_special_handler_innervate_mana_and_cooldown() -> bool:
     match = make_match("druid", "warrior", seed=9111)
     druid_sid, _ = match.players
@@ -6478,6 +6514,7 @@ SCENARIOS = [
     scenario_shield_of_vengeance_explosion_uses_absorbed_amount_for_pets,
     scenario_paladin_shield_of_vengeance_reset_and_no_unrelated_changes,
     scenario_special_handler_healthstone_mindgames_parity,
+    scenario_generic_on_hit_healing_mindgames_backend,
     scenario_special_handler_innervate_mana_and_cooldown,
     scenario_special_handler_non_handler_baseline_path_unchanged,
     scenario_special_handler_mass_dispel_parity_and_denial_order,
