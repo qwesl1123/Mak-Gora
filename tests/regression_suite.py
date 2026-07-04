@@ -3672,16 +3672,73 @@ def scenario_dragonwrath_duplicate_log_includes_class_owner_prefix() -> bool:
 def scenario_dragonwrath_multihit_duplicate_logs_as_single_line() -> bool:
     for seed in range(1, 900):
         match = make_match("mage", "warrior", p1_items={"weapon": "dragonwrath"}, seed=seed)
+        target = match.state[match.players[1]]
+        effects.add_absorb(target, 999, source_name="Shield of Vengeance", effect_id="shield_of_vengeance")
         submit_turn(match, "arcane_barrage", _DEF_PASS)
+        main_lines = [line for line in match.log if "cast Arcane Barrage." in line]
         duplicate_lines = [line for line in match.log if "duplicates Arcane Barrage!" in line]
         if not duplicate_lines:
             continue
         assert len(duplicate_lines) == 1, "Dragonwrath duplicate should render Arcane Barrage multi-hit text as one line"
         duplicate_line = duplicate_lines[0]
         assert "Hit 1:" in duplicate_line and "Hit 2:" in duplicate_line and "Hit 3:" in duplicate_line, "Combined duplicate line should include all Arcane Barrage hits"
+        assert "__DMG_" not in duplicate_line, "Dragonwrath Arcane Barrage duplicate should replace every per-hit placeholder"
+        assert "absorbed by Shield of Vengeance" in duplicate_line, "Dragonwrath duplicate should keep absorb suffixes on the duplicate log"
+        assert main_lines and all("__DMG_" not in line for line in main_lines), "main Arcane Barrage multi-hit logs should remain formatted"
         return True
     raise AssertionError("Could not find deterministic Dragonwrath Arcane Barrage duplicate proc seed in range")
 
+
+
+def scenario_passive_damage_event_preserves_multihit_instances_for_formatting_and_absorbs() -> bool:
+    match = make_match("warrior", "priest", seed=123)
+    target = match.state[match.players[1]]
+    effects.add_absorb(target, 25, source_name="Power Word: Shield", effect_id="power_word_shield")
+
+    original_trigger = resolver.trigger_on_hit_passives
+
+    def fake_trigger_on_hit_passives(*args, include_strike_again=False, only_strike_again=False, **kwargs):
+        if include_strike_again or only_strike_again:
+            return 0, [], 0, []
+        return 0, [], 0, [
+            {
+                "incoming": 60,
+                "school": "magic",
+                "log_template": "Passive multi-hit! Hit 1: Deals __DMG_0__ damage. Hit 2: Deals __DMG_1__ damage. Hit 3: Deals __DMG_2__ damage.",
+                "damage_instances": [10, 20, 30],
+            }
+        ]
+
+    resolver.trigger_on_hit_passives = fake_trigger_on_hit_passives
+    try:
+        submit_turn(match, "overpower", _DEF_PASS)
+    finally:
+        resolver.trigger_on_hit_passives = original_trigger
+
+    passive_line = next((line for line in match.log if line.startswith("Passive multi-hit!")), None)
+    assert passive_line is not None, "passive multi-hit damage event should be logged"
+    assert "__DMG_" not in passive_line, "all passive multi-hit damage placeholders should be replaced"
+    assert "Hit 1: Deals 10 damage." in passive_line, "first passive damage instance should stay separate"
+    assert "Hit 2: Deals 20 damage." in passive_line, "second passive damage instance should stay separate"
+    assert "Hit 3: Deals 30 damage." in passive_line, "third passive damage instance should stay separate"
+    assert passive_line.count("absorbed by Power Word: Shield") == 2, "absorbs should be reported against the affected instances"
+
+    single_match = make_match("warrior", "priest", seed=124)
+
+    def fake_single_passive(*args, include_strike_again=False, only_strike_again=False, **kwargs):
+        if include_strike_again or only_strike_again:
+            return 0, [], 0, []
+        return 0, [], 0, [{"incoming": 17, "log_template": "Single passive deals __DMG_0__ damage."}]
+
+    resolver.trigger_on_hit_passives = fake_single_passive
+    try:
+        submit_turn(single_match, "overpower", _DEF_PASS)
+    finally:
+        resolver.trigger_on_hit_passives = original_trigger
+
+    single_line = next((line for line in single_match.log if line.startswith("Single passive deals")), None)
+    assert single_line == "Single passive deals 17 damage.", "single-instance passive damage events should still format correctly"
+    return True
 
 def scenario_dragonwrath_duplicate_drain_life_heals_from_total_landed_damage() -> bool:
     for seed in range(1, 1000):
@@ -6639,6 +6696,7 @@ SCENARIOS = [
     scenario_dragonwrath_duplicate_spell_deals_real_damage,
     scenario_dragonwrath_duplicate_log_includes_class_owner_prefix,
     scenario_dragonwrath_multihit_duplicate_logs_as_single_line,
+    scenario_passive_damage_event_preserves_multihit_instances_for_formatting_and_absorbs,
     scenario_dragonwrath_duplicate_drain_life_heals_from_total_landed_damage,
     scenario_dragonwrath_duplicate_drain_life_does_not_heal_from_fully_absorbed_damage,
     scenario_thunderfury_lightning_uses_damage_pipeline,

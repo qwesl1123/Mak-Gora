@@ -2922,16 +2922,27 @@ def resolve_turn(match: MatchState) -> None:
                 template = event.get("log_template")
                 if incoming <= 0 or not template:
                     continue
-                extra_logs.append(
-                    {
-                        "type": "damage_event",
-                        "source_name": ability.get("name", "attack"),
-                        "incoming": incoming,
-                        "school": event.get("school", "physical"),
-                        "subschool": event.get("subschool"),
-                        "log_template": str(template),
-                    }
-                )
+                queued_event = {
+                    "type": "damage_event",
+                    "source_name": ability.get("name", "attack"),
+                    "incoming": incoming,
+                    "school": event.get("school", "physical"),
+                    "subschool": event.get("subschool"),
+                    "log_template": str(template),
+                }
+                damage_instances = event.get("damage_instances")
+                if isinstance(damage_instances, list):
+                    normalized_instances = []
+                    for value in damage_instances:
+                        try:
+                            normalized_value = max(0, int(value or 0))
+                        except (TypeError, ValueError):
+                            continue
+                        if normalized_value > 0:
+                            normalized_instances.append(normalized_value)
+                    if normalized_instances:
+                        queued_event["damage_instances"] = normalized_instances
+                extra_logs.append(queued_event)
 
         # Apply non-strike-again on-hit passive effects once per ability execution.
         if ability_hit_landed:
