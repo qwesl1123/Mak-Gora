@@ -1,5 +1,6 @@
 # games/duel/engine/resolver.py
 import json
+import math
 from dataclasses import dataclass, field
 from typing import Dict, Any, Tuple, Callable
 from .models import MatchState, PlayerState, PlayerBuild, Resources, PetState
@@ -54,6 +55,8 @@ from .effects import (
     trigger_on_hit_passives,
     damage_multiplier_from_passives,
     resource_gain_multiplier_from_passives,
+    challenger_resource_cost_multiplier,
+    challenger_resource_stance_mode,
     end_of_turn,
     end_of_turn_pet,
     apply_effect_by_id,
@@ -1401,9 +1404,24 @@ def resolve_action_denial_stage(
     }
 
 
+def adjusted_resource_costs(
+    ps: PlayerState,
+    costs: Dict[str, int],
+    *,
+    challenger_mode: str | None = None,
+) -> Dict[str, int]:
+    """Return costs after player-only item passives; Challenger rounds active-resource surcharges up."""
+    adjusted: Dict[str, int] = {}
+    for key, value in (costs or {}).items():
+        base_value = int(value or 0)
+        multiplier = challenger_resource_cost_multiplier(ps, key, mode=challenger_mode)
+        adjusted[key] = int(math.ceil(base_value * multiplier)) if multiplier != 1.0 else base_value
+    return adjusted
+
+
 def can_pay_costs(ps: PlayerState, costs: Dict[str, int]) -> Tuple[bool, str]:
     res = ps.res
-    for key, value in costs.items():
+    for key, value in adjusted_resource_costs(ps, costs).items():
         current = getattr(res, key)
         if current < value:
             return False, str(key)
@@ -1626,9 +1644,9 @@ def resolve_turn(match: MatchState) -> None:
         template = effect_template(effect_id) if effect_id else {}
         return str(effect.get("name") or template.get("name") or effect_name(effect_id or "effect"))
 
-    def consume_costs(ps: PlayerState, costs: Dict[str, int]) -> None:
+    def consume_costs(ps: PlayerState, costs: Dict[str, int], *, challenger_mode: str | None = None) -> None:
         res = ps.res
-        for key, value in costs.items():
+        for key, value in adjusted_resource_costs(ps, costs, challenger_mode=challenger_mode).items():
             new_value = getattr(res, key) - value
             cap = getattr(res, f"{key}_max", None)
             if cap is not None:
@@ -2289,8 +2307,9 @@ def resolve_turn(match: MatchState) -> None:
 
         was_stealthed = has_effect(actor, "stealth")
         offensive_action = is_offensive_action(ability)
+        action_challenger_mode = challenger_resource_stance_mode(actor)
 
-        consume_costs(actor, ability.get("cost", {}))
+        consume_costs(actor, ability.get("cost", {}), challenger_mode=action_challenger_mode)
         clarity_consumed = _consume_clarity_of_mind_on_cast(actor, ability_id)
 
         extra_logs: list[Any] = []
@@ -2756,7 +2775,7 @@ def resolve_turn(match: MatchState) -> None:
                 ability_school=ability_school,
                 ignore_armor=bool(ability.get("ignore_armor") or ability.get("ignore_physical_reduction")),
                 ignore_magic_resist=bool(ability.get("ignore_magic_resist")),
-                passive_damage_multiplier=damage_multiplier_from_passives(actor),
+                passive_damage_multiplier=damage_multiplier_from_passives(actor, challenger_mode=action_challenger_mode),
                 empower_multiplier=empower_multiplier,
                 outgoing_multiplier=outgoing_mult,
                 death_doubled=death_doubled,
@@ -2770,7 +2789,7 @@ def resolve_turn(match: MatchState) -> None:
                     ability_school=ability_school,
                     ignore_armor=bool(ability.get("ignore_armor") or ability.get("ignore_physical_reduction")),
                     ignore_magic_resist=bool(ability.get("ignore_magic_resist")),
-                    passive_damage_multiplier=damage_multiplier_from_passives(actor),
+                    passive_damage_multiplier=damage_multiplier_from_passives(actor, challenger_mode=action_challenger_mode),
                     empower_multiplier=empower_multiplier,
                     outgoing_multiplier=outgoing_mult,
                     death_doubled=death_doubled,
@@ -3258,7 +3277,8 @@ def resolve_turn(match: MatchState) -> None:
             ctx["resolved"] = True
             return
 
-        consume_costs(actor, ability.get("cost", {}))
+        action_challenger_mode = challenger_resource_stance_mode(actor)
+        consume_costs(actor, ability.get("cost", {}), challenger_mode=action_challenger_mode)
 
         if ability.get("target_effects"):
             protection_log = resolve_immediate_target_protection(

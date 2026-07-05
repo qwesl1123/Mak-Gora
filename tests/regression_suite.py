@@ -1071,6 +1071,112 @@ def scenario_rage_crystal_increases_all_rage_gain_sources() -> bool:
     return True
 
 
+
+def scenario_challengers_chestplate_resource_stance() -> bool:
+    high = make_match("mage", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6201)
+    owner = high.state[high.players[0]]
+    assert effects.active_resource_id(owner) == "mp", "Mage active resource should be mana"
+    owner.res.mp = 51
+    assert effects.active_resource_pct(owner) > 0.5, "51/80 mana should be high-resource"
+    assert effects.challenger_resource_stance_mode(owner) == "might", "Challenger mode should be Might above 50% active resource"
+    assert effects.damage_multiplier_from_passives(owner) == 1.10, "Challenger should deal 10% more damage above 50% active resource"
+    duel_html_text = _detect_duel_html_path().read_text(encoding="utf-8")
+    assert "/item armor challengers_chestplate" in duel_html_text, "Challenger's Chestplate should be documented in the static item list"
+    high_panel = effects.build_effect_panel_payload(owner)
+    high_buffs = {entry.get("name") for entry in high_panel["buffs_magical"]}
+    high_debuffs = {entry.get("name") for entry in high_panel["debuffs_magical"]}
+    assert "Challenger's Might" in high_buffs, "Challenger's Might should show above 50% active resource"
+    assert "Challenger's Wrath" not in high_debuffs, "Challenger's Wrath should not show above 50% active resource"
+
+    challenger_effect = next(effect for effect in owner.effects if effect.get("source_item_id") == "challengers_chestplate")
+    assert challenger_effect.get("dispellable") is False, "Challenger item passive should remain non-dispellable"
+    removed = effects.dispel_effects(owner, school="magical")
+    assert removed == 0 and any(effect.get("source_item_id") == "challengers_chestplate" for effect in owner.effects), "Dispel should not remove Challenger item passive"
+
+    owner.res.mp = 40
+    assert effects.active_resource_pct(owner) == 0.5, "40/80 mana should be exactly threshold"
+    assert effects.challenger_resource_stance_mode(owner) == "wrath", "Challenger mode should be Wrath at exactly 50% active resource"
+    assert effects.damage_multiplier_from_passives(owner) == 0.90, "Challenger should use low-resource damage at exactly 50%"
+    threshold_panel = effects.build_effect_panel_payload(owner)
+    threshold_buffs = {entry.get("name") for entry in threshold_panel["buffs_magical"]}
+    threshold_debuffs = {entry.get("name") for entry in threshold_panel["debuffs_magical"]}
+    assert "Challenger's Might" not in threshold_buffs, "Challenger's Might should disappear at exactly 50% active resource"
+    assert "Challenger's Wrath" in threshold_debuffs, "Challenger's Wrath should show at exactly 50% active resource"
+    owner.res.mp = 41
+    crossed_panel = effects.build_effect_panel_payload(owner)
+    assert effects.challenger_resource_stance_mode(owner) == "might", "Challenger mode should update to Might after crossing above 50%"
+    assert "Challenger's Might" in {entry.get("name") for entry in crossed_panel["buffs_magical"]}, "Challenger panel should update back to Might after crossing above 50%"
+    assert "Challenger's Wrath" not in {entry.get("name") for entry in crossed_panel["debuffs_magical"]}, "Challenger panel should hide Wrath after crossing above 50%"
+    owner.res.mp = 39
+    assert effects.damage_multiplier_from_passives(owner) == 0.90, "Challenger should deal 10% less damage below 50% active resource"
+
+    snapshot_match = make_match("mage", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6208)
+    snapshot_actor = snapshot_match.state[snapshot_match.players[0]]
+    snapshot_target = snapshot_match.state[snapshot_match.players[1]]
+    snapshot_actor.res.mp = 41
+    snapshot_start_hp = snapshot_target.res.hp
+    submit_turn(snapshot_match, "fireball", _DEF_PASS)
+    snapshot_damage = snapshot_start_hp - snapshot_target.res.hp
+    assert snapshot_actor.res.mp <= 40, "Fireball's increased Challenger cost should leave the actor at or below 50% after the action"
+    assert effects.challenger_resource_stance_mode(snapshot_actor) == "wrath", "Live Challenger mode should become Wrath after the action spends below threshold"
+
+    low_snapshot_match = make_match("mage", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6208)
+    low_snapshot_actor = low_snapshot_match.state[low_snapshot_match.players[0]]
+    low_snapshot_target = low_snapshot_match.state[low_snapshot_match.players[1]]
+    low_snapshot_actor.res.mp = 40
+    low_snapshot_start_hp = low_snapshot_target.res.hp
+    submit_turn(low_snapshot_match, "fireball", _DEF_PASS)
+    low_snapshot_damage = low_snapshot_start_hp - low_snapshot_target.res.hp
+    assert snapshot_damage > low_snapshot_damage, "An action that starts in Might should not switch to Wrath damage after its cost drops resource below 50%"
+
+    owner.res.mp = 80
+    physical_with_challenger = effects.mitigate_damage(100, owner, "physical")
+    magical_with_challenger = effects.mitigate_damage(100, owner, "magic")
+    owner.effects = [fx for fx in owner.effects if fx.get("source_item_id") != "challengers_chestplate"]
+    physical_without_challenger = effects.mitigate_damage(100, owner, "physical")
+    magical_without_challenger = effects.mitigate_damage(100, owner, "magic")
+    assert physical_with_challenger == int(physical_without_challenger * 0.90), "Challenger should reduce incoming physical damage by 10% above 50%"
+    assert magical_with_challenger == int(magical_without_challenger * 0.90), "Challenger should reduce incoming magical/DoT-path damage by 10% above 50%"
+
+    low = make_match("mage", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6202)
+    low_owner = low.state[low.players[0]]
+    low_owner.res.mp = 40
+    low_physical = effects.mitigate_damage(100, low_owner, "physical")
+    low_owner.effects = [fx for fx in low_owner.effects if fx.get("source_item_id") != "challengers_chestplate"]
+    low_baseline = effects.mitigate_damage(100, low_owner, "physical")
+    assert low_physical == int(low_baseline * 1.10), "Challenger should increase incoming damage by 10% at or below 50%"
+
+    cost_owner = make_match("mage", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6203).state["p1_sid"]
+    cost_owner.res.mp = 80
+    assert resolver.adjusted_resource_costs(cost_owner, {"mp": 11, "hp": 7}) == {"mp": 14, "hp": 7}, "Challenger should ceil active-resource costs by 20% and leave non-active costs unchanged"
+    cost_owner.res.mp = 50
+    ok, fail = resolver.can_pay_costs(cost_owner, {"mp": 42})
+    assert not ok and fail == "mp", "can_pay_costs should reject casts made unaffordable by Challenger's surcharge"
+
+    gain_owner = make_match("mage", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6204).state["p1_sid"]
+    gain_owner.res.mp = 40
+    assert effects.resource_gain_multiplier_from_passives(gain_owner, "mp") == 1.30, "Challenger should boost active resource gains by 30% at or below 50%"
+    assert effects.resource_gain_multiplier_from_passives(gain_owner, "rage") == 1.0, "Challenger should not boost inactive resource gains"
+
+    pet_owner = make_match("hunter", "mage", p1_items={"armor": "challengers_chestplate"}, seed=6205).state["p1_sid"]
+    pet_owner.pets["pet"] = PetState(id="pet", template_id="wolf", name="Wolf", owner_sid="p1_sid", hp=50, hp_max=50, entity_type="beast")
+    pet = pet_owner.pets["pet"]
+    assert not any(fx.get("source_item_id") == "challengers_chestplate" for fx in pet.effects), "Pets should not inherit Challenger outgoing/incoming/resource passives"
+
+    stacked = make_match("warrior", "mage", p1_items={"armor": "challengers_chestplate", "trinket": "rage_crystal"}, seed=6206).state["p1_sid"]
+    stacked.res.rage = 10
+    assert round(effects.resource_gain_multiplier_from_passives(stacked, "rage"), 3) == 1.625, "Challenger and Rage Crystal resource gains should stack multiplicatively"
+    stacked.res.hp = max(1, int(stacked.res.hp_max * 0.2))
+    assert round(effects.damage_multiplier_from_passives(stacked), 3) == 1.035, "Existing damage passives should continue stacking multiplicatively with Challenger"
+
+    druid = make_match("druid", "mage", p1_items={"armor": "challengers_chestplate"}, seed=6207).state["p1_sid"]
+    assert effects.active_resource_id(druid) == "mp", "Druid with no form should use mana"
+    effects.apply_form(druid, "bear_form")
+    assert effects.active_resource_id(druid) == "rage", "Druid Bear Form should use rage"
+    effects.apply_form(druid, "cat_form")
+    assert effects.active_resource_id(druid) == "energy", "Druid Cat Form should use energy"
+    return True
+
 def scenario_item_passive_effect_panel_labels_and_descriptions() -> bool:
     focus_match = make_match("mage", "warrior", p1_items={"trinket": "focus_charm"}, seed=6107)
     focus_owner = focus_match.state[focus_match.players[0]]
@@ -6597,6 +6703,7 @@ SCENARIOS = [
     scenario_iceblock_blocks_same_turn_stun_and_next_turn_attack,
     scenario_aoe_hits_pets_with_immune_champion,
     scenario_rage_crystal_increases_all_rage_gain_sources,
+    scenario_challengers_chestplate_resource_stance,
     scenario_item_passive_effect_panel_labels_and_descriptions,
     scenario_absorb_layering,
     scenario_pet_summon_data_driven,

@@ -1143,6 +1143,8 @@ _EFFECT_PANEL_DESCRIPTION_BY_NAME: Dict[str, str] = {
     "Focus Charm": "Deal 10% more damage",
     "Rage Crystal": "Deal 15% more damage",
     "Crystalized Rage": "Gain 15% more rage from all sources",
+    "Challenger's Might": "Deal 10% more damage and take 10% less damage, but active resource costs 20% more.",
+    "Challenger's Wrath": "Deal 10% less damage and take 10% more damage, but active resource generation is 30% faster.",
 }
 
 _ITEM_PASSIVE_PANEL_EFFECTS_BY_ITEM_ID: Dict[str, tuple[Dict[str, Any], ...]] = {
@@ -1170,6 +1172,22 @@ _ITEM_PASSIVE_PANEL_EFFECTS_BY_ITEM_ID: Dict[str, tuple[Dict[str, Any], ...]] = 
             "visibility": "always",
         },
     ),
+    "challengers_chestplate": (
+        {
+            "name": "Challenger's Might",
+            "description": "Deal 10% more damage and take 10% less damage, but active resource costs 20% more.",
+            "bucket": "buffs_magical",
+            "visibility": "challenger_mode",
+            "mode": "might",
+        },
+        {
+            "name": "Challenger's Wrath",
+            "description": "Deal 10% less damage and take 10% more damage, but active resource generation is 30% faster.",
+            "bucket": "debuffs_magical",
+            "visibility": "challenger_mode",
+            "mode": "wrath",
+        },
+    ),
 }
 
 
@@ -1186,6 +1204,7 @@ def _item_passive_panel_effects(effect: Dict[str, Any], owner: PlayerState) -> t
     hp_pct = 0.0
     if getattr(owner, "res", None):
         hp_pct = owner.res.hp / max(1, owner.res.hp_max)
+    challenger_mode = challenger_resource_stance_mode(owner)
     visible: list[Dict[str, Any]] = []
     for candidate in candidates:
         visibility = str(candidate.get("visibility") or "always")
@@ -1193,6 +1212,8 @@ def _item_passive_panel_effects(effect: Dict[str, Any], owner: PlayerState) -> t
         if visibility == "hp_above" and hp_pct <= threshold:
             continue
         if visibility == "hp_below" and hp_pct >= threshold:
+            continue
+        if visibility == "challenger_mode" and challenger_mode != str(candidate.get("mode") or ""):
             continue
         visible.append(candidate)
     return tuple(visible)
@@ -1765,7 +1786,11 @@ def mitigate_damage(
         ignore_magic_resist=ignore_magic_resist,
     )
     reduced = mitigate(raw, effective_stat)
-    return int(reduced * mitigation_multiplier(target))
+    incoming_multiplier = 1.0
+    challenger_mode = challenger_resource_stance_mode(target)
+    for passive in challenger_resource_stance_passives(target):
+        incoming_multiplier *= float(passive.get("high_incoming_damage_multiplier" if challenger_mode == "might" else "low_incoming_damage_multiplier", 1.0) or 1.0)
+    return int(reduced * mitigation_multiplier(target) * incoming_multiplier)
 
 
 def resolve_incoming_damage(
@@ -2269,7 +2294,77 @@ def trigger_on_hit_passives(
 
     return bonus_damage, log_lines, bonus_healing, damage_events
 
-def damage_multiplier_from_passives(attacker: PlayerState) -> float:
+
+def active_resource_id(player: PlayerState) -> Optional[str]:
+    """Return the player's active non-HP combat resource: mp, rage, or energy."""
+    if not player or not getattr(player, "res", None):
+        return None
+    class_id = str(getattr(getattr(player, "build", None), "class_id", "") or "").strip().lower()
+    if class_id == "druid":
+        form_id = current_form_id(player)
+        if form_id == "bear_form" and getattr(player.res, "rage_max", 0) > 0:
+            return "rage"
+        if form_id == "cat_form" and getattr(player.res, "energy_max", 0) > 0:
+            return "energy"
+        if getattr(player.res, "mp_max", 0) > 0:
+            return "mp"
+    for resource in ("mp", "rage", "energy"):
+        if getattr(player.res, f"{resource}_max", 0) > 0:
+            return resource
+    return None
+
+
+def active_resource_pct(player: PlayerState) -> Optional[float]:
+    resource = active_resource_id(player)
+    if not resource or not getattr(player, "res", None):
+        return None
+    max_value = max(1, int(getattr(player.res, f"{resource}_max", 0) or 0))
+    return float(getattr(player.res, resource, 0) or 0) / max_value
+
+
+def challenger_resource_stance_passives(player: PlayerState) -> list[Dict[str, Any]]:
+    if not player or not getattr(player, "effects", None):
+        return []
+    passives: list[Dict[str, Any]] = []
+    for effect in player.effects:
+        if effect.get("type") != "item_passive":
+            continue
+        passive = effect.get("passive", {}) or {}
+        if passive.get("type") == "challenger_resource_stance":
+            passives.append(passive)
+    return passives
+
+
+def has_challenger_resource_stance(player: PlayerState) -> bool:
+    return bool(challenger_resource_stance_passives(player))
+
+
+def challenger_resource_stance_mode(player: PlayerState) -> Optional[str]:
+    """Return Challenger's current backend stance mode: might, wrath, or None."""
+    pct = active_resource_pct(player)
+    if pct is None:
+        return None
+    for passive in challenger_resource_stance_passives(player):
+        threshold = float(passive.get("threshold", 0.5) or 0.5)
+        # Strictly greater than the threshold is Might; exactly 50% is Wrath.
+        return "might" if pct > threshold else "wrath"
+    return None
+
+def challenger_high_resource(player: PlayerState, passive: Dict[str, Any]) -> bool:
+    return challenger_resource_stance_mode(player) == "might"
+
+
+def challenger_resource_cost_multiplier(player: PlayerState, resource: str, mode: Optional[str] = None) -> float:
+    if active_resource_id(player) != str(resource or "").strip().lower():
+        return 1.0
+    current_mode = challenger_resource_stance_mode(player) if mode is None else mode
+    multiplier = 1.0
+    for passive in challenger_resource_stance_passives(player):
+        if current_mode == "might":
+            multiplier *= float(passive.get("high_resource_cost_multiplier", 1.0) or 1.0)
+    return multiplier
+
+def damage_multiplier_from_passives(attacker: PlayerState, challenger_mode: Optional[str] = None) -> float:
     """Apply conditional damage multipliers from item passives."""
     if not attacker.res:
         return 1.0
@@ -2279,6 +2374,10 @@ def damage_multiplier_from_passives(attacker: PlayerState) -> float:
         if effect.get("type") != "item_passive":
             continue
         passive = effect.get("passive", {}) or {}
+        if passive.get("type") == "challenger_resource_stance":
+            current_mode = challenger_resource_stance_mode(attacker) if challenger_mode is None else challenger_mode
+            multiplier *= float(passive.get("high_damage_multiplier" if current_mode == "might" else "low_damage_multiplier", 1.0) or 1.0)
+            continue
         if passive.get("trigger") != "on_damage":
             continue
         if passive.get("type") == "damage_bonus_above_hp":
@@ -2302,6 +2401,10 @@ def resource_gain_multiplier_from_passives(player: PlayerState, resource: str) -
         if effect.get("type") != "item_passive":
             continue
         passive = effect.get("passive", {}) or {}
+        if passive.get("type") == "challenger_resource_stance":
+            if normalized_resource == active_resource_id(player) and challenger_resource_stance_mode(player) == "wrath":
+                multiplier *= float(passive.get("low_resource_gain_multiplier", 1.0) or 1.0)
+            continue
         if passive.get("type") != "resource_gain_multiplier":
             continue
         passive_resource = str(passive.get("resource", "") or "").strip().lower()
