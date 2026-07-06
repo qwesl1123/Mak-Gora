@@ -7317,6 +7317,36 @@ def scenario_shield_of_vengeance_explosion_uses_absorbed_amount_for_pets() -> bo
     assert champion_damage == imp_damage, "Champion and pet targets should resolve from the same Shield of Vengeance base amount"
     assert champion_line, "Shield of Vengeance champion log should match actual champion damage"
     assert imp_line, "Shield of Vengeance pet log should match actual pet damage"
+
+    def challenger_sov_champion_damage(*, paladin_mp: int) -> int:
+        challenger_match = make_match(
+            "paladin",
+            "warrior",
+            p1_items={"armor": "challengers_chestplate"},
+            seed=7311,
+        )
+        challenger_paladin_sid, challenger_enemy_sid = challenger_match.players
+        challenger_paladin = challenger_match.state[challenger_paladin_sid]
+        challenger_enemy = challenger_match.state[challenger_enemy_sid]
+        challenger_enemy.stats.update({"def": 0, "magic_resist": 0})
+        challenger_paladin.res.mp = paladin_mp
+        effects.apply_effect_by_id(challenger_paladin, "shield_of_vengeance", overrides={"duration": 1})
+        effects.add_absorb(
+            challenger_paladin,
+            expected_explosion_damage,
+            source_name="Shield of Vengeance",
+            effect_id="shield_of_vengeance",
+        )
+        remaining, absorbed, _ = effects.consume_absorbs(challenger_paladin, expected_explosion_damage)
+        assert remaining == 0 and absorbed == expected_explosion_damage, "Challenger SoV setup should absorb the same amount"
+        enemy_hp_before = challenger_enemy.res.hp
+        submit_turn(challenger_match, _DEF_PASS, _DEF_PASS)
+        return enemy_hp_before - challenger_enemy.res.hp
+
+    sov_might_damage = challenger_sov_champion_damage(paladin_mp=41)
+    sov_wrath_damage = challenger_sov_champion_damage(paladin_mp=40)
+    assert sov_might_damage == expected_explosion_damage, "Shield of Vengeance should ignore Challenger Might outgoing modifiers"
+    assert sov_wrath_damage == expected_explosion_damage, "Shield of Vengeance should ignore Challenger Wrath outgoing modifiers"
     assert not any(effect.get("id") == "shield_of_vengeance" for effect in paladin.effects), "Shield of Vengeance should still be removed after exploding"
     return True
 
