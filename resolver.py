@@ -1716,13 +1716,22 @@ def resolve_turn(match: MatchState) -> None:
             return False, None
         return True, untargetable_miss_log(target)
 
-    def grant_resource(player: PlayerState, resource: str, base_amount: int) -> int:
+    def grant_resource(
+        player: PlayerState,
+        resource: str,
+        base_amount: int,
+        *,
+        challenger_mode: str | None | object = _LIVE_CHALLENGER_MODE,
+    ) -> int:
         if not player.res or not hasattr(player.res, resource):
             return 0
         amount = max(0, int(base_amount or 0))
         if amount <= 0:
             return 0
-        multiplier = resource_gain_multiplier_from_passives(player, resource)
+        if challenger_mode is _LIVE_CHALLENGER_MODE:
+            multiplier = resource_gain_multiplier_from_passives(player, resource)
+        else:
+            multiplier = resource_gain_multiplier_from_passives(player, resource, challenger_mode=challenger_mode)
         adjusted = int(amount * multiplier)
         if adjusted <= 0:
             return 0
@@ -2280,10 +2289,17 @@ def resolve_turn(match: MatchState) -> None:
         pet = target.pets.get(pet_id) if pet_id and getattr(target, "pets", None) else None
         return pet if pet and pet.hp > 0 else None
 
-    def target_challenger_mode_for_single_target(target_sid: str, target: PlayerState | PetState) -> str | None:
-        # Challenger is player-only; if Blocking Defence will redirect this hit to a pet,
-        # do not bake the owner's stance into the precomputed damage the pet receives.
-        if single_target_redirect_pet(target) is not None:
+    def target_challenger_mode_for_single_target(
+        target_sid: str,
+        target: PlayerState | PetState,
+        *,
+        allow_redirect: bool = True,
+    ) -> str | None:
+        # Challenger is player-only; only drop the owner's stance when this specific
+        # damage event will actually be redirected to a pet (single-target Blocking
+        # Defence). AoE / on-hit passive procs bypass redirect and still hit the
+        # champion, so they must keep the champion's start-of-turn stance.
+        if allow_redirect and single_target_redirect_pet(target) is not None:
             return None
         return turn_ctx.challenger_mode_by_sid.get(target_sid)
 
@@ -2935,7 +2951,7 @@ def resolve_turn(match: MatchState) -> None:
                     amount = int(gain.get("amount", 0) or 0)
                     if not resource or amount <= 0 or not hasattr(actor.res, resource):
                         continue
-                    gained = grant_resource(actor, resource, amount)
+                    gained = grant_resource(actor, resource, amount, challenger_mode=action_challenger_mode)
                     if gained > 0 and gain.get("log"):
                         log_parts.append(f"{prefix}{gain['log']}")
             heal_on_hit = int(ability.get("heal_on_hit", 0) or 0)
@@ -3009,7 +3025,11 @@ def resolve_turn(match: MatchState) -> None:
                 r,
                 ability=ability,
                 include_strike_again=False,
-                target_challenger_mode=target_challenger_mode_for_single_target(target_sid, target),
+                target_challenger_mode=target_challenger_mode_for_single_target(
+                    target_sid,
+                    target,
+                    allow_redirect=ability_target_mode(ability) != "aoe_enemy",
+                ),
             )
             if bonus_damage > 0:
                 passive_bonus_damage_total += bonus_damage
@@ -3029,7 +3049,11 @@ def resolve_turn(match: MatchState) -> None:
                 ability=ability,
                 include_strike_again=True,
                 only_strike_again=True,
-                target_challenger_mode=target_challenger_mode_for_single_target(target_sid, target),
+                target_challenger_mode=target_challenger_mode_for_single_target(
+                    target_sid,
+                    target,
+                    allow_redirect=ability_target_mode(ability) != "aoe_enemy",
+                ),
             )
             if strike_bonus_damage > 0:
                 passive_bonus_damage_total += strike_bonus_damage
@@ -3048,7 +3072,7 @@ def resolve_turn(match: MatchState) -> None:
                 else:
                     gain_value = int(gain)
                 if gain_value > 0 and hasattr(actor.res, resource):
-                    grant_resource(actor, resource, gain_value)
+                    grant_resource(actor, resource, gain_value, challenger_mode=action_challenger_mode)
 
         mindgames_flip_damage = bool(has_effect(actor, "mindgames") and total_damage > 0)
 

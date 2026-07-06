@@ -2405,8 +2405,16 @@ def damage_multiplier_from_passives(attacker: PlayerState, challenger_mode: Opti
     return multiplier
 
 
-def resource_gain_multiplier_from_passives(player: PlayerState, resource: str) -> float:
-    """Apply item passives that modify resource gains from any source."""
+def resource_gain_multiplier_from_passives(
+    player: PlayerState,
+    resource: str,
+    challenger_mode: Optional[str] | object = _LIVE_CHALLENGER_MODE,
+) -> float:
+    """Apply item passives that modify resource gains from any source.
+
+    ``challenger_mode`` lets callers pin the Challenger stance to a start-of-turn
+    snapshot; by default the live stance is read.
+    """
     if not player.res:
         return 1.0
     multiplier = 1.0
@@ -2416,7 +2424,12 @@ def resource_gain_multiplier_from_passives(player: PlayerState, resource: str) -
             continue
         passive = effect.get("passive", {}) or {}
         if passive.get("type") == "challenger_resource_stance":
-            if normalized_resource == active_resource_id(player) and challenger_resource_stance_mode(player) == "wrath":
+            current_mode = (
+                challenger_resource_stance_mode(player)
+                if challenger_mode is _LIVE_CHALLENGER_MODE
+                else challenger_mode
+            )
+            if normalized_resource == active_resource_id(player) and current_mode == "wrath":
                 multiplier *= float(passive.get("low_resource_gain_multiplier", 1.0) or 1.0)
             continue
         if passive.get("type") != "resource_gain_multiplier":
@@ -2586,9 +2599,15 @@ def end_of_turn(ps: PlayerState, log: List[str], label: str) -> dict[str, Any]:
     total_healing += effect_healing
 
     if ps.res.hp > 0:
+        active_resource = active_resource_id(ps)
         passive_mp_regen = DEFAULTS["mp_regen_per_turn"] + mana_regen_from_spirit(ps)
+        if active_resource == "mp":
+            passive_mp_regen = int(passive_mp_regen * resource_gain_multiplier_from_passives(ps, "mp"))
         ps.res.mp = min(ps.res.mp + passive_mp_regen, ps.res.mp_max)
-        ps.res.energy = min(ps.res.energy + DEFAULTS["energy_regen_per_turn"], ps.res.energy_max)
+        passive_energy_regen = DEFAULTS["energy_regen_per_turn"]
+        if active_resource == "energy":
+            passive_energy_regen = int(passive_energy_regen * resource_gain_multiplier_from_passives(ps, "energy"))
+        ps.res.energy = min(ps.res.energy + passive_energy_regen, ps.res.energy_max)
     return {"damage_sources": damage_sources, "healing_done": total_healing, "self_damage_sources": self_damage_sources}
 
 

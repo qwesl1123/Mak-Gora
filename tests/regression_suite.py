@@ -1245,6 +1245,137 @@ def scenario_challengers_chestplate_resource_stance() -> bool:
     assert effects.active_resource_id(druid) == "energy", "Druid Cat Form should use energy"
     return True
 
+
+def scenario_challengers_chestplate_followup_fixes() -> bool:
+    # ------------------------------------------------------------------
+    # Issue 1: Wrath's resource-gain multiplier must also reach the normal
+    # end-of-turn passive regen for the active resource.
+    # ------------------------------------------------------------------
+    regen_rogue = make_match("rogue", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6301).state["p1_sid"]
+    regen_rogue.res.energy = 0
+    assert effects.challenger_resource_stance_mode(regen_rogue) == "wrath", "Empty energy should put the rogue in Wrath"
+    effects.end_of_turn(regen_rogue, [], "P1")
+    assert regen_rogue.res.energy == int(effects.DEFAULTS["energy_regen_per_turn"] * 1.30), \
+        "Low-resource rogue should regen int(5 * 1.30) energy from end-of-turn passive regen"
+
+    # A mana user (paladin: base regen 4) makes the 30% boost observable after truncation.
+    regen_pal = make_match("paladin", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6302).state["p1_sid"]
+    regen_pal.res.mp = 0
+    pal_base_regen = effects.DEFAULTS["mp_regen_per_turn"] + effects.mana_regen_from_spirit(regen_pal)
+    assert effects.challenger_resource_stance_mode(regen_pal) == "wrath", "Empty mana should put the paladin in Wrath"
+    effects.end_of_turn(regen_pal, [], "P1")
+    assert regen_pal.res.mp == int(pal_base_regen * 1.30), \
+        "Low-resource mana user should get Wrath-multiplied end-of-turn mana regen"
+
+    # Baseline: no Chestplate leaves passive regen untouched.
+    regen_plain = make_match("rogue", "warrior", seed=6303).state["p1_sid"]
+    regen_plain.res.energy = 0
+    effects.end_of_turn(regen_plain, [], "P1")
+    assert regen_plain.res.energy == effects.DEFAULTS["energy_regen_per_turn"], \
+        "Without Challenger, end-of-turn energy regen should be the unmodified default"
+
+    # Baseline: Might (non-Wrath) does not boost regen either.
+    regen_might = make_match("mage", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6304).state["p1_sid"]
+    regen_might.res.mp = 60
+    might_base_regen = effects.DEFAULTS["mp_regen_per_turn"] + effects.mana_regen_from_spirit(regen_might)
+    assert effects.challenger_resource_stance_mode(regen_might) == "might", "60/80 mana should be Might"
+    before_might = regen_might.res.mp
+    effects.end_of_turn(regen_might, [], "P1")
+    assert regen_might.res.mp - before_might == might_base_regen, "Might should not boost end-of-turn regen"
+
+    # ------------------------------------------------------------------
+    # Issue 2: the redirect stance helper must only suppress the champion's
+    # stance for damage that is actually redirected. AoE / on-hit passive
+    # procs bypass Blocking Defence's single-target redirect and still hit
+    # the champion, so they must keep the champion's start-of-turn stance.
+    # ------------------------------------------------------------------
+    def aoe_proc_damage_on_hunter(hunter_mp: int) -> int | None:
+        proc_match = make_match("hunter", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6310)
+        hunter_sid, warrior_sid = proc_match.players
+        hunter = proc_match.state[hunter_sid]
+        warrior = proc_match.state[warrior_sid]
+        submit_turn(proc_match, "call_boar", _DEF_PASS)
+        boar = _active_pet(hunter, "barrens_boar")
+        assert boar is not None, "Boar should be active for the AoE-proc redirect coverage"
+        hunter.res.mp = hunter_mp
+        effects.apply_effect_by_id(hunter, "blocking_defence", overrides={"duration": 1, "redirect_to_pet_id": boar.id})
+        warrior.res.rage = warrior.res.rage_max
+        # Deterministic magical on-hit proc so the Hunter's incoming stance is observable.
+        warrior.effects.append(
+            {
+                "type": "item_passive",
+                "source_item": "Test Blade",
+                "passive": {
+                    "type": "lightning_blast",
+                    "trigger": "on_hit",
+                    "chance": 1.0,
+                    "scaling": {"atk": 5.0},
+                    "dice": None,
+                    "school": "magical",
+                },
+            }
+        )
+        original_dragon_roar = dict(ABILITIES["dragon_roar"])
+        log_start = len(proc_match.log)
+        try:
+            ABILITIES["dragon_roar"] = dict(original_dragon_roar, cannot_miss=True)
+            submit_turn(proc_match, _DEF_PASS, "dragon_roar")
+        finally:
+            ABILITIES["dragon_roar"] = original_dragon_roar
+        proc_value = None
+        for line in proc_match.log[log_start:]:
+            match = re.search(r"blasts the target with lightning.*Deals (\d+) magic damage", line)
+            if match:
+                proc_value = int(match.group(1))
+        return proc_value
+
+    might_proc = aoe_proc_damage_on_hunter(50)  # 50/50 mana -> Might
+    wrath_proc = aoe_proc_damage_on_hunter(0)   # 0/50 mana -> Wrath
+    assert might_proc is not None and wrath_proc is not None, \
+        "AoE on-hit proc should still hit the Hunter even while Blocking Defence has a live redirect pet"
+    assert might_proc < wrath_proc, \
+        "Challenger's incoming modifier must apply to the AoE proc (Might reduces, Wrath increases) despite the redirect pet"
+
+    # ------------------------------------------------------------------
+    # Issue 3: same-action resource gains must use the actor's start-of-turn
+    # Challenger snapshot, not the live stance after the cost is paid.
+    # ------------------------------------------------------------------
+    snap = make_match("mage", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6305).state["p1_sid"]
+    snap.res.mp = 39
+    assert effects.challenger_resource_stance_mode(snap) == "wrath", "39/80 mana is live Wrath"
+    assert effects.resource_gain_multiplier_from_passives(snap, "mp") == 1.30, "Live Wrath still boosts gains for end-of-turn/external callers"
+    assert effects.resource_gain_multiplier_from_passives(snap, "mp", challenger_mode="might") == 1.0, \
+        "A Might start-of-turn snapshot must suppress the Wrath gain boost even when live stance is Wrath"
+    assert effects.resource_gain_multiplier_from_passives(snap, "mp", challenger_mode="wrath") == 1.30, \
+        "A Wrath start-of-turn snapshot keeps the gain boost"
+
+    def crusader_strike_final_mp(start_mp: int) -> int:
+        gain_match = make_match("paladin", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6320)
+        pal = gain_match.state[gain_match.players[0]]
+        pal.res.mp = start_mp
+        original = dict(ABILITIES["crusader_strike"])
+        try:
+            ABILITIES["crusader_strike"] = dict(
+                original, cost={"mp": 20}, resource_gain={"mp": 8}, dice=None, scaling={"atk": 0.4}, cannot_miss=True
+            )
+            submit_turn(gain_match, "crusader_strike", _DEF_PASS)
+        finally:
+            ABILITIES["crusader_strike"] = original
+        return pal.res.mp
+
+    # Might start (36/70): snapshot=Might. Cost 20 * 1.20 (Might surcharge) -> 24, mana 36->12 (live Wrath).
+    # Same-action gain of 8 uses the Might snapshot (x1.0) -> 20, then end-of-turn Wrath regen 4*1.30=5 -> 25.
+    # The pre-fix live-stance grant would boost the gain (8*1.30=10) and yield 27 instead.
+    assert crusader_strike_final_mp(36) == 25, \
+        "Same-action gain for a Might-start actor must not receive Wrath's 1.30x even after the cost drops it below threshold"
+    # Wrath start (34/70): snapshot=Wrath. Cost 20 (no Wrath surcharge), mana 34->14.
+    # Same-action gain 8 * 1.30 = 10 -> 24, then end-of-turn Wrath regen 5 -> 29.
+    assert crusader_strike_final_mp(34) == 29, \
+        "Same-action gain for a Wrath-start actor should still receive Wrath's 1.30x multiplier"
+
+    return True
+
+
 def scenario_item_passive_effect_panel_labels_and_descriptions() -> bool:
     focus_match = make_match("mage", "warrior", p1_items={"trinket": "focus_charm"}, seed=6107)
     focus_owner = focus_match.state[focus_match.players[0]]
@@ -6772,6 +6903,7 @@ SCENARIOS = [
     scenario_aoe_hits_pets_with_immune_champion,
     scenario_rage_crystal_increases_all_rage_gain_sources,
     scenario_challengers_chestplate_resource_stance,
+    scenario_challengers_chestplate_followup_fixes,
     scenario_item_passive_effect_panel_labels_and_descriptions,
     scenario_absorb_layering,
     scenario_pet_summon_data_driven,
