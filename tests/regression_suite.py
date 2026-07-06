@@ -1375,7 +1375,7 @@ def scenario_challengers_chestplate_followup_fixes() -> bool:
     assert might_proc < wrath_proc, \
         "Challenger's incoming modifier must apply to the AoE proc (Might reduces, Wrath increases) despite the redirect pet"
 
-    def queued_single_target_proc_damage(*, boar_hp: int, hunter_mp: int) -> tuple[int | None, int, int]:
+    def queued_single_target_proc_damage(*, boar_hp: int, hunter_mp: int, direct_damage: int) -> tuple[int | None, int, int, int]:
         proc_match = make_match("hunter", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6311)
         hunter_sid, warrior_sid = proc_match.players
         hunter = proc_match.state[hunter_sid]
@@ -1385,6 +1385,7 @@ def scenario_challengers_chestplate_followup_fixes() -> bool:
         assert boar is not None, "Boar should be active for queued single-target proc coverage"
         hunter.res.mp = hunter_mp
         hunter_hp_before = hunter.res.hp
+        expected_hunter_might_proc = effects.resolve_incoming_damage(20, hunter, "magical", challenger_mode="might")
         boar.hp = boar_hp
         effects.apply_effect_by_id(hunter, "blocking_defence", overrides={"duration": 1, "redirect_to_pet_id": boar.id})
         warrior.res.rage = warrior.res.rage_max
@@ -1406,7 +1407,7 @@ def scenario_challengers_chestplate_followup_fixes() -> bool:
         original_mortal_strike = dict(ABILITIES["mortal_strike"])
         log_start = len(proc_match.log)
         try:
-            ABILITIES["mortal_strike"] = dict(original_mortal_strike, dice=None, scaling={}, flat_damage=30, cannot_miss=True)
+            ABILITIES["mortal_strike"] = dict(original_mortal_strike, dice=None, scaling={}, flat_damage=direct_damage, cannot_miss=True)
             submit_turn(proc_match, _DEF_PASS, "mortal_strike")
         finally:
             ABILITIES["mortal_strike"] = original_mortal_strike
@@ -1415,19 +1416,18 @@ def scenario_challengers_chestplate_followup_fixes() -> bool:
             match = re.search(r"blasts the target with lightning.*Deals (\d+) magic damage", line)
             if match:
                 proc_value = int(match.group(1))
-        return proc_value, hunter_hp_before - hunter.res.hp, boar.hp
+        return proc_value, hunter_hp_before - hunter.res.hp, boar.hp, expected_hunter_might_proc
 
-    killed_proc, killed_hunter_damage, killed_boar_hp = queued_single_target_proc_damage(boar_hp=1, hunter_mp=50)
-    expected_might_proc = effects.resolve_incoming_damage(20, owner, "magical", challenger_mode="might")
+    killed_proc, killed_hunter_damage, killed_boar_hp, expected_might_proc = queued_single_target_proc_damage(boar_hp=1, hunter_mp=50, direct_damage=30)
     assert killed_boar_hp <= 0, "Direct redirected hit should kill the Boar before queued proc damage lands"
     assert killed_proc == expected_might_proc, \
         "Queued passive damage that falls through to the Hunter must use the Hunter's start-of-turn Challenger Might mitigation"
     assert killed_hunter_damage == expected_might_proc, "Queued proc damage should be applied to the Hunter after the redirect pet dies"
 
-    survived_proc, survived_hunter_damage, survived_boar_hp = queued_single_target_proc_damage(boar_hp=100, hunter_mp=50)
+    survived_proc, survived_hunter_damage, survived_boar_hp, _ = queued_single_target_proc_damage(boar_hp=30, hunter_mp=50, direct_damage=1)
     assert survived_proc is not None and survived_proc > 0, "Queued passive damage should still be logged when it redirects to a surviving Boar"
     assert survived_hunter_damage == 0, "Queued passive damage redirected to the Boar must not damage the Hunter"
-    assert survived_boar_hp < 100, "Queued passive damage should apply to the surviving Boar"
+    assert survived_boar_hp < 30, "Queued passive damage should apply to the surviving Boar"
     assert survived_proc != expected_might_proc, "Pet-redirected queued passive damage must not use the Hunter's Challenger mitigation"
 
     # ------------------------------------------------------------------
