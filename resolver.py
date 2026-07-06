@@ -2989,7 +2989,7 @@ def resolve_turn(match: MatchState) -> None:
 
         def queue_passive_damage_events(events: list[Dict[str, Any]]) -> None:
             for event in events:
-                incoming = int(event.get("incoming", 0) or 0)
+                incoming = int(event.get("raw_incoming", event.get("incoming", 0)) or 0)
                 template = event.get("log_template")
                 if incoming <= 0 or not template:
                     continue
@@ -2997,11 +2997,12 @@ def resolve_turn(match: MatchState) -> None:
                     "type": "damage_event",
                     "source_name": ability.get("name", "attack"),
                     "incoming": incoming,
+                    "requires_player_mitigation": bool(event.get("raw_incoming") is not None),
                     "school": event.get("school", "physical"),
                     "subschool": event.get("subschool"),
                     "log_template": str(template),
                 }
-                damage_instances = event.get("damage_instances")
+                damage_instances = event.get("raw_damage_instances", event.get("damage_instances"))
                 if isinstance(damage_instances, list):
                     normalized_instances = []
                     for value in damage_instances:
@@ -3517,6 +3518,7 @@ def resolve_turn(match: MatchState) -> None:
         subschool: str | None = None,
         allow_redirect: bool = True,
         resolve_non_player_mitigation: bool = True,
+        resolve_player_mitigation: bool = False,
     ) -> Dict[str, Any]:
         normalized_school = normalize_school(school) or "physical"
         is_player_target = hasattr(target, "res") and target.res is not None
@@ -3535,7 +3537,31 @@ def resolve_turn(match: MatchState) -> None:
                 damage_school=normalized_school,
             ):
                 return _empty_damage_result(school=normalized_school, subschool=subschool, redirect_log=redirect_log)
-        if is_player_target or not resolve_non_player_mitigation:
+        if is_player_target and resolve_player_mitigation:
+            if damage_instances:
+                instance_values = [
+                    resolve_incoming_damage(
+                        int(value or 0),
+                        target,
+                        normalized_school,
+                        challenger_mode=turn_ctx.challenger_mode_by_sid.get(target_sid),
+                    )
+                    for value in damage_instances
+                    if int(value or 0) > 0
+                ]
+                instance_values = [value for value in instance_values if value > 0]
+                incoming = sum(instance_values)
+            else:
+                incoming = resolve_incoming_damage(
+                    incoming,
+                    target,
+                    normalized_school,
+                    challenger_mode=turn_ctx.challenger_mode_by_sid.get(target_sid),
+                )
+                instance_values = [incoming] if incoming > 0 else []
+            if incoming <= 0 or not instance_values:
+                return _empty_damage_result(school=normalized_school, subschool=subschool, redirect_log=redirect_log)
+        elif is_player_target or not resolve_non_player_mitigation:
             if not is_player_target and is_damage_immune(target, "physical" if normalized_school == "physical" else "magic"):
                 return _empty_damage_result(school=normalized_school, subschool=subschool, redirect_log=redirect_log)
             instance_values = _build_damage_instance_values(incoming, damage_instances)
@@ -3925,6 +3951,7 @@ def resolve_turn(match: MatchState) -> None:
                 school=str(entry.get("school") or "physical"),
                 subschool=entry.get("subschool"),
                 allow_redirect=ability_target_mode(ABILITIES.get(result.get("ability_id", ""), {})) != "aoe_enemy",
+                resolve_player_mitigation=bool(entry.get("requires_player_mitigation")),
             )
             dealt_amount = int(dealt_data.get("hp_damage", 0) or 0)
             if dealt_amount > 0:
