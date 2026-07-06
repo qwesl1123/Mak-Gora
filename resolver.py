@@ -2485,6 +2485,8 @@ def resolve_turn(match: MatchState) -> None:
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
 
             split_count = len(enemy_pets)
+            # Astral Explosion is actor-owned outgoing damage: detonate the consumed
+            # absorb pool through the actor's action-time outgoing snapshot.
             outgoing_pool = int(consumed_absorb * action_passive_damage_multiplier)
             per_target = outgoing_pool // split_count
             remainder = outgoing_pool % split_count
@@ -2998,6 +3000,10 @@ def resolve_turn(match: MatchState) -> None:
                 template = event.get("log_template")
                 if incoming <= 0 or not template:
                     continue
+                # raw_incoming means the producer supplied pre-mitigation damage that
+                # must still go through target mitigation when the queued event is
+                # applied. Otherwise incoming is already resolved and should only go
+                # through absorb/HP application.
                 queued_event = {
                     "type": "damage_event",
                     "source_name": ability.get("name", "attack"),
@@ -3037,6 +3043,7 @@ def resolve_turn(match: MatchState) -> None:
                     allow_redirect=ability_target_mode(ability) != "aoe_enemy",
                 ),
                 attacker_challenger_mode=action_challenger_mode,
+                attacker_outgoing_multiplier=action_passive_damage_multiplier,
             )
             if bonus_damage > 0:
                 passive_bonus_damage_total += bonus_damage
@@ -3062,6 +3069,7 @@ def resolve_turn(match: MatchState) -> None:
                     allow_redirect=ability_target_mode(ability) != "aoe_enemy",
                 ),
                 attacker_challenger_mode=action_challenger_mode,
+                attacker_outgoing_multiplier=action_passive_damage_multiplier,
             )
             if strike_bonus_damage > 0:
                 passive_bonus_damage_total += strike_bonus_damage
@@ -3761,6 +3769,9 @@ def resolve_turn(match: MatchState) -> None:
         skip_champion, untargetable_log = aoe_untargetable_resolution(enemy)
         if untargetable_log and untargetable_log.startswith("Target "):
             untargetable_log = f"{sid_token(enemy_sid)} {untargetable_log[len('Target '):] }"
+        # Shield of Vengeance is intentionally flat reflected/exploded damage based
+        # on the absorbed amount, not actor-owned outgoing damage, so Challenger
+        # Might/Wrath and similar outgoing modifiers do not scale this explosion.
         aoe_result = resolve_aoe_enemy_attack(
             owner_sid,
             enemy_sid,

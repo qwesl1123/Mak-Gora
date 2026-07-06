@@ -2066,8 +2066,16 @@ def trigger_on_hit_passives(
     only_strike_again: bool = False,
     target_challenger_mode: Optional[str] | object = _LIVE_CHALLENGER_MODE,
     attacker_challenger_mode: Optional[str] | object = _LIVE_CHALLENGER_MODE,
+    attacker_outgoing_multiplier: Optional[float] = None,
 ) -> tuple[int, List[str], int, List[Dict[str, Any]]]:
-    """Run attacker item passives that trigger on_hit."""
+    """Run attacker item passives that trigger on_hit.
+
+    ``attacker_outgoing_multiplier`` is the action-time outgoing snapshot from
+    the resolver. When provided, freshly computed proc formulas use that scalar
+    directly rather than re-reading attacker state after the primary hit may have
+    changed HP/resources. Strike-again effects derive from already resolved hit
+    damage and intentionally do not use it.
+    """
     bonus_damage = 0
     bonus_healing = 0
     log_lines: List[str] = []
@@ -2075,10 +2083,12 @@ def trigger_on_hit_passives(
     # Attacker-side outgoing damage stance (e.g. Challenger's Might/Wrath) applies
     # to freshly computed proc damage, mirroring the primary hit's damage step. It
     # is applied before target mitigation, which keeps target_challenger_mode as
-    # the only incoming modifier.
-    attacker_outgoing_multiplier = damage_multiplier_from_passives(
-        attacker, challenger_mode=attacker_challenger_mode
-    )
+    # the only incoming modifier. Prefer the resolver's action-time scalar so
+    # same-action procs cannot observe later HP/resource mutations.
+    if attacker_outgoing_multiplier is None:
+        attacker_outgoing_multiplier = damage_multiplier_from_passives(
+            attacker, challenger_mode=attacker_challenger_mode
+        )
     for effect in attacker.effects:
         if effect.get("type") != "item_passive":
             continue
