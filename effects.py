@@ -2065,12 +2065,20 @@ def trigger_on_hit_passives(
     include_strike_again: bool = True,
     only_strike_again: bool = False,
     target_challenger_mode: Optional[str] | object = _LIVE_CHALLENGER_MODE,
+    attacker_challenger_mode: Optional[str] | object = _LIVE_CHALLENGER_MODE,
 ) -> tuple[int, List[str], int, List[Dict[str, Any]]]:
     """Run attacker item passives that trigger on_hit."""
     bonus_damage = 0
     bonus_healing = 0
     log_lines: List[str] = []
     damage_events: List[Dict[str, Any]] = []
+    # Attacker-side outgoing damage stance (e.g. Challenger's Might/Wrath) applies
+    # to freshly computed proc damage, mirroring the primary hit's damage step. It
+    # is applied before target mitigation, which keeps target_challenger_mode as
+    # the only incoming modifier.
+    attacker_outgoing_multiplier = damage_multiplier_from_passives(
+        attacker, challenger_mode=attacker_challenger_mode
+    )
     for effect in attacker.effects:
         if effect.get("type") != "item_passive":
             continue
@@ -2123,6 +2131,8 @@ def trigger_on_hit_passives(
             roll_power = roll(dice, rng) if dice else 0
             intellect = modify_stat(attacker, "int", attacker.stats.get("int", 0))
             raw = int(intellect * int_multiplier) + int(roll_power)
+            if attacker_outgoing_multiplier != 1.0:
+                raw = int(raw * attacker_outgoing_multiplier)
             if raw <= 0:
                 continue
             reduced = mitigate_damage(raw, target, "magic", challenger_mode=target_challenger_mode)
@@ -2162,6 +2172,8 @@ def trigger_on_hit_passives(
                     scaling["int"],
                     roll_power,
                 )
+            if attacker_outgoing_multiplier != 1.0:
+                raw = int(raw * attacker_outgoing_multiplier)
             if raw <= 0:
                 continue
             reduced = mitigate_damage(raw, target, "magic", challenger_mode=target_challenger_mode)
@@ -2270,6 +2282,8 @@ def trigger_on_hit_passives(
                         scaling["int"],
                         roll_power,
                     )
+                if attacker_outgoing_multiplier != 1.0:
+                    duplicate_raw = int(duplicate_raw * attacker_outgoing_multiplier)
                 if duplicate_raw <= 0:
                     continue
 

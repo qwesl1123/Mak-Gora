@@ -3031,6 +3031,7 @@ def resolve_turn(match: MatchState) -> None:
                     target,
                     allow_redirect=ability_target_mode(ability) != "aoe_enemy",
                 ),
+                attacker_challenger_mode=action_challenger_mode,
             )
             if bonus_damage > 0:
                 passive_bonus_damage_total += bonus_damage
@@ -3055,6 +3056,7 @@ def resolve_turn(match: MatchState) -> None:
                     target,
                     allow_redirect=ability_target_mode(ability) != "aoe_enemy",
                 ),
+                attacker_challenger_mode=action_challenger_mode,
             )
             if strike_bonus_damage > 0:
                 passive_bonus_damage_total += strike_bonus_damage

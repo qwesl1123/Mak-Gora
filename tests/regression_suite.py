@@ -1470,6 +1470,156 @@ def scenario_challengers_chestplate_followup_fixes() -> bool:
     return True
 
 
+def scenario_challengers_chestplate_on_hit_proc_outgoing_stance() -> bool:
+    # ------------------------------------------------------------------
+    # The attacker's Challenger outgoing damage stance (Might/Wrath) must
+    # scale freshly-computed on-hit proc damage (lightning_blast/void_blade,
+    # Thunderfury-style, and duplicate_offensive_spell) exactly like the
+    # primary hit, while the target's incoming stance stays an independent
+    # modifier and strike_again (derived from the resolved primary hit) is
+    # never double-multiplied.
+    # ------------------------------------------------------------------
+    lightning_passive = {
+        "type": "item_passive",
+        "source_item": "Test Thunderfury",
+        "passive": {
+            "type": "lightning_blast",
+            "trigger": "on_hit",
+            "chance": 1.0,
+            "scaling": {"atk": 2.0},
+            "dice": None,
+            "school": "magical",
+        },
+    }
+
+    # -- Attacker outgoing stance drives proc damage against a fixed target --
+    def lightning_proc(attacker_mode: str) -> int:
+        match = make_match("warrior", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6350)
+        attacker = match.state[match.players[0]]
+        target = match.state[match.players[1]]
+        attacker.stats["atk"] = 40
+        attacker.effects.append(dict(lightning_passive, passive=dict(lightning_passive["passive"])))
+        bonus_damage, _, _, _ = effects.trigger_on_hit_passives(
+            attacker,
+            target,
+            base_damage=10,
+            damage_type="physical",
+            rng=random.Random(11),
+            ability=None,
+            include_strike_again=False,
+            attacker_challenger_mode=attacker_mode,
+        )
+        return bonus_damage
+
+    might_proc = lightning_proc("might")
+    wrath_proc = lightning_proc("wrath")
+    assert might_proc > 0 and wrath_proc > 0, "Deterministic lightning_blast proc should deal damage in both stances"
+    assert might_proc > wrath_proc, \
+        "Attacker Challenger Might must produce a higher on-hit proc than Wrath against the same target"
+
+    # -- Target incoming stance stays independent of the attacker stance --
+    def lightning_proc_vs_challenger_target(target_mode: str) -> int:
+        match = make_match(
+            "warrior",
+            "warrior",
+            p1_items={"armor": "challengers_chestplate"},
+            p2_items={"armor": "challengers_chestplate"},
+            seed=6351,
+        )
+        attacker = match.state[match.players[0]]
+        target = match.state[match.players[1]]
+        attacker.stats["atk"] = 40
+        attacker.effects.append(dict(lightning_passive, passive=dict(lightning_passive["passive"])))
+        bonus_damage, _, _, _ = effects.trigger_on_hit_passives(
+            attacker,
+            target,
+            base_damage=10,
+            damage_type="physical",
+            rng=random.Random(11),
+            ability=None,
+            include_strike_again=False,
+            target_challenger_mode=target_mode,
+            attacker_challenger_mode="might",
+        )
+        return bonus_damage
+
+    target_might_proc = lightning_proc_vs_challenger_target("might")
+    target_wrath_proc = lightning_proc_vs_challenger_target("wrath")
+    assert target_might_proc > 0 and target_wrath_proc > 0, "Proc against a Challenger target should still land"
+    assert target_might_proc < target_wrath_proc, \
+        "Target Challenger Might must reduce incoming proc damage while Wrath increases it, independent of the attacker stance"
+
+    # -- Dragonwrath-style duplicate_offensive_spell honours attacker stance --
+    duplicate_passive = {
+        "type": "item_passive",
+        "source_item": "Test Dragonwrath",
+        "passive": {"type": "duplicate_offensive_spell", "trigger": "on_hit", "chance": 1.0},
+    }
+    duplicate_ability = {
+        "name": "Test Bolt",
+        "tags": ["attack", "spell"],
+        "damage_type": "magic",
+        "scaling": {"int": 2.0},
+        "dice": None,
+    }
+
+    def duplicate_proc(attacker_mode: str) -> int:
+        match = make_match("mage", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6352)
+        attacker = match.state[match.players[0]]
+        target = match.state[match.players[1]]
+        attacker.stats["int"] = 40
+        attacker.effects.append(dict(duplicate_passive, passive=dict(duplicate_passive["passive"])))
+        bonus_damage, _, _, _ = effects.trigger_on_hit_passives(
+            attacker,
+            target,
+            base_damage=10,
+            damage_type="magic",
+            rng=random.Random(11),
+            ability=duplicate_ability,
+            include_strike_again=False,
+            attacker_challenger_mode=attacker_mode,
+        )
+        return bonus_damage
+
+    might_duplicate = duplicate_proc("might")
+    wrath_duplicate = duplicate_proc("wrath")
+    assert might_duplicate > 0 and wrath_duplicate > 0, "Duplicate spell proc should deal damage in both stances"
+    assert might_duplicate > wrath_duplicate, \
+        "Attacker Challenger Might must scale duplicated spell damage higher than Wrath"
+
+    # -- strike_again is derived from the resolved hit and must not be re-scaled --
+    strike_passive = {
+        "type": "item_passive",
+        "source_item": "Test Strike Blade",
+        "passive": {"type": "strike_again", "trigger": "on_hit", "chance": 1.0, "multiplier": 0.5},
+    }
+
+    def strike_again_bonus(attacker_mode: str) -> int:
+        match = make_match("warrior", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6353)
+        attacker = match.state[match.players[0]]
+        target = match.state[match.players[1]]
+        attacker.effects.append(dict(strike_passive, passive=dict(strike_passive["passive"])))
+        bonus_damage, _, _, _ = effects.trigger_on_hit_passives(
+            attacker,
+            target,
+            base_damage=100,
+            damage_type="physical",
+            rng=random.Random(11),
+            ability=None,
+            include_strike_again=True,
+            only_strike_again=True,
+            attacker_challenger_mode=attacker_mode,
+        )
+        return bonus_damage
+
+    might_strike = strike_again_bonus("might")
+    wrath_strike = strike_again_bonus("wrath")
+    assert might_strike == 50 and wrath_strike == 50, \
+        "strike_again derives from the resolved primary hit and must not receive the attacker Challenger multiplier"
+
+    return True
+
+
 def scenario_item_passive_effect_panel_labels_and_descriptions() -> bool:
     focus_match = make_match("mage", "warrior", p1_items={"trinket": "focus_charm"}, seed=6107)
     focus_owner = focus_match.state[focus_match.players[0]]
@@ -6998,6 +7148,7 @@ SCENARIOS = [
     scenario_rage_crystal_increases_all_rage_gain_sources,
     scenario_challengers_chestplate_resource_stance,
     scenario_challengers_chestplate_followup_fixes,
+    scenario_challengers_chestplate_on_hit_proc_outgoing_stance,
     scenario_item_passive_effect_panel_labels_and_descriptions,
     scenario_absorb_layering,
     scenario_pet_summon_data_driven,
