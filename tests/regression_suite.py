@@ -1622,6 +1622,68 @@ def scenario_challengers_chestplate_on_hit_proc_outgoing_stance() -> bool:
 
 
 def scenario_challengers_chestplate_wildfire_dot_outgoing_snapshot() -> bool:
+    def cast_from_dealt_damage_dot(*, hunter_mp: int) -> tuple[int, int]:
+        ability_id = "test_challenger_from_dealt_dot"
+        effect_id = "test_challenger_from_dealt_dot_effect"
+        original_ability = ABILITIES.get(ability_id)
+        original_effect = EFFECT_TEMPLATES.get(effect_id)
+        ABILITIES[ability_id] = {
+            "name": "Challenger Rupture Test",
+            "requires_target": True,
+            "cannot_miss": True,
+            "flat_damage": 24,
+            "damage_type": "magic",
+            "school": "magical",
+            "subschool": "fire",
+            "dot": {"id": effect_id, "duration": 2, "from_dealt_damage": True},
+            "tags": ["attack", "spell"],
+            "classes": ["hunter"],
+        }
+        EFFECT_TEMPLATES[effect_id] = {
+            "type": "dot",
+            "name": "Challenger Rupture Test DoT",
+            "duration": 2,
+            "category": "dot",
+            "school": "magical",
+            "subschool": "fire",
+            "tick_damage": 1,
+        }
+        try:
+            match = make_match("hunter", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=9010)
+            hunter_sid, warrior_sid = match.players
+            hunter = match.state[hunter_sid]
+            warrior = match.state[warrior_sid]
+            hunter.res.mp = hunter_mp
+            hunter.stats["crit"] = 0
+            hunter.stats["hit"] = 999
+
+            submit_turn(match, ability_id, _DEF_PASS)
+
+            turn_one_log = "\n".join(_turn_lines(match, 1))
+            direct_match = re.search(r"Challenger Rupture Test\. Deals (\d+) damage", turn_one_log)
+            dot = next((fx for fx in warrior.effects if fx.get("id") == effect_id), None)
+            assert direct_match is not None, "from_dealt_damage Challenger test direct hit should land"
+            assert dot is not None, "from_dealt_damage Challenger test should apply its DoT"
+            direct_damage = int(direct_match.group(1))
+            stored_tick_damage = int(dot.get("tick_damage", 0) or 0)
+            assert stored_tick_damage == direct_damage // 2, "from_dealt_damage DoT should store resolved direct damage divided by duration without a second Challenger multiplier"
+            return direct_damage, stored_tick_damage
+        finally:
+            if original_ability is None:
+                ABILITIES.pop(ability_id, None)
+            else:
+                ABILITIES[ability_id] = original_ability
+            if original_effect is None:
+                EFFECT_TEMPLATES.pop(effect_id, None)
+            else:
+                EFFECT_TEMPLATES[effect_id] = original_effect
+
+    might_from_dealt_direct, might_from_dealt_stored = cast_from_dealt_damage_dot(hunter_mp=50)
+    wrath_from_dealt_direct, wrath_from_dealt_stored = cast_from_dealt_damage_dot(hunter_mp=25)
+    assert might_from_dealt_direct > wrath_from_dealt_direct, "from_dealt_damage direct hit should still reflect Challenger Might versus Wrath"
+    assert might_from_dealt_stored == might_from_dealt_direct // 2, "Might from_dealt_damage DoT must not double-scale after resolved direct damage"
+    assert wrath_from_dealt_stored == wrath_from_dealt_direct // 2, "Wrath from_dealt_damage DoT must not double-scale after resolved direct damage"
+
     def cast_wildfire(*, hunter_mp: int, challenger: bool) -> tuple[int, int, int, int, int]:
         match = make_match(
             "hunter",
