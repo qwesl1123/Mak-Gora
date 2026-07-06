@@ -2133,6 +2133,7 @@ def trigger_on_hit_passives(
                 damage_events.append(
                     {
                         "incoming": reduced,
+                        "raw_incoming": raw,
                         "school": normalize_school(passive.get("school") or "magical"),
                         "subschool": passive.get("subschool"),
                         "log_template": (
@@ -2171,6 +2172,7 @@ def trigger_on_hit_passives(
                 damage_events.append(
                     {
                         "incoming": reduced,
+                        "raw_incoming": raw,
                         "school": normalize_school(passive.get("school") or "magical"),
                         "subschool": passive.get("subschool"),
                         "log_template": (
@@ -2241,7 +2243,9 @@ def trigger_on_hit_passives(
             owner_class = class_display_name((attacker.build.class_id or "").strip().lower()) if attacker.build else "Player"
             duplicate_prefix = f"{owner_class}(you)'s {item_name}"
             duplicate_damage = 0
+            duplicate_raw_damage = 0
             per_hit_reduced: list[int] = []
+            per_hit_raw: list[int] = []
             hit_segments: list[str] = []
             for hit_index in range(1, hits + 1):
                 roll_power = 0
@@ -2278,7 +2282,9 @@ def trigger_on_hit_passives(
                     continue
 
                 duplicate_damage += duplicate_reduced
+                duplicate_raw_damage += duplicate_raw
                 per_hit_reduced.append(duplicate_reduced)
+                per_hit_raw.append(duplicate_raw)
                 if hits > 1:
                     if dice_type:
                         hit_segments.append(f"Hit {hit_index}: Roll {dice_type} = {roll_power}. Deals __DMG_{len(per_hit_reduced) - 1}__ damage.")
@@ -2296,7 +2302,9 @@ def trigger_on_hit_passives(
             damage_events.append(
                 {
                     "incoming": duplicate_damage,
+                    "raw_incoming": duplicate_raw_damage,
                     "damage_instances": per_hit_reduced,
+                    "raw_damage_instances": per_hit_raw,
                     "school": spell_school,
                     "subschool": spell_subschool,
                     "log_template": f"{duplicate_prefix} duplicates {ability_name}! {' '.join(hit_segments)}",
