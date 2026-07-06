@@ -1678,6 +1678,85 @@ def scenario_challengers_chestplate_wildfire_dot_outgoing_snapshot() -> bool:
             else:
                 EFFECT_TEMPLATES[effect_id] = original_effect
 
+    def cast_focus_independent_dot(*, focus_charm: bool, incoming_after_action: bool) -> tuple[int, int, int]:
+        ability_id = "test_focus_independent_dot"
+        effect_id = "test_focus_independent_dot_effect"
+        counter_ability_id = "test_focus_threshold_hit"
+        original_ability = ABILITIES.get(ability_id)
+        original_counter_ability = ABILITIES.get(counter_ability_id)
+        original_effect = EFFECT_TEMPLATES.get(effect_id)
+        ABILITIES[ability_id] = {
+            "name": "Focus Ember Test",
+            "requires_target": True,
+            "cannot_miss": True,
+            "flat_damage": 20,
+            "damage_type": "magic",
+            "school": "magical",
+            "subschool": "fire",
+            "dot": {"id": effect_id, "duration": 2, "tick_damage": 10, "school": "magical", "subschool": "fire"},
+            "tags": ["attack", "spell"],
+            "classes": ["hunter"],
+        }
+        ABILITIES[counter_ability_id] = {
+            "name": "Heavy Test Strike",
+            "requires_target": True,
+            "cannot_miss": True,
+            "flat_damage": 45,
+            "damage_type": "physical",
+            "school": "physical",
+            "tags": ["attack"],
+            "classes": ["warrior"],
+        }
+        EFFECT_TEMPLATES[effect_id] = {
+            "type": "dot",
+            "name": "Focus Ember Test DoT",
+            "duration": 2,
+            "category": "dot",
+            "school": "magical",
+            "subschool": "fire",
+            "tick_damage": 1,
+        }
+        try:
+            match = make_match(
+                "hunter",
+                "warrior",
+                p1_items={"trinket": "focus_charm"} if focus_charm else None,
+                seed=9011,
+            )
+            hunter_sid, warrior_sid = match.players
+            hunter = match.state[hunter_sid]
+            warrior = match.state[warrior_sid]
+            hunter.stats["crit"] = 0
+            hunter.stats["hit"] = 999
+
+            submit_turn(match, ability_id, counter_ability_id if incoming_after_action else _DEF_PASS)
+
+            turn_one_log = "\n".join(_turn_lines(match, 1))
+            direct_match = re.search(r"Focus Ember Test\. Deals (\d+) damage", turn_one_log)
+            dot = next((fx for fx in warrior.effects if fx.get("id") == effect_id), None)
+            assert direct_match is not None, "Focus independent DoT test direct hit should land"
+            assert dot is not None, "Focus independent DoT test should apply its DoT"
+            return int(direct_match.group(1)), int(dot.get("tick_damage", 0) or 0), hunter.res.hp
+        finally:
+            if original_ability is None:
+                ABILITIES.pop(ability_id, None)
+            else:
+                ABILITIES[ability_id] = original_ability
+            if original_counter_ability is None:
+                ABILITIES.pop(counter_ability_id, None)
+            else:
+                ABILITIES[counter_ability_id] = original_counter_ability
+            if original_effect is None:
+                EFFECT_TEMPLATES.pop(effect_id, None)
+            else:
+                EFFECT_TEMPLATES[effect_id] = original_effect
+
+    focus_direct, focus_stored, focus_end_hp = cast_focus_independent_dot(focus_charm=True, incoming_after_action=True)
+    baseline_direct, baseline_stored, _ = cast_focus_independent_dot(focus_charm=False, incoming_after_action=False)
+    assert focus_end_hp < 70, "Counter hit should move the Focus Charm actor below its HP threshold after action calculation"
+    assert focus_direct > baseline_direct, "Independent DoT direct hit should use the action-time Focus Charm outgoing multiplier"
+    assert focus_stored == int(baseline_stored * 1.10), "Independent DoT tick_damage should use the same action-time Focus Charm multiplier as the direct hit"
+
     might_from_dealt_direct, might_from_dealt_stored = cast_from_dealt_damage_dot(hunter_mp=50)
     wrath_from_dealt_direct, wrath_from_dealt_stored = cast_from_dealt_damage_dot(hunter_mp=25)
     assert might_from_dealt_direct > wrath_from_dealt_direct, "from_dealt_damage direct hit should still reflect Challenger Might versus Wrath"
