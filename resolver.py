@@ -2718,6 +2718,10 @@ def resolve_turn(match: MatchState) -> None:
         consume_empower = False
         empower_logged = False
         outgoing_mult = outgoing_damage_multiplier(actor) * (1.0 + (0.04 * onslaught_stacks))
+        action_passive_damage_multiplier = damage_multiplier_from_passives(
+            actor,
+            challenger_mode=action_challenger_mode,
+        )
         if clarity_consumed and ability_id == "penance":
             outgoing_mult *= CLARITY_OF_MIND_MULTIPLIER
         if offensive_action and has_damage:
@@ -2825,7 +2829,7 @@ def resolve_turn(match: MatchState) -> None:
                 ability_school=ability_school,
                 ignore_armor=bool(ability.get("ignore_armor") or ability.get("ignore_physical_reduction")),
                 ignore_magic_resist=bool(ability.get("ignore_magic_resist")),
-                passive_damage_multiplier=damage_multiplier_from_passives(actor, challenger_mode=action_challenger_mode),
+                passive_damage_multiplier=action_passive_damage_multiplier,
                 empower_multiplier=empower_multiplier,
                 outgoing_multiplier=outgoing_mult,
                 death_doubled=death_doubled,
@@ -2839,7 +2843,7 @@ def resolve_turn(match: MatchState) -> None:
                     ability_school=ability_school,
                     ignore_armor=bool(ability.get("ignore_armor") or ability.get("ignore_physical_reduction")),
                     ignore_magic_resist=bool(ability.get("ignore_magic_resist")),
-                    passive_damage_multiplier=damage_multiplier_from_passives(actor, challenger_mode=action_challenger_mode),
+                    passive_damage_multiplier=action_passive_damage_multiplier,
                     empower_multiplier=empower_multiplier,
                     outgoing_multiplier=outgoing_mult,
                     death_doubled=death_doubled,
@@ -3137,6 +3141,7 @@ def resolve_turn(match: MatchState) -> None:
             "pre_logs": pre_log_parts,
             "extra_logs": extra_logs,
             "ability_id": ability_id,
+            "passive_damage_multiplier": action_passive_damage_multiplier,
             "mindgames_flip_damage": mindgames_flip_damage,
             "skip_direct_target_damage": aoe_skip_champion,
         }
@@ -3897,7 +3902,7 @@ def resolve_turn(match: MatchState) -> None:
                 )
             else:
                 tick_damage = int(dot_data.get("tick_damage", 0) or 0)
-            tick_damage = max(1, int(tick_damage))
+            tick_damage = max(1, int(tick_damage * float(result.get("passive_damage_multiplier", 1.0) or 1.0)))
         refreshed = False
         if dot_id and refresh_dot_effect(
             target,

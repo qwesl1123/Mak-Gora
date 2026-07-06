@@ -1620,6 +1620,204 @@ def scenario_challengers_chestplate_on_hit_proc_outgoing_stance() -> bool:
     return True
 
 
+
+def scenario_challengers_chestplate_wildfire_dot_outgoing_snapshot() -> bool:
+    def cast_from_dealt_damage_dot(*, hunter_mp: int) -> tuple[int, int]:
+        ability_id = "test_challenger_from_dealt_dot"
+        effect_id = "test_challenger_from_dealt_dot_effect"
+        original_ability = ABILITIES.get(ability_id)
+        original_effect = EFFECT_TEMPLATES.get(effect_id)
+        ABILITIES[ability_id] = {
+            "name": "Challenger Rupture Test",
+            "requires_target": True,
+            "cannot_miss": True,
+            "flat_damage": 24,
+            "damage_type": "magic",
+            "school": "magical",
+            "subschool": "fire",
+            "dot": {"id": effect_id, "duration": 2, "from_dealt_damage": True},
+            "tags": ["attack", "spell"],
+            "classes": ["hunter"],
+        }
+        EFFECT_TEMPLATES[effect_id] = {
+            "type": "dot",
+            "name": "Challenger Rupture Test DoT",
+            "duration": 2,
+            "category": "dot",
+            "school": "magical",
+            "subschool": "fire",
+            "tick_damage": 1,
+        }
+        try:
+            match = make_match("hunter", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=9010)
+            hunter_sid, warrior_sid = match.players
+            hunter = match.state[hunter_sid]
+            warrior = match.state[warrior_sid]
+            hunter.res.mp = hunter_mp
+            hunter.stats["crit"] = 0
+            hunter.stats["hit"] = 999
+
+            submit_turn(match, ability_id, _DEF_PASS)
+
+            turn_one_log = "\n".join(_turn_lines(match, 1))
+            direct_match = re.search(r"Challenger Rupture Test\. Deals (\d+) damage", turn_one_log)
+            dot = next((fx for fx in warrior.effects if fx.get("id") == effect_id), None)
+            assert direct_match is not None, "from_dealt_damage Challenger test direct hit should land"
+            assert dot is not None, "from_dealt_damage Challenger test should apply its DoT"
+            direct_damage = int(direct_match.group(1))
+            stored_tick_damage = int(dot.get("tick_damage", 0) or 0)
+            assert stored_tick_damage == direct_damage // 2, "from_dealt_damage DoT should store resolved direct damage divided by duration without a second Challenger multiplier"
+            return direct_damage, stored_tick_damage
+        finally:
+            if original_ability is None:
+                ABILITIES.pop(ability_id, None)
+            else:
+                ABILITIES[ability_id] = original_ability
+            if original_effect is None:
+                EFFECT_TEMPLATES.pop(effect_id, None)
+            else:
+                EFFECT_TEMPLATES[effect_id] = original_effect
+
+    def cast_focus_independent_dot(*, focus_charm: bool, incoming_after_action: bool) -> tuple[int, int, int]:
+        ability_id = "test_focus_independent_dot"
+        effect_id = "test_focus_independent_dot_effect"
+        counter_ability_id = "test_focus_threshold_hit"
+        original_ability = ABILITIES.get(ability_id)
+        original_counter_ability = ABILITIES.get(counter_ability_id)
+        original_effect = EFFECT_TEMPLATES.get(effect_id)
+        ABILITIES[ability_id] = {
+            "name": "Focus Ember Test",
+            "requires_target": True,
+            "cannot_miss": True,
+            "flat_damage": 20,
+            "damage_type": "magic",
+            "school": "magical",
+            "subschool": "fire",
+            "dot": {"id": effect_id, "duration": 2, "tick_damage": 10, "school": "magical", "subschool": "fire"},
+            "tags": ["attack", "spell"],
+            "classes": ["hunter"],
+        }
+        ABILITIES[counter_ability_id] = {
+            "name": "Heavy Test Strike",
+            "requires_target": True,
+            "cannot_miss": True,
+            "flat_damage": 45,
+            "damage_type": "physical",
+            "school": "physical",
+            "tags": ["attack"],
+            "classes": ["warrior"],
+        }
+        EFFECT_TEMPLATES[effect_id] = {
+            "type": "dot",
+            "name": "Focus Ember Test DoT",
+            "duration": 2,
+            "category": "dot",
+            "school": "magical",
+            "subschool": "fire",
+            "tick_damage": 1,
+        }
+        try:
+            match = make_match(
+                "hunter",
+                "warrior",
+                p1_items={"trinket": "focus_charm"} if focus_charm else None,
+                seed=9011,
+            )
+            hunter_sid, warrior_sid = match.players
+            hunter = match.state[hunter_sid]
+            warrior = match.state[warrior_sid]
+            hunter.stats["crit"] = 0
+            hunter.stats["hit"] = 999
+
+            submit_turn(match, ability_id, counter_ability_id if incoming_after_action else _DEF_PASS)
+
+            turn_one_log = "\n".join(_turn_lines(match, 1))
+            direct_match = re.search(r"Focus Ember Test\. Deals (\d+) damage", turn_one_log)
+            dot = next((fx for fx in warrior.effects if fx.get("id") == effect_id), None)
+            assert direct_match is not None, "Focus independent DoT test direct hit should land"
+            assert dot is not None, "Focus independent DoT test should apply its DoT"
+            return int(direct_match.group(1)), int(dot.get("tick_damage", 0) or 0), hunter.res.hp
+        finally:
+            if original_ability is None:
+                ABILITIES.pop(ability_id, None)
+            else:
+                ABILITIES[ability_id] = original_ability
+            if original_counter_ability is None:
+                ABILITIES.pop(counter_ability_id, None)
+            else:
+                ABILITIES[counter_ability_id] = original_counter_ability
+            if original_effect is None:
+                EFFECT_TEMPLATES.pop(effect_id, None)
+            else:
+                EFFECT_TEMPLATES[effect_id] = original_effect
+
+    focus_direct, focus_stored, focus_end_hp = cast_focus_independent_dot(focus_charm=True, incoming_after_action=True)
+    baseline_direct, baseline_stored, _ = cast_focus_independent_dot(focus_charm=False, incoming_after_action=False)
+    assert focus_end_hp < 70, "Counter hit should move the Focus Charm actor below its HP threshold after action calculation"
+    assert focus_direct > baseline_direct, "Independent DoT direct hit should use the action-time Focus Charm outgoing multiplier"
+    assert focus_stored == int(baseline_stored * 1.10), "Independent DoT tick_damage should use the same action-time Focus Charm multiplier as the direct hit"
+
+    might_from_dealt_direct, might_from_dealt_stored = cast_from_dealt_damage_dot(hunter_mp=50)
+    wrath_from_dealt_direct, wrath_from_dealt_stored = cast_from_dealt_damage_dot(hunter_mp=25)
+    assert might_from_dealt_direct > wrath_from_dealt_direct, "from_dealt_damage direct hit should still reflect Challenger Might versus Wrath"
+    assert might_from_dealt_stored == might_from_dealt_direct // 2, "Might from_dealt_damage DoT must not double-scale after resolved direct damage"
+    assert wrath_from_dealt_stored == wrath_from_dealt_direct // 2, "Wrath from_dealt_damage DoT must not double-scale after resolved direct damage"
+
+    def cast_wildfire(*, hunter_mp: int, challenger: bool) -> tuple[int, int, int, int, int]:
+        match = make_match(
+            "hunter",
+            "warrior",
+            p1_items={"armor": "challengers_chestplate"} if challenger else None,
+            seed=9002,
+        )
+        hunter_sid, warrior_sid = match.players
+        hunter = match.state[hunter_sid]
+        warrior = match.state[warrior_sid]
+        hunter.res.mp = hunter_mp
+        hunter.stats["crit"] = 0
+        hunter.stats["hit"] = 999
+
+        submit_turn(match, "wildfire_bomb", _DEF_PASS)
+
+        turn_one_log = "\n".join(_turn_lines(match, 1))
+        direct_match = re.search(r"Wildfire Bomb\. Roll d8 = \d+\. Deals (\d+) damage", turn_one_log)
+        tick_match = re.search(r"suffers (\d+) damage from Wildfire Burn", turn_one_log)
+        dot = next((fx for fx in warrior.effects if fx.get("id") == "wildfire_burn"), None)
+        assert direct_match is not None, "Wildfire Bomb direct hit should land for Challenger DoT coverage"
+        assert tick_match is not None, "Wildfire Burn should tick after the direct-damage application turn"
+        assert dot is not None, "Wildfire Burn should remain stored for its future tick"
+        stored_tick_damage = int(dot.get("tick_damage", 0) or 0)
+        expected_mitigated_tick = effects.mitigate_damage(stored_tick_damage, warrior, "magical")
+        assert int(tick_match.group(1)) == expected_mitigated_tick, "Same-turn Wildfire Burn tick should use stored damage after target mitigation"
+
+        hp_before_second_tick = warrior.res.hp
+        submit_turn(match, _DEF_PASS, _DEF_PASS)
+        turn_two_log = "\n".join(_turn_lines(match, 2))
+        future_tick_match = re.search(r"suffers (\d+) damage from Wildfire Burn", turn_two_log)
+        assert future_tick_match is not None, "Wildfire Burn should tick again on the following turn"
+        future_tick_damage = int(future_tick_match.group(1))
+        assert future_tick_damage == expected_mitigated_tick, "Future Wildfire Burn tick should follow the stored tick damage after normal target mitigation"
+        assert hp_before_second_tick - warrior.res.hp == expected_mitigated_tick, "Future Wildfire Burn HP loss should match the stored mitigated tick"
+        return int(direct_match.group(1)), stored_tick_damage, int(tick_match.group(1)), future_tick_damage, hunter.res.mp
+
+    might_direct, might_stored, might_tick, might_future_tick, might_end_mp = cast_wildfire(hunter_mp=50, challenger=True)
+    wrath_direct, wrath_stored, wrath_tick, wrath_future_tick, _ = cast_wildfire(hunter_mp=25, challenger=True)
+    assert might_direct > wrath_direct, "Wildfire Bomb direct hit should be higher in Challenger Might than Wrath"
+    assert might_stored > wrath_stored, "Stored Wildfire Burn tick_damage should be higher in Challenger Might than Wrath"
+    assert might_tick > wrath_tick and might_future_tick > wrath_future_tick, "Wildfire Burn ticks should reflect the stored Challenger-adjusted tick_damage"
+
+    crossing_direct, crossing_stored, crossing_tick, _, crossing_end_mp = cast_wildfire(hunter_mp=26, challenger=True)
+    assert crossing_end_mp <= 25, "Wildfire Bomb should spend the Hunter from Might into live Wrath for the crossing-threshold case"
+    assert crossing_direct == might_direct, "Crossing-threshold Wildfire Bomb direct hit should use the start-of-turn Might snapshot"
+    assert crossing_stored == might_stored, "Crossing-threshold Wildfire Burn tick_damage should use the start-of-turn Might snapshot"
+    assert crossing_tick == might_tick, "Crossing-threshold Wildfire Burn tick should use the Might-snapshotted stored value"
+
+    baseline_direct, baseline_stored, baseline_tick, baseline_future_tick, _ = cast_wildfire(hunter_mp=50, challenger=False)
+    assert baseline_direct == 11, "Baseline non-Challenger Wildfire Bomb direct hit should remain unchanged for the deterministic roll"
+    assert baseline_stored == 8, "Baseline non-Challenger Wildfire Burn stored tick_damage should remain unchanged"
+    assert baseline_tick == 6 and baseline_future_tick == 6, "Baseline Wildfire Burn ticks should remain unchanged after target mitigation"
+    return True
+
 def scenario_item_passive_effect_panel_labels_and_descriptions() -> bool:
     focus_match = make_match("mage", "warrior", p1_items={"trinket": "focus_charm"}, seed=6107)
     focus_owner = focus_match.state[focus_match.players[0]]
@@ -7149,6 +7347,7 @@ SCENARIOS = [
     scenario_challengers_chestplate_resource_stance,
     scenario_challengers_chestplate_followup_fixes,
     scenario_challengers_chestplate_on_hit_proc_outgoing_stance,
+    scenario_challengers_chestplate_wildfire_dot_outgoing_snapshot,
     scenario_item_passive_effect_panel_labels_and_descriptions,
     scenario_absorb_layering,
     scenario_pet_summon_data_driven,
