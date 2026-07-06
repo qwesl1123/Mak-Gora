@@ -1196,6 +1196,21 @@ def scenario_challengers_chestplate_resource_stance() -> bool:
     stacked.res.hp = max(1, int(stacked.res.hp_max * 0.2))
     assert round(effects.damage_multiplier_from_passives(stacked), 3) == 1.035, "Existing damage passives should continue stacking multiplicatively with Challenger"
 
+    focus_warrior = make_match("warrior", "mage", p1_items={"armor": "challengers_chestplate", "trinket": "focus_charm"}, seed=6210).state["p1_sid"]
+    focus_warrior.res.rage = 60
+    focus_warrior.res.mp = focus_warrior.res.mp_max
+    assert effects.active_resource_id(focus_warrior) == "rage", "Warrior should use rage even when Focus Charm grants a mana pool"
+    assert effects.challenger_resource_stance_mode(focus_warrior) == "might", "Warrior Challenger stance should key off rage, not item-granted mana"
+    assert resolver.adjusted_resource_costs(focus_warrior, {"rage": 11, "mp": 5}) == {"rage": 14, "mp": 5}, "Challenger should surcharge the warrior active rage cost only"
+
+    rage_rogue = make_match("rogue", "mage", p1_items={"armor": "challengers_chestplate", "trinket": "rage_crystal"}, seed=6211).state["p1_sid"]
+    rage_rogue.res.energy = 50
+    rage_rogue.res.rage = rage_rogue.res.rage_max
+    assert effects.active_resource_id(rage_rogue) == "energy", "Rogue should use energy even when Rage Crystal grants a rage pool"
+    assert effects.challenger_resource_stance_mode(rage_rogue) == "wrath", "Rogue Challenger stance should key off energy, not item-granted rage"
+    assert effects.resource_gain_multiplier_from_passives(rage_rogue, "energy") == 1.30, "Challenger Wrath should boost rogue active energy gains"
+    assert effects.resource_gain_multiplier_from_passives(rage_rogue, "rage") == 1.25, "Rage Crystal should still boost rage without inheriting Challenger's active-resource bonus"
+
     druid = make_match("druid", "mage", p1_items={"armor": "challengers_chestplate"}, seed=6207).state["p1_sid"]
     assert effects.active_resource_id(druid) == "mp", "Druid with no form should use mana"
     effects.apply_form(druid, "bear_form")

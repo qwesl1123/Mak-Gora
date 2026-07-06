@@ -2308,7 +2308,7 @@ def trigger_on_hit_passives(
 
 
 def active_resource_id(player: PlayerState) -> Optional[str]:
-    """Return the player's active non-HP combat resource: mp, rage, or energy."""
+    """Return the player's class/form active non-HP combat resource: mp, rage, or energy."""
     if not player or not getattr(player, "res", None):
         return None
     class_id = str(getattr(getattr(player, "build", None), "class_id", "") or "").strip().lower()
@@ -2318,11 +2318,12 @@ def active_resource_id(player: PlayerState) -> Optional[str]:
             return "rage"
         if form_id == "cat_form" and getattr(player.res, "energy_max", 0) > 0:
             return "energy"
-        if getattr(player.res, "mp_max", 0) > 0:
-            return "mp"
-    for resource in ("mp", "rage", "energy"):
-        if getattr(player.res, f"{resource}_max", 0) > 0:
-            return resource
+        return "mp" if getattr(player.res, "mp_max", 0) > 0 else None
+
+    class_resource = ((CLASSES.get(class_id, {}) or {}).get("resource_display", {}) or {}).get("primary", {})
+    resource = str(class_resource.get("id") or "").strip().lower()
+    if resource in ("mp", "rage", "energy") and getattr(player.res, f"{resource}_max", 0) > 0:
+        return resource
     return None
 
 
