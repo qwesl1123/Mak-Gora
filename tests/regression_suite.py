@@ -1283,6 +1283,45 @@ def scenario_challengers_chestplate_followup_fixes() -> bool:
     effects.end_of_turn(regen_might, [], "P1")
     assert regen_might.res.mp - before_might == might_base_regen, "Might should not boost end-of-turn regen"
 
+    # Status-effect resource regen should use the same active-resource gain multiplier.
+    effect_regen_rogue = make_match("rogue", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6330).state["p1_sid"]
+    effect_regen_rogue.res.energy = 0
+    effect_regen_rogue.effects.append({"id": "test_energy_regen", "name": "Test Energy Regen", "regen": {"energy": 7}})
+    effect_log: list[str] = []
+    effects.trigger_end_of_turn_effects(effect_regen_rogue, effect_log, "P1")
+    assert effect_regen_rogue.res.energy == int(7 * 1.30), \
+        "Low-resource rogue should get Wrath-multiplied status-effect energy regen"
+    assert any("9 Energy" in line for line in effect_log), "Status-effect Energy log should show the adjusted amount"
+
+    effect_regen_pal = make_match("paladin", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6331).state["p1_sid"]
+    effect_regen_pal.res.mp = 0
+    effect_regen_pal.effects.append({"id": "test_mana_regen", "name": "Test Mana Regen", "regen": {"mp": 7}})
+    effect_log = []
+    effects.trigger_end_of_turn_effects(effect_regen_pal, effect_log, "P1")
+    assert effect_regen_pal.res.mp == int(7 * 1.30), \
+        "Low-resource mana user should get Wrath-multiplied status-effect mana regen"
+    assert any("9 Mana" in line for line in effect_log), "Status-effect Mana log should show the adjusted amount"
+
+    effect_regen_might = make_match("mage", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6332).state["p1_sid"]
+    effect_regen_might.res.mp = 60
+    effect_regen_might.effects.append({"id": "test_might_mana_regen", "name": "Test Might Mana Regen", "regen": {"mp": 7}})
+    before_effect_might = effect_regen_might.res.mp
+    effects.trigger_end_of_turn_effects(effect_regen_might, [], "P1")
+    assert effect_regen_might.res.mp - before_effect_might == 7, "Might should not boost status-effect resource regen"
+
+    effect_regen_plain = make_match("rogue", "warrior", seed=6333).state["p1_sid"]
+    effect_regen_plain.res.energy = 0
+    effect_regen_plain.effects.append({"id": "test_plain_energy_regen", "name": "Test Plain Energy Regen", "regen": {"energy": 7}})
+    effects.trigger_end_of_turn_effects(effect_regen_plain, [], "P1")
+    assert effect_regen_plain.res.energy == 7, "Without Challenger, status-effect energy regen should remain unchanged"
+
+    hp_regen = make_match("mage", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6334).state["p1_sid"]
+    hp_regen.res.mp = 0
+    hp_regen.res.hp = hp_regen.res.hp_max - 7
+    hp_regen.effects.append({"id": "test_hp_regen", "name": "Test HP Regen", "regen": {"hp": 7}})
+    effects.trigger_end_of_turn_effects(hp_regen, [], "P1")
+    assert hp_regen.res.hp == hp_regen.res.hp_max, "Status-effect HP regen should not be multiplied by Challenger Wrath"
+
     # ------------------------------------------------------------------
     # Issue 2: the redirect stance helper must only suppress the champion's
     # stance for damage that is actually redirected. AoE / on-hit passive
