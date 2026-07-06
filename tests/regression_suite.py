@@ -1156,6 +1156,32 @@ def scenario_challengers_chestplate_resource_stance() -> bool:
     assert effects.challenger_resource_stance_mode(sim_p2) == "wrath", "P2 live mode should be Wrath after spending below threshold"
     assert p1_damage_taken == p2_damage_taken, "Simultaneous Chestplate Fireballs should use start-of-turn target Might snapshots symmetrically"
 
+    def redirected_boar_damage_for_hunter_mana(mana: int) -> int:
+        redirect_match = make_match("hunter", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6212)
+        hunter_sid, warrior_sid = redirect_match.players
+        hunter = redirect_match.state[hunter_sid]
+        warrior = redirect_match.state[warrior_sid]
+        submit_turn(redirect_match, "call_boar", _DEF_PASS)
+        boar = _active_pet(hunter, "barrens_boar")
+        assert boar is not None, "Boar should be active for Challenger redirect coverage"
+        hunter.res.mp = mana
+        effects.apply_effect_by_id(hunter, "blocking_defence", overrides={"duration": 1, "redirect_to_pet_id": boar.id})
+        warrior.res.rage = warrior.res.rage_max
+        original_mortal_strike = dict(ABILITIES["mortal_strike"])
+        try:
+            ABILITIES["mortal_strike"] = dict(original_mortal_strike, dice=None, scaling={}, flat_damage=30, cannot_miss=True)
+            hunter_hp_before = hunter.res.hp
+            boar_hp_before = boar.hp
+            submit_turn(redirect_match, _DEF_PASS, "mortal_strike")
+        finally:
+            ABILITIES["mortal_strike"] = original_mortal_strike
+        assert hunter.res.hp == hunter_hp_before, "Blocking Defence should redirect the single-target hit away from the Hunter"
+        return boar_hp_before - boar.hp
+
+    might_redirect_damage = redirected_boar_damage_for_hunter_mana(41)
+    wrath_redirect_damage = redirected_boar_damage_for_hunter_mana(20)
+    assert might_redirect_damage == wrath_redirect_damage, "Redirected pet damage should not change with the Hunter's Challenger stance"
+
     owner.res.mp = 80
     physical_with_challenger = effects.mitigate_damage(100, owner, "physical")
     magical_with_challenger = effects.mitigate_damage(100, owner, "magic")

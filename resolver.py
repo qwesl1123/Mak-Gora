@@ -2269,6 +2269,24 @@ def resolve_turn(match: MatchState) -> None:
         )
         return result.missed, result.miss_log, result.skip_aoe_champion, result.aoe_immune_log
 
+    def single_target_redirect_pet(target: PlayerState | PetState) -> PetState | None:
+        if not hasattr(target, "pets") or not has_flag(target, "redirect_single_target_to_pet"):
+            return None
+        redirect_effect = next(
+            (fx for fx in target.effects if (fx.get("flags", {}) or {}).get("redirect_single_target_to_pet")),
+            None,
+        )
+        pet_id = (redirect_effect or {}).get("redirect_to_pet_id")
+        pet = target.pets.get(pet_id) if pet_id and getattr(target, "pets", None) else None
+        return pet if pet and pet.hp > 0 else None
+
+    def target_challenger_mode_for_single_target(target_sid: str, target: PlayerState | PetState) -> str | None:
+        # Challenger is player-only; if Blocking Defence will redirect this hit to a pet,
+        # do not bake the owner's stance into the precomputed damage the pet receives.
+        if single_target_redirect_pet(target) is not None:
+            return None
+        return turn_ctx.challenger_mode_by_sid.get(target_sid)
+
 
     def resolve_action(actor_sid: str, target_sid: str, action: Dict[str, Any]) -> Dict[str, Any]:
         selection = resolve_action_selection_modifiers(turn_ctx, actor_sid, target_sid, action)
@@ -2809,7 +2827,7 @@ def resolve_turn(match: MatchState) -> None:
                     empower_multiplier=empower_multiplier,
                     outgoing_multiplier=outgoing_mult,
                     death_doubled=death_doubled,
-                    target_challenger_mode=turn_ctx.challenger_mode_by_sid.get(target_sid),
+                    target_challenger_mode=target_challenger_mode_for_single_target(target_sid, target),
                 )
             elif raw_for_hit > 0:
                 aoe_raw_damage += raw_for_hit
@@ -2991,7 +3009,7 @@ def resolve_turn(match: MatchState) -> None:
                 r,
                 ability=ability,
                 include_strike_again=False,
-                target_challenger_mode=turn_ctx.challenger_mode_by_sid.get(target_sid),
+                target_challenger_mode=target_challenger_mode_for_single_target(target_sid, target),
             )
             if bonus_damage > 0:
                 passive_bonus_damage_total += bonus_damage
@@ -3011,7 +3029,7 @@ def resolve_turn(match: MatchState) -> None:
                 ability=ability,
                 include_strike_again=True,
                 only_strike_again=True,
-                target_challenger_mode=turn_ctx.challenger_mode_by_sid.get(target_sid),
+                target_challenger_mode=target_challenger_mode_for_single_target(target_sid, target),
             )
             if strike_bonus_damage > 0:
                 passive_bonus_damage_total += strike_bonus_damage
