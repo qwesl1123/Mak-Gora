@@ -1757,6 +1757,43 @@ def scenario_challengers_chestplate_wildfire_dot_outgoing_snapshot() -> bool:
     assert focus_direct > baseline_direct, "Independent DoT direct hit should use the action-time Focus Charm outgoing multiplier"
     assert focus_stored == int(baseline_stored * 1.10), "Independent DoT tick_damage should use the same action-time Focus Charm multiplier as the direct hit"
 
+    def cast_challenger_pure_dot(class_id: str, ability_id: str, dot_id: str, *, mp: int) -> tuple[int, int]:
+        match = make_match(class_id, "warrior", p1_items={"armor": "challengers_chestplate"}, seed=9020)
+        actor_sid, target_sid = match.players
+        actor = match.state[actor_sid]
+        target = match.state[target_sid]
+        actor.res.mp = mp
+        actor.stats["acc"] = 999
+        actor.stats["crit"] = 0
+        if ability_id == "devouring_plague":
+            effects.apply_effect_by_id(actor, "shadowy_insight")
+
+        submit_turn(match, ability_id, _DEF_PASS)
+
+        dot = next((fx for fx in target.effects if fx.get("id") == dot_id), None)
+        assert dot is not None, f"{ability_id} should apply its pure DoT"
+        return int(dot.get("tick_damage", 0) or 0), actor.res.mp
+
+    corruption_might, corruption_might_end_mp = cast_challenger_pure_dot("warlock", "corruption", "corruption", mp=41)
+    corruption_wrath, _ = cast_challenger_pure_dot("warlock", "corruption", "corruption", mp=40)
+    assert corruption_might > corruption_wrath, "Corruption stored tick_damage should use Challenger Might versus Wrath"
+    assert corruption_might_end_mp <= 40, "Corruption should cross from Might into live Wrath after paying its cost"
+
+    ua_might, ua_might_end_mp = cast_challenger_pure_dot("warlock", "unstable_affliction", "unstable_affliction", mp=41)
+    ua_wrath, _ = cast_challenger_pure_dot("warlock", "unstable_affliction", "unstable_affliction", mp=40)
+    assert ua_might > ua_wrath, "Unstable Affliction stored tick_damage should use Challenger Might versus Wrath"
+    assert ua_might_end_mp <= 40, "Unstable Affliction should cross from Might into live Wrath after paying its cost"
+
+    vt_might, vt_might_end_mp = cast_challenger_pure_dot("priest", "vampiric_touch", "vampiric_touch", mp=41)
+    vt_wrath, _ = cast_challenger_pure_dot("priest", "vampiric_touch", "vampiric_touch", mp=40)
+    assert vt_might > vt_wrath, "Vampiric Touch stored tick_damage should use Challenger Might versus Wrath"
+    assert vt_might_end_mp <= 40, "Vampiric Touch should cross from Might into live Wrath after paying its cost"
+
+    dp_might, dp_might_end_mp = cast_challenger_pure_dot("priest", "devouring_plague", "devouring_plague", mp=41)
+    dp_wrath, _ = cast_challenger_pure_dot("priest", "devouring_plague", "devouring_plague", mp=40)
+    assert dp_might > dp_wrath, "Devouring Plague stored tick_damage should use Challenger Might versus Wrath"
+    assert dp_might_end_mp <= 40, "Devouring Plague should cross from Might into live Wrath after paying its cost"
+
     might_from_dealt_direct, might_from_dealt_stored = cast_from_dealt_damage_dot(hunter_mp=50)
     wrath_from_dealt_direct, wrath_from_dealt_stored = cast_from_dealt_damage_dot(hunter_mp=25)
     assert might_from_dealt_direct > wrath_from_dealt_direct, "from_dealt_damage direct hit should still reflect Challenger Might versus Wrath"
@@ -6220,6 +6257,24 @@ def scenario_shaman_totems_and_astral_explosion() -> bool:
     assert warlock.res.hp == warlock_hp_before, "Astral Explosion should not damage the enemy champion"
     assert any(imp_hp_after.get(pid, 0) < hp for pid, hp in imp_hp_before.items()), "Astral Explosion should damage enemy pets"
     assert effects.absorb_total(shaman) == 0, "Astral Explosion should consume all absorb when valid targets exist"
+
+    def challenger_astral_pet_damage(*, shaman_mp: int) -> int:
+        explosion_match = make_match("shaman", "warlock", p1_items={"armor": "challengers_chestplate"}, seed=7007)
+        explosion_shaman_sid, explosion_warlock_sid = explosion_match.players
+        explosion_shaman = explosion_match.state[explosion_shaman_sid]
+        explosion_warlock = explosion_match.state[explosion_warlock_sid]
+        submit_turn(explosion_match, _DEF_PASS, "summon_imp")
+        explosion_shaman.res.mp = shaman_mp
+        effects.add_absorb(explosion_shaman, 30, source_name="Test Absorb", effect_id="test_absorb")
+        imp_id = sorted(explosion_warlock.pets.keys())[0]
+        before = explosion_warlock.pets[imp_id].hp
+        submit_turn(explosion_match, "astral_explosion", _DEF_PASS)
+        after = explosion_warlock.pets.get(imp_id).hp if imp_id in explosion_warlock.pets else 0
+        return before - after
+
+    astral_might_damage = challenger_astral_pet_damage(shaman_mp=41)
+    astral_wrath_damage = challenger_astral_pet_damage(shaman_mp=40)
+    assert astral_might_damage > astral_wrath_damage, "Astral Explosion pet damage should use the actor's action-time Challenger outgoing snapshot"
     return True
 
 
