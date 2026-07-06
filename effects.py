@@ -2532,6 +2532,11 @@ def trigger_end_of_turn_effects(ps: PlayerState, log: List[str], label: str) -> 
         hp_gain = int(regen.get("hp", 0) or 0)
         mp_gain = int(regen.get("mp", 0) or 0)
         energy_gain = int(regen.get("energy", 0) or 0)
+        active_resource = active_resource_id(ps)
+        if mp_gain > 0 and active_resource == "mp":
+            mp_gain = int(mp_gain * resource_gain_multiplier_from_passives(ps, "mp"))
+        if energy_gain > 0 and active_resource == "energy":
+            energy_gain = int(energy_gain * resource_gain_multiplier_from_passives(ps, "energy"))
         effect_name = effect.get("name", "an effect")
         twisted_by_mindgames = hp_gain > 0 and has_effect(ps, "mindgames")
         if hp_gain > 0:
