@@ -1129,6 +1129,33 @@ def scenario_challengers_chestplate_resource_stance() -> bool:
     low_snapshot_damage = low_snapshot_start_hp - low_snapshot_target.res.hp
     assert snapshot_damage > low_snapshot_damage, "An action that starts in Might should not switch to Wrath damage after its cost drops resource below 50%"
 
+    simultaneous = make_match(
+        "mage",
+        "mage",
+        p1_items={"armor": "challengers_chestplate"},
+        p2_items={"armor": "challengers_chestplate"},
+        seed=6209,
+    )
+    sim_p1, sim_p2 = (simultaneous.state[sid] for sid in simultaneous.players)
+    sim_p1.res.mp = 41
+    sim_p2.res.mp = 41
+    assert effects.challenger_resource_stance_mode(sim_p1) == "might", "P1 should start the simultaneous turn in Might"
+    assert effects.challenger_resource_stance_mode(sim_p2) == "might", "P2 should start the simultaneous turn in Might"
+    original_fireball = dict(ABILITIES["fireball"])
+    try:
+        ABILITIES["fireball"] = dict(original_fireball, dice=None, scaling={}, flat_damage=30, on_hit_effects=[], cannot_miss=True)
+        p1_hp_before = sim_p1.res.hp
+        p2_hp_before = sim_p2.res.hp
+        submit_turn(simultaneous, "fireball", "fireball")
+    finally:
+        ABILITIES["fireball"] = original_fireball
+    p1_damage_taken = p1_hp_before - sim_p1.res.hp
+    p2_damage_taken = p2_hp_before - sim_p2.res.hp
+    assert sim_p1.res.mp == 31 and sim_p2.res.mp == 31, "Both players should pay the increased Might cost before dropping to Wrath and end-of-turn mana regen"
+    assert effects.challenger_resource_stance_mode(sim_p1) == "wrath", "P1 live mode should be Wrath after spending below threshold"
+    assert effects.challenger_resource_stance_mode(sim_p2) == "wrath", "P2 live mode should be Wrath after spending below threshold"
+    assert p1_damage_taken == p2_damage_taken, "Simultaneous Chestplate Fireballs should use start-of-turn target Might snapshots symmetrically"
+
     owner.res.mp = 80
     physical_with_challenger = effects.mitigate_damage(100, owner, "physical")
     magical_with_challenger = effects.mitigate_damage(100, owner, "magic")

@@ -1771,6 +1771,9 @@ def mitigation_effective_stat(
     return max(0, defense + magic_resist)
 
 
+_LIVE_CHALLENGER_MODE = object()
+
+
 def mitigate_damage(
     raw: int,
     target: PlayerState,
@@ -1778,6 +1781,7 @@ def mitigate_damage(
     *,
     ignore_armor: bool = False,
     ignore_magic_resist: bool = False,
+    challenger_mode: Optional[str] | object = _LIVE_CHALLENGER_MODE,
 ) -> int:
     effective_stat = mitigation_effective_stat(
         target,
@@ -1787,9 +1791,14 @@ def mitigate_damage(
     )
     reduced = mitigate(raw, effective_stat)
     incoming_multiplier = 1.0
-    challenger_mode = challenger_resource_stance_mode(target)
-    for passive in challenger_resource_stance_passives(target):
-        incoming_multiplier *= float(passive.get("high_incoming_damage_multiplier" if challenger_mode == "might" else "low_incoming_damage_multiplier", 1.0) or 1.0)
+    current_challenger_mode = (
+        challenger_resource_stance_mode(target)
+        if challenger_mode is _LIVE_CHALLENGER_MODE
+        else challenger_mode
+    )
+    if current_challenger_mode in ("might", "wrath"):
+        for passive in challenger_resource_stance_passives(target):
+            incoming_multiplier *= float(passive.get("high_incoming_damage_multiplier" if current_challenger_mode == "might" else "low_incoming_damage_multiplier", 1.0) or 1.0)
     return int(reduced * mitigation_multiplier(target) * incoming_multiplier)
 
 
@@ -1800,6 +1809,7 @@ def resolve_incoming_damage(
     *,
     ignore_armor: bool = False,
     ignore_magic_resist: bool = False,
+    challenger_mode: Optional[str] | object = _LIVE_CHALLENGER_MODE,
 ) -> int:
     normalized = normalize_school(school) or "physical"
     if is_damage_immune(target, "physical" if normalized == "physical" else "magic"):
@@ -1810,6 +1820,7 @@ def resolve_incoming_damage(
         normalized,
         ignore_armor=ignore_armor,
         ignore_magic_resist=ignore_magic_resist,
+        challenger_mode=challenger_mode,
     )
 
 
@@ -2053,6 +2064,7 @@ def trigger_on_hit_passives(
     ability: Optional[Dict[str, Any]] = None,
     include_strike_again: bool = True,
     only_strike_again: bool = False,
+    target_challenger_mode: Optional[str] | object = _LIVE_CHALLENGER_MODE,
 ) -> tuple[int, List[str], int, List[Dict[str, Any]]]:
     """Run attacker item passives that trigger on_hit."""
     bonus_damage = 0
@@ -2113,7 +2125,7 @@ def trigger_on_hit_passives(
             raw = int(intellect * int_multiplier) + int(roll_power)
             if raw <= 0:
                 continue
-            reduced = mitigate_damage(raw, target, "magic")
+            reduced = mitigate_damage(raw, target, "magic", challenger_mode=target_challenger_mode)
             if is_damage_immune(target, "magic"):
                 reduced = 0
             if reduced > 0:
@@ -2151,7 +2163,7 @@ def trigger_on_hit_passives(
                 )
             if raw <= 0:
                 continue
-            reduced = mitigate_damage(raw, target, "magic")
+            reduced = mitigate_damage(raw, target, "magic", challenger_mode=target_challenger_mode)
             if is_damage_immune(target, "magic"):
                 reduced = 0
             if reduced > 0:
@@ -2257,7 +2269,7 @@ def trigger_on_hit_passives(
                 if duplicate_raw <= 0:
                     continue
 
-                duplicate_reduced = mitigate_damage(duplicate_raw, target, spell_school)
+                duplicate_reduced = mitigate_damage(duplicate_raw, target, spell_school, challenger_mode=target_challenger_mode)
                 if spell_school == "physical" and is_damage_immune(target, "physical"):
                     duplicate_reduced = 0
                 if spell_school == "magical" and is_damage_immune(target, "magic"):
@@ -2354,17 +2366,17 @@ def challenger_high_resource(player: PlayerState, passive: Dict[str, Any]) -> bo
     return challenger_resource_stance_mode(player) == "might"
 
 
-def challenger_resource_cost_multiplier(player: PlayerState, resource: str, mode: Optional[str] = None) -> float:
+def challenger_resource_cost_multiplier(player: PlayerState, resource: str, mode: Optional[str] | object = _LIVE_CHALLENGER_MODE) -> float:
     if active_resource_id(player) != str(resource or "").strip().lower():
         return 1.0
-    current_mode = challenger_resource_stance_mode(player) if mode is None else mode
+    current_mode = challenger_resource_stance_mode(player) if mode is _LIVE_CHALLENGER_MODE else mode
     multiplier = 1.0
     for passive in challenger_resource_stance_passives(player):
         if current_mode == "might":
             multiplier *= float(passive.get("high_resource_cost_multiplier", 1.0) or 1.0)
     return multiplier
 
-def damage_multiplier_from_passives(attacker: PlayerState, challenger_mode: Optional[str] = None) -> float:
+def damage_multiplier_from_passives(attacker: PlayerState, challenger_mode: Optional[str] | object = _LIVE_CHALLENGER_MODE) -> float:
     """Apply conditional damage multipliers from item passives."""
     if not attacker.res:
         return 1.0
@@ -2375,8 +2387,9 @@ def damage_multiplier_from_passives(attacker: PlayerState, challenger_mode: Opti
             continue
         passive = effect.get("passive", {}) or {}
         if passive.get("type") == "challenger_resource_stance":
-            current_mode = challenger_resource_stance_mode(attacker) if challenger_mode is None else challenger_mode
-            multiplier *= float(passive.get("high_damage_multiplier" if current_mode == "might" else "low_damage_multiplier", 1.0) or 1.0)
+            current_mode = challenger_resource_stance_mode(attacker) if challenger_mode is _LIVE_CHALLENGER_MODE else challenger_mode
+            if current_mode in ("might", "wrath"):
+                multiplier *= float(passive.get("high_damage_multiplier" if current_mode == "might" else "low_damage_multiplier", 1.0) or 1.0)
             continue
         if passive.get("trigger") != "on_damage":
             continue

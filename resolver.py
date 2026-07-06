@@ -773,6 +773,7 @@ class TurnResolutionContext:
     stunned_at_start: dict[str, bool]
     stealth_start_at_turn_begin: dict[str, bool]
     stealth_targeting: dict[str, bool]
+    challenger_mode_by_sid: dict[str, str | None]
     immediate_contexts: dict[str, dict[str, Any]] = field(default_factory=dict)
     start_of_turn_cant_act: dict[str, bool] = field(default_factory=dict)
     deferred_pet_pre_action_logs: list[str] = field(default_factory=list)
@@ -1315,6 +1316,7 @@ def resolve_damage_modification_stage(
     outgoing_multiplier: float,
     death_doubled: bool,
     include_target_mitigation: bool = True,
+    target_challenger_mode: str | None = None,
 ) -> int:
     modified_damage = raw_damage
     if include_target_mitigation and target is not None:
@@ -1324,6 +1326,7 @@ def resolve_damage_modification_stage(
             ability_school,
             ignore_armor=ignore_armor,
             ignore_magic_resist=ignore_magic_resist,
+            challenger_mode=target_challenger_mode,
         )
     if passive_damage_multiplier != 1.0:
         modified_damage = int(modified_damage * passive_damage_multiplier)
@@ -1404,24 +1407,31 @@ def resolve_action_denial_stage(
     }
 
 
+_LIVE_CHALLENGER_MODE = object()
+
+
 def adjusted_resource_costs(
     ps: PlayerState,
     costs: Dict[str, int],
     *,
-    challenger_mode: str | None = None,
+    challenger_mode: str | None | object = _LIVE_CHALLENGER_MODE,
 ) -> Dict[str, int]:
     """Return costs after player-only item passives; Challenger rounds active-resource surcharges up."""
     adjusted: Dict[str, int] = {}
     for key, value in (costs or {}).items():
         base_value = int(value or 0)
-        multiplier = challenger_resource_cost_multiplier(ps, key, mode=challenger_mode)
+        multiplier = (
+            challenger_resource_cost_multiplier(ps, key)
+            if challenger_mode is _LIVE_CHALLENGER_MODE
+            else challenger_resource_cost_multiplier(ps, key, mode=challenger_mode)
+        )
         adjusted[key] = int(math.ceil(base_value * multiplier)) if multiplier != 1.0 else base_value
     return adjusted
 
 
-def can_pay_costs(ps: PlayerState, costs: Dict[str, int]) -> Tuple[bool, str]:
+def can_pay_costs(ps: PlayerState, costs: Dict[str, int], *, challenger_mode: str | None | object = _LIVE_CHALLENGER_MODE) -> Tuple[bool, str]:
     res = ps.res
-    for key, value in adjusted_resource_costs(ps, costs).items():
+    for key, value in adjusted_resource_costs(ps, costs, challenger_mode=challenger_mode).items():
         current = getattr(res, key)
         if current < value:
             return False, str(key)
@@ -1461,6 +1471,7 @@ def setup_turn_resolution_context(
     submitted_actions: dict[str, dict[str, Any]],
 ) -> TurnResolutionContext:
     stunned_at_start, stealth_start_at_turn_begin, stealth_targeting = capture_pre_turn_snapshots(match, sids)
+    challenger_mode_by_sid = {sid: challenger_resource_stance_mode(match.state[sid]) for sid in sids}
     return TurnResolutionContext(
         match=match,
         rng=rng,
@@ -1469,6 +1480,7 @@ def setup_turn_resolution_context(
         stunned_at_start=stunned_at_start,
         stealth_start_at_turn_begin=stealth_start_at_turn_begin,
         stealth_targeting=stealth_targeting,
+        challenger_mode_by_sid=challenger_mode_by_sid,
     )
 
 
@@ -1574,7 +1586,11 @@ def resolve_action_selection_modifiers(
             "log": f"{max_count} {template.get('name', summon_pet_id)} Maximum",
         }
 
-    ok, fail_reason = can_pay_costs(actor, ability.get("cost", {}))
+    ok, fail_reason = can_pay_costs(
+        actor,
+        ability.get("cost", {}),
+        challenger_mode=turn_ctx.challenger_mode_by_sid.get(actor_sid),
+    )
     if not ok:
         return {
             "resolved": True,
@@ -2307,7 +2323,7 @@ def resolve_turn(match: MatchState) -> None:
 
         was_stealthed = has_effect(actor, "stealth")
         offensive_action = is_offensive_action(ability)
-        action_challenger_mode = challenger_resource_stance_mode(actor)
+        action_challenger_mode = turn_ctx.challenger_mode_by_sid.get(actor_sid)
 
         consume_costs(actor, ability.get("cost", {}), challenger_mode=action_challenger_mode)
         clarity_consumed = _consume_clarity_of_mind_on_cast(actor, ability_id)
@@ -2793,6 +2809,7 @@ def resolve_turn(match: MatchState) -> None:
                     empower_multiplier=empower_multiplier,
                     outgoing_multiplier=outgoing_mult,
                     death_doubled=death_doubled,
+                    target_challenger_mode=turn_ctx.challenger_mode_by_sid.get(target_sid),
                 )
             elif raw_for_hit > 0:
                 aoe_raw_damage += raw_for_hit
@@ -2803,6 +2820,7 @@ def resolve_turn(match: MatchState) -> None:
                     ability_school,
                     ignore_armor=bool(ability.get("ignore_armor") or ability.get("ignore_physical_reduction")),
                     ignore_magic_resist=bool(ability.get("ignore_magic_resist")),
+                    challenger_mode=turn_ctx.challenger_mode_by_sid.get(target_sid),
                 )
                 if incoming_for_hit > 0:
                     aoe_incoming_damage += incoming_for_hit
@@ -2973,6 +2991,7 @@ def resolve_turn(match: MatchState) -> None:
                 r,
                 ability=ability,
                 include_strike_again=False,
+                target_challenger_mode=turn_ctx.challenger_mode_by_sid.get(target_sid),
             )
             if bonus_damage > 0:
                 passive_bonus_damage_total += bonus_damage
@@ -2992,6 +3011,7 @@ def resolve_turn(match: MatchState) -> None:
                 ability=ability,
                 include_strike_again=True,
                 only_strike_again=True,
+                target_challenger_mode=turn_ctx.challenger_mode_by_sid.get(target_sid),
             )
             if strike_bonus_damage > 0:
                 passive_bonus_damage_total += strike_bonus_damage
@@ -3277,7 +3297,7 @@ def resolve_turn(match: MatchState) -> None:
             ctx["resolved"] = True
             return
 
-        action_challenger_mode = challenger_resource_stance_mode(actor)
+        action_challenger_mode = turn_ctx.challenger_mode_by_sid.get(actor_sid)
         consume_costs(actor, ability.get("cost", {}), challenger_mode=action_challenger_mode)
 
         if ability.get("target_effects"):
