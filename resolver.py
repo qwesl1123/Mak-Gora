@@ -3898,6 +3898,10 @@ def resolve_turn(match: MatchState) -> None:
             else:
                 tick_damage = int(dot_data.get("tick_damage", 0) or 0)
             tick_damage = max(1, int(tick_damage))
+        tick_damage = max(1, int(tick_damage * damage_multiplier_from_passives(
+            actor,
+            challenger_mode=turn_ctx.challenger_mode_by_sid.get(actor_sid),
+        )))
         refreshed = False
         if dot_id and refresh_dot_effect(
             target,

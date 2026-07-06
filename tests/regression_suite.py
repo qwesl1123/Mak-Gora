@@ -1620,6 +1620,63 @@ def scenario_challengers_chestplate_on_hit_proc_outgoing_stance() -> bool:
     return True
 
 
+
+def scenario_challengers_chestplate_wildfire_dot_outgoing_snapshot() -> bool:
+    def cast_wildfire(*, hunter_mp: int, challenger: bool) -> tuple[int, int, int, int, int]:
+        match = make_match(
+            "hunter",
+            "warrior",
+            p1_items={"armor": "challengers_chestplate"} if challenger else None,
+            seed=9002,
+        )
+        hunter_sid, warrior_sid = match.players
+        hunter = match.state[hunter_sid]
+        warrior = match.state[warrior_sid]
+        hunter.res.mp = hunter_mp
+        hunter.stats["crit"] = 0
+        hunter.stats["hit"] = 999
+
+        submit_turn(match, "wildfire_bomb", _DEF_PASS)
+
+        turn_one_log = "\n".join(_turn_lines(match, 1))
+        direct_match = re.search(r"Wildfire Bomb\. Roll d8 = \d+\. Deals (\d+) damage", turn_one_log)
+        tick_match = re.search(r"suffers (\d+) damage from Wildfire Burn", turn_one_log)
+        dot = next((fx for fx in warrior.effects if fx.get("id") == "wildfire_burn"), None)
+        assert direct_match is not None, "Wildfire Bomb direct hit should land for Challenger DoT coverage"
+        assert tick_match is not None, "Wildfire Burn should tick after the direct-damage application turn"
+        assert dot is not None, "Wildfire Burn should remain stored for its future tick"
+        stored_tick_damage = int(dot.get("tick_damage", 0) or 0)
+        expected_mitigated_tick = effects.mitigate_damage(stored_tick_damage, warrior, "magical")
+        assert int(tick_match.group(1)) == expected_mitigated_tick, "Same-turn Wildfire Burn tick should use stored damage after target mitigation"
+
+        hp_before_second_tick = warrior.res.hp
+        submit_turn(match, _DEF_PASS, _DEF_PASS)
+        turn_two_log = "\n".join(_turn_lines(match, 2))
+        future_tick_match = re.search(r"suffers (\d+) damage from Wildfire Burn", turn_two_log)
+        assert future_tick_match is not None, "Wildfire Burn should tick again on the following turn"
+        future_tick_damage = int(future_tick_match.group(1))
+        assert future_tick_damage == expected_mitigated_tick, "Future Wildfire Burn tick should follow the stored tick damage after normal target mitigation"
+        assert hp_before_second_tick - warrior.res.hp == expected_mitigated_tick, "Future Wildfire Burn HP loss should match the stored mitigated tick"
+        return int(direct_match.group(1)), stored_tick_damage, int(tick_match.group(1)), future_tick_damage, hunter.res.mp
+
+    might_direct, might_stored, might_tick, might_future_tick, might_end_mp = cast_wildfire(hunter_mp=50, challenger=True)
+    wrath_direct, wrath_stored, wrath_tick, wrath_future_tick, _ = cast_wildfire(hunter_mp=25, challenger=True)
+    assert might_direct > wrath_direct, "Wildfire Bomb direct hit should be higher in Challenger Might than Wrath"
+    assert might_stored > wrath_stored, "Stored Wildfire Burn tick_damage should be higher in Challenger Might than Wrath"
+    assert might_tick > wrath_tick and might_future_tick > wrath_future_tick, "Wildfire Burn ticks should reflect the stored Challenger-adjusted tick_damage"
+
+    crossing_direct, crossing_stored, crossing_tick, _, crossing_end_mp = cast_wildfire(hunter_mp=26, challenger=True)
+    assert crossing_end_mp <= 25, "Wildfire Bomb should spend the Hunter from Might into live Wrath for the crossing-threshold case"
+    assert crossing_direct == might_direct, "Crossing-threshold Wildfire Bomb direct hit should use the start-of-turn Might snapshot"
+    assert crossing_stored == might_stored, "Crossing-threshold Wildfire Burn tick_damage should use the start-of-turn Might snapshot"
+    assert crossing_tick == might_tick, "Crossing-threshold Wildfire Burn tick should use the Might-snapshotted stored value"
+
+    baseline_direct, baseline_stored, baseline_tick, baseline_future_tick, _ = cast_wildfire(hunter_mp=50, challenger=False)
+    assert baseline_direct == 11, "Baseline non-Challenger Wildfire Bomb direct hit should remain unchanged for the deterministic roll"
+    assert baseline_stored == 8, "Baseline non-Challenger Wildfire Burn stored tick_damage should remain unchanged"
+    assert baseline_tick == 6 and baseline_future_tick == 6, "Baseline Wildfire Burn ticks should remain unchanged after target mitigation"
+    return True
+
 def scenario_item_passive_effect_panel_labels_and_descriptions() -> bool:
     focus_match = make_match("mage", "warrior", p1_items={"trinket": "focus_charm"}, seed=6107)
     focus_owner = focus_match.state[focus_match.players[0]]
@@ -7149,6 +7206,7 @@ SCENARIOS = [
     scenario_challengers_chestplate_resource_stance,
     scenario_challengers_chestplate_followup_fixes,
     scenario_challengers_chestplate_on_hit_proc_outgoing_stance,
+    scenario_challengers_chestplate_wildfire_dot_outgoing_snapshot,
     scenario_item_passive_effect_panel_labels_and_descriptions,
     scenario_absorb_layering,
     scenario_pet_summon_data_driven,
