@@ -2358,6 +2358,10 @@ def resolve_turn(match: MatchState) -> None:
         was_stealthed = has_effect(actor, "stealth")
         offensive_action = is_offensive_action(ability)
         action_challenger_mode = turn_ctx.challenger_mode_by_sid.get(actor_sid)
+        action_passive_damage_multiplier = damage_multiplier_from_passives(
+            actor,
+            challenger_mode=action_challenger_mode,
+        )
 
         consume_costs(actor, ability.get("cost", {}), challenger_mode=action_challenger_mode)
         clarity_consumed = _consume_clarity_of_mind_on_cast(actor, ability_id)
@@ -2481,8 +2485,9 @@ def resolve_turn(match: MatchState) -> None:
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
 
             split_count = len(enemy_pets)
-            per_target = consumed_absorb // split_count
-            remainder = consumed_absorb % split_count
+            outgoing_pool = int(consumed_absorb * action_passive_damage_multiplier)
+            per_target = outgoing_pool // split_count
+            remainder = outgoing_pool % split_count
             total_damage = 0
             for index, pet in enumerate(enemy_pets):
                 incoming = per_target + (1 if index < remainder else 0)
@@ -2526,7 +2531,7 @@ def resolve_turn(match: MatchState) -> None:
             scale = float((ability.get("scaling") or {}).get("int", 0.0) or 0.0)
             dot_data = ability.get("dot", {})
             duration = int(dot_data.get("duration", 1) or 1)
-            tick_damage = max(1, int(intellect * scale) + int(roll_power))
+            tick_damage = max(1, int((int(intellect * scale) + int(roll_power)) * action_passive_damage_multiplier))
             dot_id = dot_data.get("id")
             dot_school = normalize_school(dot_data.get("school") or ability.get("school") or "magical") or "magical"
             dot_subschool = (dot_data.get("subschool") or ability.get("subschool")) if dot_school == "magical" else None
@@ -2603,7 +2608,7 @@ def resolve_turn(match: MatchState) -> None:
             scale = float((ability.get("scaling") or {}).get("int", 0.0) or 0.0)
             dot_data = ability.get("dot", {})
             duration = int(dot_data.get("duration", 1) or 1)
-            tick_damage = max(1, int(intellect * scale) + int(roll_power))
+            tick_damage = max(1, int((int(intellect * scale) + int(roll_power)) * action_passive_damage_multiplier))
             dot_id = dot_data.get("id")
             dot_template = effect_template(dot_id) if dot_id else {}
             lifesteal_pct = float(dot_template.get("lifesteal_pct", 0) or 0)
@@ -2718,10 +2723,6 @@ def resolve_turn(match: MatchState) -> None:
         consume_empower = False
         empower_logged = False
         outgoing_mult = outgoing_damage_multiplier(actor) * (1.0 + (0.04 * onslaught_stacks))
-        action_passive_damage_multiplier = damage_multiplier_from_passives(
-            actor,
-            challenger_mode=action_challenger_mode,
-        )
         if clarity_consumed and ability_id == "penance":
             outgoing_mult *= CLARITY_OF_MIND_MULTIPLIER
         if offensive_action and has_damage:
