@@ -158,6 +158,47 @@ def _logical_statements(block_lines: List[str]) -> List[str]:
     return statements
 
 
+def _extract_block_starting_at(source: str, marker: str) -> Optional[str]:
+    """Return a marker line plus the control statement that immediately follows it.
+
+    Used to isolate one logical block inside a larger function -- e.g. the
+    deferred ``damage_resource_gain = ability.get("resource_gain", {})`` block and
+    its guarding ``if``/``for`` logic -- so a check cannot be satisfied by an
+    unrelated sibling block elsewhere in the same function.
+
+    The returned text is: the marker line, any blank lines, the first following
+    non-blank line at the marker's indentation (expected to be an ``if``/``for``
+    header), and that header's fully-indented body. A subsequent statement that
+    dedents back to the marker's indentation ends the block, so exactly one
+    control construct is captured.
+    """
+    lines = source.splitlines()
+    idx = next((i for i, line in enumerate(lines) if marker in line), None)
+    if idx is None:
+        return None
+    start_indent = len(lines[idx]) - len(lines[idx].lstrip())
+    block = [lines[idx]]
+
+    j = idx + 1
+    while j < len(lines) and not lines[j].strip():
+        block.append(lines[j])
+        j += 1
+    if j < len(lines) and (len(lines[j]) - len(lines[j].lstrip())) == start_indent:
+        block.append(lines[j])  # the following control header (if/for)
+        j += 1
+        while j < len(lines):
+            raw = lines[j]
+            if not raw.strip():
+                block.append(raw)
+                j += 1
+                continue
+            if (len(raw) - len(raw.lstrip())) <= start_indent:
+                break
+            block.append(raw)
+            j += 1
+    return "\n".join(block)
+
+
 def _find_def(lines: List[str], func_name: str) -> Optional[int]:
     pattern = re.compile(r"^\s*def\s+" + re.escape(func_name) + r"\s*\(")
     for i, line in enumerate(lines):
@@ -333,8 +374,8 @@ def guardrail_damage_resource_gains_post_damage() -> Tuple[bool, str]:
     lines = source.splitlines()
     problems: List[str] = []
 
-    # (a) The canonical post-damage stage must exist and credit damage-based
-    #     gains from the actual dealt HP amount.
+    # (a) The canonical post-damage stage must exist and must never reference
+    #     speculative pre-mitigation damage tokens (whole-function guard).
     post_stage = _extract_function(source, "_resolve_actor_post_damage_reactions_stage")
     if post_stage is None:
         problems.append(
@@ -342,12 +383,6 @@ def guardrail_damage_resource_gains_post_damage() -> Tuple[bool, str]:
             "resource gains no longer have a dedicated post-damage home."
         )
     else:
-        if "gain_value = dealt" not in post_stage:
-            problems.append(
-                "_resolve_actor_post_damage_reactions_stage() no longer credits "
-                "damage-based gains from the actual `dealt` HP amount "
-                "(expected `gain_value = dealt`)."
-            )
         for token in _SPECULATIVE_DAMAGE_TOKENS:
             if token in post_stage:
                 problems.append(
@@ -355,6 +390,41 @@ def guardrail_damage_resource_gains_post_damage() -> Tuple[bool, str]:
                     f"speculative damage token `{token}`; the post-damage stage "
                     "must only use resolved `dealt` HP damage."
                 )
+
+    # (a2) Scope the correctness check to the DEFERRED normal resource_gain block
+    #      specifically. The post-damage stage has two resource-gain sections
+    #      (`resource_gain_on_dealt` and this `damage_resource_gain` block); a
+    #      whole-function check could pass on the first while the second regresses.
+    #      Anchor on the `damage_resource_gain` marker and validate only that block.
+    dmg_block = _extract_block_starting_at(
+        source, 'damage_resource_gain = ability.get("resource_gain", {})'
+    )
+    if dmg_block is None:
+        problems.append(
+            "Could not locate the deferred `damage_resource_gain = "
+            'ability.get("resource_gain", {})` block in '
+            "_resolve_actor_post_damage_reactions_stage(); the guardrail anchor "
+            "may have moved."
+        )
+    else:
+        block_checks: Tuple[Tuple[str, int, str], ...] = (
+            (r"if\s+gain\s*==\s*[\"']damage[\"']\s*:", 0,
+             'the `if gain == "damage":` branch is missing'),
+            (r"^\s*gain_value\s*=\s*dealt\s*$", re.MULTILINE,
+             'the "damage" branch must assign `gain_value = dealt`'),
+            (r"elif\s+gain\s*==\s*[\"']damage_x3[\"']\s*:", 0,
+             'the `elif gain == "damage_x3":` branch is missing'),
+            (r"gain_value\s*=\s*dealt\s*\*\s*3", 0,
+             'the "damage_x3" branch must assign `gain_value = dealt * 3`'),
+            (r"else\s*:\s*\n\s*continue\b", 0,
+             "non-damage gain values must be skipped with `continue`"),
+            (r"grant_resource\([^\n]*challenger_mode\s*=\s*resource_challenger_mode", 0,
+             "grant_resource(...) must be called with "
+             "`challenger_mode=resource_challenger_mode`"),
+        )
+        for pattern, flags, desc in block_checks:
+            if not re.search(pattern, dmg_block, flags):
+                problems.append(f"damage_resource_gain block: {desc}.")
 
     # (b) resolve_action must SKIP immediate grants for "damage"/"damage_x3" so
     #     those are deferred to the post-damage stage.
