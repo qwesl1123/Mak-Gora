@@ -129,6 +129,35 @@ def _extract_block(lines: List[str], start_index: int) -> List[str]:
     return block
 
 
+def _logical_statements(block_lines: List[str]) -> List[str]:
+    """Join physical lines into logical statements by bracket balance.
+
+    A statement accumulates lines until its ``()[]{}`` brackets are balanced, so
+    a multi-line assignment (e.g. a dict literal spread over several lines) is
+    returned as a single string. Limitation: bracket counting is textual and does
+    not exclude brackets inside string literals; this is acceptable for the
+    small, bracket-balanced blocks these guardrails inspect.
+    """
+    statements: List[str] = []
+    buf: List[str] = []
+    depth = 0
+    for raw in block_lines:
+        if not raw.strip() and not buf:
+            continue
+        buf.append(raw)
+        depth += (
+            raw.count("(") + raw.count("[") + raw.count("{")
+            - raw.count(")") - raw.count("]") - raw.count("}")
+        )
+        if depth <= 0 and buf:
+            statements.append("\n".join(buf))
+            buf = []
+            depth = 0
+    if buf:
+        statements.append("\n".join(buf))
+    return statements
+
+
 def _find_def(lines: List[str], func_name: str) -> Optional[int]:
     pattern = re.compile(r"^\s*def\s+" + re.escape(func_name) + r"\s*\(")
     for i, line in enumerate(lines):
@@ -484,10 +513,17 @@ def guardrail_raw_proc_bonus_damage() -> Tuple[bool, str]:
 # Guardrail 4: on_hit_resource_gains logs must use the actual gained amount.
 # =========================================================================== #
 
-# ``log_parts.append`` payloads that echo the static ability-data log directly.
+# Reference to the static ability-data log string on a resource-gain entry:
+# ``gain['log']`` / ``gain["log"]`` / ``gain.get('log')``. Logging this value
+# instead of a message built from the actual ``gained`` amount is the old Aimed
+# Shot bug.
 _STATIC_GAIN_LOG_RE = re.compile(
-    r"log_parts\.append\([^)]*gain(?:\[[\"']log[\"']\]|\.get\(\s*[\"']log[\"'])"
+    r"gain(?:\[\s*[\"']log[\"']\s*\]|\.get\(\s*[\"']log[\"'])"
 )
+
+# Simple-name assignment (``foo = ...``), excluding ``==`` and augmented forms.
+_SIMPLE_ASSIGN_RE = re.compile(r"^\s*([A-Za-z_]\w*)\s*=(?!=)\s*(.+)$", re.DOTALL)
+_LOG_APPEND_RE = re.compile(r"log_parts\.append\((.*)\)", re.DOTALL)
 
 
 def guardrail_resource_gain_logs_use_gained() -> Tuple[bool, str]:
@@ -505,37 +541,83 @@ def guardrail_resource_gain_logs_use_gained() -> Tuple[bool, str]:
         )
 
     block = _extract_block(lines, loop_idx)
-    block_text = "\n".join(block)
+    statements = _logical_statements(block)
     problems: List[str] = []
 
-    # Positive check: the handler must obtain and use the actual gained amount.
-    if "gained = grant_resource(" not in block_text:
+    if "gained = grant_resource(" not in "\n".join(block):
         problems.append(
             "on_hit_resource_gains handler no longer captures the actual gained "
             "amount from grant_resource() (expected `gained = grant_resource(...)`)."
         )
-    if "gained" not in block_text:
-        problems.append(
-            "on_hit_resource_gains handler no longer references `gained` when "
-            "building its log; it must log the actual restored amount."
-        )
 
-    # Negative check: no log line may echo the static gain['log'] directly.
-    for offset, line in enumerate(block):
-        if _STATIC_GAIN_LOG_RE.search(line):
+    # One-hop taint tracking over local variables in the loop body. A variable
+    # bound from the static gain log WITHOUT also deriving from the actual
+    # ``gained`` amount is "tainted"; a variable whose RHS references ``gained``
+    # is "gained-derived". This catches laundering the static log through an
+    # intermediate (``resource_log = str(gain['log'])`` -> append resource_log)
+    # while still passing the current main pattern, where ``resource_log`` is a
+    # dict lookup whose values interpolate ``gained``.
+    #
+    # Limitation: tracking is a single hop over simple-name assignments; it does
+    # not chase var -> var -> var chains. That is sufficient for this handler and
+    # keeps the check auditable.
+    tainted: set[str] = set()
+    gained_derived: set[str] = set()
+    for stmt in statements:
+        m = _SIMPLE_ASSIGN_RE.match(stmt)
+        if not m:
+            continue
+        var, rhs = m.group(1), m.group(2)
+        rhs_has_static = bool(_STATIC_GAIN_LOG_RE.search(rhs))
+        rhs_has_gained = bool(re.search(r"\bgained\b", rhs))
+        if rhs_has_gained:
+            gained_derived.add(var)
+        if rhs_has_static and not rhs_has_gained:
+            tainted.add(var)
+
+    def _refs(text: str, names: set[str]) -> List[str]:
+        return sorted(n for n in names if re.search(r"\b" + re.escape(n) + r"\b", text))
+
+    append_problem = False
+    good_append_found = False
+    for stmt in statements:
+        am = _LOG_APPEND_RE.search(stmt)
+        if not am:
+            continue
+        arg = am.group(1)
+        first_line = stmt.strip().splitlines()[0]
+        if _STATIC_GAIN_LOG_RE.search(arg):
+            append_problem = True
             problems.append(
-                f"resolver.py:{loop_idx + offset + 1}: on_hit_resource_gains log "
-                "appends the static gain['log'] directly instead of formatting "
-                "from the actual `gained` amount (the old Aimed Shot bug): "
-                f"{line.strip()}"
+                "on_hit_resource_gains appends the static gain['log'] directly "
+                "instead of a message built from the actual `gained` amount "
+                f"(the old Aimed Shot bug): {first_line}"
             )
+            continue
+        used_tainted = _refs(arg, tainted)
+        if used_tainted:
+            append_problem = True
+            problems.append(
+                "on_hit_resource_gains appends variable(s) "
+                f"{used_tainted} derived from the static gain['log'] without the "
+                f"actual `gained` amount (the old Aimed Shot bug): {first_line}"
+            )
+            continue
+        if re.search(r"\bgained\b", arg) or _refs(arg, gained_derived):
+            good_append_found = True
+
+    if not good_append_found and not append_problem:
+        problems.append(
+            "on_hit_resource_gains no longer logs the actual `gained` amount: no "
+            "log_parts.append references `gained` or a gained-derived value."
+        )
 
     if problems:
         detail = "\n".join(f"  - {p}" for p in problems)
         return False, "on_hit_resource_gains log invariant violated:\n" + detail
     return True, (
         "on_hit_resource_gains logs are formatted from the actual `gained` amount "
-        "returned by grant_resource()."
+        "returned by grant_resource() (verified through one-hop variable taint)."
     )
 
 
