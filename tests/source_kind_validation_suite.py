@@ -370,8 +370,9 @@ def run_all() -> list[tuple[str, bool, str]]:
 
 
 if __name__ == "__main__":
-    failures = [entry for entry in run_all() if not entry[1]]
-    for name, ok, reason in run_all():
+    results = run_all()
+    failures = [entry for entry in results if not entry[1]]
+    for name, ok, reason in results:
         print(f"PASS: {name}" if ok else f"FAIL: {name} -> {reason}")
     if failures:
         sys.exit(1)
