@@ -2472,6 +2472,61 @@ def resource_gain_multiplier_from_passives(
         multiplier *= float(passive.get("multiplier", 1.0) or 1.0)
     return multiplier
 
+
+def grant_player_resource(
+    player: PlayerState,
+    resource: str,
+    amount: int,
+    *,
+    challenger_mode: Optional[str] | object = _LIVE_CHALLENGER_MODE,
+) -> int:
+    """Grant a PLAYER a gameplay resource (mp/energy/rage) — the single entry point
+    for player resource gains.
+
+    Any mechanic that grants a player mana, energy, or rage MUST route through this
+    helper instead of mutating ``player.res.mp`` / ``player.res.energy`` /
+    ``player.res.rage`` directly. It guarantees that:
+
+    * ``resource_gain_multiplier_from_passives`` is applied (so Challenger Wrath's
+      low-resource bonus and item passives such as Rage Crystal are honoured),
+    * the result is capped at the player's resource max, and
+    * the actual amount restored after the cap is returned.
+
+    ``challenger_mode`` mirrors ``resource_gain_multiplier_from_passives``: the
+    default reads the live Challenger stance, ``None`` means "no Challenger
+    modifier" (not Wrath), and an explicit "might"/"wrath" pins a snapshot.
+
+    Pet-owned resources are deliberately out of scope: pet mp/energy/rage are
+    handled by pet resource logic in ``pet_ai`` and must NOT be passed here. Only
+    mp/energy/rage are supported; HP and any other attribute are ignored.
+    """
+    if not player.res:
+        return 0
+    normalized_resource = str(resource or "").strip().lower()
+    if normalized_resource not in ("mp", "energy", "rage"):
+        return 0
+    if not hasattr(player.res, normalized_resource):
+        return 0
+    base_amount = max(0, int(amount or 0))
+    if base_amount <= 0:
+        return 0
+    if challenger_mode is _LIVE_CHALLENGER_MODE:
+        multiplier = resource_gain_multiplier_from_passives(player, normalized_resource)
+    else:
+        multiplier = resource_gain_multiplier_from_passives(
+            player, normalized_resource, challenger_mode=challenger_mode
+        )
+    adjusted = int(base_amount * multiplier)
+    if adjusted <= 0:
+        return 0
+    current = getattr(player.res, normalized_resource)
+    cap = getattr(player.res, f"{normalized_resource}_max", current)
+    new_value = max(0, min(current + adjusted, cap))
+    gained = new_value - current
+    setattr(player.res, normalized_resource, new_value)
+    return gained
+
+
 def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[dict[str, Any]]:
     """Compute DoT tick events after mitigation; resolution/logging happens in resolver."""
     if is_immune_all(ps):

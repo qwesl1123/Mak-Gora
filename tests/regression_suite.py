@@ -7397,7 +7397,108 @@ def scenario_paladin_shield_of_vengeance_reset_and_no_unrelated_changes() -> boo
     return True
 
 
+def scenario_grant_player_resource_central_helper() -> bool:
+    """Player resource grants (pet/totem restores included) route through
+    grant_player_resource so Challenger Wrath applies and caps are respected."""
+
+    def _restored(match, needle: str) -> list[int]:
+        return [
+            int(m.group(1))
+            for line in match.log
+            for m in [re.search(needle + r" restores (\d+) mana", line)]
+            if m
+        ]
+
+    # --- Central helper unit behavior -------------------------------------
+    helper_match = make_match("shaman", "rogue", p1_items={"armor": "challengers_chestplate"}, seed=6400)
+    helper = helper_match.state["p1_sid"]
+    helper.res.mp = 40  # <=50% -> Challenger Wrath boosts active-resource (mp) gains 30%
+    assert effects.challenger_resource_stance_mode(helper) == "wrath", "Setup: helper owner should be in Wrath"
+    assert effects.grant_player_resource(helper, "mp", 10) == 13, "Helper should apply Challenger Wrath (int(10*1.30)=13)"
+    assert helper.res.mp == 53, "Helper should mutate player mana by the adjusted amount"
+    # None Challenger mode means no modifier (not Wrath).
+    helper.res.mp = 40
+    assert effects.grant_player_resource(helper, "mp", 10, challenger_mode=None) == 10, "None mode should apply no Challenger modifier"
+    # Non-positive amounts and HP are ignored; caps are respected.
+    hp_before = helper.res.hp
+    assert effects.grant_player_resource(helper, "mp", 0) == 0, "Non-positive grants are ignored"
+    assert effects.grant_player_resource(helper, "mp", -5) == 0, "Negative grants are ignored"
+    assert effects.grant_player_resource(helper, "hp", 10) == 0 and helper.res.hp == hp_before, "Helper must not touch HP"
+    helper.res.mp = helper.res.mp_max - 4
+    assert effects.grant_player_resource(helper, "mp", 10, challenger_mode=None) == 4, "Helper caps at resource max and returns actual restored"
+    assert helper.res.mp == helper.res.mp_max, "Near-cap grant should clamp to max"
+    # energy / rage support and a missing res guard.
+    rogue_owner = make_match("rogue", "mage", seed=6401).state["p1_sid"]
+    rogue_owner.res.energy = 10
+    assert effects.grant_player_resource(rogue_owner, "energy", 5) == 5 and rogue_owner.res.energy == 15, "Helper should support energy"
+    warrior_owner = make_match("warrior", "mage", seed=6402).state["p1_sid"]
+    warrior_owner.res.rage = 10
+    assert effects.grant_player_resource(warrior_owner, "rage", 5) == 5 and warrior_owner.res.rage == 15, "Helper should support rage"
+    class _NoRes:
+        res = None
+    assert effects.grant_player_resource(_NoRes(), "mp", 10) == 0, "Helper should be safe when player.res is missing"
+
+    # --- 1) Challenger Shaman in Wrath: Mana Tide restores 13 -------------
+    wrath_tide = make_match("shaman", "rogue", p1_items={"armor": "challengers_chestplate"}, seed=6403)
+    wrath_shaman = wrath_tide.state["p1_sid"]
+    wrath_shaman.res.mp = 30
+    assert effects.challenger_resource_stance_mode(wrath_shaman) == "wrath", "Setup: Wrath shaman at 30/100 mana"
+    submit_turn(wrath_tide, "mana_tide_totem", _DEF_PASS)
+    assert _restored(wrath_tide, "Mana Tide Totem") == [13], "Challenger Wrath Mana Tide should restore int(10*1.30)=13"
+
+    # --- 2) Challenger Shaman in Might: Mana Tide restores 10 -------------
+    might_tide = make_match("shaman", "rogue", p1_items={"armor": "challengers_chestplate"}, seed=6404)
+    might_shaman = might_tide.state["p1_sid"]
+    might_shaman.res.mp = might_shaman.res.mp_max
+    assert effects.challenger_resource_stance_mode(might_shaman) == "might", "Setup: Might shaman above 50% mana"
+    submit_turn(might_tide, "mana_tide_totem", _DEF_PASS)
+    assert _restored(might_tide, "Mana Tide Totem") == [10], "Challenger Might Mana Tide should restore the base 10"
+
+    # --- 3) No-Challenger Shaman: Mana Tide restores 10 ------------------
+    plain_tide = make_match("shaman", "rogue", seed=6405)
+    plain_shaman = plain_tide.state["p1_sid"]
+    plain_shaman.res.mp = max(0, plain_shaman.res.mp - 40)
+    submit_turn(plain_tide, "mana_tide_totem", _DEF_PASS)
+    assert _restored(plain_tide, "Mana Tide Totem") == [10], "Non-Challenger Mana Tide should restore the base 10"
+
+    original_hit_chance = PET_AI.hit_chance
+    PET_AI.hit_chance = lambda acc, eva: 100
+    try:
+        # --- 4) Challenger Priest in Wrath: Shadowfiend hit restores 16 --
+        wrath_fiend = make_match("priest", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6406)
+        wrath_priest = wrath_fiend.state["p1_sid"]
+        wrath_priest.res.mp = 30
+        assert effects.challenger_resource_stance_mode(wrath_priest) == "wrath", "Setup: Wrath priest below 50% mana"
+        submit_turn(wrath_fiend, "shadowfiend", _DEF_PASS)
+        assert _restored(wrath_fiend, "Shadowfiend") == [16], "Challenger Wrath Shadowfiend should restore int(13*1.30)=16"
+
+        # --- 5) Near-cap restore logs/state reflect only the actual amount
+        cap_fiend = make_match("priest", "warrior", seed=6407)
+        cap_priest = cap_fiend.state["p1_sid"]
+        submit_turn(cap_fiend, "shadowfiend", _DEF_PASS)  # summon + first melee restore
+        cap_priest.res.mp = cap_priest.res.mp_max - 3
+        submit_turn(cap_fiend, _DEF_PASS, _DEF_PASS)  # next melee restore, now near cap
+        cap_restores = _restored(cap_fiend, "Shadowfiend")
+        assert cap_restores and cap_restores[-1] == 3, "Near-cap Shadowfiend log should reflect only the actual 3 mana restored"
+        assert cap_priest.res.mp == cap_priest.res.mp_max, "Near-cap restore should clamp mana to max"
+    finally:
+        PET_AI.hit_chance = original_hit_chance
+
+    # --- 6) Pet self-resource regeneration remains unchanged -------------
+    saber_match = make_match("hunter", "warrior", seed=6408)
+    hunter = saber_match.state["p1_sid"]
+    submit_turn(saber_match, "call_saber", _DEF_PASS)
+    saber = _active_pet(hunter, "frostsaber")
+    assert saber is not None, "Frostsaber should summon"
+    saber.energy = 7
+    submit_turn(saber_match, _DEF_PASS, _DEF_PASS)
+    assert saber.energy == 12, "Pet self-resource regen (+5 energy/turn) must be unaffected by the player helper"
+
+    return True
+
+
 SCENARIOS = [
+    scenario_grant_player_resource_central_helper,
     scenario_mindgames_lay_on_hands,
     scenario_paladin_divine_storm_behavior_and_docs,
     scenario_shield_of_vengeance_explosion_uses_absorbed_amount_for_pets,
