@@ -2971,7 +2971,12 @@ def resolve_turn(match: MatchState) -> None:
                         continue
                     gained = grant_resource(actor, resource, amount, challenger_mode=action_challenger_mode)
                     if gained > 0 and gain.get("log"):
-                        log_parts.append(f"{prefix}{gain['log']}")
+                        resource_log = {
+                            "mp": f"restores {gained} mana.",
+                            "energy": f"restores {gained} energy.",
+                            "rage": f"generates {gained} rage.",
+                        }.get(resource, str(gain["log"]))
+                        log_parts.append(f"{prefix}{resource_log}")
             heal_on_hit = int(ability.get("heal_on_hit", 0) or 0)
             heal_scaling = ability.get("heal_scaling", {}) or {}
             heal_dice = ability.get("heal_dice")

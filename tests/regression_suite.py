@@ -1625,6 +1625,66 @@ def scenario_challengers_chestplate_on_hit_proc_outgoing_stance() -> bool:
     return True
 
 
+def scenario_on_hit_resource_gain_log_uses_actual_gained() -> bool:
+    # ------------------------------------------------------------------
+    # The on_hit_resource_gains combat log must report the amount actually
+    # gained through grant_resource (Challenger Wrath boost + cap), not the
+    # static ability text (e.g. Aimed Shot's "restores 5 mana.").
+    # ------------------------------------------------------------------
+
+    # Source-of-truth math: Challenger Wrath turns a base-5 mana gain into 6.
+    unit = make_match("hunter", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6220)
+    unit_hunter = unit.state[unit.players[0]]
+    unit_hunter.res.mp = unit_hunter.res.mp_max // 2  # 50% active resource -> Wrath
+    assert effects.challenger_resource_stance_mode(unit_hunter) == "wrath", \
+        "Low-resource hunter should be in Challenger Wrath"
+    unit_hunter.res.mp = 0
+    assert effects.grant_player_resource(unit_hunter, "mp", 5, challenger_mode="wrath") == 6, \
+        "Challenger Wrath should turn a base-5 mana gain into an actual 6"
+
+    # Full turn: a low-resource Challenger hunter procs Aimed Shot's on-hit mana
+    # gain and the log must report the boosted 6, never the static 5.
+    match = make_match("hunter", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=3)
+    hunter = match.state[match.players[0]]
+    hunter.res.mp = hunter.res.mp_max // 2
+    submit_turn(match, "aimed_shot", "die_by_the_sword")
+    turn_lines = _turn_lines(match, 1)
+    assert any("restores 6 mana." in line for line in turn_lines), \
+        "Aimed Shot on-hit gain should log the Challenger-boosted amount (6)"
+    assert not any("restores 5 mana." in line for line in turn_lines), \
+        "Combat log must not report the static base amount (5) under Challenger Wrath"
+
+    # Near-cap: when the adjusted amount would overflow the pool, the log must
+    # follow the actual capped gain, not the pre-cap adjusted amount. Only Aimed
+    # Shot uses on_hit_resource_gains and its cost draws from the same mana pool,
+    # so temporarily widen the base gain to force the cap to bind.
+    entry = ABILITIES["aimed_shot"]["on_hit_resource_gains"][0]
+    original_amount = entry["amount"]
+    try:
+        entry["amount"] = 40  # int(40 * 1.30) == 52 adjusted, far above the mana headroom
+        adjusted = int(40 * 1.30)
+        cap_match = make_match("hunter", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=3)
+        cap_hunter = cap_match.state[cap_match.players[0]]
+        cap_hunter.res.mp = cap_hunter.res.mp_max // 2
+        submit_turn(cap_match, "aimed_shot", "die_by_the_sword")
+        cap_lines = _turn_lines(cap_match, 1)
+        assert cap_hunter.res.mp == cap_hunter.res.mp_max, \
+            "Near-cap gain should fill the hunter's mana to its maximum"
+        mana_logs = [line for line in cap_lines if re.search(r"restores \d+ mana\.", line)]
+        assert mana_logs, "Near-cap Aimed Shot should still log a mana restore"
+        logged = int(re.search(r"restores (\d+) mana\.", mana_logs[0]).group(1))
+        assert 0 < logged < adjusted, \
+            "Near-cap log should report the capped gain, strictly below the adjusted amount"
+        assert not any("restores 40 mana." in line or f"restores {adjusted} mana." in line for line in cap_lines), \
+            "Near-cap log must not report the base (40) or pre-cap adjusted (52) amounts"
+        assert not any("restores 5 mana." in line for line in cap_lines), \
+            "Near-cap log must not fall back to the static base text (5)"
+    finally:
+        entry["amount"] = original_amount
+
+    return True
+
+
 def scenario_queued_proc_resource_gain_uses_actual_dealt() -> bool:
     # ------------------------------------------------------------------
     # P2 fix: damage-based resource gains (e.g. Overpower's rage: damage) must be
@@ -7753,6 +7813,7 @@ SCENARIOS = [
     scenario_challengers_chestplate_resource_stance,
     scenario_challengers_chestplate_followup_fixes,
     scenario_challengers_chestplate_on_hit_proc_outgoing_stance,
+    scenario_on_hit_resource_gain_log_uses_actual_gained,
     scenario_queued_proc_resource_gain_uses_actual_dealt,
     scenario_challengers_chestplate_wildfire_dot_outgoing_snapshot,
     scenario_item_passive_effect_panel_labels_and_descriptions,
