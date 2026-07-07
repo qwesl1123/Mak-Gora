@@ -319,6 +319,8 @@ def test_pet_magical_damage_carries_school_and_subschool() -> None:
         owner_sid=owner_sid,
         hp=45,
         hp_max=45,
+        mp=10,
+        mp_max=10,
         effects=[],
         duration=None,
     )
@@ -344,6 +346,8 @@ def test_pet_magical_damage_carries_school_and_subschool() -> None:
         lambda *_args, **_kwargs: False,
         lambda _target: "Target is untargetable",
         lambda *_args, **_kwargs: False,
+        lambda *_args, **_kwargs: False,
+        lambda *_args, **_kwargs: "Miss!",
     )
     assert captured, "Imp firebolt should call into apply_damage"
     assert captured[0]["school"] == "magical"
