@@ -144,6 +144,22 @@ ITEMS = {
         "slot": "armor",
         "mods": {"physical_reduction": 18, "magic_resist": 3},
     },
+    "challengers_chestplate": {
+        "name": "Challenger's Chestplate",
+        "slot": "armor",
+        "color": "#a335ee",
+        "mods": {"physical_reduction": 8, "magic_resist": 7},
+        "passive": {
+            "type": "challenger_resource_stance",
+            "threshold": 0.5,
+            "high_damage_multiplier": 1.10,
+            "high_incoming_damage_multiplier": 0.90,
+            "high_resource_cost_multiplier": 1.20,
+            "low_damage_multiplier": 0.90,
+            "low_incoming_damage_multiplier": 1.10,
+            "low_resource_gain_multiplier": 1.30,
+        },
+    },
     
     # Trinkets
     "focus_charm": {

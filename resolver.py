@@ -1,5 +1,6 @@
 # games/duel/engine/resolver.py
 import json
+import math
 from dataclasses import dataclass, field
 from typing import Dict, Any, Tuple, Callable
 from .models import MatchState, PlayerState, PlayerBuild, Resources, PetState
@@ -53,7 +54,9 @@ from .pet_ai import run_pet_phase, cleanup_pets, prepare_pet_pre_action_effects,
 from .effects import (
     trigger_on_hit_passives,
     damage_multiplier_from_passives,
-    resource_gain_multiplier_from_passives,
+    grant_player_resource,
+    challenger_resource_cost_multiplier,
+    challenger_resource_stance_mode,
     end_of_turn,
     end_of_turn_pet,
     apply_effect_by_id,
@@ -299,6 +302,7 @@ def _resolve_actor_post_damage_reactions_stage(
     grant_resource: Callable[[PlayerState, str, int], int],
     combat_totals: Dict[str, Dict[str, int]],
     log: list[str],
+    resource_challenger_mode: str | None = None,
 ) -> None:
     if dealt > 0 and ability.get("heal_from_dealt_damage") and actor.res:
         before_hp = actor.res.hp
@@ -335,6 +339,11 @@ def _resolve_actor_post_damage_reactions_stage(
             totals = combat_totals.setdefault(actor_sid, {"damage": 0, "healing": 0})
             totals["healing"] += gained
 
+    # Damage-based resource gains resolve here, after the primary hit AND every
+    # queued proc / strike-again event has actually landed, so ``dealt`` reflects
+    # real HP dealt (post redirect / absorb / mitigation / Mindgames) rather than
+    # speculative pre-resolution damage. Same-action gains use the actor's
+    # action-start Challenger snapshot (``resource_challenger_mode``).
     dealt_resource_gain = ability.get("resource_gain_on_dealt", {})
     if dealt > 0 and dealt_resource_gain and actor.res:
         for resource, gain in dealt_resource_gain.items():
@@ -345,7 +354,23 @@ def _resolve_actor_post_damage_reactions_stage(
             else:
                 gain_value = int(gain or 0)
             if gain_value > 0 and hasattr(actor.res, resource):
-                grant_resource(actor, resource, gain_value)
+                grant_resource(actor, resource, gain_value, challenger_mode=resource_challenger_mode)
+
+    # Deferred damage-based ``resource_gain`` entries. Flat entries were already
+    # granted immediately in resolve_action; only "damage"/"damage_x3" are credited
+    # here from the actual dealt total so redirected/absorbed/immuned queued proc
+    # damage contributes exactly what actually landed.
+    damage_resource_gain = ability.get("resource_gain", {})
+    if dealt > 0 and damage_resource_gain and actor.res:
+        for resource, gain in damage_resource_gain.items():
+            if gain == "damage":
+                gain_value = dealt
+            elif gain == "damage_x3":
+                gain_value = dealt * 3
+            else:
+                continue
+            if gain_value > 0 and hasattr(actor.res, resource):
+                grant_resource(actor, resource, gain_value, challenger_mode=resource_challenger_mode)
 
 
 def _apply_effect_entries_stage(
@@ -770,6 +795,7 @@ class TurnResolutionContext:
     stunned_at_start: dict[str, bool]
     stealth_start_at_turn_begin: dict[str, bool]
     stealth_targeting: dict[str, bool]
+    challenger_mode_by_sid: dict[str, str | None]
     immediate_contexts: dict[str, dict[str, Any]] = field(default_factory=dict)
     start_of_turn_cant_act: dict[str, bool] = field(default_factory=dict)
     deferred_pet_pre_action_logs: list[str] = field(default_factory=list)
@@ -1312,6 +1338,7 @@ def resolve_damage_modification_stage(
     outgoing_multiplier: float,
     death_doubled: bool,
     include_target_mitigation: bool = True,
+    target_challenger_mode: str | None = None,
 ) -> int:
     modified_damage = raw_damage
     if include_target_mitigation and target is not None:
@@ -1321,6 +1348,7 @@ def resolve_damage_modification_stage(
             ability_school,
             ignore_armor=ignore_armor,
             ignore_magic_resist=ignore_magic_resist,
+            challenger_mode=target_challenger_mode,
         )
     if passive_damage_multiplier != 1.0:
         modified_damage = int(modified_damage * passive_damage_multiplier)
@@ -1401,9 +1429,31 @@ def resolve_action_denial_stage(
     }
 
 
-def can_pay_costs(ps: PlayerState, costs: Dict[str, int]) -> Tuple[bool, str]:
+_LIVE_CHALLENGER_MODE = object()
+
+
+def adjusted_resource_costs(
+    ps: PlayerState,
+    costs: Dict[str, int],
+    *,
+    challenger_mode: str | None | object = _LIVE_CHALLENGER_MODE,
+) -> Dict[str, int]:
+    """Return costs after player-only item passives; Challenger rounds active-resource surcharges up."""
+    adjusted: Dict[str, int] = {}
+    for key, value in (costs or {}).items():
+        base_value = int(value or 0)
+        multiplier = (
+            challenger_resource_cost_multiplier(ps, key)
+            if challenger_mode is _LIVE_CHALLENGER_MODE
+            else challenger_resource_cost_multiplier(ps, key, mode=challenger_mode)
+        )
+        adjusted[key] = int(math.ceil(base_value * multiplier)) if multiplier != 1.0 else base_value
+    return adjusted
+
+
+def can_pay_costs(ps: PlayerState, costs: Dict[str, int], *, challenger_mode: str | None | object = _LIVE_CHALLENGER_MODE) -> Tuple[bool, str]:
     res = ps.res
-    for key, value in costs.items():
+    for key, value in adjusted_resource_costs(ps, costs, challenger_mode=challenger_mode).items():
         current = getattr(res, key)
         if current < value:
             return False, str(key)
@@ -1443,6 +1493,7 @@ def setup_turn_resolution_context(
     submitted_actions: dict[str, dict[str, Any]],
 ) -> TurnResolutionContext:
     stunned_at_start, stealth_start_at_turn_begin, stealth_targeting = capture_pre_turn_snapshots(match, sids)
+    challenger_mode_by_sid = {sid: challenger_resource_stance_mode(match.state[sid]) for sid in sids}
     return TurnResolutionContext(
         match=match,
         rng=rng,
@@ -1451,6 +1502,7 @@ def setup_turn_resolution_context(
         stunned_at_start=stunned_at_start,
         stealth_start_at_turn_begin=stealth_start_at_turn_begin,
         stealth_targeting=stealth_targeting,
+        challenger_mode_by_sid=challenger_mode_by_sid,
     )
 
 
@@ -1556,7 +1608,11 @@ def resolve_action_selection_modifiers(
             "log": f"{max_count} {template.get('name', summon_pet_id)} Maximum",
         }
 
-    ok, fail_reason = can_pay_costs(actor, ability.get("cost", {}))
+    ok, fail_reason = can_pay_costs(
+        actor,
+        ability.get("cost", {}),
+        challenger_mode=turn_ctx.challenger_mode_by_sid.get(actor_sid),
+    )
     if not ok:
         return {
             "resolved": True,
@@ -1626,9 +1682,9 @@ def resolve_turn(match: MatchState) -> None:
         template = effect_template(effect_id) if effect_id else {}
         return str(effect.get("name") or template.get("name") or effect_name(effect_id or "effect"))
 
-    def consume_costs(ps: PlayerState, costs: Dict[str, int]) -> None:
+    def consume_costs(ps: PlayerState, costs: Dict[str, int], *, challenger_mode: str | None = None) -> None:
         res = ps.res
-        for key, value in costs.items():
+        for key, value in adjusted_resource_costs(ps, costs, challenger_mode=challenger_mode).items():
             new_value = getattr(res, key) - value
             cap = getattr(res, f"{key}_max", None)
             if cap is not None:
@@ -1682,22 +1738,20 @@ def resolve_turn(match: MatchState) -> None:
             return False, None
         return True, untargetable_miss_log(target)
 
-    def grant_resource(player: PlayerState, resource: str, base_amount: int) -> int:
-        if not player.res or not hasattr(player.res, resource):
-            return 0
-        amount = max(0, int(base_amount or 0))
-        if amount <= 0:
-            return 0
-        multiplier = resource_gain_multiplier_from_passives(player, resource)
-        adjusted = int(amount * multiplier)
-        if adjusted <= 0:
-            return 0
-        current = getattr(player.res, resource)
-        cap = getattr(player.res, f"{resource}_max", current)
-        new_value = max(0, min(current + adjusted, cap))
-        gained = new_value - current
-        setattr(player.res, resource, new_value)
-        return gained
+    def grant_resource(
+        player: PlayerState,
+        resource: str,
+        base_amount: int,
+        *,
+        challenger_mode: str | None | object = _LIVE_CHALLENGER_MODE,
+    ) -> int:
+        # Thin resolver-local adapter over the central grant_player_resource helper so
+        # every player resource gain flows through one pipeline (Challenger/passive
+        # multipliers + cap). Do not reimplement the math here. The resolver's live
+        # sentinel is distinct from effects', so translate it before delegating.
+        if challenger_mode is _LIVE_CHALLENGER_MODE:
+            return grant_player_resource(player, resource, base_amount)
+        return grant_player_resource(player, resource, base_amount, challenger_mode=challenger_mode)
 
     def entity_log_label(target: PlayerState | PetState) -> str:
         if isinstance(target, PlayerState):
@@ -2235,6 +2289,31 @@ def resolve_turn(match: MatchState) -> None:
         )
         return result.missed, result.miss_log, result.skip_aoe_champion, result.aoe_immune_log
 
+    def single_target_redirect_pet(target: PlayerState | PetState) -> PetState | None:
+        if not hasattr(target, "pets") or not has_flag(target, "redirect_single_target_to_pet"):
+            return None
+        redirect_effect = next(
+            (fx for fx in target.effects if (fx.get("flags", {}) or {}).get("redirect_single_target_to_pet")),
+            None,
+        )
+        pet_id = (redirect_effect or {}).get("redirect_to_pet_id")
+        pet = target.pets.get(pet_id) if pet_id and getattr(target, "pets", None) else None
+        return pet if pet and pet.hp > 0 else None
+
+    def target_challenger_mode_for_single_target(
+        target_sid: str,
+        target: PlayerState | PetState,
+        *,
+        allow_redirect: bool = True,
+    ) -> str | None:
+        # Challenger is player-only; only drop the owner's stance when this specific
+        # damage event will actually be redirected to a pet (single-target Blocking
+        # Defence). AoE / on-hit passive procs bypass redirect and still hit the
+        # champion, so they must keep the champion's start-of-turn stance.
+        if allow_redirect and single_target_redirect_pet(target) is not None:
+            return None
+        return turn_ctx.challenger_mode_by_sid.get(target_sid)
+
 
     def resolve_action(actor_sid: str, target_sid: str, action: Dict[str, Any]) -> Dict[str, Any]:
         selection = resolve_action_selection_modifiers(turn_ctx, actor_sid, target_sid, action)
@@ -2289,8 +2368,13 @@ def resolve_turn(match: MatchState) -> None:
 
         was_stealthed = has_effect(actor, "stealth")
         offensive_action = is_offensive_action(ability)
+        action_challenger_mode = turn_ctx.challenger_mode_by_sid.get(actor_sid)
+        action_passive_damage_multiplier = damage_multiplier_from_passives(
+            actor,
+            challenger_mode=action_challenger_mode,
+        )
 
-        consume_costs(actor, ability.get("cost", {}))
+        consume_costs(actor, ability.get("cost", {}), challenger_mode=action_challenger_mode)
         clarity_consumed = _consume_clarity_of_mind_on_cast(actor, ability_id)
 
         extra_logs: list[Any] = []
@@ -2412,8 +2496,11 @@ def resolve_turn(match: MatchState) -> None:
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
 
             split_count = len(enemy_pets)
-            per_target = consumed_absorb // split_count
-            remainder = consumed_absorb % split_count
+            # Astral Explosion is actor-owned outgoing damage: detonate the consumed
+            # absorb pool through the actor's action-time outgoing snapshot.
+            outgoing_pool = int(consumed_absorb * action_passive_damage_multiplier)
+            per_target = outgoing_pool // split_count
+            remainder = outgoing_pool % split_count
             total_damage = 0
             for index, pet in enumerate(enemy_pets):
                 incoming = per_target + (1 if index < remainder else 0)
@@ -2457,7 +2544,7 @@ def resolve_turn(match: MatchState) -> None:
             scale = float((ability.get("scaling") or {}).get("int", 0.0) or 0.0)
             dot_data = ability.get("dot", {})
             duration = int(dot_data.get("duration", 1) or 1)
-            tick_damage = max(1, int(intellect * scale) + int(roll_power))
+            tick_damage = max(1, int((int(intellect * scale) + int(roll_power)) * action_passive_damage_multiplier))
             dot_id = dot_data.get("id")
             dot_school = normalize_school(dot_data.get("school") or ability.get("school") or "magical") or "magical"
             dot_subschool = (dot_data.get("subschool") or ability.get("subschool")) if dot_school == "magical" else None
@@ -2534,7 +2621,7 @@ def resolve_turn(match: MatchState) -> None:
             scale = float((ability.get("scaling") or {}).get("int", 0.0) or 0.0)
             dot_data = ability.get("dot", {})
             duration = int(dot_data.get("duration", 1) or 1)
-            tick_damage = max(1, int(intellect * scale) + int(roll_power))
+            tick_damage = max(1, int((int(intellect * scale) + int(roll_power)) * action_passive_damage_multiplier))
             dot_id = dot_data.get("id")
             dot_template = effect_template(dot_id) if dot_id else {}
             lifesteal_pct = float(dot_template.get("lifesteal_pct", 0) or 0)
@@ -2756,7 +2843,7 @@ def resolve_turn(match: MatchState) -> None:
                 ability_school=ability_school,
                 ignore_armor=bool(ability.get("ignore_armor") or ability.get("ignore_physical_reduction")),
                 ignore_magic_resist=bool(ability.get("ignore_magic_resist")),
-                passive_damage_multiplier=damage_multiplier_from_passives(actor),
+                passive_damage_multiplier=action_passive_damage_multiplier,
                 empower_multiplier=empower_multiplier,
                 outgoing_multiplier=outgoing_mult,
                 death_doubled=death_doubled,
@@ -2770,10 +2857,11 @@ def resolve_turn(match: MatchState) -> None:
                     ability_school=ability_school,
                     ignore_armor=bool(ability.get("ignore_armor") or ability.get("ignore_physical_reduction")),
                     ignore_magic_resist=bool(ability.get("ignore_magic_resist")),
-                    passive_damage_multiplier=damage_multiplier_from_passives(actor),
+                    passive_damage_multiplier=action_passive_damage_multiplier,
                     empower_multiplier=empower_multiplier,
                     outgoing_multiplier=outgoing_mult,
                     death_doubled=death_doubled,
+                    target_challenger_mode=target_challenger_mode_for_single_target(target_sid, target),
                 )
             elif raw_for_hit > 0:
                 aoe_raw_damage += raw_for_hit
@@ -2784,6 +2872,7 @@ def resolve_turn(match: MatchState) -> None:
                     ability_school,
                     ignore_armor=bool(ability.get("ignore_armor") or ability.get("ignore_physical_reduction")),
                     ignore_magic_resist=bool(ability.get("ignore_magic_resist")),
+                    challenger_mode=turn_ctx.challenger_mode_by_sid.get(target_sid),
                 )
                 if incoming_for_hit > 0:
                     aoe_incoming_damage += incoming_for_hit
@@ -2880,9 +2969,14 @@ def resolve_turn(match: MatchState) -> None:
                     amount = int(gain.get("amount", 0) or 0)
                     if not resource or amount <= 0 or not hasattr(actor.res, resource):
                         continue
-                    gained = grant_resource(actor, resource, amount)
+                    gained = grant_resource(actor, resource, amount, challenger_mode=action_challenger_mode)
                     if gained > 0 and gain.get("log"):
-                        log_parts.append(f"{prefix}{gain['log']}")
+                        resource_log = {
+                            "mp": f"restores {gained} mana.",
+                            "energy": f"restores {gained} energy.",
+                            "rage": f"generates {gained} rage.",
+                        }.get(resource, str(gain["log"]))
+                        log_parts.append(f"{prefix}{resource_log}")
             heal_on_hit = int(ability.get("heal_on_hit", 0) or 0)
             heal_scaling = ability.get("heal_scaling", {}) or {}
             heal_dice = ability.get("heal_dice")
@@ -2918,19 +3012,24 @@ def resolve_turn(match: MatchState) -> None:
 
         def queue_passive_damage_events(events: list[Dict[str, Any]]) -> None:
             for event in events:
-                incoming = int(event.get("incoming", 0) or 0)
+                incoming = int(event.get("raw_incoming", event.get("incoming", 0)) or 0)
                 template = event.get("log_template")
                 if incoming <= 0 or not template:
                     continue
+                # raw_incoming means the producer supplied pre-mitigation damage that
+                # must still go through target mitigation when the queued event is
+                # applied. Otherwise incoming is already resolved and should only go
+                # through absorb/HP application.
                 queued_event = {
                     "type": "damage_event",
                     "source_name": ability.get("name", "attack"),
                     "incoming": incoming,
+                    "requires_player_mitigation": bool(event.get("raw_incoming") is not None),
                     "school": event.get("school", "physical"),
                     "subschool": event.get("subschool"),
                     "log_template": str(template),
                 }
-                damage_instances = event.get("damage_instances")
+                damage_instances = event.get("raw_damage_instances", event.get("damage_instances"))
                 if isinstance(damage_instances, list):
                     normalized_instances = []
                     for value in damage_instances:
@@ -2954,6 +3053,13 @@ def resolve_turn(match: MatchState) -> None:
                 r,
                 ability=ability,
                 include_strike_again=False,
+                target_challenger_mode=target_challenger_mode_for_single_target(
+                    target_sid,
+                    target,
+                    allow_redirect=ability_target_mode(ability) != "aoe_enemy",
+                ),
+                attacker_challenger_mode=action_challenger_mode,
+                attacker_outgoing_multiplier=action_passive_damage_multiplier,
             )
             if bonus_damage > 0:
                 passive_bonus_damage_total += bonus_damage
@@ -2973,6 +3079,13 @@ def resolve_turn(match: MatchState) -> None:
                 ability=ability,
                 include_strike_again=True,
                 only_strike_again=True,
+                target_challenger_mode=target_challenger_mode_for_single_target(
+                    target_sid,
+                    target,
+                    allow_redirect=ability_target_mode(ability) != "aoe_enemy",
+                ),
+                attacker_challenger_mode=action_challenger_mode,
+                attacker_outgoing_multiplier=action_passive_damage_multiplier,
             )
             if strike_bonus_damage > 0:
                 passive_bonus_damage_total += strike_bonus_damage
@@ -2981,17 +3094,21 @@ def resolve_turn(match: MatchState) -> None:
             queue_passive_damage_events(strike_damage_events)
 
         resource_gain = ability.get("resource_gain", {})
+        # ``passive_bonus_damage_total`` now only holds fully-resolved passive damage
+        # (e.g. strike-again). Raw queued proc events (lightning_blast, void_blade,
+        # duplicate_offensive_spell) no longer contribute their speculative value.
         total_effective_damage_for_resources = total_damage + passive_bonus_damage_total
+        # Flat resource gains resolve immediately once the ability has landed damage.
+        # Damage-based gains ("damage"/"damage_x3") are deferred to the post-damage
+        # stage so they reflect the ACTUAL HP dealt after redirect / absorb /
+        # mitigation / Mindgames of both the primary hit and any queued proc events.
         if total_effective_damage_for_resources > 0 and resource_gain:
             for resource, gain in resource_gain.items():
-                if gain == "damage":
-                    gain_value = total_effective_damage_for_resources
-                elif gain == "damage_x3":
-                    gain_value = total_effective_damage_for_resources * 3
-                else:
-                    gain_value = int(gain)
+                if gain in ("damage", "damage_x3"):
+                    continue
+                gain_value = int(gain)
                 if gain_value > 0 and hasattr(actor.res, resource):
-                    grant_resource(actor, resource, gain_value)
+                    grant_resource(actor, resource, gain_value, challenger_mode=action_challenger_mode)
 
         mindgames_flip_damage = bool(has_effect(actor, "mindgames") and total_damage > 0)
 
@@ -3053,8 +3170,12 @@ def resolve_turn(match: MatchState) -> None:
             "pre_logs": pre_log_parts,
             "extra_logs": extra_logs,
             "ability_id": ability_id,
+            "passive_damage_multiplier": action_passive_damage_multiplier,
             "mindgames_flip_damage": mindgames_flip_damage,
             "skip_direct_target_damage": aoe_skip_champion,
+            # Snapshot of the actor's action-start Challenger stance so deferred
+            # damage-based resource gains use the same snapshot as the action.
+            "resource_challenger_mode": action_challenger_mode,
         }
 
     def build_immediate_resolution(actor_sid: str, target_sid: str, action: Dict[str, Any]) -> Dict[str, Any]:
@@ -3258,7 +3379,8 @@ def resolve_turn(match: MatchState) -> None:
             ctx["resolved"] = True
             return
 
-        consume_costs(actor, ability.get("cost", {}))
+        action_challenger_mode = turn_ctx.challenger_mode_by_sid.get(actor_sid)
+        consume_costs(actor, ability.get("cost", {}), challenger_mode=action_challenger_mode)
 
         if ability.get("target_effects"):
             protection_log = resolve_immediate_target_protection(
@@ -3435,6 +3557,7 @@ def resolve_turn(match: MatchState) -> None:
         subschool: str | None = None,
         allow_redirect: bool = True,
         resolve_non_player_mitigation: bool = True,
+        resolve_player_mitigation: bool = False,
     ) -> Dict[str, Any]:
         normalized_school = normalize_school(school) or "physical"
         is_player_target = hasattr(target, "res") and target.res is not None
@@ -3453,7 +3576,31 @@ def resolve_turn(match: MatchState) -> None:
                 damage_school=normalized_school,
             ):
                 return _empty_damage_result(school=normalized_school, subschool=subschool, redirect_log=redirect_log)
-        if is_player_target or not resolve_non_player_mitigation:
+        if is_player_target and resolve_player_mitigation:
+            if damage_instances:
+                instance_values = [
+                    resolve_incoming_damage(
+                        int(value or 0),
+                        target,
+                        normalized_school,
+                        challenger_mode=turn_ctx.challenger_mode_by_sid.get(target_sid),
+                    )
+                    for value in damage_instances
+                    if int(value or 0) > 0
+                ]
+                instance_values = [value for value in instance_values if value > 0]
+                incoming = sum(instance_values)
+            else:
+                incoming = resolve_incoming_damage(
+                    incoming,
+                    target,
+                    normalized_school,
+                    challenger_mode=turn_ctx.challenger_mode_by_sid.get(target_sid),
+                )
+                instance_values = [incoming] if incoming > 0 else []
+            if incoming <= 0 or not instance_values:
+                return _empty_damage_result(school=normalized_school, subschool=subschool, redirect_log=redirect_log)
+        elif is_player_target or not resolve_non_player_mitigation:
             if not is_player_target and is_damage_immune(target, "physical" if normalized_school == "physical" else "magic"):
                 return _empty_damage_result(school=normalized_school, subschool=subschool, redirect_log=redirect_log)
             instance_values = _build_damage_instance_values(incoming, damage_instances)
@@ -3645,6 +3792,9 @@ def resolve_turn(match: MatchState) -> None:
         skip_champion, untargetable_log = aoe_untargetable_resolution(enemy)
         if untargetable_log and untargetable_log.startswith("Target "):
             untargetable_log = f"{sid_token(enemy_sid)} {untargetable_log[len('Target '):] }"
+        # Shield of Vengeance is intentionally flat reflected/exploded damage based
+        # on the absorbed amount, not actor-owned outgoing damage, so Challenger
+        # Might/Wrath and similar outgoing modifiers do not scale this explosion.
         aoe_result = resolve_aoe_enemy_attack(
             owner_sid,
             enemy_sid,
@@ -3787,7 +3937,7 @@ def resolve_turn(match: MatchState) -> None:
                 )
             else:
                 tick_damage = int(dot_data.get("tick_damage", 0) or 0)
-            tick_damage = max(1, int(tick_damage))
+            tick_damage = max(1, int(tick_damage * float(result.get("passive_damage_multiplier", 1.0) or 1.0)))
         refreshed = False
         if dot_id and refresh_dot_effect(
             target,
@@ -3843,6 +3993,7 @@ def resolve_turn(match: MatchState) -> None:
                 school=str(entry.get("school") or "physical"),
                 subschool=entry.get("subschool"),
                 allow_redirect=ability_target_mode(ABILITIES.get(result.get("ability_id", ""), {})) != "aoe_enemy",
+                resolve_player_mitigation=bool(entry.get("requires_player_mitigation")),
             )
             dealt_amount = int(dealt_data.get("hp_damage", 0) or 0)
             if dealt_amount > 0:
@@ -3955,6 +4106,7 @@ def resolve_turn(match: MatchState) -> None:
             grant_resource=grant_resource,
             combat_totals=match.combat_totals,
             log=match.log,
+            resource_challenger_mode=result.get("resource_challenger_mode"),
         )
 
     end_of_turn_result = resolve_end_of_turn_stage(

@@ -1071,6 +1071,1062 @@ def scenario_rage_crystal_increases_all_rage_gain_sources() -> bool:
     return True
 
 
+
+def scenario_challengers_chestplate_resource_stance() -> bool:
+    high = make_match("mage", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6201)
+    owner = high.state[high.players[0]]
+    assert effects.active_resource_id(owner) == "mp", "Mage active resource should be mana"
+    owner.res.mp = 51
+    assert effects.active_resource_pct(owner) > 0.5, "51/80 mana should be high-resource"
+    assert effects.challenger_resource_stance_mode(owner) == "might", "Challenger mode should be Might above 50% active resource"
+    assert effects.damage_multiplier_from_passives(owner) == 1.10, "Challenger should deal 10% more damage above 50% active resource"
+    duel_html_text = _detect_duel_html_path().read_text(encoding="utf-8")
+    assert "/item armor challengers_chestplate" in duel_html_text, "Challenger's Chestplate should be documented in the static item list"
+    assert '"Challenger\'s Chestplate",' in duel_html_text and "#a335ee" in duel_html_text, "Challenger's Chestplate should be registered on the epic item color path"
+    assert "When the fight turns, so do you—either with steel resolve or with bruising consequence." in duel_html_text, "Challenger's Chestplate flavor text should appear in static item docs/tooltips"
+    assert '"Challenger\'s Chestplate": {' in duel_html_text, "Challenger's Chestplate should have normal item tooltip data for equipped armor mouseover"
+    high_panel = effects.build_effect_panel_payload(owner)
+    high_buffs = {entry.get("name") for entry in high_panel["buffs_magical"]}
+    high_debuffs = {entry.get("name") for entry in high_panel["debuffs_magical"]}
+    assert "Challenger's Might" in high_buffs, "Challenger's Might should show above 50% active resource"
+    assert "Challenger's Wrath" not in high_debuffs, "Challenger's Wrath should not show above 50% active resource"
+
+    challenger_effect = next(effect for effect in owner.effects if effect.get("source_item_id") == "challengers_chestplate")
+    assert challenger_effect.get("dispellable") is False, "Challenger item passive should remain non-dispellable"
+    removed = effects.dispel_effects(owner, school="magical")
+    assert removed == 0 and any(effect.get("source_item_id") == "challengers_chestplate" for effect in owner.effects), "Dispel should not remove Challenger item passive"
+
+    owner.res.mp = 40
+    assert effects.active_resource_pct(owner) == 0.5, "40/80 mana should be exactly threshold"
+    assert effects.challenger_resource_stance_mode(owner) == "wrath", "Challenger mode should be Wrath at exactly 50% active resource"
+    assert effects.damage_multiplier_from_passives(owner) == 0.90, "Challenger should use low-resource damage at exactly 50%"
+    threshold_panel = effects.build_effect_panel_payload(owner)
+    threshold_buffs = {entry.get("name") for entry in threshold_panel["buffs_magical"]}
+    threshold_debuffs = {entry.get("name") for entry in threshold_panel["debuffs_magical"]}
+    assert "Challenger's Might" not in threshold_buffs, "Challenger's Might should disappear at exactly 50% active resource"
+    assert "Challenger's Wrath" in threshold_debuffs, "Challenger's Wrath should show at exactly 50% active resource"
+    owner.res.mp = 41
+    crossed_panel = effects.build_effect_panel_payload(owner)
+    assert effects.challenger_resource_stance_mode(owner) == "might", "Challenger mode should update to Might after crossing above 50%"
+    assert "Challenger's Might" in {entry.get("name") for entry in crossed_panel["buffs_magical"]}, "Challenger panel should update back to Might after crossing above 50%"
+    assert "Challenger's Wrath" not in {entry.get("name") for entry in crossed_panel["debuffs_magical"]}, "Challenger panel should hide Wrath after crossing above 50%"
+    owner.res.mp = 39
+    assert effects.damage_multiplier_from_passives(owner) == 0.90, "Challenger should deal 10% less damage below 50% active resource"
+
+    snapshot_match = make_match("mage", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6208)
+    snapshot_actor = snapshot_match.state[snapshot_match.players[0]]
+    snapshot_target = snapshot_match.state[snapshot_match.players[1]]
+    snapshot_actor.res.mp = 41
+    snapshot_start_hp = snapshot_target.res.hp
+    submit_turn(snapshot_match, "fireball", _DEF_PASS)
+    snapshot_damage = snapshot_start_hp - snapshot_target.res.hp
+    assert snapshot_actor.res.mp <= 40, "Fireball's increased Challenger cost should leave the actor at or below 50% after the action"
+    assert effects.challenger_resource_stance_mode(snapshot_actor) == "wrath", "Live Challenger mode should become Wrath after the action spends below threshold"
+
+    low_snapshot_match = make_match("mage", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6208)
+    low_snapshot_actor = low_snapshot_match.state[low_snapshot_match.players[0]]
+    low_snapshot_target = low_snapshot_match.state[low_snapshot_match.players[1]]
+    low_snapshot_actor.res.mp = 40
+    low_snapshot_start_hp = low_snapshot_target.res.hp
+    submit_turn(low_snapshot_match, "fireball", _DEF_PASS)
+    low_snapshot_damage = low_snapshot_start_hp - low_snapshot_target.res.hp
+    assert snapshot_damage > low_snapshot_damage, "An action that starts in Might should not switch to Wrath damage after its cost drops resource below 50%"
+
+    simultaneous = make_match(
+        "mage",
+        "mage",
+        p1_items={"armor": "challengers_chestplate"},
+        p2_items={"armor": "challengers_chestplate"},
+        seed=6209,
+    )
+    sim_p1, sim_p2 = (simultaneous.state[sid] for sid in simultaneous.players)
+    sim_p1.res.mp = 41
+    sim_p2.res.mp = 41
+    assert effects.challenger_resource_stance_mode(sim_p1) == "might", "P1 should start the simultaneous turn in Might"
+    assert effects.challenger_resource_stance_mode(sim_p2) == "might", "P2 should start the simultaneous turn in Might"
+    original_fireball = dict(ABILITIES["fireball"])
+    try:
+        ABILITIES["fireball"] = dict(original_fireball, dice=None, scaling={}, flat_damage=30, on_hit_effects=[], cannot_miss=True)
+        p1_hp_before = sim_p1.res.hp
+        p2_hp_before = sim_p2.res.hp
+        submit_turn(simultaneous, "fireball", "fireball")
+    finally:
+        ABILITIES["fireball"] = original_fireball
+    p1_damage_taken = p1_hp_before - sim_p1.res.hp
+    p2_damage_taken = p2_hp_before - sim_p2.res.hp
+    assert sim_p1.res.mp == 31 and sim_p2.res.mp == 31, "Both players should pay the increased Might cost before dropping to Wrath and end-of-turn mana regen"
+    assert effects.challenger_resource_stance_mode(sim_p1) == "wrath", "P1 live mode should be Wrath after spending below threshold"
+    assert effects.challenger_resource_stance_mode(sim_p2) == "wrath", "P2 live mode should be Wrath after spending below threshold"
+    assert p1_damage_taken == p2_damage_taken, "Simultaneous Chestplate Fireballs should use start-of-turn target Might snapshots symmetrically"
+
+    def redirected_boar_damage_for_hunter_mana(mana: int) -> int:
+        redirect_match = make_match("hunter", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6212)
+        hunter_sid, warrior_sid = redirect_match.players
+        hunter = redirect_match.state[hunter_sid]
+        warrior = redirect_match.state[warrior_sid]
+        submit_turn(redirect_match, "call_boar", _DEF_PASS)
+        boar = _active_pet(hunter, "barrens_boar")
+        assert boar is not None, "Boar should be active for Challenger redirect coverage"
+        hunter.res.mp = mana
+        effects.apply_effect_by_id(hunter, "blocking_defence", overrides={"duration": 1, "redirect_to_pet_id": boar.id})
+        warrior.res.rage = warrior.res.rage_max
+        original_mortal_strike = dict(ABILITIES["mortal_strike"])
+        try:
+            ABILITIES["mortal_strike"] = dict(original_mortal_strike, dice=None, scaling={}, flat_damage=30, cannot_miss=True)
+            hunter_hp_before = hunter.res.hp
+            boar_hp_before = boar.hp
+            submit_turn(redirect_match, _DEF_PASS, "mortal_strike")
+        finally:
+            ABILITIES["mortal_strike"] = original_mortal_strike
+        assert hunter.res.hp == hunter_hp_before, "Blocking Defence should redirect the single-target hit away from the Hunter"
+        return boar_hp_before - boar.hp
+
+    might_redirect_damage = redirected_boar_damage_for_hunter_mana(41)
+    wrath_redirect_damage = redirected_boar_damage_for_hunter_mana(20)
+    assert might_redirect_damage == wrath_redirect_damage, "Redirected pet damage should not change with the Hunter's Challenger stance"
+
+    owner.res.mp = 80
+    physical_with_challenger = effects.mitigate_damage(100, owner, "physical")
+    magical_with_challenger = effects.mitigate_damage(100, owner, "magic")
+    owner.effects = [fx for fx in owner.effects if fx.get("source_item_id") != "challengers_chestplate"]
+    physical_without_challenger = effects.mitigate_damage(100, owner, "physical")
+    magical_without_challenger = effects.mitigate_damage(100, owner, "magic")
+    assert physical_with_challenger == int(physical_without_challenger * 0.90), "Challenger should reduce incoming physical damage by 10% above 50%"
+    assert magical_with_challenger == int(magical_without_challenger * 0.90), "Challenger should reduce incoming magical/DoT-path damage by 10% above 50%"
+
+    low = make_match("mage", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6202)
+    low_owner = low.state[low.players[0]]
+    low_owner.res.mp = 40
+    low_physical = effects.mitigate_damage(100, low_owner, "physical")
+    low_owner.effects = [fx for fx in low_owner.effects if fx.get("source_item_id") != "challengers_chestplate"]
+    low_baseline = effects.mitigate_damage(100, low_owner, "physical")
+    assert low_physical == int(low_baseline * 1.10), "Challenger should increase incoming damage by 10% at or below 50%"
+
+    cost_owner = make_match("mage", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6203).state["p1_sid"]
+    cost_owner.res.mp = 80
+    assert resolver.adjusted_resource_costs(cost_owner, {"mp": 11, "hp": 7}) == {"mp": 14, "hp": 7}, "Challenger should ceil active-resource costs by 20% and leave non-active costs unchanged"
+    cost_owner.res.mp = 50
+    ok, fail = resolver.can_pay_costs(cost_owner, {"mp": 42})
+    assert not ok and fail == "mp", "can_pay_costs should reject casts made unaffordable by Challenger's surcharge"
+
+    gain_owner = make_match("mage", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6204).state["p1_sid"]
+    gain_owner.res.mp = 40
+    assert effects.resource_gain_multiplier_from_passives(gain_owner, "mp") == 1.30, "Challenger should boost active resource gains by 30% at or below 50%"
+    assert effects.resource_gain_multiplier_from_passives(gain_owner, "rage") == 1.0, "Challenger should not boost inactive resource gains"
+
+    pet_owner = make_match("hunter", "mage", p1_items={"armor": "challengers_chestplate"}, seed=6205).state["p1_sid"]
+    pet_owner.pets["pet"] = PetState(id="pet", template_id="wolf", name="Wolf", owner_sid="p1_sid", hp=50, hp_max=50, entity_type="beast")
+    pet = pet_owner.pets["pet"]
+    assert not any(fx.get("source_item_id") == "challengers_chestplate" for fx in pet.effects), "Pets should not inherit Challenger outgoing/incoming/resource passives"
+
+    stacked = make_match("warrior", "mage", p1_items={"armor": "challengers_chestplate", "trinket": "rage_crystal"}, seed=6206).state["p1_sid"]
+    stacked.res.rage = 10
+    assert round(effects.resource_gain_multiplier_from_passives(stacked, "rage"), 3) == 1.625, "Challenger and Rage Crystal resource gains should stack multiplicatively"
+    stacked.res.hp = max(1, int(stacked.res.hp_max * 0.2))
+    assert round(effects.damage_multiplier_from_passives(stacked), 3) == 1.035, "Existing damage passives should continue stacking multiplicatively with Challenger"
+
+    focus_warrior = make_match("warrior", "mage", p1_items={"armor": "challengers_chestplate", "trinket": "focus_charm"}, seed=6210).state["p1_sid"]
+    focus_warrior.res.rage = 60
+    focus_warrior.res.mp = focus_warrior.res.mp_max
+    assert effects.active_resource_id(focus_warrior) == "rage", "Warrior should use rage even when Focus Charm grants a mana pool"
+    assert effects.challenger_resource_stance_mode(focus_warrior) == "might", "Warrior Challenger stance should key off rage, not item-granted mana"
+    assert resolver.adjusted_resource_costs(focus_warrior, {"rage": 11, "mp": 5}) == {"rage": 14, "mp": 5}, "Challenger should surcharge the warrior active rage cost only"
+
+    rage_rogue = make_match("rogue", "mage", p1_items={"armor": "challengers_chestplate", "trinket": "rage_crystal"}, seed=6211).state["p1_sid"]
+    rage_rogue.res.energy = 50
+    rage_rogue.res.rage = rage_rogue.res.rage_max
+    assert effects.active_resource_id(rage_rogue) == "energy", "Rogue should use energy even when Rage Crystal grants a rage pool"
+    assert effects.challenger_resource_stance_mode(rage_rogue) == "wrath", "Rogue Challenger stance should key off energy, not item-granted rage"
+    assert effects.resource_gain_multiplier_from_passives(rage_rogue, "energy") == 1.30, "Challenger Wrath should boost rogue active energy gains"
+    assert effects.resource_gain_multiplier_from_passives(rage_rogue, "rage") == 1.25, "Rage Crystal should still boost rage without inheriting Challenger's active-resource bonus"
+
+    druid = make_match("druid", "mage", p1_items={"armor": "challengers_chestplate"}, seed=6207).state["p1_sid"]
+    assert effects.active_resource_id(druid) == "mp", "Druid with no form should use mana"
+    effects.apply_form(druid, "bear_form")
+    assert effects.active_resource_id(druid) == "rage", "Druid Bear Form should use rage"
+    effects.apply_form(druid, "cat_form")
+    assert effects.active_resource_id(druid) == "energy", "Druid Cat Form should use energy"
+    return True
+
+
+def scenario_challengers_chestplate_followup_fixes() -> bool:
+    # ------------------------------------------------------------------
+    # Issue 1: Wrath's resource-gain multiplier must also reach the normal
+    # end-of-turn passive regen for the active resource.
+    # ------------------------------------------------------------------
+    regen_rogue = make_match("rogue", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6301).state["p1_sid"]
+    regen_rogue.res.energy = 0
+    assert effects.challenger_resource_stance_mode(regen_rogue) == "wrath", "Empty energy should put the rogue in Wrath"
+    effects.end_of_turn(regen_rogue, [], "P1")
+    assert regen_rogue.res.energy == int(effects.DEFAULTS["energy_regen_per_turn"] * 1.30), \
+        "Low-resource rogue should regen int(5 * 1.30) energy from end-of-turn passive regen"
+
+    # A mana user (paladin: base regen 4) makes the 30% boost observable after truncation.
+    regen_pal = make_match("paladin", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6302).state["p1_sid"]
+    regen_pal.res.mp = 0
+    pal_base_regen = effects.DEFAULTS["mp_regen_per_turn"] + effects.mana_regen_from_spirit(regen_pal)
+    assert effects.challenger_resource_stance_mode(regen_pal) == "wrath", "Empty mana should put the paladin in Wrath"
+    effects.end_of_turn(regen_pal, [], "P1")
+    assert regen_pal.res.mp == int(pal_base_regen * 1.30), \
+        "Low-resource mana user should get Wrath-multiplied end-of-turn mana regen"
+
+    # Baseline: no Chestplate leaves passive regen untouched.
+    regen_plain = make_match("rogue", "warrior", seed=6303).state["p1_sid"]
+    regen_plain.res.energy = 0
+    effects.end_of_turn(regen_plain, [], "P1")
+    assert regen_plain.res.energy == effects.DEFAULTS["energy_regen_per_turn"], \
+        "Without Challenger, end-of-turn energy regen should be the unmodified default"
+
+    # Baseline: Might (non-Wrath) does not boost regen either.
+    regen_might = make_match("mage", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6304).state["p1_sid"]
+    regen_might.res.mp = 60
+    might_base_regen = effects.DEFAULTS["mp_regen_per_turn"] + effects.mana_regen_from_spirit(regen_might)
+    assert effects.challenger_resource_stance_mode(regen_might) == "might", "60/80 mana should be Might"
+    before_might = regen_might.res.mp
+    effects.end_of_turn(regen_might, [], "P1")
+    assert regen_might.res.mp - before_might == might_base_regen, "Might should not boost end-of-turn regen"
+
+    # Status-effect resource regen should use the same active-resource gain multiplier.
+    effect_regen_rogue = make_match("rogue", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6330).state["p1_sid"]
+    effect_regen_rogue.res.energy = 0
+    effect_regen_rogue.effects.append({"id": "test_energy_regen", "name": "Test Energy Regen", "regen": {"energy": 7}})
+    effect_log: list[str] = []
+    effects.trigger_end_of_turn_effects(effect_regen_rogue, effect_log, "P1")
+    assert effect_regen_rogue.res.energy == int(7 * 1.30), \
+        "Low-resource rogue should get Wrath-multiplied status-effect energy regen"
+    assert any("9 Energy" in line for line in effect_log), "Status-effect Energy log should show the adjusted amount"
+
+    effect_regen_pal = make_match("paladin", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6331).state["p1_sid"]
+    effect_regen_pal.res.mp = 0
+    effect_regen_pal.effects.append({"id": "test_mana_regen", "name": "Test Mana Regen", "regen": {"mp": 7}})
+    effect_log = []
+    effects.trigger_end_of_turn_effects(effect_regen_pal, effect_log, "P1")
+    assert effect_regen_pal.res.mp == int(7 * 1.30), \
+        "Low-resource mana user should get Wrath-multiplied status-effect mana regen"
+    assert any("9 Mana" in line for line in effect_log), "Status-effect Mana log should show the adjusted amount"
+
+    effect_regen_might = make_match("mage", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6332).state["p1_sid"]
+    effect_regen_might.res.mp = 60
+    effect_regen_might.effects.append({"id": "test_might_mana_regen", "name": "Test Might Mana Regen", "regen": {"mp": 7}})
+    before_effect_might = effect_regen_might.res.mp
+    effects.trigger_end_of_turn_effects(effect_regen_might, [], "P1")
+    assert effect_regen_might.res.mp - before_effect_might == 7, "Might should not boost status-effect resource regen"
+
+    effect_regen_plain = make_match("rogue", "warrior", seed=6333).state["p1_sid"]
+    effect_regen_plain.res.energy = 0
+    effect_regen_plain.effects.append({"id": "test_plain_energy_regen", "name": "Test Plain Energy Regen", "regen": {"energy": 7}})
+    effects.trigger_end_of_turn_effects(effect_regen_plain, [], "P1")
+    assert effect_regen_plain.res.energy == 7, "Without Challenger, status-effect energy regen should remain unchanged"
+
+    hp_regen = make_match("mage", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6334).state["p1_sid"]
+    hp_regen.res.mp = 0
+    hp_regen.res.hp = hp_regen.res.hp_max - 7
+    hp_regen.effects.append({"id": "test_hp_regen", "name": "Test HP Regen", "regen": {"hp": 7}})
+    effects.trigger_end_of_turn_effects(hp_regen, [], "P1")
+    assert hp_regen.res.hp == hp_regen.res.hp_max, "Status-effect HP regen should not be multiplied by Challenger Wrath"
+
+    # ------------------------------------------------------------------
+    # Issue 2: the redirect stance helper must only suppress the champion's
+    # stance for damage that is actually redirected. AoE / on-hit passive
+    # procs bypass Blocking Defence's single-target redirect and still hit
+    # the champion, so they must keep the champion's start-of-turn stance.
+    # ------------------------------------------------------------------
+    def aoe_proc_damage_on_hunter(hunter_mp: int) -> int | None:
+        proc_match = make_match("hunter", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6310)
+        hunter_sid, warrior_sid = proc_match.players
+        hunter = proc_match.state[hunter_sid]
+        warrior = proc_match.state[warrior_sid]
+        submit_turn(proc_match, "call_boar", _DEF_PASS)
+        boar = _active_pet(hunter, "barrens_boar")
+        assert boar is not None, "Boar should be active for the AoE-proc redirect coverage"
+        hunter.res.mp = hunter_mp
+        effects.apply_effect_by_id(hunter, "blocking_defence", overrides={"duration": 1, "redirect_to_pet_id": boar.id})
+        warrior.res.rage = warrior.res.rage_max
+        # Deterministic magical on-hit proc so the Hunter's incoming stance is observable.
+        warrior.effects.append(
+            {
+                "type": "item_passive",
+                "source_item": "Test Blade",
+                "passive": {
+                    "type": "lightning_blast",
+                    "trigger": "on_hit",
+                    "chance": 1.0,
+                    "scaling": {"atk": 5.0},
+                    "dice": None,
+                    "school": "magical",
+                },
+            }
+        )
+        original_dragon_roar = dict(ABILITIES["dragon_roar"])
+        log_start = len(proc_match.log)
+        try:
+            ABILITIES["dragon_roar"] = dict(original_dragon_roar, cannot_miss=True)
+            submit_turn(proc_match, _DEF_PASS, "dragon_roar")
+        finally:
+            ABILITIES["dragon_roar"] = original_dragon_roar
+        proc_value = None
+        for line in proc_match.log[log_start:]:
+            match = re.search(r"blasts the target with lightning.*Deals (\d+) magic damage", line)
+            if match:
+                proc_value = int(match.group(1))
+        return proc_value
+
+    might_proc = aoe_proc_damage_on_hunter(50)  # 50/50 mana -> Might
+    wrath_proc = aoe_proc_damage_on_hunter(0)   # 0/50 mana -> Wrath
+    assert might_proc is not None and wrath_proc is not None, \
+        "AoE on-hit proc should still hit the Hunter even while Blocking Defence has a live redirect pet"
+    assert might_proc < wrath_proc, \
+        "Challenger's incoming modifier must apply to the AoE proc (Might reduces, Wrath increases) despite the redirect pet"
+
+    def queued_single_target_proc_damage(*, boar_hp: int, hunter_mp: int, direct_damage: int) -> tuple[int | None, int, int, int]:
+        proc_match = make_match("hunter", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6311)
+        hunter_sid, warrior_sid = proc_match.players
+        hunter = proc_match.state[hunter_sid]
+        warrior = proc_match.state[warrior_sid]
+        submit_turn(proc_match, "call_boar", _DEF_PASS)
+        boar = _active_pet(hunter, "barrens_boar")
+        assert boar is not None, "Boar should be active for queued single-target proc coverage"
+        hunter.res.mp = hunter_mp
+        hunter_hp_before = hunter.res.hp
+        expected_hunter_might_proc = effects.resolve_incoming_damage(20, hunter, "magical", challenger_mode="might")
+        boar.hp = boar_hp
+        effects.apply_effect_by_id(hunter, "blocking_defence", overrides={"duration": 1, "redirect_to_pet_id": boar.id})
+        warrior.res.rage = warrior.res.rage_max
+        warrior.stats["atk"] = 20
+        warrior.effects.append(
+            {
+                "type": "item_passive",
+                "source_item": "Test Thunderfury",
+                "passive": {
+                    "type": "lightning_blast",
+                    "trigger": "on_hit",
+                    "chance": 1.0,
+                    "scaling": {"atk": 1.0},
+                    "dice": None,
+                    "school": "magical",
+                },
+            }
+        )
+        original_mortal_strike = dict(ABILITIES["mortal_strike"])
+        log_start = len(proc_match.log)
+        try:
+            ABILITIES["mortal_strike"] = dict(original_mortal_strike, dice=None, scaling={}, flat_damage=direct_damage, cannot_miss=True)
+            submit_turn(proc_match, _DEF_PASS, "mortal_strike")
+        finally:
+            ABILITIES["mortal_strike"] = original_mortal_strike
+        proc_value = None
+        for line in proc_match.log[log_start:]:
+            match = re.search(r"blasts the target with lightning.*Deals (\d+) magic damage", line)
+            if match:
+                proc_value = int(match.group(1))
+        return proc_value, hunter_hp_before - hunter.res.hp, boar.hp, expected_hunter_might_proc
+
+    killed_proc, killed_hunter_damage, killed_boar_hp, expected_might_proc = queued_single_target_proc_damage(boar_hp=1, hunter_mp=50, direct_damage=30)
+    assert killed_boar_hp <= 0, "Direct redirected hit should kill the Boar before queued proc damage lands"
+    assert killed_proc == expected_might_proc, \
+        "Queued passive damage that falls through to the Hunter must use the Hunter's start-of-turn Challenger Might mitigation"
+    assert killed_hunter_damage == expected_might_proc, "Queued proc damage should be applied to the Hunter after the redirect pet dies"
+
+    survived_proc, survived_hunter_damage, survived_boar_hp, _ = queued_single_target_proc_damage(boar_hp=30, hunter_mp=50, direct_damage=1)
+    assert survived_proc is not None and survived_proc > 0, "Queued passive damage should still be logged when it redirects to a surviving Boar"
+    assert survived_hunter_damage == 0, "Queued passive damage redirected to the Boar must not damage the Hunter"
+    assert survived_boar_hp < 30, "Queued passive damage should apply to the surviving Boar"
+    assert survived_proc != expected_might_proc, "Pet-redirected queued passive damage must not use the Hunter's Challenger mitigation"
+
+    # ------------------------------------------------------------------
+    # Issue 3: same-action resource gains must use the actor's start-of-turn
+    # Challenger snapshot, not the live stance after the cost is paid.
+    # ------------------------------------------------------------------
+    snap = make_match("mage", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6305).state["p1_sid"]
+    snap.res.mp = 39
+    assert effects.challenger_resource_stance_mode(snap) == "wrath", "39/80 mana is live Wrath"
+    assert effects.resource_gain_multiplier_from_passives(snap, "mp") == 1.30, "Live Wrath still boosts gains for end-of-turn/external callers"
+    assert effects.resource_gain_multiplier_from_passives(snap, "mp", challenger_mode="might") == 1.0, \
+        "A Might start-of-turn snapshot must suppress the Wrath gain boost even when live stance is Wrath"
+    assert effects.resource_gain_multiplier_from_passives(snap, "mp", challenger_mode="wrath") == 1.30, \
+        "A Wrath start-of-turn snapshot keeps the gain boost"
+
+    def crusader_strike_final_mp(start_mp: int) -> int:
+        gain_match = make_match("paladin", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6320)
+        pal = gain_match.state[gain_match.players[0]]
+        pal.res.mp = start_mp
+        original = dict(ABILITIES["crusader_strike"])
+        try:
+            ABILITIES["crusader_strike"] = dict(
+                original, cost={"mp": 20}, resource_gain={"mp": 8}, dice=None, scaling={"atk": 0.4}, cannot_miss=True
+            )
+            submit_turn(gain_match, "crusader_strike", _DEF_PASS)
+        finally:
+            ABILITIES["crusader_strike"] = original
+        return pal.res.mp
+
+    # Might start (36/70): snapshot=Might. Cost 20 * 1.20 (Might surcharge) -> 24, mana 36->12 (live Wrath).
+    # Same-action gain of 8 uses the Might snapshot (x1.0) -> 20, then end-of-turn Wrath regen 4*1.30=5 -> 25.
+    # The pre-fix live-stance grant would boost the gain (8*1.30=10) and yield 27 instead.
+    assert crusader_strike_final_mp(36) == 25, \
+        "Same-action gain for a Might-start actor must not receive Wrath's 1.30x even after the cost drops it below threshold"
+    # Wrath start (34/70): snapshot=Wrath. Cost 20 (no Wrath surcharge), mana 34->14.
+    # Same-action gain 8 * 1.30 = 10 -> 24, then end-of-turn Wrath regen 5 -> 29.
+    assert crusader_strike_final_mp(34) == 29, \
+        "Same-action gain for a Wrath-start actor should still receive Wrath's 1.30x multiplier"
+
+    return True
+
+
+def scenario_challengers_chestplate_on_hit_proc_outgoing_stance() -> bool:
+    # ------------------------------------------------------------------
+    # The attacker's Challenger outgoing damage stance (Might/Wrath) must
+    # scale freshly-computed on-hit proc damage (lightning_blast/void_blade,
+    # Thunderfury-style, and duplicate_offensive_spell) exactly like the
+    # primary hit, while the target's incoming stance stays an independent
+    # modifier and strike_again (derived from the resolved primary hit) is
+    # never double-multiplied.
+    # ------------------------------------------------------------------
+    lightning_passive = {
+        "type": "item_passive",
+        "source_item": "Test Thunderfury",
+        "passive": {
+            "type": "lightning_blast",
+            "trigger": "on_hit",
+            "chance": 1.0,
+            "scaling": {"atk": 2.0},
+            "dice": None,
+            "school": "magical",
+        },
+    }
+
+    # -- Attacker outgoing stance drives proc damage against a fixed target --
+    # lightning_blast queues a raw ``damage_event`` (re-mitigated on landing) and
+    # therefore no longer reports its speculative value through ``bonus_damage``;
+    # the scaled proc damage now lives in the queued event's ``incoming``.
+    def lightning_proc(attacker_mode: str) -> int:
+        match = make_match("warrior", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6350)
+        attacker = match.state[match.players[0]]
+        target = match.state[match.players[1]]
+        attacker.stats["atk"] = 40
+        attacker.effects.append(dict(lightning_passive, passive=dict(lightning_passive["passive"])))
+        bonus_damage, _, _, damage_events = effects.trigger_on_hit_passives(
+            attacker,
+            target,
+            base_damage=10,
+            damage_type="physical",
+            rng=random.Random(11),
+            ability=None,
+            include_strike_again=False,
+            attacker_challenger_mode=attacker_mode,
+        )
+        assert bonus_damage == 0, "Raw queued lightning proc must not contribute speculative bonus_damage"
+        return sum(int(event.get("incoming", 0) or 0) for event in damage_events)
+
+    might_proc = lightning_proc("might")
+    wrath_proc = lightning_proc("wrath")
+    assert might_proc > 0 and wrath_proc > 0, "Deterministic lightning_blast proc should deal damage in both stances"
+    assert might_proc > wrath_proc, \
+        "Attacker Challenger Might must produce a higher on-hit proc than Wrath against the same target"
+
+    # -- Target incoming stance stays independent of the attacker stance --
+    def lightning_proc_vs_challenger_target(target_mode: str) -> int:
+        match = make_match(
+            "warrior",
+            "warrior",
+            p1_items={"armor": "challengers_chestplate"},
+            p2_items={"armor": "challengers_chestplate"},
+            seed=6351,
+        )
+        attacker = match.state[match.players[0]]
+        target = match.state[match.players[1]]
+        attacker.stats["atk"] = 40
+        attacker.effects.append(dict(lightning_passive, passive=dict(lightning_passive["passive"])))
+        _, _, _, damage_events = effects.trigger_on_hit_passives(
+            attacker,
+            target,
+            base_damage=10,
+            damage_type="physical",
+            rng=random.Random(11),
+            ability=None,
+            include_strike_again=False,
+            target_challenger_mode=target_mode,
+            attacker_challenger_mode="might",
+        )
+        return sum(int(event.get("incoming", 0) or 0) for event in damage_events)
+
+    target_might_proc = lightning_proc_vs_challenger_target("might")
+    target_wrath_proc = lightning_proc_vs_challenger_target("wrath")
+    assert target_might_proc > 0 and target_wrath_proc > 0, "Proc against a Challenger target should still land"
+    assert target_might_proc < target_wrath_proc, \
+        "Target Challenger Might must reduce incoming proc damage while Wrath increases it, independent of the attacker stance"
+
+    # -- Dragonwrath-style duplicate_offensive_spell honours attacker stance --
+    duplicate_passive = {
+        "type": "item_passive",
+        "source_item": "Test Dragonwrath",
+        "passive": {"type": "duplicate_offensive_spell", "trigger": "on_hit", "chance": 1.0},
+    }
+    duplicate_ability = {
+        "name": "Test Bolt",
+        "tags": ["attack", "spell"],
+        "damage_type": "magic",
+        "scaling": {"int": 2.0},
+        "dice": None,
+    }
+
+    def duplicate_proc(attacker_mode: str) -> int:
+        match = make_match("mage", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6352)
+        attacker = match.state[match.players[0]]
+        target = match.state[match.players[1]]
+        attacker.stats["int"] = 40
+        attacker.effects.append(dict(duplicate_passive, passive=dict(duplicate_passive["passive"])))
+        bonus_damage, _, _, damage_events = effects.trigger_on_hit_passives(
+            attacker,
+            target,
+            base_damage=10,
+            damage_type="magic",
+            rng=random.Random(11),
+            ability=duplicate_ability,
+            include_strike_again=False,
+            attacker_challenger_mode=attacker_mode,
+        )
+        assert bonus_damage == 0, "Raw queued duplicate proc must not contribute speculative bonus_damage"
+        return sum(int(event.get("incoming", 0) or 0) for event in damage_events)
+
+    might_duplicate = duplicate_proc("might")
+    wrath_duplicate = duplicate_proc("wrath")
+    assert might_duplicate > 0 and wrath_duplicate > 0, "Duplicate spell proc should deal damage in both stances"
+    assert might_duplicate > wrath_duplicate, \
+        "Attacker Challenger Might must scale duplicated spell damage higher than Wrath"
+
+    # -- strike_again is derived from the resolved hit and must not be re-scaled --
+    strike_passive = {
+        "type": "item_passive",
+        "source_item": "Test Strike Blade",
+        "passive": {"type": "strike_again", "trigger": "on_hit", "chance": 1.0, "multiplier": 0.5},
+    }
+
+    def strike_again_bonus(attacker_mode: str) -> int:
+        match = make_match("warrior", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6353)
+        attacker = match.state[match.players[0]]
+        target = match.state[match.players[1]]
+        attacker.effects.append(dict(strike_passive, passive=dict(strike_passive["passive"])))
+        bonus_damage, _, _, _ = effects.trigger_on_hit_passives(
+            attacker,
+            target,
+            base_damage=100,
+            damage_type="physical",
+            rng=random.Random(11),
+            ability=None,
+            include_strike_again=True,
+            only_strike_again=True,
+            attacker_challenger_mode=attacker_mode,
+        )
+        return bonus_damage
+
+    might_strike = strike_again_bonus("might")
+    wrath_strike = strike_again_bonus("wrath")
+    assert might_strike == 50 and wrath_strike == 50, \
+        "strike_again derives from the resolved primary hit and must not receive the attacker Challenger multiplier"
+
+    return True
+
+
+def scenario_on_hit_resource_gain_log_uses_actual_gained() -> bool:
+    # ------------------------------------------------------------------
+    # The on_hit_resource_gains combat log must report the amount actually
+    # gained through grant_resource (Challenger Wrath boost + cap), not the
+    # static ability text (e.g. Aimed Shot's "restores 5 mana.").
+    # ------------------------------------------------------------------
+
+    # Source-of-truth math: Challenger Wrath turns a base-5 mana gain into 6.
+    unit = make_match("hunter", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6220)
+    unit_hunter = unit.state[unit.players[0]]
+    unit_hunter.res.mp = unit_hunter.res.mp_max // 2  # 50% active resource -> Wrath
+    assert effects.challenger_resource_stance_mode(unit_hunter) == "wrath", \
+        "Low-resource hunter should be in Challenger Wrath"
+    unit_hunter.res.mp = 0
+    assert effects.grant_player_resource(unit_hunter, "mp", 5, challenger_mode="wrath") == 6, \
+        "Challenger Wrath should turn a base-5 mana gain into an actual 6"
+
+    # Full turn: a low-resource Challenger hunter procs Aimed Shot's on-hit mana
+    # gain and the log must report the boosted 6, never the static 5.
+    match = make_match("hunter", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=3)
+    hunter = match.state[match.players[0]]
+    hunter.res.mp = hunter.res.mp_max // 2
+    submit_turn(match, "aimed_shot", "die_by_the_sword")
+    turn_lines = _turn_lines(match, 1)
+    assert any("restores 6 mana." in line for line in turn_lines), \
+        "Aimed Shot on-hit gain should log the Challenger-boosted amount (6)"
+    assert not any("restores 5 mana." in line for line in turn_lines), \
+        "Combat log must not report the static base amount (5) under Challenger Wrath"
+
+    # Near-cap: when the adjusted amount would overflow the pool, the log must
+    # follow the actual capped gain, not the pre-cap adjusted amount. Only Aimed
+    # Shot uses on_hit_resource_gains and its cost draws from the same mana pool,
+    # so temporarily widen the base gain to force the cap to bind.
+    entry = ABILITIES["aimed_shot"]["on_hit_resource_gains"][0]
+    original_amount = entry["amount"]
+    try:
+        entry["amount"] = 40  # int(40 * 1.30) == 52 adjusted, far above the mana headroom
+        adjusted = int(40 * 1.30)
+        cap_match = make_match("hunter", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=3)
+        cap_hunter = cap_match.state[cap_match.players[0]]
+        cap_hunter.res.mp = cap_hunter.res.mp_max // 2
+        submit_turn(cap_match, "aimed_shot", "die_by_the_sword")
+        cap_lines = _turn_lines(cap_match, 1)
+        assert cap_hunter.res.mp == cap_hunter.res.mp_max, \
+            "Near-cap gain should fill the hunter's mana to its maximum"
+        mana_logs = [line for line in cap_lines if re.search(r"restores \d+ mana\.", line)]
+        assert mana_logs, "Near-cap Aimed Shot should still log a mana restore"
+        logged = int(re.search(r"restores (\d+) mana\.", mana_logs[0]).group(1))
+        assert 0 < logged < adjusted, \
+            "Near-cap log should report the capped gain, strictly below the adjusted amount"
+        assert not any("restores 40 mana." in line or f"restores {adjusted} mana." in line for line in cap_lines), \
+            "Near-cap log must not report the base (40) or pre-cap adjusted (52) amounts"
+        assert not any("restores 5 mana." in line for line in cap_lines), \
+            "Near-cap log must not fall back to the static base text (5)"
+    finally:
+        entry["amount"] = original_amount
+
+    return True
+
+
+def scenario_queued_proc_resource_gain_uses_actual_dealt() -> bool:
+    # ------------------------------------------------------------------
+    # P2 fix: damage-based resource gains (e.g. Overpower's rage: damage) must be
+    # credited from the ACTUAL HP dealt after each queued on-hit proc has landed
+    # against its final target — not from the speculative pre-mitigation value the
+    # proc was originally computed against. Raw queued proc events therefore no
+    # longer contribute their speculative reduced value to bonus_damage; instead
+    # the resolver defers damage-based resource gains to the post-damage stage and
+    # sums the real dealt amount (post redirect / absorb / immunity / Mindgames).
+    # ------------------------------------------------------------------
+    lightning_passive = {
+        "type": "item_passive",
+        "source_item": "Test Thunderfury",
+        "passive": {
+            "type": "lightning_blast",
+            "trigger": "on_hit",
+            "chance": 1.0,
+            "scaling": {"atk": 1.0},
+            "dice": None,
+            "school": "magical",
+        },
+    }
+
+    def _overpower_override():
+        # Deterministic single physical strike carrying rage: damage.
+        original = dict(ABILITIES["overpower"])
+        ABILITIES["overpower"] = dict(
+            original, dice=None, scaling={}, flat_damage=20, cannot_miss=True, resource_gain={"rage": "damage"}
+        )
+        return original
+
+    # -- Case 1: redirect to a surviving boar --------------------------------
+    # The direct hit and the lightning proc both redirect to the Hunter's boar via
+    # Blocking Defence. Rage must equal the ACTUAL damage dealt to the boar, and
+    # must differ from the champion-mitigated value (proving it is not speculative).
+    def redirect_run(redirect: bool) -> tuple[int, int, int, bool]:
+        match = make_match("hunter", "warrior", seed=6212)
+        hunter_sid, warrior_sid = match.players
+        hunter = match.state[hunter_sid]
+        warrior = match.state[warrior_sid]
+        submit_turn(match, "call_boar", _DEF_PASS)
+        boar = _active_pet(hunter, "barrens_boar")
+        assert boar is not None, "Boar should be active for redirect coverage"
+        # Divergent mitigation so champion vs boar damage differ meaningfully.
+        hunter.stats["def"] = 40
+        hunter.stats["magic_resist"] = 30
+        if redirect:
+            effects.apply_effect_by_id(hunter, "blocking_defence", overrides={"duration": 1, "redirect_to_pet_id": boar.id})
+        warrior.stats.update({"atk": 20, "crit": 0, "acc": 999})
+        warrior.res.rage = 0
+        warrior.effects.append(dict(lightning_passive, passive=dict(lightning_passive["passive"])))
+        original = _overpower_override()
+        try:
+            hunter_hp0 = hunter.res.hp
+            boar_hp0 = boar.hp
+            submit_turn(match, _DEF_PASS, "overpower")
+        finally:
+            ABILITIES["overpower"] = original
+        return warrior.res.rage, hunter_hp0 - hunter.res.hp, boar_hp0 - boar.hp, boar.hp > 0
+
+    redirect_rage, redirect_hunter_dmg, redirect_boar_dmg, boar_alive = redirect_run(redirect=True)
+    champion_rage, champion_hunter_dmg, _, _ = redirect_run(redirect=False)
+    assert boar_alive, "Case 1 requires the boar to survive so real boar damage is observable"
+    assert redirect_hunter_dmg == 0, "Blocking Defence should redirect the whole hit away from the Hunter"
+    assert redirect_boar_dmg > 0, "Redirected hit and proc should deal real damage to the boar"
+    assert redirect_rage == redirect_boar_dmg, "Rage must be credited from ACTUAL damage dealt to the boar"
+    assert champion_hunter_dmg == champion_rage and champion_rage > 0, "Control run: rage tracks direct champion damage"
+    assert redirect_rage != champion_rage, "Redirected rage must differ from the champion-mitigated value (not speculative)"
+
+    # -- Case 2: direct hit kills the boar, proc falls through to the Hunter ---
+    # The boar dies to the direct strike, so the queued lightning proc falls through
+    # to the Hunter and must be mitigated with the Hunter's START-OF-TURN Challenger
+    # stance. Wrath (start-of-turn) increases incoming, Might reduces it; the rage
+    # difference must equal exactly the proc-damage difference.
+    def fallthrough_run(hunter_start_mp: int) -> tuple[int, int, int]:
+        match = make_match("hunter", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6212)
+        hunter_sid, warrior_sid = match.players
+        hunter = match.state[hunter_sid]
+        warrior = match.state[warrior_sid]
+        submit_turn(match, "call_boar", _DEF_PASS)
+        boar = _active_pet(hunter, "barrens_boar")
+        assert boar is not None, "Boar should be active for fall-through coverage"
+        boar.hp = 1  # dies to the direct strike before the proc resolves
+        hunter.stats["def"] = 0
+        hunter.stats["magic_resist"] = 0
+        hunter.res.mp = hunter_start_mp
+        effects.apply_effect_by_id(hunter, "blocking_defence", overrides={"duration": 1, "redirect_to_pet_id": boar.id})
+        warrior.stats.update({"atk": 20, "crit": 0, "acc": 999})
+        warrior.res.rage = 0
+        warrior.effects.append(dict(lightning_passive, passive=dict(lightning_passive["passive"])))
+        original = _overpower_override()
+        try:
+            hunter_hp0 = hunter.res.hp
+            submit_turn(match, _DEF_PASS, "overpower")
+        finally:
+            ABILITIES["overpower"] = original
+        proc_line = next((line for line in match.log if "lightning from Test Thunderfury" in line), "")
+        parsed = re.search(r"Deals (\d+) magic damage", proc_line)
+        assert parsed is not None, "Fall-through proc should log its incoming damage against the Hunter"
+        assert boar.hp <= 0, "Case 2 requires the direct hit to kill the boar"
+        return warrior.res.rage, hunter_hp0 - hunter.res.hp, int(parsed.group(1))
+
+    hunter_mp_max = make_match("hunter", "warrior", seed=6212).state["p1_sid"].res.mp_max
+    wrath_rage, wrath_hunter_dmg, wrath_proc = fallthrough_run(hunter_start_mp=hunter_mp_max // 2)  # start-of-turn Wrath
+    might_rage, might_hunter_dmg, might_proc = fallthrough_run(hunter_start_mp=hunter_mp_max)  # start-of-turn Might
+    assert wrath_hunter_dmg == wrath_proc and might_hunter_dmg == might_proc, "Proc must fall through and hit the Hunter"
+    assert wrath_proc > might_proc, "Start-of-turn Wrath must increase incoming proc damage relative to Might"
+    assert wrath_rage - might_rage == wrath_proc - might_proc, (
+        "Rage from the fall-through proc must track the Hunter's start-of-turn Challenger-mitigated damage"
+    )
+
+    # -- Cases 3 & 4: absorb / immunity zero out the proc; strike_again once ---
+    def cast_vs_target(*, absorb: int = 0, immune_magic: bool = False, passive: dict | None = None) -> tuple[int, int, list[str]]:
+        passive = passive if passive is not None else lightning_passive
+        match = make_match("warrior", "warrior", seed=6212)
+        warrior_sid, target_sid = match.players
+        warrior = match.state[warrior_sid]
+        target = match.state[target_sid]
+        warrior.stats.update({"atk": 20, "crit": 0, "acc": 999})
+        warrior.res.rage = 0
+        target.stats.update({"def": 0, "magic_resist": 0})
+        warrior.effects.append(dict(passive, passive=dict(passive["passive"])))
+        if absorb:
+            effects.add_absorb(target, absorb, source_name="Power Word: Shield", effect_id="power_word_shield")
+        if immune_magic:
+            target.effects.append({"id": "test_immune_magic", "name": "Test Magic Immunity", "flags": {"immune_magic": True}})
+        original = _overpower_override()
+        try:
+            target_hp0 = target.res.hp
+            submit_turn(match, "overpower", _DEF_PASS)
+        finally:
+            ABILITIES["overpower"] = original
+        proc_lines = [line for line in match.log if "lightning from Test Thunderfury" in line]
+        return warrior.res.rage, target_hp0 - target.res.hp, proc_lines
+
+    baseline_rage, baseline_dmg, baseline_proc_lines = cast_vs_target()
+    assert baseline_rage == baseline_dmg > 0, "Baseline: rage equals total actual damage (direct + proc)"
+    assert baseline_proc_lines, "Baseline lightning proc should fire"
+
+    absorbed_rage, absorbed_dmg, absorbed_proc_lines = cast_vs_target(absorb=999)
+    assert absorbed_rage == 0 and absorbed_dmg == 0, "Fully absorbed hit + proc must contribute 0 resource gain"
+    assert absorbed_proc_lines and "absorbed by Power Word: Shield" in absorbed_proc_lines[0], (
+        "Proc event must still fire and be absorbed (not silently skipped)"
+    )
+
+    immune_rage, immune_dmg, immune_proc_lines = cast_vs_target(immune_magic=True)
+    assert immune_rage == immune_dmg and immune_dmg > 0, "Immune target: rage equals direct physical damage only"
+    assert immune_rage < baseline_rage, "Immuned magic proc must contribute 0 extra resource gain"
+
+    strike_passive = {
+        "type": "item_passive",
+        "source_item": "Test Strike Blade",
+        "passive": {"type": "strike_again", "trigger": "on_hit", "chance": 1.0, "multiplier": 0.5},
+    }
+    strike_rage, strike_dmg, _ = cast_vs_target(passive=strike_passive)
+    assert strike_rage == strike_dmg, "Strike-again resource gain must equal total actual damage (counted exactly once)"
+    assert strike_rage == 30, "Strike-again (20 direct + 10 strike) must be counted once, not doubled"
+
+    # -- Case 5: Dragonwrath-style multi-hit duplicate ------------------------
+    # The duplicate log must render real per-hit numbers, and the damage-based
+    # resource gain must increase by exactly the duplicate's actual dealt damage.
+    duplicate_passive = {
+        "type": "item_passive",
+        "source_item": "Dragonwrath",
+        "passive": {"type": "duplicate_offensive_spell", "trigger": "on_hit", "chance": 1.0},
+    }
+
+    def cast_barrage(with_dragonwrath: bool) -> tuple[int, int, str | None]:
+        match = make_match("mage", "priest", seed=6212)
+        mage_sid, target_sid = match.players
+        mage = match.state[mage_sid]
+        target = match.state[target_sid]
+        mage.stats.update({"int": 6, "crit": 0, "acc": 999})
+        target.stats.update({"def": 0, "magic_resist": 0})
+        target.res.hp = target.res.hp_max
+        if with_dragonwrath:
+            mage.effects.append(dict(duplicate_passive, passive=dict(duplicate_passive["passive"])))
+        original = dict(ABILITIES["arcane_barrage"])
+        # Exactly enough mana to cast so the gain is not clamped by the cap.
+        mage.res.mp = int(original.get("cost", {}).get("mp", 0) or 0)
+        try:
+            ABILITIES["arcane_barrage"] = dict(
+                original, dice=None, scaling={"int": 1.0}, hits=3, cannot_miss=True, resource_gain={"mp": "damage"}
+            )
+            target_hp0 = target.res.hp
+            submit_turn(match, "arcane_barrage", _DEF_PASS)
+        finally:
+            ABILITIES["arcane_barrage"] = original
+        duplicate_line = next((line for line in match.log if "duplicates Arcane Barrage!" in line), None)
+        return mage.res.mp, target_hp0 - target.res.hp, duplicate_line
+
+    plain_mp, plain_dmg, _ = cast_barrage(with_dragonwrath=False)
+    dragon_mp, dragon_dmg, duplicate_line = cast_barrage(with_dragonwrath=True)
+    assert duplicate_line is not None, "Deterministic Dragonwrath duplicate should fire"
+    assert "__DMG_" not in duplicate_line, "Multi-hit duplicate log must render real damage numbers, not placeholders"
+    assert "Hit 1: Deals 6 damage." in duplicate_line and "Hit 3: Deals 6 damage." in duplicate_line, (
+        "Duplicate multi-hit log should show each real per-hit value"
+    )
+    duplicate_damage = dragon_dmg - plain_dmg
+    assert duplicate_damage > 0, "Dragonwrath duplicate should add real HP damage"
+    assert dragon_mp - plain_mp == duplicate_damage, (
+        "Damage-based resource gain must increase by exactly the duplicate's actual dealt damage"
+    )
+    return True
+
+
+def scenario_challengers_chestplate_wildfire_dot_outgoing_snapshot() -> bool:
+    def cast_from_dealt_damage_dot(*, hunter_mp: int) -> tuple[int, int]:
+        ability_id = "test_challenger_from_dealt_dot"
+        effect_id = "test_challenger_from_dealt_dot_effect"
+        original_ability = ABILITIES.get(ability_id)
+        original_effect = EFFECT_TEMPLATES.get(effect_id)
+        ABILITIES[ability_id] = {
+            "name": "Challenger Rupture Test",
+            "requires_target": True,
+            "cannot_miss": True,
+            "flat_damage": 24,
+            "damage_type": "magic",
+            "school": "magical",
+            "subschool": "fire",
+            "dot": {"id": effect_id, "duration": 2, "from_dealt_damage": True},
+            "tags": ["attack", "spell"],
+            "classes": ["hunter"],
+        }
+        EFFECT_TEMPLATES[effect_id] = {
+            "type": "dot",
+            "name": "Challenger Rupture Test DoT",
+            "duration": 2,
+            "category": "dot",
+            "school": "magical",
+            "subschool": "fire",
+            "tick_damage": 1,
+        }
+        try:
+            match = make_match("hunter", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=9010)
+            hunter_sid, warrior_sid = match.players
+            hunter = match.state[hunter_sid]
+            warrior = match.state[warrior_sid]
+            hunter.res.mp = hunter_mp
+            hunter.stats["crit"] = 0
+            hunter.stats["hit"] = 999
+
+            submit_turn(match, ability_id, _DEF_PASS)
+
+            turn_one_log = "\n".join(_turn_lines(match, 1))
+            direct_match = re.search(r"Challenger Rupture Test\. Deals (\d+) damage", turn_one_log)
+            dot = next((fx for fx in warrior.effects if fx.get("id") == effect_id), None)
+            assert direct_match is not None, "from_dealt_damage Challenger test direct hit should land"
+            assert dot is not None, "from_dealt_damage Challenger test should apply its DoT"
+            direct_damage = int(direct_match.group(1))
+            stored_tick_damage = int(dot.get("tick_damage", 0) or 0)
+            assert stored_tick_damage == direct_damage // 2, "from_dealt_damage DoT should store resolved direct damage divided by duration without a second Challenger multiplier"
+            return direct_damage, stored_tick_damage
+        finally:
+            if original_ability is None:
+                ABILITIES.pop(ability_id, None)
+            else:
+                ABILITIES[ability_id] = original_ability
+            if original_effect is None:
+                EFFECT_TEMPLATES.pop(effect_id, None)
+            else:
+                EFFECT_TEMPLATES[effect_id] = original_effect
+
+    def cast_focus_independent_dot(*, focus_charm: bool, incoming_after_action: bool) -> tuple[int, int, int]:
+        ability_id = "test_focus_independent_dot"
+        effect_id = "test_focus_independent_dot_effect"
+        counter_ability_id = "test_focus_threshold_hit"
+        original_ability = ABILITIES.get(ability_id)
+        original_counter_ability = ABILITIES.get(counter_ability_id)
+        original_effect = EFFECT_TEMPLATES.get(effect_id)
+        ABILITIES[ability_id] = {
+            "name": "Focus Ember Test",
+            "requires_target": True,
+            "cannot_miss": True,
+            "flat_damage": 20,
+            "damage_type": "magic",
+            "school": "magical",
+            "subschool": "fire",
+            "dot": {"id": effect_id, "duration": 2, "tick_damage": 10, "school": "magical", "subschool": "fire"},
+            "tags": ["attack", "spell"],
+            "classes": ["hunter"],
+        }
+        ABILITIES[counter_ability_id] = {
+            "name": "Heavy Test Strike",
+            "requires_target": True,
+            "cannot_miss": True,
+            "flat_damage": 45,
+            "damage_type": "physical",
+            "school": "physical",
+            "tags": ["attack"],
+            "classes": ["warrior"],
+        }
+        EFFECT_TEMPLATES[effect_id] = {
+            "type": "dot",
+            "name": "Focus Ember Test DoT",
+            "duration": 2,
+            "category": "dot",
+            "school": "magical",
+            "subschool": "fire",
+            "tick_damage": 1,
+        }
+        try:
+            match = make_match(
+                "hunter",
+                "warrior",
+                p1_items={"trinket": "focus_charm"} if focus_charm else None,
+                seed=9011,
+            )
+            hunter_sid, warrior_sid = match.players
+            hunter = match.state[hunter_sid]
+            warrior = match.state[warrior_sid]
+            hunter.stats["crit"] = 0
+            hunter.stats["hit"] = 999
+
+            submit_turn(match, ability_id, counter_ability_id if incoming_after_action else _DEF_PASS)
+
+            turn_one_log = "\n".join(_turn_lines(match, 1))
+            direct_match = re.search(r"Focus Ember Test\. Deals (\d+) damage", turn_one_log)
+            dot = next((fx for fx in warrior.effects if fx.get("id") == effect_id), None)
+            assert direct_match is not None, "Focus independent DoT test direct hit should land"
+            assert dot is not None, "Focus independent DoT test should apply its DoT"
+            return int(direct_match.group(1)), int(dot.get("tick_damage", 0) or 0), hunter.res.hp
+        finally:
+            if original_ability is None:
+                ABILITIES.pop(ability_id, None)
+            else:
+                ABILITIES[ability_id] = original_ability
+            if original_counter_ability is None:
+                ABILITIES.pop(counter_ability_id, None)
+            else:
+                ABILITIES[counter_ability_id] = original_counter_ability
+            if original_effect is None:
+                EFFECT_TEMPLATES.pop(effect_id, None)
+            else:
+                EFFECT_TEMPLATES[effect_id] = original_effect
+
+    focus_direct, focus_stored, focus_end_hp = cast_focus_independent_dot(focus_charm=True, incoming_after_action=True)
+    baseline_direct, baseline_stored, _ = cast_focus_independent_dot(focus_charm=False, incoming_after_action=False)
+    assert focus_end_hp < 70, "Counter hit should move the Focus Charm actor below its HP threshold after action calculation"
+    assert focus_direct > baseline_direct, "Independent DoT direct hit should use the action-time Focus Charm outgoing multiplier"
+    assert focus_stored == int(baseline_stored * 1.10), "Independent DoT tick_damage should use the same action-time Focus Charm multiplier as the direct hit"
+
+    def cast_challenger_pure_dot(class_id: str, ability_id: str, dot_id: str, *, mp: int) -> tuple[int, int]:
+        match = make_match(class_id, "warrior", p1_items={"armor": "challengers_chestplate"}, seed=9020)
+        actor_sid, target_sid = match.players
+        actor = match.state[actor_sid]
+        target = match.state[target_sid]
+        actor.res.mp = mp
+        actor.stats["acc"] = 999
+        actor.stats["crit"] = 0
+        if ability_id == "devouring_plague":
+            effects.apply_effect_by_id(actor, "shadowy_insight")
+
+        submit_turn(match, ability_id, _DEF_PASS)
+
+        dot = next((fx for fx in target.effects if fx.get("id") == dot_id), None)
+        assert dot is not None, f"{ability_id} should apply its pure DoT"
+        return int(dot.get("tick_damage", 0) or 0), actor.res.mp
+
+    def challenger_pure_dot_pair(class_id: str, ability_id: str, dot_id: str) -> tuple[int, int]:
+        # Derive Might/Wrath test mana from the actor's own max resource. Hard-coded
+        # 41/40 only lands above 50% for a 80-max pool; Warlock (100) and Priest
+        # (110) treat those as Wrath, hiding the Might/Wrath difference.
+        probe = make_match(class_id, "warrior", p1_items={"armor": "challengers_chestplate"}, seed=9020)
+        mp_max = probe.state[probe.players[0]].res.mp_max
+        might_mp = mp_max // 2 + 1
+        wrath_mp = mp_max // 2
+        might_tick, might_end_mp = cast_challenger_pure_dot(class_id, ability_id, dot_id, mp=might_mp)
+        wrath_tick, _ = cast_challenger_pure_dot(class_id, ability_id, dot_id, mp=wrath_mp)
+        assert might_tick > wrath_tick, f"{ability_id} stored tick_damage should use Challenger Might versus Wrath"
+        assert might_end_mp <= mp_max // 2, f"{ability_id} should cross from Might into live Wrath after paying its cost"
+        return might_tick, wrath_tick
+
+    challenger_pure_dot_pair("warlock", "corruption", "corruption")
+    challenger_pure_dot_pair("warlock", "unstable_affliction", "unstable_affliction")
+    challenger_pure_dot_pair("priest", "vampiric_touch", "vampiric_touch")
+    challenger_pure_dot_pair("priest", "devouring_plague", "devouring_plague")
+
+    might_from_dealt_direct, might_from_dealt_stored = cast_from_dealt_damage_dot(hunter_mp=50)
+    wrath_from_dealt_direct, wrath_from_dealt_stored = cast_from_dealt_damage_dot(hunter_mp=25)
+    assert might_from_dealt_direct > wrath_from_dealt_direct, "from_dealt_damage direct hit should still reflect Challenger Might versus Wrath"
+    assert might_from_dealt_stored == might_from_dealt_direct // 2, "Might from_dealt_damage DoT must not double-scale after resolved direct damage"
+    assert wrath_from_dealt_stored == wrath_from_dealt_direct // 2, "Wrath from_dealt_damage DoT must not double-scale after resolved direct damage"
+
+    def cast_wildfire(*, hunter_mp: int, challenger: bool) -> tuple[int, int, int, int, int]:
+        match = make_match(
+            "hunter",
+            "warrior",
+            p1_items={"armor": "challengers_chestplate"} if challenger else None,
+            seed=9002,
+        )
+        hunter_sid, warrior_sid = match.players
+        hunter = match.state[hunter_sid]
+        warrior = match.state[warrior_sid]
+        hunter.res.mp = hunter_mp
+        hunter.stats["crit"] = 0
+        hunter.stats["hit"] = 999
+
+        submit_turn(match, "wildfire_bomb", _DEF_PASS)
+
+        turn_one_log = "\n".join(_turn_lines(match, 1))
+        direct_match = re.search(r"Wildfire Bomb\. Roll d8 = \d+\. Deals (\d+) damage", turn_one_log)
+        tick_match = re.search(r"suffers (\d+) damage from Wildfire Burn", turn_one_log)
+        dot = next((fx for fx in warrior.effects if fx.get("id") == "wildfire_burn"), None)
+        assert direct_match is not None, "Wildfire Bomb direct hit should land for Challenger DoT coverage"
+        assert tick_match is not None, "Wildfire Burn should tick after the direct-damage application turn"
+        assert dot is not None, "Wildfire Burn should remain stored for its future tick"
+        stored_tick_damage = int(dot.get("tick_damage", 0) or 0)
+        expected_mitigated_tick = effects.mitigate_damage(stored_tick_damage, warrior, "magical")
+        assert int(tick_match.group(1)) == expected_mitigated_tick, "Same-turn Wildfire Burn tick should use stored damage after target mitigation"
+
+        hp_before_second_tick = warrior.res.hp
+        submit_turn(match, _DEF_PASS, _DEF_PASS)
+        turn_two_log = "\n".join(_turn_lines(match, 2))
+        future_tick_match = re.search(r"suffers (\d+) damage from Wildfire Burn", turn_two_log)
+        assert future_tick_match is not None, "Wildfire Burn should tick again on the following turn"
+        future_tick_damage = int(future_tick_match.group(1))
+        assert future_tick_damage == expected_mitigated_tick, "Future Wildfire Burn tick should follow the stored tick damage after normal target mitigation"
+        assert hp_before_second_tick - warrior.res.hp == expected_mitigated_tick, "Future Wildfire Burn HP loss should match the stored mitigated tick"
+        return int(direct_match.group(1)), stored_tick_damage, int(tick_match.group(1)), future_tick_damage, hunter.res.mp
+
+    might_direct, might_stored, might_tick, might_future_tick, might_end_mp = cast_wildfire(hunter_mp=50, challenger=True)
+    wrath_direct, wrath_stored, wrath_tick, wrath_future_tick, _ = cast_wildfire(hunter_mp=25, challenger=True)
+    assert might_direct > wrath_direct, "Wildfire Bomb direct hit should be higher in Challenger Might than Wrath"
+    assert might_stored > wrath_stored, "Stored Wildfire Burn tick_damage should be higher in Challenger Might than Wrath"
+    assert might_tick > wrath_tick and might_future_tick > wrath_future_tick, "Wildfire Burn ticks should reflect the stored Challenger-adjusted tick_damage"
+
+    crossing_direct, crossing_stored, crossing_tick, _, crossing_end_mp = cast_wildfire(hunter_mp=26, challenger=True)
+    assert crossing_end_mp <= 25, "Wildfire Bomb should spend the Hunter from Might into live Wrath for the crossing-threshold case"
+    assert crossing_direct == might_direct, "Crossing-threshold Wildfire Bomb direct hit should use the start-of-turn Might snapshot"
+    assert crossing_stored == might_stored, "Crossing-threshold Wildfire Burn tick_damage should use the start-of-turn Might snapshot"
+    assert crossing_tick == might_tick, "Crossing-threshold Wildfire Burn tick should use the Might-snapshotted stored value"
+
+    baseline_direct, baseline_stored, baseline_tick, baseline_future_tick, _ = cast_wildfire(hunter_mp=50, challenger=False)
+    assert baseline_direct == 11, "Baseline non-Challenger Wildfire Bomb direct hit should remain unchanged for the deterministic roll"
+    assert baseline_stored == 8, "Baseline non-Challenger Wildfire Burn stored tick_damage should remain unchanged"
+    assert baseline_tick == 6 and baseline_future_tick == 6, "Baseline Wildfire Burn ticks should remain unchanged after target mitigation"
+    return True
+
 def scenario_item_passive_effect_panel_labels_and_descriptions() -> bool:
     focus_match = make_match("mage", "warrior", p1_items={"trinket": "focus_charm"}, seed=6107)
     focus_owner = focus_match.state[focus_match.players[0]]
@@ -5473,6 +6529,35 @@ def scenario_shaman_totems_and_astral_explosion() -> bool:
     assert warlock.res.hp == warlock_hp_before, "Astral Explosion should not damage the enemy champion"
     assert any(imp_hp_after.get(pid, 0) < hp for pid, hp in imp_hp_before.items()), "Astral Explosion should damage enemy pets"
     assert effects.absorb_total(shaman) == 0, "Astral Explosion should consume all absorb when valid targets exist"
+
+    # Assert on the logged incoming damage rather than HP lost: the Imp only has a
+    # few HP and is overkilled in both stances, so before/after HP would be
+    # identical and hide the Might/Wrath difference. Shaman has 100 max mana, so
+    # derive Might/Wrath mana from the pool instead of hard-coding 41/40 (both Wrath).
+    def challenger_astral_pet_damage(*, shaman_mp: int) -> int:
+        explosion_match = make_match("shaman", "warlock", p1_items={"armor": "challengers_chestplate"}, seed=7007)
+        explosion_shaman_sid, explosion_warlock_sid = explosion_match.players
+        explosion_shaman = explosion_match.state[explosion_shaman_sid]
+        explosion_warlock = explosion_match.state[explosion_warlock_sid]
+        submit_turn(explosion_match, _DEF_PASS, "summon_imp")
+        explosion_shaman.res.mp = shaman_mp
+        effects.add_absorb(explosion_shaman, 30, source_name="Test Absorb", effect_id="test_absorb")
+        assert sorted(explosion_warlock.pets.keys()), "Astral Explosion Challenger coverage needs an enemy pet"
+        line_start = len(explosion_match.log)
+        submit_turn(explosion_match, "astral_explosion", _DEF_PASS)
+        hit_line = next(
+            (line for line in explosion_match.log[line_start:] if "Astral Explosion hits" in line and "Imp for" in line),
+            None,
+        )
+        assert hit_line is not None, "Astral Explosion should log an incoming damage line against the enemy Imp"
+        parsed = re.search(r"for (\d+) damage", hit_line)
+        assert parsed is not None, "Astral Explosion pet hit line should report the incoming damage"
+        return int(parsed.group(1))
+
+    shaman_mp_max = make_match("shaman", "warlock", seed=7007).state["p1_sid"].res.mp_max
+    astral_might_damage = challenger_astral_pet_damage(shaman_mp=shaman_mp_max // 2 + 1)
+    astral_wrath_damage = challenger_astral_pet_damage(shaman_mp=shaman_mp_max // 2)
+    assert astral_might_damage > astral_wrath_damage, "Astral Explosion pet damage should use the actor's action-time Challenger outgoing snapshot"
     return True
 
 
@@ -6515,6 +7600,36 @@ def scenario_shield_of_vengeance_explosion_uses_absorbed_amount_for_pets() -> bo
     assert champion_damage == imp_damage, "Champion and pet targets should resolve from the same Shield of Vengeance base amount"
     assert champion_line, "Shield of Vengeance champion log should match actual champion damage"
     assert imp_line, "Shield of Vengeance pet log should match actual pet damage"
+
+    def challenger_sov_champion_damage(*, paladin_mp: int) -> int:
+        challenger_match = make_match(
+            "paladin",
+            "warrior",
+            p1_items={"armor": "challengers_chestplate"},
+            seed=7311,
+        )
+        challenger_paladin_sid, challenger_enemy_sid = challenger_match.players
+        challenger_paladin = challenger_match.state[challenger_paladin_sid]
+        challenger_enemy = challenger_match.state[challenger_enemy_sid]
+        challenger_enemy.stats.update({"def": 0, "magic_resist": 0})
+        challenger_paladin.res.mp = paladin_mp
+        effects.apply_effect_by_id(challenger_paladin, "shield_of_vengeance", overrides={"duration": 1})
+        effects.add_absorb(
+            challenger_paladin,
+            expected_explosion_damage,
+            source_name="Shield of Vengeance",
+            effect_id="shield_of_vengeance",
+        )
+        remaining, absorbed, _ = effects.consume_absorbs(challenger_paladin, expected_explosion_damage)
+        assert remaining == 0 and absorbed == expected_explosion_damage, "Challenger SoV setup should absorb the same amount"
+        enemy_hp_before = challenger_enemy.res.hp
+        submit_turn(challenger_match, _DEF_PASS, _DEF_PASS)
+        return enemy_hp_before - challenger_enemy.res.hp
+
+    sov_might_damage = challenger_sov_champion_damage(paladin_mp=41)
+    sov_wrath_damage = challenger_sov_champion_damage(paladin_mp=40)
+    assert sov_might_damage == expected_explosion_damage, "Shield of Vengeance should ignore Challenger Might outgoing modifiers"
+    assert sov_wrath_damage == expected_explosion_damage, "Shield of Vengeance should ignore Challenger Wrath outgoing modifiers"
     assert not any(effect.get("id") == "shield_of_vengeance" for effect in paladin.effects), "Shield of Vengeance should still be removed after exploding"
     return True
 
@@ -6565,7 +7680,108 @@ def scenario_paladin_shield_of_vengeance_reset_and_no_unrelated_changes() -> boo
     return True
 
 
+def scenario_grant_player_resource_central_helper() -> bool:
+    """Player resource grants (pet/totem restores included) route through
+    grant_player_resource so Challenger Wrath applies and caps are respected."""
+
+    def _restored(match, needle: str) -> list[int]:
+        return [
+            int(m.group(1))
+            for line in match.log
+            for m in [re.search(needle + r" restores (\d+) mana", line)]
+            if m
+        ]
+
+    # --- Central helper unit behavior -------------------------------------
+    helper_match = make_match("shaman", "rogue", p1_items={"armor": "challengers_chestplate"}, seed=6400)
+    helper = helper_match.state["p1_sid"]
+    helper.res.mp = 40  # <=50% -> Challenger Wrath boosts active-resource (mp) gains 30%
+    assert effects.challenger_resource_stance_mode(helper) == "wrath", "Setup: helper owner should be in Wrath"
+    assert effects.grant_player_resource(helper, "mp", 10) == 13, "Helper should apply Challenger Wrath (int(10*1.30)=13)"
+    assert helper.res.mp == 53, "Helper should mutate player mana by the adjusted amount"
+    # None Challenger mode means no modifier (not Wrath).
+    helper.res.mp = 40
+    assert effects.grant_player_resource(helper, "mp", 10, challenger_mode=None) == 10, "None mode should apply no Challenger modifier"
+    # Non-positive amounts and HP are ignored; caps are respected.
+    hp_before = helper.res.hp
+    assert effects.grant_player_resource(helper, "mp", 0) == 0, "Non-positive grants are ignored"
+    assert effects.grant_player_resource(helper, "mp", -5) == 0, "Negative grants are ignored"
+    assert effects.grant_player_resource(helper, "hp", 10) == 0 and helper.res.hp == hp_before, "Helper must not touch HP"
+    helper.res.mp = helper.res.mp_max - 4
+    assert effects.grant_player_resource(helper, "mp", 10, challenger_mode=None) == 4, "Helper caps at resource max and returns actual restored"
+    assert helper.res.mp == helper.res.mp_max, "Near-cap grant should clamp to max"
+    # energy / rage support and a missing res guard.
+    rogue_owner = make_match("rogue", "mage", seed=6401).state["p1_sid"]
+    rogue_owner.res.energy = 10
+    assert effects.grant_player_resource(rogue_owner, "energy", 5) == 5 and rogue_owner.res.energy == 15, "Helper should support energy"
+    warrior_owner = make_match("warrior", "mage", seed=6402).state["p1_sid"]
+    warrior_owner.res.rage = 10
+    assert effects.grant_player_resource(warrior_owner, "rage", 5) == 5 and warrior_owner.res.rage == 15, "Helper should support rage"
+    class _NoRes:
+        res = None
+    assert effects.grant_player_resource(_NoRes(), "mp", 10) == 0, "Helper should be safe when player.res is missing"
+
+    # --- 1) Challenger Shaman in Wrath: Mana Tide restores 13 -------------
+    wrath_tide = make_match("shaman", "rogue", p1_items={"armor": "challengers_chestplate"}, seed=6403)
+    wrath_shaman = wrath_tide.state["p1_sid"]
+    wrath_shaman.res.mp = 30
+    assert effects.challenger_resource_stance_mode(wrath_shaman) == "wrath", "Setup: Wrath shaman at 30/100 mana"
+    submit_turn(wrath_tide, "mana_tide_totem", _DEF_PASS)
+    assert _restored(wrath_tide, "Mana Tide Totem") == [13], "Challenger Wrath Mana Tide should restore int(10*1.30)=13"
+
+    # --- 2) Challenger Shaman in Might: Mana Tide restores 10 -------------
+    might_tide = make_match("shaman", "rogue", p1_items={"armor": "challengers_chestplate"}, seed=6404)
+    might_shaman = might_tide.state["p1_sid"]
+    might_shaman.res.mp = might_shaman.res.mp_max
+    assert effects.challenger_resource_stance_mode(might_shaman) == "might", "Setup: Might shaman above 50% mana"
+    submit_turn(might_tide, "mana_tide_totem", _DEF_PASS)
+    assert _restored(might_tide, "Mana Tide Totem") == [10], "Challenger Might Mana Tide should restore the base 10"
+
+    # --- 3) No-Challenger Shaman: Mana Tide restores 10 ------------------
+    plain_tide = make_match("shaman", "rogue", seed=6405)
+    plain_shaman = plain_tide.state["p1_sid"]
+    plain_shaman.res.mp = max(0, plain_shaman.res.mp - 40)
+    submit_turn(plain_tide, "mana_tide_totem", _DEF_PASS)
+    assert _restored(plain_tide, "Mana Tide Totem") == [10], "Non-Challenger Mana Tide should restore the base 10"
+
+    original_hit_chance = PET_AI.hit_chance
+    PET_AI.hit_chance = lambda acc, eva: 100
+    try:
+        # --- 4) Challenger Priest in Wrath: Shadowfiend hit restores 16 --
+        wrath_fiend = make_match("priest", "warrior", p1_items={"armor": "challengers_chestplate"}, seed=6406)
+        wrath_priest = wrath_fiend.state["p1_sid"]
+        wrath_priest.res.mp = 30
+        assert effects.challenger_resource_stance_mode(wrath_priest) == "wrath", "Setup: Wrath priest below 50% mana"
+        submit_turn(wrath_fiend, "shadowfiend", _DEF_PASS)
+        assert _restored(wrath_fiend, "Shadowfiend") == [16], "Challenger Wrath Shadowfiend should restore int(13*1.30)=16"
+
+        # --- 5) Near-cap restore logs/state reflect only the actual amount
+        cap_fiend = make_match("priest", "warrior", seed=6407)
+        cap_priest = cap_fiend.state["p1_sid"]
+        submit_turn(cap_fiend, "shadowfiend", _DEF_PASS)  # summon + first melee restore
+        cap_priest.res.mp = cap_priest.res.mp_max - 3
+        submit_turn(cap_fiend, _DEF_PASS, _DEF_PASS)  # next melee restore, now near cap
+        cap_restores = _restored(cap_fiend, "Shadowfiend")
+        assert cap_restores and cap_restores[-1] == 3, "Near-cap Shadowfiend log should reflect only the actual 3 mana restored"
+        assert cap_priest.res.mp == cap_priest.res.mp_max, "Near-cap restore should clamp mana to max"
+    finally:
+        PET_AI.hit_chance = original_hit_chance
+
+    # --- 6) Pet self-resource regeneration remains unchanged -------------
+    saber_match = make_match("hunter", "warrior", seed=6408)
+    hunter = saber_match.state["p1_sid"]
+    submit_turn(saber_match, "call_saber", _DEF_PASS)
+    saber = _active_pet(hunter, "frostsaber")
+    assert saber is not None, "Frostsaber should summon"
+    saber.energy = 7
+    submit_turn(saber_match, _DEF_PASS, _DEF_PASS)
+    assert saber.energy == 12, "Pet self-resource regen (+5 energy/turn) must be unaffected by the player helper"
+
+    return True
+
+
 SCENARIOS = [
+    scenario_grant_player_resource_central_helper,
     scenario_mindgames_lay_on_hands,
     scenario_paladin_divine_storm_behavior_and_docs,
     scenario_shield_of_vengeance_explosion_uses_absorbed_amount_for_pets,
@@ -6597,6 +7813,12 @@ SCENARIOS = [
     scenario_iceblock_blocks_same_turn_stun_and_next_turn_attack,
     scenario_aoe_hits_pets_with_immune_champion,
     scenario_rage_crystal_increases_all_rage_gain_sources,
+    scenario_challengers_chestplate_resource_stance,
+    scenario_challengers_chestplate_followup_fixes,
+    scenario_challengers_chestplate_on_hit_proc_outgoing_stance,
+    scenario_on_hit_resource_gain_log_uses_actual_gained,
+    scenario_queued_proc_resource_gain_uses_actual_dealt,
+    scenario_challengers_chestplate_wildfire_dot_outgoing_snapshot,
     scenario_item_passive_effect_panel_labels_and_descriptions,
     scenario_absorb_layering,
     scenario_pet_summon_data_driven,

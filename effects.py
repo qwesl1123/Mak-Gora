@@ -1143,6 +1143,8 @@ _EFFECT_PANEL_DESCRIPTION_BY_NAME: Dict[str, str] = {
     "Focus Charm": "Deal 10% more damage",
     "Rage Crystal": "Deal 15% more damage",
     "Crystalized Rage": "Gain 15% more rage from all sources",
+    "Challenger's Might": "Deal 10% more damage and take 10% less damage, but active resource costs 20% more.",
+    "Challenger's Wrath": "Deal 10% less damage and take 10% more damage, but active resource generation is 30% faster.",
 }
 
 _ITEM_PASSIVE_PANEL_EFFECTS_BY_ITEM_ID: Dict[str, tuple[Dict[str, Any], ...]] = {
@@ -1170,6 +1172,22 @@ _ITEM_PASSIVE_PANEL_EFFECTS_BY_ITEM_ID: Dict[str, tuple[Dict[str, Any], ...]] = 
             "visibility": "always",
         },
     ),
+    "challengers_chestplate": (
+        {
+            "name": "Challenger's Might",
+            "description": "Deal 10% more damage and take 10% less damage, but active resource costs 20% more.",
+            "bucket": "buffs_magical",
+            "visibility": "challenger_mode",
+            "mode": "might",
+        },
+        {
+            "name": "Challenger's Wrath",
+            "description": "Deal 10% less damage and take 10% more damage, but active resource generation is 30% faster.",
+            "bucket": "debuffs_magical",
+            "visibility": "challenger_mode",
+            "mode": "wrath",
+        },
+    ),
 }
 
 
@@ -1186,6 +1204,7 @@ def _item_passive_panel_effects(effect: Dict[str, Any], owner: PlayerState) -> t
     hp_pct = 0.0
     if getattr(owner, "res", None):
         hp_pct = owner.res.hp / max(1, owner.res.hp_max)
+    challenger_mode = challenger_resource_stance_mode(owner)
     visible: list[Dict[str, Any]] = []
     for candidate in candidates:
         visibility = str(candidate.get("visibility") or "always")
@@ -1193,6 +1212,8 @@ def _item_passive_panel_effects(effect: Dict[str, Any], owner: PlayerState) -> t
         if visibility == "hp_above" and hp_pct <= threshold:
             continue
         if visibility == "hp_below" and hp_pct >= threshold:
+            continue
+        if visibility == "challenger_mode" and challenger_mode != str(candidate.get("mode") or ""):
             continue
         visible.append(candidate)
     return tuple(visible)
@@ -1750,6 +1771,9 @@ def mitigation_effective_stat(
     return max(0, defense + magic_resist)
 
 
+_LIVE_CHALLENGER_MODE = object()
+
+
 def mitigate_damage(
     raw: int,
     target: PlayerState,
@@ -1757,6 +1781,7 @@ def mitigate_damage(
     *,
     ignore_armor: bool = False,
     ignore_magic_resist: bool = False,
+    challenger_mode: Optional[str] | object = _LIVE_CHALLENGER_MODE,
 ) -> int:
     effective_stat = mitigation_effective_stat(
         target,
@@ -1765,7 +1790,16 @@ def mitigate_damage(
         ignore_magic_resist=ignore_magic_resist,
     )
     reduced = mitigate(raw, effective_stat)
-    return int(reduced * mitigation_multiplier(target))
+    incoming_multiplier = 1.0
+    current_challenger_mode = (
+        challenger_resource_stance_mode(target)
+        if challenger_mode is _LIVE_CHALLENGER_MODE
+        else challenger_mode
+    )
+    if current_challenger_mode in ("might", "wrath"):
+        for passive in challenger_resource_stance_passives(target):
+            incoming_multiplier *= float(passive.get("high_incoming_damage_multiplier" if current_challenger_mode == "might" else "low_incoming_damage_multiplier", 1.0) or 1.0)
+    return int(reduced * mitigation_multiplier(target) * incoming_multiplier)
 
 
 def resolve_incoming_damage(
@@ -1775,6 +1809,7 @@ def resolve_incoming_damage(
     *,
     ignore_armor: bool = False,
     ignore_magic_resist: bool = False,
+    challenger_mode: Optional[str] | object = _LIVE_CHALLENGER_MODE,
 ) -> int:
     normalized = normalize_school(school) or "physical"
     if is_damage_immune(target, "physical" if normalized == "physical" else "magic"):
@@ -1785,6 +1820,7 @@ def resolve_incoming_damage(
         normalized,
         ignore_armor=ignore_armor,
         ignore_magic_resist=ignore_magic_resist,
+        challenger_mode=challenger_mode,
     )
 
 
@@ -2028,12 +2064,41 @@ def trigger_on_hit_passives(
     ability: Optional[Dict[str, Any]] = None,
     include_strike_again: bool = True,
     only_strike_again: bool = False,
+    target_challenger_mode: Optional[str] | object = _LIVE_CHALLENGER_MODE,
+    attacker_challenger_mode: Optional[str] | object = _LIVE_CHALLENGER_MODE,
+    attacker_outgoing_multiplier: Optional[float] = None,
 ) -> tuple[int, List[str], int, List[Dict[str, Any]]]:
-    """Run attacker item passives that trigger on_hit."""
+    """Run attacker item passives that trigger on_hit.
+
+    ``attacker_outgoing_multiplier`` is the action-time outgoing snapshot from
+    the resolver. When provided, freshly computed proc formulas use that scalar
+    directly rather than re-reading attacker state after the primary hit may have
+    changed HP/resources. Strike-again effects derive from already resolved hit
+    damage and intentionally do not use it.
+
+    The returned ``bonus_damage`` only accounts for passive damage that is already
+    final and will not be re-mitigated later (e.g. strike-again). Passives that
+    queue a raw ``damage_event`` (``raw_incoming`` set) — void_blade,
+    lightning_blast, duplicate_offensive_spell — deliberately do NOT contribute
+    their speculative pre-mitigation value to ``bonus_damage``. Those events are
+    re-resolved against the final target when applied, and damage-based resource
+    gains are credited from the actual dealt amount at that point. This avoids
+    counting speculative proc damage that may later redirect, be absorbed, or hit
+    a different target than the one it was computed against.
+    """
     bonus_damage = 0
     bonus_healing = 0
     log_lines: List[str] = []
     damage_events: List[Dict[str, Any]] = []
+    # Attacker-side outgoing damage stance (e.g. Challenger's Might/Wrath) applies
+    # to freshly computed proc damage, mirroring the primary hit's damage step. It
+    # is applied before target mitigation, which keeps target_challenger_mode as
+    # the only incoming modifier. Prefer the resolver's action-time scalar so
+    # same-action procs cannot observe later HP/resource mutations.
+    if attacker_outgoing_multiplier is None:
+        attacker_outgoing_multiplier = damage_multiplier_from_passives(
+            attacker, challenger_mode=attacker_challenger_mode
+        )
     for effect in attacker.effects:
         if effect.get("type") != "item_passive":
             continue
@@ -2086,16 +2151,22 @@ def trigger_on_hit_passives(
             roll_power = roll(dice, rng) if dice else 0
             intellect = modify_stat(attacker, "int", attacker.stats.get("int", 0))
             raw = int(intellect * int_multiplier) + int(roll_power)
+            if attacker_outgoing_multiplier != 1.0:
+                raw = int(raw * attacker_outgoing_multiplier)
             if raw <= 0:
                 continue
-            reduced = mitigate_damage(raw, target, "magic")
+            reduced = mitigate_damage(raw, target, "magic", challenger_mode=target_challenger_mode)
             if is_damage_immune(target, "magic"):
                 reduced = 0
             if reduced > 0:
-                bonus_damage += reduced
+                # Queued raw event: its speculative ``reduced`` is intentionally NOT
+                # added to bonus_damage. The event carries ``raw_incoming`` and is
+                # re-mitigated against the final target when it lands, so resource
+                # gains are credited from the actual dealt amount at apply time.
                 damage_events.append(
                     {
                         "incoming": reduced,
+                        "raw_incoming": raw,
                         "school": normalize_school(passive.get("school") or "magical"),
                         "subschool": passive.get("subschool"),
                         "log_template": (
@@ -2124,16 +2195,21 @@ def trigger_on_hit_passives(
                     scaling["int"],
                     roll_power,
                 )
+            if attacker_outgoing_multiplier != 1.0:
+                raw = int(raw * attacker_outgoing_multiplier)
             if raw <= 0:
                 continue
-            reduced = mitigate_damage(raw, target, "magic")
+            reduced = mitigate_damage(raw, target, "magic", challenger_mode=target_challenger_mode)
             if is_damage_immune(target, "magic"):
                 reduced = 0
             if reduced > 0:
-                bonus_damage += reduced
+                # Queued raw event: speculative ``reduced`` is not credited to
+                # bonus_damage; resource gains are taken from the actual dealt
+                # amount when the re-mitigated event lands on the final target.
                 damage_events.append(
                     {
                         "incoming": reduced,
+                        "raw_incoming": raw,
                         "school": normalize_school(passive.get("school") or "magical"),
                         "subschool": passive.get("subschool"),
                         "log_template": (
@@ -2204,7 +2280,9 @@ def trigger_on_hit_passives(
             owner_class = class_display_name((attacker.build.class_id or "").strip().lower()) if attacker.build else "Player"
             duplicate_prefix = f"{owner_class}(you)'s {item_name}"
             duplicate_damage = 0
+            duplicate_raw_damage = 0
             per_hit_reduced: list[int] = []
+            per_hit_raw: list[int] = []
             hit_segments: list[str] = []
             for hit_index in range(1, hits + 1):
                 roll_power = 0
@@ -2229,10 +2307,12 @@ def trigger_on_hit_passives(
                         scaling["int"],
                         roll_power,
                     )
+                if attacker_outgoing_multiplier != 1.0:
+                    duplicate_raw = int(duplicate_raw * attacker_outgoing_multiplier)
                 if duplicate_raw <= 0:
                     continue
 
-                duplicate_reduced = mitigate_damage(duplicate_raw, target, spell_school)
+                duplicate_reduced = mitigate_damage(duplicate_raw, target, spell_school, challenger_mode=target_challenger_mode)
                 if spell_school == "physical" and is_damage_immune(target, "physical"):
                     duplicate_reduced = 0
                 if spell_school == "magical" and is_damage_immune(target, "magic"):
@@ -2241,7 +2321,9 @@ def trigger_on_hit_passives(
                     continue
 
                 duplicate_damage += duplicate_reduced
+                duplicate_raw_damage += duplicate_raw
                 per_hit_reduced.append(duplicate_reduced)
+                per_hit_raw.append(duplicate_raw)
                 if hits > 1:
                     if dice_type:
                         hit_segments.append(f"Hit {hit_index}: Roll {dice_type} = {roll_power}. Deals __DMG_{len(per_hit_reduced) - 1}__ damage.")
@@ -2255,11 +2337,16 @@ def trigger_on_hit_passives(
             if duplicate_damage <= 0:
                 continue
 
-            bonus_damage += duplicate_damage
+            # Queued raw multi-hit event: speculative ``duplicate_damage`` is not
+            # credited to bonus_damage. The per-hit ``raw_damage_instances`` are
+            # re-mitigated against the final target on landing (keeping multihit
+            # logs rendering real numbers), and resource gains use the dealt amount.
             damage_events.append(
                 {
                     "incoming": duplicate_damage,
+                    "raw_incoming": duplicate_raw_damage,
                     "damage_instances": per_hit_reduced,
+                    "raw_damage_instances": per_hit_raw,
                     "school": spell_school,
                     "subschool": spell_subschool,
                     "log_template": f"{duplicate_prefix} duplicates {ability_name}! {' '.join(hit_segments)}",
@@ -2269,7 +2356,78 @@ def trigger_on_hit_passives(
 
     return bonus_damage, log_lines, bonus_healing, damage_events
 
-def damage_multiplier_from_passives(attacker: PlayerState) -> float:
+
+def active_resource_id(player: PlayerState) -> Optional[str]:
+    """Return the player's class/form active non-HP combat resource: mp, rage, or energy."""
+    if not player or not getattr(player, "res", None):
+        return None
+    class_id = str(getattr(getattr(player, "build", None), "class_id", "") or "").strip().lower()
+    if class_id == "druid":
+        form_id = current_form_id(player)
+        if form_id == "bear_form" and getattr(player.res, "rage_max", 0) > 0:
+            return "rage"
+        if form_id == "cat_form" and getattr(player.res, "energy_max", 0) > 0:
+            return "energy"
+        return "mp" if getattr(player.res, "mp_max", 0) > 0 else None
+
+    class_resource = ((CLASSES.get(class_id, {}) or {}).get("resource_display", {}) or {}).get("primary", {})
+    resource = str(class_resource.get("id") or "").strip().lower()
+    if resource in ("mp", "rage", "energy") and getattr(player.res, f"{resource}_max", 0) > 0:
+        return resource
+    return None
+
+
+def active_resource_pct(player: PlayerState) -> Optional[float]:
+    resource = active_resource_id(player)
+    if not resource or not getattr(player, "res", None):
+        return None
+    max_value = max(1, int(getattr(player.res, f"{resource}_max", 0) or 0))
+    return float(getattr(player.res, resource, 0) or 0) / max_value
+
+
+def challenger_resource_stance_passives(player: PlayerState) -> list[Dict[str, Any]]:
+    if not player or not getattr(player, "effects", None):
+        return []
+    passives: list[Dict[str, Any]] = []
+    for effect in player.effects:
+        if effect.get("type") != "item_passive":
+            continue
+        passive = effect.get("passive", {}) or {}
+        if passive.get("type") == "challenger_resource_stance":
+            passives.append(passive)
+    return passives
+
+
+def has_challenger_resource_stance(player: PlayerState) -> bool:
+    return bool(challenger_resource_stance_passives(player))
+
+
+def challenger_resource_stance_mode(player: PlayerState) -> Optional[str]:
+    """Return Challenger's current backend stance mode: might, wrath, or None."""
+    pct = active_resource_pct(player)
+    if pct is None:
+        return None
+    for passive in challenger_resource_stance_passives(player):
+        threshold = float(passive.get("threshold", 0.5) or 0.5)
+        # Strictly greater than the threshold is Might; exactly 50% is Wrath.
+        return "might" if pct > threshold else "wrath"
+    return None
+
+def challenger_high_resource(player: PlayerState, passive: Dict[str, Any]) -> bool:
+    return challenger_resource_stance_mode(player) == "might"
+
+
+def challenger_resource_cost_multiplier(player: PlayerState, resource: str, mode: Optional[str] | object = _LIVE_CHALLENGER_MODE) -> float:
+    if active_resource_id(player) != str(resource or "").strip().lower():
+        return 1.0
+    current_mode = challenger_resource_stance_mode(player) if mode is _LIVE_CHALLENGER_MODE else mode
+    multiplier = 1.0
+    for passive in challenger_resource_stance_passives(player):
+        if current_mode == "might":
+            multiplier *= float(passive.get("high_resource_cost_multiplier", 1.0) or 1.0)
+    return multiplier
+
+def damage_multiplier_from_passives(attacker: PlayerState, challenger_mode: Optional[str] | object = _LIVE_CHALLENGER_MODE) -> float:
     """Apply conditional damage multipliers from item passives."""
     if not attacker.res:
         return 1.0
@@ -2279,6 +2437,11 @@ def damage_multiplier_from_passives(attacker: PlayerState) -> float:
         if effect.get("type") != "item_passive":
             continue
         passive = effect.get("passive", {}) or {}
+        if passive.get("type") == "challenger_resource_stance":
+            current_mode = challenger_resource_stance_mode(attacker) if challenger_mode is _LIVE_CHALLENGER_MODE else challenger_mode
+            if current_mode in ("might", "wrath"):
+                multiplier *= float(passive.get("high_damage_multiplier" if current_mode == "might" else "low_damage_multiplier", 1.0) or 1.0)
+            continue
         if passive.get("trigger") != "on_damage":
             continue
         if passive.get("type") == "damage_bonus_above_hp":
@@ -2292,8 +2455,16 @@ def damage_multiplier_from_passives(attacker: PlayerState) -> float:
     return multiplier
 
 
-def resource_gain_multiplier_from_passives(player: PlayerState, resource: str) -> float:
-    """Apply item passives that modify resource gains from any source."""
+def resource_gain_multiplier_from_passives(
+    player: PlayerState,
+    resource: str,
+    challenger_mode: Optional[str] | object = _LIVE_CHALLENGER_MODE,
+) -> float:
+    """Apply item passives that modify resource gains from any source.
+
+    ``challenger_mode`` lets callers pin the Challenger stance to a start-of-turn
+    snapshot; by default the live stance is read.
+    """
     if not player.res:
         return 1.0
     multiplier = 1.0
@@ -2302,6 +2473,15 @@ def resource_gain_multiplier_from_passives(player: PlayerState, resource: str) -
         if effect.get("type") != "item_passive":
             continue
         passive = effect.get("passive", {}) or {}
+        if passive.get("type") == "challenger_resource_stance":
+            current_mode = (
+                challenger_resource_stance_mode(player)
+                if challenger_mode is _LIVE_CHALLENGER_MODE
+                else challenger_mode
+            )
+            if normalized_resource == active_resource_id(player) and current_mode == "wrath":
+                multiplier *= float(passive.get("low_resource_gain_multiplier", 1.0) or 1.0)
+            continue
         if passive.get("type") != "resource_gain_multiplier":
             continue
         passive_resource = str(passive.get("resource", "") or "").strip().lower()
@@ -2309,6 +2489,61 @@ def resource_gain_multiplier_from_passives(player: PlayerState, resource: str) -
             continue
         multiplier *= float(passive.get("multiplier", 1.0) or 1.0)
     return multiplier
+
+
+def grant_player_resource(
+    player: PlayerState,
+    resource: str,
+    amount: int,
+    *,
+    challenger_mode: Optional[str] | object = _LIVE_CHALLENGER_MODE,
+) -> int:
+    """Grant a PLAYER a gameplay resource (mp/energy/rage) — the single entry point
+    for player resource gains.
+
+    Any mechanic that grants a player mana, energy, or rage MUST route through this
+    helper instead of mutating ``player.res.mp`` / ``player.res.energy`` /
+    ``player.res.rage`` directly. It guarantees that:
+
+    * ``resource_gain_multiplier_from_passives`` is applied (so Challenger Wrath's
+      low-resource bonus and item passives such as Rage Crystal are honoured),
+    * the result is capped at the player's resource max, and
+    * the actual amount restored after the cap is returned.
+
+    ``challenger_mode`` mirrors ``resource_gain_multiplier_from_passives``: the
+    default reads the live Challenger stance, ``None`` means "no Challenger
+    modifier" (not Wrath), and an explicit "might"/"wrath" pins a snapshot.
+
+    Pet-owned resources are deliberately out of scope: pet mp/energy/rage are
+    handled by pet resource logic in ``pet_ai`` and must NOT be passed here. Only
+    mp/energy/rage are supported; HP and any other attribute are ignored.
+    """
+    if not player.res:
+        return 0
+    normalized_resource = str(resource or "").strip().lower()
+    if normalized_resource not in ("mp", "energy", "rage"):
+        return 0
+    if not hasattr(player.res, normalized_resource):
+        return 0
+    base_amount = max(0, int(amount or 0))
+    if base_amount <= 0:
+        return 0
+    if challenger_mode is _LIVE_CHALLENGER_MODE:
+        multiplier = resource_gain_multiplier_from_passives(player, normalized_resource)
+    else:
+        multiplier = resource_gain_multiplier_from_passives(
+            player, normalized_resource, challenger_mode=challenger_mode
+        )
+    adjusted = int(base_amount * multiplier)
+    if adjusted <= 0:
+        return 0
+    current = getattr(player.res, normalized_resource)
+    cap = getattr(player.res, f"{normalized_resource}_max", current)
+    new_value = max(0, min(current + adjusted, cap))
+    gained = new_value - current
+    setattr(player.res, normalized_resource, new_value)
+    return gained
+
 
 def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[dict[str, Any]]:
     """Compute DoT tick events after mitigation; resolution/logging happens in resolver."""
@@ -2425,19 +2660,20 @@ def trigger_end_of_turn_effects(ps: PlayerState, log: List[str], label: str) -> 
                 before_hp = ps.res.hp
                 ps.res.hp = min(ps.res.hp + hp_gain, ps.res.hp_max)
                 total_healing += ps.res.hp - before_hp
-        if mp_gain > 0:
-            ps.res.mp = min(ps.res.mp + mp_gain, ps.res.mp_max)
-        if energy_gain > 0:
-            ps.res.energy = min(ps.res.energy + energy_gain, ps.res.energy_max)
-        should_log_recovery = ((hp_gain > 0 and not twisted_by_mindgames) or mp_gain > 0 or energy_gain > 0)
+        # Route mp/energy regen through grant_player_resource so the Challenger/
+        # passive gain multiplier and cap are applied in one place, and report the
+        # amount actually gained after the cap (HP stays untouched by design).
+        mp_recovered = grant_player_resource(ps, "mp", mp_gain) if mp_gain > 0 else 0
+        energy_recovered = grant_player_resource(ps, "energy", energy_gain) if energy_gain > 0 else 0
+        should_log_recovery = ((hp_gain > 0 and not twisted_by_mindgames) or mp_recovered > 0 or energy_recovered > 0)
         if should_log_recovery and log is not None:
             recovered_parts: list[str] = []
             if hp_gain > 0 and not twisted_by_mindgames:
                 recovered_parts.append(f"{hp_gain} HP")
-            if mp_gain > 0:
-                recovered_parts.append(f"{mp_gain} Mana")
-            if energy_gain > 0:
-                recovered_parts.append(f"{energy_gain} Energy")
+            if mp_recovered > 0:
+                recovered_parts.append(f"{mp_recovered} Mana")
+            if energy_recovered > 0:
+                recovered_parts.append(f"{energy_recovered} Energy")
             if recovered_parts:
                 if len(recovered_parts) == 1:
                     recovered_text = recovered_parts[0]
@@ -2469,9 +2705,12 @@ def end_of_turn(ps: PlayerState, log: List[str], label: str) -> dict[str, Any]:
     total_healing += effect_healing
 
     if ps.res.hp > 0:
+        # Baseline mp/energy regen routes through grant_player_resource so the
+        # Challenger/passive gain multiplier and cap are applied consistently. HP
+        # regen is intentionally not routed through the helper.
         passive_mp_regen = DEFAULTS["mp_regen_per_turn"] + mana_regen_from_spirit(ps)
-        ps.res.mp = min(ps.res.mp + passive_mp_regen, ps.res.mp_max)
-        ps.res.energy = min(ps.res.energy + DEFAULTS["energy_regen_per_turn"], ps.res.energy_max)
+        grant_player_resource(ps, "mp", passive_mp_regen)
+        grant_player_resource(ps, "energy", DEFAULTS["energy_regen_per_turn"])
     return {"damage_sources": damage_sources, "healing_done": total_healing, "self_damage_sources": self_damage_sources}
 
 
