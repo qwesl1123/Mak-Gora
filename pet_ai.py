@@ -12,6 +12,7 @@ from .effects import (
     is_immune_all,
     is_damage_immune,
     apply_effect_by_id,
+    grant_player_resource,
 )
 
 
@@ -344,8 +345,11 @@ def _run_shadowfiend_melee_mana(
     remaining = int(dealt.get("hp_damage", 0) or 0)
     total_incoming = int(dealt.get("total_incoming", 0) or 0)
     if total_incoming > 0:
-        owner.res.mp = min(owner.res.mp + 13, owner.res.mp_max)
-        match.log.append(f"Shadowfiend restores 13 mana for {_owner_label(owner_sid)}.")
+        # Player resource gains must go through grant_player_resource so Challenger
+        # Wrath's low-resource bonus applies and the log reflects the capped amount.
+        restored = grant_player_resource(owner, "mp", 13)
+        if restored > 0:
+            match.log.append(f"Shadowfiend restores {restored} mana for {_owner_label(owner_sid)}.")
     if remaining > 0:
         totals = match.combat_totals.setdefault(owner_sid, {"damage": 0, "healing": 0})
         totals["damage"] += remaining
@@ -460,9 +464,9 @@ def _run_mana_tide_totem_regen(
 ):
     if owner.res.hp <= 0:
         return
-    before_mp = owner.res.mp
-    owner.res.mp = min(owner.res.mp + 10, owner.res.mp_max)
-    restored = owner.res.mp - before_mp
+    # Player resource gains must go through grant_player_resource so Challenger
+    # Wrath's low-resource bonus applies and the log reflects the capped amount.
+    restored = grant_player_resource(owner, "mp", 10)
     if restored > 0:
         match.log.append(f"{_owner_label(owner_sid)}'s Mana Tide Totem restores {restored} mana.")
 

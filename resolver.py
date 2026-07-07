@@ -54,7 +54,7 @@ from .pet_ai import run_pet_phase, cleanup_pets, prepare_pet_pre_action_effects,
 from .effects import (
     trigger_on_hit_passives,
     damage_multiplier_from_passives,
-    resource_gain_multiplier_from_passives,
+    grant_player_resource,
     challenger_resource_cost_multiplier,
     challenger_resource_stance_mode,
     end_of_turn,
@@ -1723,24 +1723,13 @@ def resolve_turn(match: MatchState) -> None:
         *,
         challenger_mode: str | None | object = _LIVE_CHALLENGER_MODE,
     ) -> int:
-        if not player.res or not hasattr(player.res, resource):
-            return 0
-        amount = max(0, int(base_amount or 0))
-        if amount <= 0:
-            return 0
+        # Thin resolver-local adapter over the central grant_player_resource helper so
+        # every player resource gain flows through one pipeline (Challenger/passive
+        # multipliers + cap). Do not reimplement the math here. The resolver's live
+        # sentinel is distinct from effects', so translate it before delegating.
         if challenger_mode is _LIVE_CHALLENGER_MODE:
-            multiplier = resource_gain_multiplier_from_passives(player, resource)
-        else:
-            multiplier = resource_gain_multiplier_from_passives(player, resource, challenger_mode=challenger_mode)
-        adjusted = int(amount * multiplier)
-        if adjusted <= 0:
-            return 0
-        current = getattr(player.res, resource)
-        cap = getattr(player.res, f"{resource}_max", current)
-        new_value = max(0, min(current + adjusted, cap))
-        gained = new_value - current
-        setattr(player.res, resource, new_value)
-        return gained
+            return grant_player_resource(player, resource, base_amount)
+        return grant_player_resource(player, resource, base_amount, challenger_mode=challenger_mode)
 
     def entity_log_label(target: PlayerState | PetState) -> str:
         if isinstance(target, PlayerState):
