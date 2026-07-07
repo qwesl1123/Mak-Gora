@@ -1082,6 +1082,9 @@ def scenario_challengers_chestplate_resource_stance() -> bool:
     assert effects.damage_multiplier_from_passives(owner) == 1.10, "Challenger should deal 10% more damage above 50% active resource"
     duel_html_text = _detect_duel_html_path().read_text(encoding="utf-8")
     assert "/item armor challengers_chestplate" in duel_html_text, "Challenger's Chestplate should be documented in the static item list"
+    assert '"Challenger\'s Chestplate",' in duel_html_text and "#a335ee" in duel_html_text, "Challenger's Chestplate should be registered on the epic item color path"
+    assert "When the fight turns, so do you—either with steel resolve or with bruising consequence." in duel_html_text, "Challenger's Chestplate flavor text should appear in static item docs/tooltips"
+    assert '"Challenger\'s Chestplate": {' in duel_html_text, "Challenger's Chestplate should have normal item tooltip data for equipped armor mouseover"
     high_panel = effects.build_effect_panel_payload(owner)
     high_buffs = {entry.get("name") for entry in high_panel["buffs_magical"]}
     high_debuffs = {entry.get("name") for entry in high_panel["debuffs_magical"]}
