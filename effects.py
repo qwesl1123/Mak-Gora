@@ -2075,6 +2075,16 @@ def trigger_on_hit_passives(
     directly rather than re-reading attacker state after the primary hit may have
     changed HP/resources. Strike-again effects derive from already resolved hit
     damage and intentionally do not use it.
+
+    The returned ``bonus_damage`` only accounts for passive damage that is already
+    final and will not be re-mitigated later (e.g. strike-again). Passives that
+    queue a raw ``damage_event`` (``raw_incoming`` set) — void_blade,
+    lightning_blast, duplicate_offensive_spell — deliberately do NOT contribute
+    their speculative pre-mitigation value to ``bonus_damage``. Those events are
+    re-resolved against the final target when applied, and damage-based resource
+    gains are credited from the actual dealt amount at that point. This avoids
+    counting speculative proc damage that may later redirect, be absorbed, or hit
+    a different target than the one it was computed against.
     """
     bonus_damage = 0
     bonus_healing = 0
@@ -2149,7 +2159,10 @@ def trigger_on_hit_passives(
             if is_damage_immune(target, "magic"):
                 reduced = 0
             if reduced > 0:
-                bonus_damage += reduced
+                # Queued raw event: its speculative ``reduced`` is intentionally NOT
+                # added to bonus_damage. The event carries ``raw_incoming`` and is
+                # re-mitigated against the final target when it lands, so resource
+                # gains are credited from the actual dealt amount at apply time.
                 damage_events.append(
                     {
                         "incoming": reduced,
@@ -2190,7 +2203,9 @@ def trigger_on_hit_passives(
             if is_damage_immune(target, "magic"):
                 reduced = 0
             if reduced > 0:
-                bonus_damage += reduced
+                # Queued raw event: speculative ``reduced`` is not credited to
+                # bonus_damage; resource gains are taken from the actual dealt
+                # amount when the re-mitigated event lands on the final target.
                 damage_events.append(
                     {
                         "incoming": reduced,
@@ -2322,7 +2337,10 @@ def trigger_on_hit_passives(
             if duplicate_damage <= 0:
                 continue
 
-            bonus_damage += duplicate_damage
+            # Queued raw multi-hit event: speculative ``duplicate_damage`` is not
+            # credited to bonus_damage. The per-hit ``raw_damage_instances`` are
+            # re-mitigated against the final target on landing (keeping multihit
+            # logs rendering real numbers), and resource gains use the dealt amount.
             damage_events.append(
                 {
                     "incoming": duplicate_damage,
@@ -2619,11 +2637,6 @@ def trigger_end_of_turn_effects(ps: PlayerState, log: List[str], label: str) -> 
         hp_gain = int(regen.get("hp", 0) or 0)
         mp_gain = int(regen.get("mp", 0) or 0)
         energy_gain = int(regen.get("energy", 0) or 0)
-        active_resource = active_resource_id(ps)
-        if mp_gain > 0 and active_resource == "mp":
-            mp_gain = int(mp_gain * resource_gain_multiplier_from_passives(ps, "mp"))
-        if energy_gain > 0 and active_resource == "energy":
-            energy_gain = int(energy_gain * resource_gain_multiplier_from_passives(ps, "energy"))
         effect_name = effect.get("name", "an effect")
         twisted_by_mindgames = hp_gain > 0 and has_effect(ps, "mindgames")
         if hp_gain > 0:
@@ -2647,19 +2660,20 @@ def trigger_end_of_turn_effects(ps: PlayerState, log: List[str], label: str) -> 
                 before_hp = ps.res.hp
                 ps.res.hp = min(ps.res.hp + hp_gain, ps.res.hp_max)
                 total_healing += ps.res.hp - before_hp
-        if mp_gain > 0:
-            ps.res.mp = min(ps.res.mp + mp_gain, ps.res.mp_max)
-        if energy_gain > 0:
-            ps.res.energy = min(ps.res.energy + energy_gain, ps.res.energy_max)
-        should_log_recovery = ((hp_gain > 0 and not twisted_by_mindgames) or mp_gain > 0 or energy_gain > 0)
+        # Route mp/energy regen through grant_player_resource so the Challenger/
+        # passive gain multiplier and cap are applied in one place, and report the
+        # amount actually gained after the cap (HP stays untouched by design).
+        mp_recovered = grant_player_resource(ps, "mp", mp_gain) if mp_gain > 0 else 0
+        energy_recovered = grant_player_resource(ps, "energy", energy_gain) if energy_gain > 0 else 0
+        should_log_recovery = ((hp_gain > 0 and not twisted_by_mindgames) or mp_recovered > 0 or energy_recovered > 0)
         if should_log_recovery and log is not None:
             recovered_parts: list[str] = []
             if hp_gain > 0 and not twisted_by_mindgames:
                 recovered_parts.append(f"{hp_gain} HP")
-            if mp_gain > 0:
-                recovered_parts.append(f"{mp_gain} Mana")
-            if energy_gain > 0:
-                recovered_parts.append(f"{energy_gain} Energy")
+            if mp_recovered > 0:
+                recovered_parts.append(f"{mp_recovered} Mana")
+            if energy_recovered > 0:
+                recovered_parts.append(f"{energy_recovered} Energy")
             if recovered_parts:
                 if len(recovered_parts) == 1:
                     recovered_text = recovered_parts[0]
@@ -2691,15 +2705,12 @@ def end_of_turn(ps: PlayerState, log: List[str], label: str) -> dict[str, Any]:
     total_healing += effect_healing
 
     if ps.res.hp > 0:
-        active_resource = active_resource_id(ps)
+        # Baseline mp/energy regen routes through grant_player_resource so the
+        # Challenger/passive gain multiplier and cap are applied consistently. HP
+        # regen is intentionally not routed through the helper.
         passive_mp_regen = DEFAULTS["mp_regen_per_turn"] + mana_regen_from_spirit(ps)
-        if active_resource == "mp":
-            passive_mp_regen = int(passive_mp_regen * resource_gain_multiplier_from_passives(ps, "mp"))
-        ps.res.mp = min(ps.res.mp + passive_mp_regen, ps.res.mp_max)
-        passive_energy_regen = DEFAULTS["energy_regen_per_turn"]
-        if active_resource == "energy":
-            passive_energy_regen = int(passive_energy_regen * resource_gain_multiplier_from_passives(ps, "energy"))
-        ps.res.energy = min(ps.res.energy + passive_energy_regen, ps.res.energy_max)
+        grant_player_resource(ps, "mp", passive_mp_regen)
+        grant_player_resource(ps, "energy", DEFAULTS["energy_regen_per_turn"])
     return {"damage_sources": damage_sources, "healing_done": total_healing, "self_damage_sources": self_damage_sources}
 
 

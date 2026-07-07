@@ -302,6 +302,7 @@ def _resolve_actor_post_damage_reactions_stage(
     grant_resource: Callable[[PlayerState, str, int], int],
     combat_totals: Dict[str, Dict[str, int]],
     log: list[str],
+    resource_challenger_mode: str | None = None,
 ) -> None:
     if dealt > 0 and ability.get("heal_from_dealt_damage") and actor.res:
         before_hp = actor.res.hp
@@ -338,6 +339,11 @@ def _resolve_actor_post_damage_reactions_stage(
             totals = combat_totals.setdefault(actor_sid, {"damage": 0, "healing": 0})
             totals["healing"] += gained
 
+    # Damage-based resource gains resolve here, after the primary hit AND every
+    # queued proc / strike-again event has actually landed, so ``dealt`` reflects
+    # real HP dealt (post redirect / absorb / mitigation / Mindgames) rather than
+    # speculative pre-resolution damage. Same-action gains use the actor's
+    # action-start Challenger snapshot (``resource_challenger_mode``).
     dealt_resource_gain = ability.get("resource_gain_on_dealt", {})
     if dealt > 0 and dealt_resource_gain and actor.res:
         for resource, gain in dealt_resource_gain.items():
@@ -348,7 +354,23 @@ def _resolve_actor_post_damage_reactions_stage(
             else:
                 gain_value = int(gain or 0)
             if gain_value > 0 and hasattr(actor.res, resource):
-                grant_resource(actor, resource, gain_value)
+                grant_resource(actor, resource, gain_value, challenger_mode=resource_challenger_mode)
+
+    # Deferred damage-based ``resource_gain`` entries. Flat entries were already
+    # granted immediately in resolve_action; only "damage"/"damage_x3" are credited
+    # here from the actual dealt total so redirected/absorbed/immuned queued proc
+    # damage contributes exactly what actually landed.
+    damage_resource_gain = ability.get("resource_gain", {})
+    if dealt > 0 and damage_resource_gain and actor.res:
+        for resource, gain in damage_resource_gain.items():
+            if gain == "damage":
+                gain_value = dealt
+            elif gain == "damage_x3":
+                gain_value = dealt * 3
+            else:
+                continue
+            if gain_value > 0 and hasattr(actor.res, resource):
+                grant_resource(actor, resource, gain_value, challenger_mode=resource_challenger_mode)
 
 
 def _apply_effect_entries_stage(
@@ -3067,15 +3089,19 @@ def resolve_turn(match: MatchState) -> None:
             queue_passive_damage_events(strike_damage_events)
 
         resource_gain = ability.get("resource_gain", {})
+        # ``passive_bonus_damage_total`` now only holds fully-resolved passive damage
+        # (e.g. strike-again). Raw queued proc events (lightning_blast, void_blade,
+        # duplicate_offensive_spell) no longer contribute their speculative value.
         total_effective_damage_for_resources = total_damage + passive_bonus_damage_total
+        # Flat resource gains resolve immediately once the ability has landed damage.
+        # Damage-based gains ("damage"/"damage_x3") are deferred to the post-damage
+        # stage so they reflect the ACTUAL HP dealt after redirect / absorb /
+        # mitigation / Mindgames of both the primary hit and any queued proc events.
         if total_effective_damage_for_resources > 0 and resource_gain:
             for resource, gain in resource_gain.items():
-                if gain == "damage":
-                    gain_value = total_effective_damage_for_resources
-                elif gain == "damage_x3":
-                    gain_value = total_effective_damage_for_resources * 3
-                else:
-                    gain_value = int(gain)
+                if gain in ("damage", "damage_x3"):
+                    continue
+                gain_value = int(gain)
                 if gain_value > 0 and hasattr(actor.res, resource):
                     grant_resource(actor, resource, gain_value, challenger_mode=action_challenger_mode)
 
@@ -3142,6 +3168,9 @@ def resolve_turn(match: MatchState) -> None:
             "passive_damage_multiplier": action_passive_damage_multiplier,
             "mindgames_flip_damage": mindgames_flip_damage,
             "skip_direct_target_damage": aoe_skip_champion,
+            # Snapshot of the actor's action-start Challenger stance so deferred
+            # damage-based resource gains use the same snapshot as the action.
+            "resource_challenger_mode": action_challenger_mode,
         }
 
     def build_immediate_resolution(actor_sid: str, target_sid: str, action: Dict[str, Any]) -> Dict[str, Any]:
@@ -4072,6 +4101,7 @@ def resolve_turn(match: MatchState) -> None:
             grant_resource=grant_resource,
             combat_totals=match.combat_totals,
             log=match.log,
+            resource_challenger_mode=result.get("resource_challenger_mode"),
         )
 
     end_of_turn_result = resolve_end_of_turn_stage(
