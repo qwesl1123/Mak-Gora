@@ -4,6 +4,14 @@ import math
 from dataclasses import dataclass, field
 from typing import Dict, Any, Tuple, Callable
 from .models import MatchState, PlayerState, PlayerBuild, Resources, PetState
+from .damage_types import (
+    DAMAGE_SOURCE_ABSORB_EXPLOSION,
+    DAMAGE_SOURCE_DIRECT_ABILITY,
+    DAMAGE_SOURCE_DOT_TICK,
+    DAMAGE_SOURCE_ON_HIT_PROC,
+    DAMAGE_SOURCE_SELF,
+    normalize_damage_source_kind,
+)
 from .dice import rng_for, roll
 from .rules import base_damage, hit_chance, clamp
 from ..content.abilities import ABILITIES
@@ -96,7 +104,13 @@ from .effects import (
 )
 
 
-def _empty_damage_result(*, school: str, subschool: str | None, redirect_log: str | None = None) -> Dict[str, Any]:
+def _empty_damage_result(
+    *,
+    school: str,
+    subschool: str | None,
+    redirect_log: str | None = None,
+    source_kind: str | None = None,
+) -> Dict[str, Any]:
     return {
         "hp_damage": 0,
         "absorbed": 0,
@@ -105,6 +119,7 @@ def _empty_damage_result(*, school: str, subschool: str | None, redirect_log: st
         "mindgames_healing": 0,
         "school": school,
         "subschool": subschool,
+        "source_kind": source_kind,
         "redirect_log": redirect_log,
     }
 
@@ -325,6 +340,7 @@ def _resolve_actor_post_damage_reactions_stage(
                 school="magical",
                 subschool="shadow",
                 allow_redirect=False,
+                source_kind=DAMAGE_SOURCE_SELF,
             )
             log.append(f"{sid_token(actor_sid)} suffers {backlash} backlash from Shadow Word: Death.")
 
@@ -1257,6 +1273,9 @@ def resolve_end_of_turn_stage(
                     school=source.get("school") or "magical",
                     subschool=source.get("subschool"),
                     allow_redirect=False,
+                    source_kind=normalize_damage_source_kind(
+                        source.get("source_kind"), default=DAMAGE_SOURCE_DOT_TICK
+                    ),
                 )
                 damage = int(dealt.get("hp_damage", 0) or 0)
                 if damage > 0:
@@ -3025,6 +3044,11 @@ def resolve_turn(match: MatchState) -> None:
                     "source_name": ability.get("name", "attack"),
                     "incoming": incoming,
                     "requires_player_mitigation": bool(event.get("raw_incoming") is not None),
+                    # Producers tag their own kind (strike-again vs raw proc);
+                    # untagged legacy events default to on-hit proc damage.
+                    "source_kind": normalize_damage_source_kind(
+                        event.get("source_kind"), default=DAMAGE_SOURCE_ON_HIT_PROC
+                    ),
                     "school": event.get("school", "physical"),
                     "subschool": event.get("subschool"),
                     "log_template": str(template),
@@ -3165,6 +3189,7 @@ def resolve_turn(match: MatchState) -> None:
             "damage_type": ability_school,
             "school": ability_school,
             "subschool": ability_subschool,
+            "source_kind": DAMAGE_SOURCE_DIRECT_ABILITY,
             "healing": total_healing,
             "log": aoe_champion_log_override or " ".join(log_parts),
             "pre_logs": pre_log_parts,
@@ -3558,11 +3583,18 @@ def resolve_turn(match: MatchState) -> None:
         allow_redirect: bool = True,
         resolve_non_player_mitigation: bool = True,
         resolve_player_mitigation: bool = False,
+        source_kind: str | None = None,
     ) -> Dict[str, Any]:
         normalized_school = normalize_school(school) or "physical"
+        # source_kind is metadata only: it is normalized and echoed back on the
+        # result so callers/rules can classify the packet, and never alters the
+        # damage math, mitigation, redirects, absorbs, or immunity below.
+        source_kind = normalize_damage_source_kind(source_kind)
         is_player_target = hasattr(target, "res") and target.res is not None
         if incoming <= 0:
-            return _empty_damage_result(school=normalized_school, subschool=subschool, redirect_log=None)
+            return _empty_damage_result(
+                school=normalized_school, subschool=subschool, redirect_log=None, source_kind=source_kind
+            )
         target, target_sid, is_player_target, redirected_to, redirect_log = resolve_target_resolution(
             target,
             target_label=target_sid,
@@ -3575,7 +3607,9 @@ def resolve_turn(match: MatchState) -> None:
                 target_label=target_sid,
                 damage_school=normalized_school,
             ):
-                return _empty_damage_result(school=normalized_school, subschool=subschool, redirect_log=redirect_log)
+                return _empty_damage_result(
+                    school=normalized_school, subschool=subschool, redirect_log=redirect_log, source_kind=source_kind
+                )
         if is_player_target and resolve_player_mitigation:
             if damage_instances:
                 instance_values = [
@@ -3599,10 +3633,14 @@ def resolve_turn(match: MatchState) -> None:
                 )
                 instance_values = [incoming] if incoming > 0 else []
             if incoming <= 0 or not instance_values:
-                return _empty_damage_result(school=normalized_school, subschool=subschool, redirect_log=redirect_log)
+                return _empty_damage_result(
+                    school=normalized_school, subschool=subschool, redirect_log=redirect_log, source_kind=source_kind
+                )
         elif is_player_target or not resolve_non_player_mitigation:
             if not is_player_target and is_damage_immune(target, "physical" if normalized_school == "physical" else "magic"):
-                return _empty_damage_result(school=normalized_school, subschool=subschool, redirect_log=redirect_log)
+                return _empty_damage_result(
+                    school=normalized_school, subschool=subschool, redirect_log=redirect_log, source_kind=source_kind
+                )
             instance_values = _build_damage_instance_values(incoming, damage_instances)
         else:
             if damage_instances:
@@ -3617,7 +3655,9 @@ def resolve_turn(match: MatchState) -> None:
                 incoming = resolve_incoming_damage(incoming, target, normalized_school)
                 instance_values = [incoming] if incoming > 0 else []
             if incoming <= 0 or not instance_values:
-                return _empty_damage_result(school=normalized_school, subschool=subschool, redirect_log=redirect_log)
+                return _empty_damage_result(
+                    school=normalized_school, subschool=subschool, redirect_log=redirect_log, source_kind=source_kind
+                )
 
         if is_player_target and mindgames_flip_damage and source.sid != target.sid:
             _apply_heal_with_clamp(target, incoming)
@@ -3630,6 +3670,7 @@ def resolve_turn(match: MatchState) -> None:
                 "mindgames_healing": incoming,
                 "school": normalized_school,
                 "subschool": subschool,
+                "source_kind": source_kind,
                 "redirect_log": redirect_log,
             }
 
@@ -3660,6 +3701,7 @@ def resolve_turn(match: MatchState) -> None:
             "redirect_log": redirect_log,
             "school": normalized_school,
             "subschool": subschool,
+            "source_kind": source_kind,
         }
 
     def build_aoe_enemy_target_list(target: PlayerState) -> list[tuple[str, PlayerState | PetState]]:
@@ -3682,6 +3724,7 @@ def resolve_turn(match: MatchState) -> None:
         damage_instances: list[int] | None = None,
         max_targets: int | None = None,
         resolve_non_player_mitigation: bool = True,
+        source_kind: str | None = None,
     ) -> Dict[str, Any]:
         actor = match.state[actor_sid]
         target = match.state[target_sid]
@@ -3718,6 +3761,7 @@ def resolve_turn(match: MatchState) -> None:
                     school=school,
                     subschool=subschool,
                     allow_redirect=False,
+                    source_kind=source_kind,
                 )
                 champion_hp_damage = int(champion_dealt_data.get("hp_damage", 0) or 0)
                 if champion_log_template:
@@ -3746,6 +3790,7 @@ def resolve_turn(match: MatchState) -> None:
                 subschool=subschool,
                 damage_instances=instances,
                 resolve_non_player_mitigation=resolve_non_player_mitigation,
+                source_kind=source_kind,
             )
             remaining = int(pet_result.get("hp_damage", 0) or 0)
             absorbed = int(pet_result.get("absorbed", 0) or 0)
@@ -3807,6 +3852,7 @@ def resolve_turn(match: MatchState) -> None:
             champion_immune_log=untargetable_log or f"{sid_token(enemy_sid)} is immune to Shield of Vengeance explosion.",
             skip_champion=skip_champion,
             resolve_non_player_mitigation=False,
+            source_kind=DAMAGE_SOURCE_ABSORB_EXPLOSION,
         )
         champion_hp_damage = int(aoe_result.get("champion", {}).get("hp_damage", 0) or 0)
         totals = match.combat_totals.setdefault(owner_sid, {"damage": 0, "healing": 0})
@@ -3832,6 +3878,11 @@ def resolve_turn(match: MatchState) -> None:
             school=source.get("school") or "magical",
             subschool=source.get("subschool"),
             allow_redirect=False,
+            # Mindgames-twisted regen sources arrive pre-tagged as self_damage;
+            # plain DoT sources default to dot_tick.
+            source_kind=normalize_damage_source_kind(
+                source.get("source_kind"), default=DAMAGE_SOURCE_DOT_TICK
+            ),
         )
         formatted = format_damage_log(
             f"{sid_token(target_sid)} suffers __DMG_0__ damage from {dot_name}.",
@@ -3863,6 +3914,9 @@ def resolve_turn(match: MatchState) -> None:
             school=result1.get("school") or "physical",
             subschool=result1.get("subschool"),
             allow_redirect=ability_target_mode(ABILITIES.get(result1.get("ability_id", ""), {})) != "aoe_enemy",
+            source_kind=normalize_damage_source_kind(
+                result1.get("source_kind"), default=DAMAGE_SOURCE_DIRECT_ABILITY
+            ),
         )
     )
     dealt2_data = (
@@ -3879,6 +3933,9 @@ def resolve_turn(match: MatchState) -> None:
             school=result2.get("school") or "physical",
             subschool=result2.get("subschool"),
             allow_redirect=ability_target_mode(ABILITIES.get(result2.get("ability_id", ""), {})) != "aoe_enemy",
+            source_kind=normalize_damage_source_kind(
+                result2.get("source_kind"), default=DAMAGE_SOURCE_DIRECT_ABILITY
+            ),
         )
     )
     dealt1 = int(dealt1_data.get("hp_damage", 0) or 0)
@@ -3994,6 +4051,9 @@ def resolve_turn(match: MatchState) -> None:
                 subschool=entry.get("subschool"),
                 allow_redirect=ability_target_mode(ABILITIES.get(result.get("ability_id", ""), {})) != "aoe_enemy",
                 resolve_player_mitigation=bool(entry.get("requires_player_mitigation")),
+                source_kind=normalize_damage_source_kind(
+                    entry.get("source_kind"), default=DAMAGE_SOURCE_ON_HIT_PROC
+                ),
             )
             dealt_amount = int(dealt_data.get("hp_damage", 0) or 0)
             if dealt_amount > 0:
@@ -4069,6 +4129,9 @@ def resolve_turn(match: MatchState) -> None:
             skip_champion=True,
             damage_instances=raw_instances if isinstance(raw_instances, list) else None,
             max_targets=ability.get("max_targets"),
+            source_kind=normalize_damage_source_kind(
+                result.get("source_kind"), default=DAMAGE_SOURCE_DIRECT_ABILITY
+            ),
         )
         pet_damage = int(aoe_result.get("pet_total_damage", 0) or 0)
         if pet_damage > 0:

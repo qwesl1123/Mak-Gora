@@ -1,6 +1,7 @@
 from typing import Callable
 
 from ..content.pets import PETS
+from .damage_types import DAMAGE_SOURCE_PET
 from .dice import roll
 from .rules import base_damage, hit_chance
 from .effects import (
@@ -150,15 +151,24 @@ def _resolve_pet_damage_and_log(
     normalized_school = "magical" if school == "magic" else school
     if is_immune_all(enemy):
         match.log.append(_pet_log(owner_sid, pet, action_text, "Immune!"))
-        return {"hp_damage": 0, "absorbed": 0, "total_incoming": 0}
+        return {"hp_damage": 0, "absorbed": 0, "total_incoming": 0, "source_kind": DAMAGE_SOURCE_PET}
     if normalized_school == "physical" and is_damage_immune(enemy, "physical"):
         match.log.append(_pet_log(owner_sid, pet, action_text, "Immune!"))
-        return {"hp_damage": 0, "absorbed": 0, "total_incoming": 0}
+        return {"hp_damage": 0, "absorbed": 0, "total_incoming": 0, "source_kind": DAMAGE_SOURCE_PET}
     if normalized_school != "physical" and (is_damage_immune(enemy, "magic") or has_effect(enemy, "cloak_of_shadows")):
         match.log.append(_pet_log(owner_sid, pet, action_text, "Immune!"))
-        return {"hp_damage": 0, "absorbed": 0, "total_incoming": 0}
+        return {"hp_damage": 0, "absorbed": 0, "total_incoming": 0, "source_kind": DAMAGE_SOURCE_PET}
     reduced = _damage_after_reduction(raw_damage, enemy, normalized_school)
-    dealt = apply_damage(owner, enemy, reduced, enemy_sid, label, school=normalized_school, subschool=subschool)
+    dealt = apply_damage(
+        owner,
+        enemy,
+        reduced,
+        enemy_sid,
+        label,
+        school=normalized_school,
+        subschool=subschool,
+        source_kind=DAMAGE_SOURCE_PET,
+    )
     remaining = int(dealt.get("hp_damage", 0) or 0)
     absorbed = int(dealt.get("absorbed", 0) or 0)
     breakdown = dealt.get("absorbed_breakdown", [])
@@ -168,7 +178,7 @@ def _resolve_pet_damage_and_log(
         if absorbed > 0:
             line = f"{line} {absorb_suffix(absorbed, breakdown).strip()}"
         match.log.append(line)
-    return {"hp_damage": remaining, "absorbed": absorbed, "total_incoming": total_incoming}
+    return {"hp_damage": remaining, "absorbed": absorbed, "total_incoming": total_incoming, "source_kind": DAMAGE_SOURCE_PET}
 
 
 def apply_pet_resource_regen(pet) -> None:

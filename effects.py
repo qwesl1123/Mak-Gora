@@ -6,6 +6,12 @@ from typing import Any, Dict, List, Optional
 from .models import PlayerState
 from ..content.balance import DEFAULTS
 from ..content.classes import CLASSES, class_display_name
+from .damage_types import (
+    DAMAGE_SOURCE_DOT_TICK,
+    DAMAGE_SOURCE_ON_HIT_PROC,
+    DAMAGE_SOURCE_SELF,
+    DAMAGE_SOURCE_STRIKE_AGAIN,
+)
 from .dice import roll
 from .rules import base_damage as calc_base_damage, mitigate
 
@@ -2135,6 +2141,7 @@ def trigger_on_hit_passives(
                     damage_events.append(
                         {
                             "incoming": extra,
+                            "source_kind": DAMAGE_SOURCE_STRIKE_AGAIN,
                             "school": "physical",
                             "subschool": None,
                             "log_template": (
@@ -2167,6 +2174,7 @@ def trigger_on_hit_passives(
                     {
                         "incoming": reduced,
                         "raw_incoming": raw,
+                        "source_kind": DAMAGE_SOURCE_ON_HIT_PROC,
                         "school": normalize_school(passive.get("school") or "magical"),
                         "subschool": passive.get("subschool"),
                         "log_template": (
@@ -2210,6 +2218,7 @@ def trigger_on_hit_passives(
                     {
                         "incoming": reduced,
                         "raw_incoming": raw,
+                        "source_kind": DAMAGE_SOURCE_ON_HIT_PROC,
                         "school": normalize_school(passive.get("school") or "magical"),
                         "subschool": passive.get("subschool"),
                         "log_template": (
@@ -2345,6 +2354,7 @@ def trigger_on_hit_passives(
                 {
                     "incoming": duplicate_damage,
                     "raw_incoming": duplicate_raw_damage,
+                    "source_kind": DAMAGE_SOURCE_ON_HIT_PROC,
                     "damage_instances": per_hit_reduced,
                     "raw_damage_instances": per_hit_raw,
                     "school": spell_school,
@@ -2584,6 +2594,7 @@ def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[dict[str, Any
         damage_sources.append({
             "source_sid": source_sid,
             "incoming": reduced,
+            "source_kind": DAMAGE_SOURCE_DOT_TICK,
             "effect_id": effect.get("id"),
             "effect_name": effect.get("name", "DoT"),
             "school": school,
@@ -2645,6 +2656,7 @@ def trigger_end_of_turn_effects(ps: PlayerState, log: List[str], label: str) -> 
                     {
                         "source_sid": ps.sid,
                         "incoming": hp_gain,
+                        "source_kind": DAMAGE_SOURCE_SELF,
                         "effect_id": "mindgames",
                         "effect_name": "Mindgames",
                         "school": "magical",
@@ -2725,6 +2737,7 @@ def end_of_turn_pet(pet, log: List[str], label: str) -> dict[str, Any]:
                     {
                         "source_sid": effect.get("source_sid"),
                         "incoming": raw_damage,
+                        "source_kind": DAMAGE_SOURCE_DOT_TICK,
                         "effect_id": effect.get("id"),
                         "effect_name": effect.get("name", "DoT"),
                         "school": effect.get("school", "magical"),
