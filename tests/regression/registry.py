@@ -4,10 +4,12 @@ SCENARIOS preserves the original tests/regression_suite.py run order across
 all domain modules. validate_scenario_registry() fails when a scenario_*
 function *defined* in a domain module is unregistered, when the same scenario
 name is defined in more than one domain module, when a SCENARIOS entry is not
-defined in one of the configured domain modules, or when an entry is
-registered twice, is not callable, or has a name that does not start with
-scenario_. Discovery ignores scenario_* names merely imported into a domain
-module by comparing each object's __module__ to the module it is found in.
+defined in one of the configured domain modules, when a registered entry does
+not match (by identity) the discovered function of the same name, or when an
+entry is registered twice, is not callable, or has a name that does not start
+with scenario_. Discovery ignores scenario_* names merely imported into a
+domain module by comparing each object's __module__ to the module it is found
+in.
 """
 from __future__ import annotations
 
@@ -529,12 +531,18 @@ def validate_scenario_registry() -> None:
     discovered = _discover_scenario_functions()
     registered_names: list[str] = []
     invalid_entries: list[str] = []
+    identity_mismatches: list[str] = []
 
     for index, scenario in enumerate(SCENARIOS, start=1):
         name = getattr(scenario, "__name__", repr(scenario))
         registered_names.append(name)
         if not callable(scenario) or not name.startswith("scenario_"):
             invalid_entries.append(f"#{index}: {name}")
+            continue
+        # A registered entry must be the exact discovered function, not merely a
+        # different callable that happens to share the same __name__.
+        if name in discovered and scenario is not discovered[name]:
+            identity_mismatches.append(name)
 
     duplicate_names = sorted(name for name, count in Counter(registered_names).items() if count > 1)
     missing_names = sorted(set(discovered) - set(registered_names))
@@ -543,6 +551,7 @@ def validate_scenario_registry() -> None:
         for name in set(registered_names)
         if name.startswith("scenario_") and name not in discovered
     )
+    identity_mismatch_names = sorted(set(identity_mismatches))
 
     failures: list[str] = []
     if missing_names:
@@ -551,6 +560,11 @@ def validate_scenario_registry() -> None:
         failures.append(
             "SCENARIOS entries not defined in configured domain modules: "
             + ", ".join(unknown_names)
+        )
+    if identity_mismatch_names:
+        failures.append(
+            "SCENARIOS entries do not match discovered domain functions: "
+            + ", ".join(identity_mismatch_names)
         )
     if duplicate_names:
         failures.append("duplicate SCENARIOS entries: " + ", ".join(duplicate_names))
