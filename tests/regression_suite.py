@@ -78,6 +78,7 @@ def _bootstrap_engine_modules() -> Dict[str, Any]:
             sys.modules[pkg_name] = pkg
 
     _load_module("games.duel.engine.models", _ENGINE_DIR / "models.py")
+    _load_module("games.duel.engine.damage_types", _ENGINE_DIR / "damage_types.py")
     _load_module("games.duel.engine.dice", _ENGINE_DIR / "dice.py")
     _load_module("games.duel.engine.rules", _ENGINE_DIR / "rules.py")
     _load_module("games.duel.content.balance", _CONTENT_DIR / "balance.py")
