@@ -8,7 +8,8 @@ from __future__ import annotations
 import random
 import re
 import sys
-from typing import Any, List, Tuple
+from collections import Counter
+from typing import Any, Callable, List, Tuple
 
 from harness import (
     ABILITIES,
@@ -7740,7 +7741,47 @@ SCENARIOS = [
 ]
 
 
+def _discover_scenario_functions() -> dict[str, Callable[..., Any]]:
+    return {
+        name: obj
+        for name, obj in globals().items()
+        if name.startswith("scenario_") and callable(obj)
+    }
+
+
+def validate_scenario_registry() -> None:
+    discovered = _discover_scenario_functions()
+    registered_names: list[str] = []
+    invalid_entries: list[str] = []
+
+    for index, scenario in enumerate(SCENARIOS, start=1):
+        name = getattr(scenario, "__name__", repr(scenario))
+        registered_names.append(name)
+        if not callable(scenario) or not name.startswith("scenario_"):
+            invalid_entries.append(f"#{index}: {name}")
+
+    duplicate_names = sorted(name for name, count in Counter(registered_names).items() if count > 1)
+    missing_names = sorted(set(discovered) - set(registered_names))
+
+    failures: list[str] = []
+    if missing_names:
+        failures.append("unregistered scenario_* functions: " + ", ".join(missing_names))
+    if duplicate_names:
+        failures.append("duplicate SCENARIOS entries: " + ", ".join(duplicate_names))
+    if invalid_entries:
+        failures.append("non-callable or non-scenario SCENARIOS entries: " + ", ".join(invalid_entries))
+
+    if failures:
+        raise AssertionError("Scenario registry validation failed: " + "; ".join(failures))
+
+
+def get_scenario_count() -> int:
+    validate_scenario_registry()
+    return len(SCENARIOS)
+
+
 def run_all() -> List[Tuple[str, bool, str]]:
+    validate_scenario_registry()
     results: List[Tuple[str, bool, str]] = []
     for scenario in SCENARIOS:
         try:
