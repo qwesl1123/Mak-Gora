@@ -451,6 +451,119 @@ def scenario_passive_damage_event_preserves_multihit_instances_for_formatting_an
     return True
 
 
+def scenario_damage_event_factories_build_normalized_plain_dicts() -> bool:
+    """Unit-style checks for damage_events.py factory/normalization helpers.
+
+    Static shape checks only — no gameplay is exercised. The factories must
+    keep emitting the exact plain-dict schemas the pre-factory inline literals
+    produced (key presence/absence matters: the resolver detects raw events by
+    ``event.get("raw_incoming") is not None``).
+    """
+    import sys
+
+    damage_events = sys.modules["games.duel.engine.damage_events"]
+    damage_types = sys.modules["games.duel.engine.damage_types"]
+
+    # Producer event without raw_incoming (strike-again shape): the optional
+    # keys must be absent, not None.
+    strike = damage_events.make_passive_damage_event(
+        incoming=12,
+        source_kind=damage_types.DAMAGE_SOURCE_STRIKE_AGAIN,
+        school="physical",
+        subschool=None,
+        log_template="p1 strikes again for __DMG_0__ bonus damage.",
+    )
+    assert type(strike) is dict, "producer events must stay plain dicts"
+    assert set(strike) == {"incoming", "source_kind", "school", "subschool", "log_template"}
+    assert strike["incoming"] == 12
+    assert strike["source_kind"] == damage_types.DAMAGE_SOURCE_STRIKE_AGAIN
+    assert strike["school"] == "physical" and strike["subschool"] is None
+    assert strike["log_template"] == "p1 strikes again for __DMG_0__ bonus damage."
+
+    # Producer raw proc event (void_blade/lightning_blast shape) with per-hit
+    # instances (duplicate_offensive_spell shape): raw lists are copied as-is.
+    raw_event = damage_events.make_passive_damage_event(
+        incoming=7,
+        raw_incoming=11,
+        source_kind=damage_types.DAMAGE_SOURCE_ON_HIT_PROC,
+        damage_instances=[3, 4],
+        raw_damage_instances=[5, 6],
+        school="magical",
+        subschool="shadow",
+        log_template="p1 calls upon the void. Deals __DMG_0__ magic damage.",
+    )
+    assert set(raw_event) == {
+        "incoming",
+        "raw_incoming",
+        "source_kind",
+        "damage_instances",
+        "raw_damage_instances",
+        "school",
+        "subschool",
+        "log_template",
+    }
+    assert raw_event["raw_incoming"] == 11 and raw_event["incoming"] == 7
+    assert raw_event["damage_instances"] == [3, 4]
+    assert raw_event["raw_damage_instances"] == [5, 6]
+
+    # Coercion rules: negatives clamp to 0, junk becomes 0, unknown/None
+    # source kinds fall back to on-hit proc.
+    coerced = damage_events.make_passive_damage_event(
+        incoming=-5,
+        raw_incoming="junk",
+        source_kind="bogus_kind",
+        school="physical",
+        subschool=None,
+        log_template="x",
+    )
+    assert coerced["incoming"] == 0 and coerced["raw_incoming"] == 0
+    assert coerced["source_kind"] == damage_types.DAMAGE_SOURCE_ON_HIT_PROC
+
+    # Queued event: full schema, legacy untagged events default to on-hit
+    # proc, and instances are normalized with zero/junk entries dropped.
+    queued = damage_events.make_queued_damage_event(
+        source_name="attack",
+        incoming="9",
+        requires_player_mitigation=True,
+        log_template="Queued deals __DMG_0__ damage.",
+        damage_instances=[4, 0, None, "junk", 5],
+    )
+    assert type(queued) is dict, "queued events must stay plain dicts"
+    assert set(queued) == {
+        "type",
+        "source_name",
+        "incoming",
+        "requires_player_mitigation",
+        "source_kind",
+        "school",
+        "subschool",
+        "log_template",
+        "damage_instances",
+    }
+    assert queued["type"] == "damage_event"
+    assert queued["incoming"] == 9 and queued["requires_player_mitigation"] is True
+    assert queued["source_kind"] == damage_types.DAMAGE_SOURCE_ON_HIT_PROC
+    assert queued["school"] == "physical" and queued["subschool"] is None
+    assert queued["damage_instances"] == [4, 5]
+
+    # Instances that normalize to nothing (or non-lists) must omit the key.
+    for empty_instances in (None, [], [0, None], "not-a-list"):
+        no_instances = damage_events.make_queued_damage_event(
+            source_name="attack",
+            incoming=3,
+            requires_player_mitigation=False,
+            log_template="x",
+            damage_instances=empty_instances,
+        )
+        assert "damage_instances" not in no_instances
+
+    # normalize_damage_instances mirrors the old inline queue normalization.
+    assert damage_events.normalize_damage_instances([2, "3", 0, -1, None, "junk"]) == [2, 3]
+    assert damage_events.normalize_damage_instances([]) is None
+    assert damage_events.normalize_damage_instances((1, 2)) is None
+    return True
+
+
 def scenario_dragonwrath_duplicate_drain_life_heals_from_total_landed_damage() -> bool:
     for seed in range(1, 1000):
         match = make_match("warlock", "warrior", p1_items={"weapon": "dragonwrath"}, seed=seed)

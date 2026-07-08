@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 from .models import PlayerState
 from ..content.balance import DEFAULTS
 from ..content.classes import CLASSES, class_display_name
+from .damage_events import make_passive_damage_event
 from .damage_types import (
     DAMAGE_SOURCE_DOT_TICK,
     DAMAGE_SOURCE_ON_HIT_PROC,
@@ -2139,16 +2140,16 @@ def trigger_on_hit_passives(
                 if extra > 0:
                     bonus_damage += extra
                     damage_events.append(
-                        {
-                            "incoming": extra,
-                            "source_kind": DAMAGE_SOURCE_STRIKE_AGAIN,
-                            "school": "physical",
-                            "subschool": None,
-                            "log_template": (
+                        make_passive_damage_event(
+                            incoming=extra,
+                            source_kind=DAMAGE_SOURCE_STRIKE_AGAIN,
+                            school="physical",
+                            subschool=None,
+                            log_template=(
                                 f"{attacker.sid[:5]} strikes again with {effect.get('source_item', 'item')} "
                                 "for __DMG_0__ bonus damage."
                             ),
-                        }
+                        )
                     )
         elif passive_type == "void_blade":
             if base_damage <= 0:
@@ -2171,17 +2172,17 @@ def trigger_on_hit_passives(
                 # re-mitigated against the final target when it lands, so resource
                 # gains are credited from the actual dealt amount at apply time.
                 damage_events.append(
-                    {
-                        "incoming": reduced,
-                        "raw_incoming": raw,
-                        "source_kind": DAMAGE_SOURCE_ON_HIT_PROC,
-                        "school": normalize_school(passive.get("school") or "magical"),
-                        "subschool": passive.get("subschool"),
-                        "log_template": (
+                    make_passive_damage_event(
+                        incoming=reduced,
+                        raw_incoming=raw,
+                        source_kind=DAMAGE_SOURCE_ON_HIT_PROC,
+                        school=normalize_school(passive.get("school") or "magical"),
+                        subschool=passive.get("subschool"),
+                        log_template=(
                             f"{attacker.sid[:5]} calls upon the void with {effect.get('source_item', 'item')}. "
                             f"Roll {dice} = {roll_power}. Deals __DMG_0__ magic damage."
                         ),
-                    }
+                    )
                 )
         elif passive_type == "lightning_blast":
             chance = float(passive.get("chance", 0) or 0)
@@ -2215,17 +2216,17 @@ def trigger_on_hit_passives(
                 # bonus_damage; resource gains are taken from the actual dealt
                 # amount when the re-mitigated event lands on the final target.
                 damage_events.append(
-                    {
-                        "incoming": reduced,
-                        "raw_incoming": raw,
-                        "source_kind": DAMAGE_SOURCE_ON_HIT_PROC,
-                        "school": normalize_school(passive.get("school") or "magical"),
-                        "subschool": passive.get("subschool"),
-                        "log_template": (
+                    make_passive_damage_event(
+                        incoming=reduced,
+                        raw_incoming=raw,
+                        source_kind=DAMAGE_SOURCE_ON_HIT_PROC,
+                        school=normalize_school(passive.get("school") or "magical"),
+                        subschool=passive.get("subschool"),
+                        log_template=(
                             f"{attacker.sid[:5]} blasts the target with lightning from {effect.get('source_item', 'item')}. "
                             f"Roll {dice} = {roll_power}. Deals __DMG_0__ magic damage."
                         ),
-                    }
+                    )
                 )
         elif passive_type == "heal_on_hit":
             chance = float(passive.get("chance", 0) or 0)
@@ -2351,16 +2352,16 @@ def trigger_on_hit_passives(
             # re-mitigated against the final target on landing (keeping multihit
             # logs rendering real numbers), and resource gains use the dealt amount.
             damage_events.append(
-                {
-                    "incoming": duplicate_damage,
-                    "raw_incoming": duplicate_raw_damage,
-                    "source_kind": DAMAGE_SOURCE_ON_HIT_PROC,
-                    "damage_instances": per_hit_reduced,
-                    "raw_damage_instances": per_hit_raw,
-                    "school": spell_school,
-                    "subschool": spell_subschool,
-                    "log_template": f"{duplicate_prefix} duplicates {ability_name}! {' '.join(hit_segments)}",
-                }
+                make_passive_damage_event(
+                    incoming=duplicate_damage,
+                    raw_incoming=duplicate_raw_damage,
+                    source_kind=DAMAGE_SOURCE_ON_HIT_PROC,
+                    damage_instances=per_hit_reduced,
+                    raw_damage_instances=per_hit_raw,
+                    school=spell_school,
+                    subschool=spell_subschool,
+                    log_template=f"{duplicate_prefix} duplicates {ability_name}! {' '.join(hit_segments)}",
+                )
             )
 
 
