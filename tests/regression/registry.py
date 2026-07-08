@@ -2,8 +2,14 @@
 
 SCENARIOS preserves the original tests/regression_suite.py run order across
 all domain modules. validate_scenario_registry() fails when a scenario_*
-function in any domain module is unregistered, registered twice, not
-callable, or registered under a name that does not start with scenario_.
+function *defined* in a domain module is unregistered, when the same scenario
+name is defined in more than one domain module, when a SCENARIOS entry is not
+defined in one of the configured domain modules, when a registered entry does
+not match (by identity) the discovered function of the same name, or when an
+entry is registered twice, is not callable, or has a name that does not start
+with scenario_. Discovery ignores scenario_* names merely imported into a
+domain module by comparing each object's __module__ to the module it is found
+in.
 """
 from __future__ import annotations
 
@@ -487,11 +493,37 @@ SCENARIOS = [
 
 
 def _discover_scenario_functions() -> dict[str, Callable[..., Any]]:
+    """Return scenario_* functions *defined* in the configured domain modules.
+
+    Only functions whose ``__module__`` matches the module they are found in
+    are discovered, so scenario_* names merely imported into a domain module
+    (re-exports, cross-module imports) are ignored. A scenario name defined in
+    more than one domain module is a duplicate definition and fails clearly.
+    """
     discovered: dict[str, Callable[..., Any]] = {}
+    defined_in: dict[str, list[str]] = {}
     for module in _DOMAIN_MODULES:
         for name, obj in vars(module).items():
-            if name.startswith("scenario_") and callable(obj):
-                discovered[name] = obj
+            if not name.startswith("scenario_") or not callable(obj):
+                continue
+            if getattr(obj, "__module__", None) != module.__name__:
+                continue
+            discovered[name] = obj
+            defined_in.setdefault(name, []).append(module.__name__)
+
+    duplicate_definitions = {
+        name: modules for name, modules in defined_in.items() if len(modules) > 1
+    }
+    if duplicate_definitions:
+        detail = "; ".join(
+            f"{name} defined in {', '.join(modules)}"
+            for name, modules in sorted(duplicate_definitions.items())
+        )
+        raise AssertionError(
+            "Scenario registry validation failed: duplicate scenario definitions "
+            "across domain modules: " + detail
+        )
+
     return discovered
 
 
@@ -499,19 +531,41 @@ def validate_scenario_registry() -> None:
     discovered = _discover_scenario_functions()
     registered_names: list[str] = []
     invalid_entries: list[str] = []
+    identity_mismatches: list[str] = []
 
     for index, scenario in enumerate(SCENARIOS, start=1):
         name = getattr(scenario, "__name__", repr(scenario))
         registered_names.append(name)
         if not callable(scenario) or not name.startswith("scenario_"):
             invalid_entries.append(f"#{index}: {name}")
+            continue
+        # A registered entry must be the exact discovered function, not merely a
+        # different callable that happens to share the same __name__.
+        if name in discovered and scenario is not discovered[name]:
+            identity_mismatches.append(name)
 
     duplicate_names = sorted(name for name, count in Counter(registered_names).items() if count > 1)
     missing_names = sorted(set(discovered) - set(registered_names))
+    unknown_names = sorted(
+        name
+        for name in set(registered_names)
+        if name.startswith("scenario_") and name not in discovered
+    )
+    identity_mismatch_names = sorted(set(identity_mismatches))
 
     failures: list[str] = []
     if missing_names:
         failures.append("unregistered scenario_* functions: " + ", ".join(missing_names))
+    if unknown_names:
+        failures.append(
+            "SCENARIOS entries not defined in configured domain modules: "
+            + ", ".join(unknown_names)
+        )
+    if identity_mismatch_names:
+        failures.append(
+            "SCENARIOS entries do not match discovered domain functions: "
+            + ", ".join(identity_mismatch_names)
+        )
     if duplicate_names:
         failures.append("duplicate SCENARIOS entries: " + ", ".join(duplicate_names))
     if invalid_entries:
