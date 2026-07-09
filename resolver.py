@@ -4,6 +4,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Dict, Any, Tuple, Callable
 from .models import MatchState, PlayerState, PlayerBuild, Resources, PetState
+from .damage_events import make_queued_damage_event
 from .damage_types import (
     DAMAGE_SOURCE_ABSORB_EXPLOSION,
     DAMAGE_SOURCE_DIRECT_ABILITY,
@@ -3039,33 +3040,25 @@ def resolve_turn(match: MatchState) -> None:
                 # must still go through target mitigation when the queued event is
                 # applied. Otherwise incoming is already resolved and should only go
                 # through absorb/HP application.
-                queued_event = {
-                    "type": "damage_event",
-                    "source_name": ability.get("name", "attack"),
-                    "incoming": incoming,
-                    "requires_player_mitigation": bool(event.get("raw_incoming") is not None),
-                    # Producers tag their own kind (strike-again vs raw proc);
-                    # untagged legacy events default to on-hit proc damage.
-                    "source_kind": normalize_damage_source_kind(
-                        event.get("source_kind"), default=DAMAGE_SOURCE_ON_HIT_PROC
-                    ),
-                    "school": event.get("school", "physical"),
-                    "subschool": event.get("subschool"),
-                    "log_template": str(template),
-                }
-                damage_instances = event.get("raw_damage_instances", event.get("damage_instances"))
-                if isinstance(damage_instances, list):
-                    normalized_instances = []
-                    for value in damage_instances:
-                        try:
-                            normalized_value = max(0, int(value or 0))
-                        except (TypeError, ValueError):
-                            continue
-                        if normalized_value > 0:
-                            normalized_instances.append(normalized_value)
-                    if normalized_instances:
-                        queued_event["damage_instances"] = normalized_instances
-                extra_logs.append(queued_event)
+                #
+                # Producers tag their own source_kind (strike-again vs raw proc);
+                # untagged legacy events default to on-hit proc damage inside
+                # make_queued_damage_event(). Raw per-hit instances win over the
+                # already-mitigated ones so multi-hit re-mitigation stays per-hit.
+                extra_logs.append(
+                    make_queued_damage_event(
+                        source_name=ability.get("name", "attack"),
+                        incoming=incoming,
+                        requires_player_mitigation=bool(event.get("raw_incoming") is not None),
+                        source_kind=event.get("source_kind"),
+                        school=event.get("school", "physical"),
+                        subschool=event.get("subschool"),
+                        log_template=str(template),
+                        damage_instances=event.get(
+                            "raw_damage_instances", event.get("damage_instances")
+                        ),
+                    )
+                )
 
         # Apply non-strike-again on-hit passive effects once per ability execution.
         if ability_hit_landed:

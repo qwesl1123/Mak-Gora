@@ -27,6 +27,10 @@ Guardrails implemented here:
    returned by ``grant_resource``, never by appending the static ``gain["log"]``
    directly (the old Aimed Shot bug).
 
+5. Queued damage events are centrally constructed: ad-hoc
+   ``"type": "damage_event"`` dict literals in gameplay producers are flagged;
+   queued events must be built via ``damage_events.make_queued_damage_event()``.
+
 Design notes / limitations:
 
 * These checks are deliberately conservative. They catch the *obvious* bad
@@ -86,6 +90,7 @@ GAMEPLAY_FILE_BASENAMES: Tuple[str, ...] = (
     "effects.py",
     "pet_ai.py",
     "damage_types.py",
+    "damage_events.py",
 )
 
 
@@ -548,9 +553,15 @@ def guardrail_raw_proc_bonus_damage() -> Tuple[bool, str]:
     raw_branches_seen: List[str] = []
     problems: List[str] = []
 
+    # A branch queues a RAW event when it sets raw_incoming — either as a dict
+    # key ("raw_incoming": ...) or as a keyword argument to the
+    # make_passive_damage_event() factory (raw_incoming=...). Prose mentions of
+    # raw_incoming in comments (no following "=" / not quoted) do not match.
+    raw_marker_re = re.compile(r"[\"']raw_incoming[\"']|\braw_incoming\s*=")
+
     for name, branch_lines in branches:
         text = "\n".join(branch_lines)
-        if '"raw_incoming"' not in text and "'raw_incoming'" not in text:
+        if not raw_marker_re.search(text):
             continue
         raw_branches_seen.append(name)
         if name in RAW_EVENT_BONUS_DAMAGE_ALLOWLIST:
@@ -693,6 +704,89 @@ def guardrail_resource_gain_logs_use_gained() -> Tuple[bool, str]:
 
 
 # =========================================================================== #
+# Guardrail 5: queued "damage_event" dicts are built by make_queued_damage_event.
+# =========================================================================== #
+
+# A dict-literal ENTRY of the form `"type": "damage_event"` marks an ad-hoc
+# queued damage event. The colon keeps comparisons/consumer checks like
+# `entry.get("type") != "damage_event"` and string mentions in comments from
+# matching, so this only fires on actual dict construction.
+_QUEUED_DAMAGE_EVENT_LITERAL_RE = re.compile(
+    r"[\"']type[\"']\s*:\s*[\"']damage_event[\"']"
+)
+
+# Files where queued damage events may be produced. damage_events.py is
+# deliberately NOT scanned: it is the single designated home of the
+# "type": "damage_event" literal (inside make_queued_damage_event()).
+_QUEUED_EVENT_PRODUCER_BASENAMES: Tuple[str, ...] = (
+    "resolver.py",
+    "effects.py",
+    "pet_ai.py",
+)
+
+# Narrow allowlist, same shape as ALLOWED_RESOURCE_MUTATIONS: (file basename,
+# enclosing function, exact stripped line). Empty in current main — every
+# queued damage event is built via damage_events.make_queued_damage_event().
+ALLOWED_QUEUED_DAMAGE_EVENT_LITERALS: Tuple[Dict[str, str], ...] = ()
+
+
+def guardrail_queued_damage_event_literals() -> Tuple[bool, str]:
+    """Fail on ad-hoc `"type": "damage_event"` dict literals in producers.
+
+    Queued damage events must be built with
+    ``damage_events.make_queued_damage_event()`` so the key schema and the
+    incoming/source_kind/damage_instances normalization stay centralized.
+    This intentionally only matches the queued-event ``type`` marker; plain
+    non-damage dicts and producer-side passive events (no ``type`` key) are
+    out of scope.
+    """
+    factory_path = _gameplay_file("damage_events.py")
+    if factory_path is None:
+        return False, (
+            "damage_events.py not found; queued damage events no longer have a "
+            "central factory module."
+        )
+    factory_source = _read(factory_path)
+    if "def make_queued_damage_event(" not in factory_source:
+        return False, "damage_events.py no longer defines make_queued_damage_event()."
+
+    violations: List[str] = []
+    for basename in _QUEUED_EVENT_PRODUCER_BASENAMES:
+        path = _gameplay_file(basename)
+        if path is None:
+            continue
+        lines = _read(path).splitlines()
+        for i, line in enumerate(lines):
+            code = line.split("#", 1)[0]
+            if not _QUEUED_DAMAGE_EVENT_LITERAL_RE.search(code):
+                continue
+            function = _enclosing_function(lines, i)
+            stripped = line.strip()
+            if any(
+                entry["file"] == basename
+                and entry["function"] == function
+                and entry["snippet"] == stripped
+                for entry in ALLOWED_QUEUED_DAMAGE_EVENT_LITERALS
+            ):
+                continue
+            violations.append(f"{basename}:{i + 1} (in {function}()): {stripped}")
+
+    if violations:
+        detail = "\n".join(f"  - {v}" for v in violations)
+        return False, (
+            "Ad-hoc queued \"damage_event\" dict literal(s) found. Build queued "
+            "damage events with damage_events.make_queued_damage_event() so the "
+            "schema and normalization stay centralized, or add a narrow, "
+            "documented entry to ALLOWED_QUEUED_DAMAGE_EVENT_LITERALS:\n" + detail
+        )
+    return True, (
+        "Queued \"damage_event\" entries are built via "
+        "damage_events.make_queued_damage_event(); no ad-hoc literals in "
+        + ", ".join(_QUEUED_EVENT_PRODUCER_BASENAMES) + "."
+    )
+
+
+# =========================================================================== #
 # Runner plumbing (mirrors the other suites' run_all() contract).
 # =========================================================================== #
 
@@ -701,6 +795,7 @@ _GUARDRAILS: Tuple[Tuple[str, Callable[[], Tuple[bool, str]]], ...] = (
     ("guardrail_damage_resource_gains_post_damage", guardrail_damage_resource_gains_post_damage),
     ("guardrail_raw_proc_bonus_damage", guardrail_raw_proc_bonus_damage),
     ("guardrail_resource_gain_logs_use_gained", guardrail_resource_gain_logs_use_gained),
+    ("guardrail_queued_damage_event_literals", guardrail_queued_damage_event_literals),
 )
 
 
