@@ -9,8 +9,15 @@ regression-suite split) and recommend the next round of small, low-risk maintain
 PRs. Mak'Gora keeps the duel format; future PvE stays duel-shaped (one main combatant per
 side plus attached pets/adds). No ECS, no many-vs-many battlefield, no broad rewrites.
 
-Line numbers below refer to the tree at the time of this review (branch
-`claude/makgora-review-planning-debyne`, based on `main` @ `91c4681`).
+Line numbers below refer to the tree at the time of the original review (branch
+`claude/makgora-review-planning-debyne`, based on `main` @ `91c4681`). The
+damage-event factory PR (#23, `main` @ `10c5791`) landed after that snapshot, so
+resolver/effects line references may be off by a few lines; re-verify before
+implementation.
+
+**Revision note:** updated after PR #23 landed the damage-event factories
+(`damage_events.py`). That item is now marked completed and the recommended PR
+order has been re-sequenced accordingly.
 
 ---
 
@@ -27,7 +34,7 @@ Line numbers below refer to the tree at the time of this review (branch
 | Actual-dealt damage resource correctness | ✅ Good | Guardrails 2–4 plus regression scenarios (`scenario_queued_proc_resource_gain_uses_actual_dealt`, etc.). Queued raw events deliberately excluded from speculative `bonus_damage` (`effects.py:2087–2093`). |
 | Damage source-kind taxonomy | ✅ Good | `damage_types.py` is the single authority; metadata-only contract documented; validated by `tests/source_kind_validation_suite.py`. |
 | Split regression suite | ✅ Good | `tests/regression/` with 8 domain modules + `registry.py` identity-validated scenario registry preserving run order. |
-| **Damage event factory helpers** | ❌ **Did not land** | No `make_damage_event()` (or equivalent) exists anywhere; git history has no such commit. `damage_events` are still inline dict literals at 4 producer sites in `effects.trigger_on_hit_passives` (`effects.py:2141, 2173, 2217, 2353`), with two shapes (`incoming` vs `incoming`+`raw_incoming`), re-normalized defensively in `queue_passive_damage_events` (`resolver.py:3032`). |
+| Damage event factory helpers | ✅ Landed (PR #23) | `damage_events.py` provides `make_passive_damage_event()` and `make_queued_damage_event()` as the single builders for the two event shapes. All 4 producer sites in `effects.trigger_on_hit_passives` and the resolver's `queue_passive_damage_events` now go through the factories; the module docstring documents the normalization contract (non-negative coercion, source-kind defaulting, optional keys omitted rather than `None`). |
 
 ### Overall shape
 
@@ -83,10 +90,11 @@ why the recommendations below chip at it from the edges instead of proposing a r
 Three dict shapes carry most of the engine's data with no declared schema:
 
 - **Action result** (17 keys, `resolver.py:3183`), plus 16 partial-shape early returns.
-- **Queued `damage_event`** — two producer shapes (`incoming` only vs
-  `incoming`+`raw_incoming`, where presence of `raw_incoming` silently means
-  "re-mitigate at apply time", `resolver.py:3040–3046`), produced in `effects.py` and
-  consumed in `resolver.py:4027` (`append_extra_logs`).
+- **Queued `damage_event`** — construction is now centralized in
+  `damage_events.py` (PR #23), which fixes shape drift at the producer end, but the
+  contract is still a plain dict documented only in that module's docstring: presence
+  of `raw_incoming` silently means "re-mitigate at apply time", and the consumer
+  (`append_extra_logs`, `resolver.py:4027`) still reads keys by convention.
 - **`apply_damage` result** (10 keys, built at three sites inside `apply_damage`, plus
   `_empty_damage_result`).
 
@@ -134,29 +142,23 @@ The domain split and registry were a clear win, but within domains:
 
 ## 3. Recommended next 5 PRs (each small, low-risk, behavior-preserving)
 
-### PR 1 — Finish the damage-event factory (completes the missed roadmap item)
+The previously recommended PR 1 (damage-event factory) landed as PR #23
+(`damage_events.py`) and is no longer in this list. The remaining items are
+re-sequenced below.
 
-Add `make_damage_event(*, incoming, source_kind, school, subschool, log_template,
-raw_incoming=None, damage_instances=None, raw_damage_instances=None)` — natural home is
-`effects.py` next to `trigger_on_hit_passives` (or `damage_types.py` if kept pure). It
-validates `source_kind` via `normalize_damage_source_kind`, normalizes school, and makes
-the `raw_incoming` ("re-mitigate at apply time") semantics explicit in one docstring.
-Convert the 4 inline producer sites (`effects.py:2141, 2173, 2217, 2353`);
-`queue_passive_damage_events` (`resolver.py:3032`) keeps its defensive normalization for
-legacy safety. Extend `tests/source_kind_validation_suite.py` to assert producers go
-through the factory. No behavior change.
+### PR 1 — Declare the packet contracts: TypedDicts + AGENTS.md documentation
 
-### PR 2 — Central heal helper `grant_player_healing()` + guardrail 5
+Add `TypedDict` definitions (annotations only, `total=False` where appropriate; zero
+runtime change) for the three shapes in P3: `ActionResult`, `QueuedDamageEvent`,
+`DamageApplicationResult`. Place them in a small `contracts.py` (or at the top of
+`resolver.py`/`damage_types.py`) and annotate `resolve_action`, `apply_damage`,
+`append_extra_logs`, and the factories in `damage_events.py` — whose docstring already
+spells out the two event schemas and the `raw_incoming` semantics, making the
+`QueuedDamageEvent`/producer-event TypedDicts nearly a transcription. Document the key
+sets in AGENTS.md so future agents edit both ends of a contract consistently. Doing
+this first locks in the contracts the later PRs touch.
 
-Mirror `grant_player_resource` in `effects.py`: clamp to `hp_max`, return the actual
-gained amount, with explicit opt-in flags for Mindgames-flip awareness (most sites
-intentionally bypass it — preserve that per site; this is a mechanical conversion, not a
-semantics change). Convert the inline sites listed in P4. Add static guardrail 5 to
-`tests/architecture_guardrail_suite.py`: flag `.res.hp = min(` in gameplay code outside
-the helper + allowlist (setup, tests, documented exceptions), same style as guardrail 1.
-No balance change — identical math at every site.
-
-### PR 3 — De-duplicate the `resolve_turn` tail
+### PR 2 — De-duplicate the `resolve_turn` tail
 
 Extract a per-actor `finalize_actor_result(actor_sid, target_sid, result, dealt_data)`
 inner function covering the copy-pasted `result1`/`result2` block
@@ -165,7 +167,7 @@ inner function covering the copy-pasted `result1`/`result2` block
 `mindgames_flip_suffix(dealt_data)` helper for the 4+ re-built suffix strings. Pure
 mechanical extraction inside the existing closure scope; log output byte-identical.
 
-### PR 4 — Data-driven empowered-variant overrides
+### PR 3 — Data-driven empowered-variant overrides
 
 Move the six hardcoded empowered-scaling branches into ability data: an `empowered_by`
 key on the relevant `abilities.py` entries, e.g.
@@ -176,22 +178,35 @@ key on the relevant `abilities.py` entries, e.g.
 scenarios in `test_classes_abilities.py` pin the behavior. This directly enforces the
 AGENTS.md "prefer data over resolver branches" rule.
 
-### PR 5 — Declare the packet contracts: TypedDicts + AGENTS.md documentation
+### PR 4 — Central heal helper `grant_player_healing()` + guardrail 5 (only after more review)
 
-Add `TypedDict` definitions (annotations only, `total=False` where appropriate; zero
-runtime change) for the three shapes in P3: `ActionResult`, `QueuedDamageEvent`,
-`DamageApplicationResult`. Place them in a small `contracts.py` (or at the top of
-`resolver.py`/`damage_types.py`) and annotate `resolve_action`, `apply_damage`,
-`append_extra_logs`, `queue_passive_damage_events`, and the `effects.py` producers.
-Document the key sets and the `raw_incoming` semantics in AGENTS.md so future agents
-edit both ends of a contract consistently.
+Mirror `grant_player_resource` in `effects.py`: clamp to `hp_max`, return the actual
+gained amount, with explicit opt-in flags for Mindgames-flip awareness. Convert the
+inline sites listed in P4, and add static guardrail 5 to
+`tests/architecture_guardrail_suite.py` flagging `.res.hp = min(` outside the helper +
+allowlist, in the style of guardrail 1. **Deliberately sequenced last of the code PRs
+and gated on a further review pass**: before implementation, audit each of the 14+
+sites for which ones intentionally bypass `_apply_mindgames_aware_healing`, which ones
+credit `combat_totals["healing"]` and which don't, and which are pet/owner heals with
+different clamp targets. The conversion must be per-site mechanical with those
+differences preserved explicitly — no balance change, identical math at every site.
+
+### PR 5 — Test hygiene pass and/or PvE-readiness AGENTS.md addendum
+
+Two docs/tests-only candidates; either (or both, as separate small PRs) closes out this
+review:
+
+- **Test hygiene** (tests-only): rename the phase-named scenarios
+  (`scenario_phase_c_pass1_…`, etc.) to behavior-based names (registry entries update
+  mechanically), and split the three 100+-line mega-scenarios at their existing
+  internal phase comments into separately registered scenarios. Zero engine risk;
+  large agent-reviewability payoff.
+- **PvE-readiness AGENTS.md addendum** (docs-only): add the "PvE shape" section drafted
+  in §4 below to AGENTS.md, pinning the duel-shaped PvE invariants (one main per side +
+  attached pets/adds, no ECS, no battlefield generalization) before any PvE work starts.
 
 ### Worth doing, but after the above (not in the next five)
 
-- **Test hygiene pass** (tests-only PR): rename the phase-named scenarios to
-  behavior-based names (registry entries update mechanically), and split the three
-  100+-line mega-scenarios at their existing internal phase comments into separately
-  registered scenarios. Zero engine risk; large agent-reviewability payoff.
 - **Incremental `resolve_action` stage extraction**: continue the existing
   `resolve_*_stage` pattern one stage per PR (per-hit damage roll stage first), only
   after PRs 1–5 shrink the surface. Explicitly **not** a wholesale breakup.
@@ -283,38 +298,33 @@ Add a short **"PvE shape"** section to AGENTS.md, roughly:
 
 ## 6. Exact files/functions to inspect before implementing each PR
 
-**PR 1 (damage-event factory):**
-- `effects.py:2064–2367` — `trigger_on_hit_passives` (all four `damage_events.append` sites: 2141, 2173, 2217, 2353)
-- `resolver.py:3032–3065` — `queue_passive_damage_events` (consumer-side normalization; keep)
-- `resolver.py:4027–4068` — `append_extra_logs` (final consumer; `requires_player_mitigation` derivation)
-- `tests/source_kind_validation_suite.py:154–200, 322` — existing event-shape assertions to extend
-- `tests/architecture_guardrail_suite.py` guardrail 3 — must keep passing (raw events still excluded from `bonus_damage`)
+**PR 1 (TypedDict contracts):**
+- `damage_events.py` — `make_passive_damage_event` / `make_queued_damage_event` and the module docstring (already documents both event schemas and the `raw_incoming` semantics; the TypedDicts should transcribe it, not re-derive it)
+- `resolver.py:3183–3206` — full action-result shape; the 16 partial early returns inside `resolve_action` (grep `return {` between 2337–3206)
+- `resolver.py:3573–3707` — `apply_damage` result shape; `resolver.py:107` — `_empty_damage_result`
+- `resolver.py:4027–4068` — `append_extra_logs` (consumer-side key reads to cover)
+- `AGENTS.md` — where to document the contracts (new subsection under "Damage pipeline rules")
 
-**PR 2 (central heal helper + guardrail 5):**
-- All inline clamp sites: `resolver.py:324, 351, 901, 924, 941, 1049, 1230, 1323, 2694`; `effects.py:2252, 2621, 2673`; `pet_ai.py:647`
-- `resolver.py:137–162` — `_apply_heal_with_clamp`, `_apply_mindgames_aware_healing` (decide which sites route through which; document per-site Mindgames opt-outs)
-- `effects.py:2504` — `grant_player_resource` (the pattern to mirror: clamp, return actual, logging contract)
-- `tests/architecture_guardrail_suite.py` — guardrail 1 structure and allowlist format to copy
-- `tests/regression/test_dots_hots.py`, `test_resources.py` — healing-log scenarios that pin exact log strings
-
-**PR 3 (tail de-duplication):**
+**PR 2 (tail de-duplication):**
 - `resolver.py:~4070–4130` — the twin `result1`/`result2` blocks and `deferred` re-resolution
 - `resolver.py:3867–3880` — `absorb_suffix` / `format_damage_log` (called from the extracted helper)
 - `tests/regression/test_damage_pipeline.py` — `scenario_winner_summary_logs_after_pet_phase_and_end_of_turn_resolution` and the phase-preservation scenarios (log-order pins)
 
-**PR 4 (data-driven empowered overrides):**
+**PR 3 (data-driven empowered overrides):**
 - `resolver.py:2805–2832` — scaling-override branches; `resolver.py:3139–3160` — consume branches (note `lightning_bolt` at 3139 is a resource gain, not an empower — leave it)
 - `abilities.py` — entries for `final_verdict`, `crusader_strike`, `judgment`, `mind_blast`, `lava_lash`, `arcane_shot`
 - `effects.py` — templates `paladin_final_verdict_empowered`, `avenging_wrath`, `mind_blast_empowered`, `lava_surge`, `arcane_surge`
 - `tests/regression/test_classes_abilities.py` — the empowered-ability scenarios that pin exact damage numbers/logs
 
-**PR 5 (TypedDict contracts):**
-- `resolver.py:3183–3206` — full action-result shape; the 16 partial early returns inside `resolve_action` (grep `return {` between 2337–3206)
-- `resolver.py:3573–3707` — `apply_damage` result shape; `resolver.py:107` — `_empty_damage_result`
-- `resolver.py:3040–3065` and `effects.py` producer sites — queued-event shape (`raw_incoming` semantics)
-- `AGENTS.md` — where to document the contracts (new subsection under "Damage pipeline rules")
+**PR 4 (central heal helper + guardrail 5 — pre-implementation review pass required):**
+- All inline clamp sites: `resolver.py:324, 351, 901, 924, 941, 1049, 1230, 1323, 2694`; `effects.py:2252, 2621, 2673`; `pet_ai.py:647` — audit each for Mindgames opt-out, `combat_totals["healing"]` crediting, and pet-vs-owner clamp target before converting anything
+- `resolver.py:137–162` — `_apply_heal_with_clamp`, `_apply_mindgames_aware_healing` (decide which sites route through which; document per-site Mindgames opt-outs)
+- `effects.py:2504` — `grant_player_resource` (the pattern to mirror: clamp, return actual, logging contract)
+- `tests/architecture_guardrail_suite.py` — guardrail 1 structure and allowlist format to copy
+- `tests/regression/test_dots_hots.py`, `test_resources.py` — healing-log scenarios that pin exact log strings
 
-**Test-hygiene follow-up (when scheduled):**
+**PR 5 (test hygiene and/or AGENTS.md PvE addendum):**
 - `tests/regression/test_damage_pipeline.py` — the `scenario_phase_*` names; `tests/regression/registry.py` — mechanical rename impact
 - `tests/regression/test_classes_abilities.py` — the three 100+-line scenarios and their internal phase comments (natural split points)
 - `tests/regression/helpers.py:73` — `_expected_mitigated` (adopt in place of inlined magic mitigation numbers)
+- `AGENTS.md` + §4 of this document — the drafted "PvE shape" section to add verbatim (adjust only if the duel-shape invariants have changed by then)
