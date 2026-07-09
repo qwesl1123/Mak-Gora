@@ -9,11 +9,11 @@ regression-suite split) and recommend the next round of small, low-risk maintain
 PRs. Mak'Gora keeps the duel format; future PvE stays duel-shaped (one main combatant per
 side plus attached pets/adds). No ECS, no many-vs-many battlefield, no broad rewrites.
 
-Line numbers below refer to the tree at the time of the original review (branch
-`claude/makgora-review-planning-debyne`, based on `main` @ `91c4681`). The
-damage-event factory PR (#23, `main` @ `10c5791`) landed after that snapshot, so
-resolver/effects line references may be off by a few lines; re-verify before
-implementation.
+Line numbers below were captured at the time of the original review (`main` @
+`91c4681`). This branch has since merged `main` @ `10c5791`, which includes the
+damage-event factory PR (#23), so `damage_events.py` and the factory wiring are
+present in this tree; resolver/effects line references may be off by a few
+lines after that merge — re-verify before implementation.
 
 **Revision note:** updated after PR #23 landed the damage-event factories
 (`damage_events.py`). That item is now marked completed and the recommended PR
@@ -28,13 +28,13 @@ order has been re-sequenced accordingly.
 | Roadmap item | Status | Evidence |
 | --- | --- | --- |
 | AGENTS.md rules | ✅ Strong | `AGENTS.md` (377 lines) covers resource/damage pipelines, snapshot-vs-live, tags, lifecycle, testing. Rules are specific and checkable. |
-| Static architecture guardrails | ✅ Strong | `tests/architecture_guardrail_suite.py` (4 guardrails: direct resource writes, post-damage resource gains, speculative raw-proc double counting, actual-gained logging). Narrow allowlists with reasons. |
+| Static architecture guardrails | ✅ Strong | `tests/architecture_guardrail_suite.py` (5 guardrails: direct resource writes, post-damage resource gains, speculative raw-proc double counting, actual-gained logging, factory-built queued damage events). Narrow allowlists with reasons. |
 | Effect tags / helper API / resolution layers | ✅ Good | `effects.py:1539–1623` (`effect_tags`, `effect_has_tag`, `target_has_effect_tag`, `target_effects_in_resolution_layer`, …). Resolver stage functions carry `# Resolution layer:` annotations. |
 | Central `grant_player_resource` pipeline | ✅ Good | `effects.py:2504`; guardrail 1 enforces it for mp/energy/rage. |
 | Actual-dealt damage resource correctness | ✅ Good | Guardrails 2–4 plus regression scenarios (`scenario_queued_proc_resource_gain_uses_actual_dealt`, etc.). Queued raw events deliberately excluded from speculative `bonus_damage` (`effects.py:2087–2093`). |
 | Damage source-kind taxonomy | ✅ Good | `damage_types.py` is the single authority; metadata-only contract documented; validated by `tests/source_kind_validation_suite.py`. |
 | Split regression suite | ✅ Good | `tests/regression/` with 8 domain modules + `registry.py` identity-validated scenario registry preserving run order. |
-| Damage event factory helpers | ✅ Landed (PR #23) | `damage_events.py` provides `make_passive_damage_event()` and `make_queued_damage_event()` as the single builders for the two event shapes. All 4 producer sites in `effects.trigger_on_hit_passives` and the resolver's `queue_passive_damage_events` now go through the factories; the module docstring documents the normalization contract (non-negative coercion, source-kind defaulting, optional keys omitted rather than `None`). |
+| Damage event factory helpers | ✅ Landed (PR #23) | `damage_events.py` provides `make_passive_damage_event()` and `make_queued_damage_event()` as the single builders for the two event shapes. All 4 producer sites in `effects.trigger_on_hit_passives` and the resolver's `queue_passive_damage_events` now go through the factories; the module docstring documents the normalization contract (non-negative coercion, source-kind defaulting, optional keys omitted rather than `None`), and static guardrail 5 now flags ad-hoc `"type": "damage_event"` dict literals in gameplay producers. |
 
 ### Overall shape
 
@@ -178,11 +178,12 @@ key on the relevant `abilities.py` entries, e.g.
 scenarios in `test_classes_abilities.py` pin the behavior. This directly enforces the
 AGENTS.md "prefer data over resolver branches" rule.
 
-### PR 4 — Central heal helper `grant_player_healing()` + guardrail 5 (only after more review)
+### PR 4 — Central heal helper `grant_player_healing()` + guardrail 6 (only after more review)
 
 Mirror `grant_player_resource` in `effects.py`: clamp to `hp_max`, return the actual
 gained amount, with explicit opt-in flags for Mindgames-flip awareness. Convert the
-inline sites listed in P4, and add static guardrail 5 to
+inline sites listed in P4, and add static guardrail 6 (PR #23 took slot 5 for
+factory-built damage events) to
 `tests/architecture_guardrail_suite.py` flagging `.res.hp = min(` outside the helper +
 allowlist, in the style of guardrail 1. **Deliberately sequenced last of the code PRs
 and gated on a further review pass**: before implementation, audit each of the 14+
@@ -316,7 +317,7 @@ Add a short **"PvE shape"** section to AGENTS.md, roughly:
 - `effects.py` — templates `paladin_final_verdict_empowered`, `avenging_wrath`, `mind_blast_empowered`, `lava_surge`, `arcane_surge`
 - `tests/regression/test_classes_abilities.py` — the empowered-ability scenarios that pin exact damage numbers/logs
 
-**PR 4 (central heal helper + guardrail 5 — pre-implementation review pass required):**
+**PR 4 (central heal helper + guardrail 6 — pre-implementation review pass required):**
 - All inline clamp sites: `resolver.py:324, 351, 901, 924, 941, 1049, 1230, 1323, 2694`; `effects.py:2252, 2621, 2673`; `pet_ai.py:647` — audit each for Mindgames opt-out, `combat_totals["healing"]` crediting, and pet-vs-owner clamp target before converting anything
 - `resolver.py:137–162` — `_apply_heal_with_clamp`, `_apply_mindgames_aware_healing` (decide which sites route through which; document per-site Mindgames opt-outs)
 - `effects.py:2504` — `grant_player_resource` (the pattern to mirror: clamp, return actual, logging contract)
