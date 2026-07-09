@@ -319,9 +319,29 @@ def test_resolver_wiring_uses_canonical_source_kind_markers() -> None:
         "resolve_action result dictionaries should be tagged as direct ability damage"
     )
     # Queued proc events keep the producer's kind and default to on-hit proc.
+    # The default now lives inside the central factory, so validate both that
+    # the resolver routes through the factory and that the factory itself
+    # normalizes with the on-hit-proc default.
     queue_block = _extract_function_block(resolver_source, "queue_passive_damage_events")
-    assert "DAMAGE_SOURCE_ON_HIT_PROC" in queue_block, (
-        "queued passive damage events should default to on_hit_proc_damage"
+    assert "make_queued_damage_event(" in queue_block, (
+        "queued passive damage events should be built via "
+        "damage_events.make_queued_damage_event()"
+    )
+    # NOTE: _extract_function_block is indentation-based and cannot span the
+    # factories' multi-line signatures, so assert on the whole (small,
+    # dedicated) module source instead.
+    factory_source = _engine_source("damage_events.py")
+    for factory_name in ("make_queued_damage_event", "make_passive_damage_event"):
+        assert f"def {factory_name}(" in factory_source, (
+            f"damage_events.py should define {factory_name}()"
+        )
+    normalize_calls = re.findall(
+        r"normalize_damage_source_kind\(\s*source_kind\s*,\s*default=DAMAGE_SOURCE_ON_HIT_PROC\s*\)",
+        factory_source,
+    )
+    assert len(normalize_calls) == 2, (
+        "both damage-event factories should normalize source_kind with the "
+        "on_hit_proc_damage default"
     )
 
 
@@ -334,7 +354,7 @@ def test_no_invalid_source_kind_literals_in_gameplay_files() -> None:
     constant_pattern = re.compile(r"\b(DAMAGE_SOURCE_[A-Z_]+)\b")
     valid_kinds = set(damage_types.ALL_DAMAGE_SOURCE_KINDS)
 
-    for basename in ("resolver.py", "effects.py", "pet_ai.py", "damage_types.py"):
+    for basename in ("resolver.py", "effects.py", "pet_ai.py", "damage_types.py", "damage_events.py"):
         source = _engine_source(basename)
         for pattern in literal_patterns:
             for value in pattern.findall(source):
