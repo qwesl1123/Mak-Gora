@@ -40,9 +40,54 @@ events themselves.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, List, Optional, TypedDict
 
 from .damage_types import DAMAGE_SOURCE_ON_HIT_PROC, normalize_damage_source_kind
+
+
+class PassiveDamageEvent(TypedDict, total=False):
+    """Producer-side on-hit passive damage event (plain dict at runtime).
+
+    Built by :func:`make_passive_damage_event` and returned from
+    ``effects.trigger_on_hit_passives()`` to the resolver. This TypedDict is
+    documentation only — construction stays a plain dict and every consumer
+    reads keys with ``event.get(...)``.
+
+    ``total=False`` because ``raw_incoming`` and the per-hit lists are
+    conditional: they must be OMITTED when absent, never stored as ``None``
+    (``queue_passive_damage_events()`` distinguishes raw events by
+    ``event.get("raw_incoming") is not None``).
+    """
+
+    incoming: int
+    raw_incoming: int  # pre-mitigation damage; presence => re-mitigate at apply time
+    source_kind: str
+    school: Any
+    subschool: Any
+    log_template: str
+    damage_instances: List[int]
+    raw_damage_instances: List[int]
+
+
+class QueuedDamageEvent(TypedDict, total=False):
+    """Resolver-side queued ``"damage_event"`` extra-log entry (plain dict).
+
+    Built by :func:`make_queued_damage_event`, appended to an action result's
+    ``extra_logs`` and applied later by ``resolver.append_extra_logs()``.
+    Documentation only — runtime construction and consumption stay plain
+    dicts. ``total=False`` because ``damage_instances`` is only attached when
+    there is real per-hit data; consumers must keep using ``.get(...)``.
+    """
+
+    type: str  # always "damage_event"
+    source_name: str
+    incoming: int
+    requires_player_mitigation: bool
+    source_kind: str
+    school: Any
+    subschool: Any
+    log_template: str
+    damage_instances: List[int]
 
 
 def _coerce_non_negative_int(value: Any) -> int:
@@ -85,7 +130,7 @@ def make_passive_damage_event(
     raw_incoming: Any = None,
     damage_instances: Optional[List[int]] = None,
     raw_damage_instances: Optional[List[int]] = None,
-) -> Dict[str, Any]:
+) -> PassiveDamageEvent:
     """Build a producer-side damage event for ``trigger_on_hit_passives()``.
 
     ``raw_incoming`` marks the event as pre-mitigation: the resolver re-runs
@@ -94,7 +139,7 @@ def make_passive_damage_event(
     resolved events like strike-again must leave it unset so the key is
     absent from the dict.
     """
-    event: Dict[str, Any] = {
+    event: PassiveDamageEvent = {
         "incoming": _coerce_non_negative_int(incoming),
         "source_kind": normalize_damage_source_kind(
             source_kind, default=DAMAGE_SOURCE_ON_HIT_PROC
@@ -124,7 +169,7 @@ def make_queued_damage_event(
     school: Any = "physical",
     subschool: Any = None,
     damage_instances: Any = None,
-) -> Dict[str, Any]:
+) -> QueuedDamageEvent:
     """Build a resolver-side queued ``"damage_event"`` extra-log entry.
 
     Producers tag their own ``source_kind`` (strike-again vs raw proc);
@@ -133,7 +178,7 @@ def make_queued_damage_event(
     :func:`normalize_damage_instances`; the key is only attached when the
     normalized list is non-empty.
     """
-    event: Dict[str, Any] = {
+    event: QueuedDamageEvent = {
         "type": "damage_event",
         "source_name": source_name,
         "incoming": _coerce_non_negative_int(incoming),
