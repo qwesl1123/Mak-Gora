@@ -2,9 +2,9 @@
 import json
 import math
 from dataclasses import dataclass, field
-from typing import Dict, Any, Tuple, Callable
+from typing import Dict, Any, List, Optional, Tuple, Callable, TypedDict
 from .models import MatchState, PlayerState, PlayerBuild, Resources, PetState
-from .damage_events import make_queued_damage_event
+from .damage_events import PassiveDamageEvent, make_queued_damage_event
 from .damage_types import (
     DAMAGE_SOURCE_ABSORB_EXPLOSION,
     DAMAGE_SOURCE_DIRECT_ABILITY,
@@ -105,13 +105,78 @@ from .effects import (
 )
 
 
+class ActionResult(TypedDict, total=False):
+    """Shape of the dict returned by ``resolve_action()`` (plain dict at runtime).
+
+    Documentation only — the engine intentionally keeps action results as
+    plain dicts and every consumer reads keys with ``result.get(...)``.
+    ``total=False`` because early-return paths (cant-act, blocked, miss,
+    pass-turn, special-ability handlers) return partial dicts carrying only
+    ``damage`` / ``healing`` / ``log`` and sometimes ``ability_id`` /
+    ``pre_logs`` / ``extra_logs``; only the full damage-resolution path
+    returns the complete shape. ``finalize_action()`` may also hand back a
+    resolved immediate-action context, which reuses this shape plus internal
+    bookkeeping keys (``resolved`` / ``ability`` / ``immediate_only``).
+    """
+
+    damage: int
+    healing: int
+    log: str
+    pre_logs: List[str]
+    # Mixed list: plain str log lines plus QueuedDamageEvent dicts (see
+    # damage_events.QueuedDamageEvent) applied later by append_extra_logs().
+    extra_logs: List[Any]
+    ability_id: str
+    damage_instances: List[int]
+    # AoE-mode abilities report champion damage via these keys; aoe_raw_damage
+    # is pre-pet-mitigation and is re-resolved per pet target at apply time.
+    aoe_incoming_damage: int
+    aoe_raw_damage: int
+    aoe_raw_damage_instances: List[int]
+    damage_type: str  # legacy alias of school kept for older consumers
+    school: str
+    subschool: Optional[str]
+    source_kind: str  # metadata-only classification (see damage_types.py)
+    passive_damage_multiplier: float
+    mindgames_flip_damage: bool
+    skip_direct_target_damage: bool
+    # Action-start Challenger stance snapshot for deferred damage-based
+    # resource gains (see snapshot-vs-live rules in AGENTS.md).
+    resource_challenger_mode: Optional[str]
+    deferred: bool  # mass_dispel resolves after both direct hits land
+
+
+class DamageApplicationResult(TypedDict, total=False):
+    """Shape of the dict returned by ``apply_damage()`` / ``_empty_damage_result()``.
+
+    Documentation only — damage application keeps returning plain dicts and
+    consumers (resolver stages, pet_ai, log formatting) read keys with
+    ``.get(...)``. All keys below are present on every current return path
+    except ``redirected_to``, which only the full application path attaches —
+    hence ``total=False``.
+    """
+
+    hp_damage: int  # actual HP dealt after absorbs; 0 when flipped by Mindgames
+    absorbed: int
+    absorbed_breakdown: List[Dict[str, Any]]
+    # Per-hit results, each {"hp_damage": int, "absorbed": int,
+    # "absorbed_breakdown": list} so logs can render real per-hit values.
+    instances: List[Dict[str, Any]]
+    mindgames_healing: int
+    redirected_to: Optional[str]  # redirect pet name; only on the full path
+    redirect_log: Optional[str]
+    school: str
+    subschool: Optional[str]
+    source_kind: Optional[str]  # normalized echo of the caller's source_kind
+
+
 def _empty_damage_result(
     *,
     school: str,
     subschool: str | None,
     redirect_log: str | None = None,
     source_kind: str | None = None,
-) -> Dict[str, Any]:
+) -> DamageApplicationResult:
     return {
         "hp_damage": 0,
         "absorbed": 0,
@@ -2335,7 +2400,7 @@ def resolve_turn(match: MatchState) -> None:
         return turn_ctx.challenger_mode_by_sid.get(target_sid)
 
 
-    def resolve_action(actor_sid: str, target_sid: str, action: Dict[str, Any]) -> Dict[str, Any]:
+    def resolve_action(actor_sid: str, target_sid: str, action: Dict[str, Any]) -> ActionResult:
         selection = resolve_action_selection_modifiers(turn_ctx, actor_sid, target_sid, action)
         if selection.get("resolved"):
             return {
@@ -3030,7 +3095,7 @@ def resolve_turn(match: MatchState) -> None:
 
             total_damage += reduced
 
-        def queue_passive_damage_events(events: list[Dict[str, Any]]) -> None:
+        def queue_passive_damage_events(events: list[PassiveDamageEvent]) -> None:
             for event in events:
                 incoming = int(event.get("raw_incoming", event.get("incoming", 0)) or 0)
                 template = event.get("log_template")
@@ -3577,7 +3642,7 @@ def resolve_turn(match: MatchState) -> None:
         resolve_non_player_mitigation: bool = True,
         resolve_player_mitigation: bool = False,
         source_kind: str | None = None,
-    ) -> Dict[str, Any]:
+    ) -> DamageApplicationResult:
         normalized_school = normalize_school(school) or "physical"
         # source_kind is metadata only: it is normalized and echoed back on the
         # result so callers/rules can classify the packet, and never alters the

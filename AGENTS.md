@@ -144,6 +144,24 @@ Items/passives should define which source kinds they affect whenever the behavio
 
 Example: fixed reflected or absorb-explosion damage should not accidentally inherit generic outgoing-damage modifiers unless explicitly intended.
 
+## Packet / result dict contracts
+
+The engine intentionally passes packets/results between stages as plain dicts. `TypedDict` declarations document the key schemas but do not change runtime behavior; do not migrate these shapes to dataclasses or classes.
+
+Documented contracts:
+
+* `ActionResult` (`resolver.py`): the dict returned by `resolve_action()`. It remains a plain dict. Early-return paths return partial dicts, so consumers must read keys with `.get(...)`.
+* `DamageApplicationResult` (`resolver.py`): the dict returned by `apply_damage()` / `_empty_damage_result()`. It remains a plain dict.
+* `PassiveDamageEvent` (`damage_events.py`): the producer-side on-hit event built by `make_passive_damage_event()`. It remains a plain dict.
+* `QueuedDamageEvent` (`damage_events.py`): the resolver-side queued `"damage_event"` extra-log entry built by `make_queued_damage_event()`. It remains a plain dict.
+
+Contract rules:
+
+* `raw_incoming` on a passive damage event means the queued event carries pre-mitigation damage and must be re-mitigated at apply time. Fully resolved events must not carry it.
+* `source_kind` is metadata-only: it classifies the packet for rules/tests and never alters damage math unless a consumer explicitly opts into filtering on it.
+* Optional keys should be OMITTED when absent, not stored as `None`, whenever consumers distinguish absence from `None` (e.g. `event.get("raw_incoming") is not None`).
+* When adding a key to one of these shapes, update the matching TypedDict and keep constructing plain dicts via the existing factories.
+
 ## Snapshot-vs-live state rules
 
 Be explicit when a mechanic reads state.
