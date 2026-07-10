@@ -242,6 +242,41 @@ def _apply_clarity_of_mind_bonus(amount: int, consumed: bool) -> int:
     return int(amount * CLARITY_OF_MIND_MULTIPLIER)
 
 
+# Ability-specific empowerment ("empowered_by" ability metadata). Fixed
+# per-ability empowered formula variants (e.g. empowered Mind Blast) are
+# declared in ability data and resolved through the two helpers below. Broad
+# modifiers — Flame Dance, Avenging Wrath's global outgoing multiplier,
+# Onslaught stacks, generic empower_next_offense effects — are separate
+# systems and must not be folded into this path.
+
+def active_ability_empowerment(actor: PlayerState, ability: Dict[str, Any]) -> Dict[str, Any] | None:
+    """Return the ability's ``empowered_by`` spec when its effect is active on the actor."""
+    empowerment = ability.get("empowered_by")
+    if not isinstance(empowerment, dict):
+        return None
+    effect_id = str(empowerment.get("effect_id") or "")
+    if not effect_id:
+        return None
+    if not has_effect(actor, effect_id):
+        return None
+    return empowerment
+
+
+def consume_ability_empowerment(actor: PlayerState, empowerment: Dict[str, Any]) -> None:
+    """Consume the empowering effect as declared by the spec's ``consume`` entry."""
+    consume = empowerment.get("consume")
+    if not consume:
+        return
+    effect_id = str(empowerment.get("effect_id") or "")
+    mode = str(consume.get("mode") or "")
+    if mode == "remove":
+        remove_effect(actor, effect_id)
+    elif mode == "stack":
+        consume_effect_stack(actor, effect_id, amount=int(consume.get("amount", 1) or 1))
+    else:
+        raise ValueError(f"unsupported empowered_by consume mode {mode!r} for effect {effect_id!r}")
+
+
 def _active_live_pet(owner: PlayerState) -> PetState | None:
     active_pet_id = getattr(owner, "active_pet_id", None)
     if active_pet_id:
@@ -2868,41 +2903,30 @@ def resolve_turn(match: MatchState) -> None:
 
             raw = 0
             local_scaling = dict(scaling)
-            if ability_id == "final_verdict" and has_effect(actor, "paladin_final_verdict_empowered"):
-                local_scaling = {"atk": 2.0}
-            elif ability_id == "crusader_strike" and has_effect(actor, "avenging_wrath"):
-                local_scaling = {"atk": 1.0}
-            elif ability_id == "judgment" and has_effect(actor, "avenging_wrath"):
-                local_scaling = {"atk": 1.4}
-
-            is_empowered_mind_blast = ability_id == "mind_blast" and has_effect(actor, "mind_blast_empowered")
-            if is_empowered_mind_blast:
-                local_scaling = {"int": 1.3}
-                roll_power = roll("d8", r)
-                if dice_data:
-                    log_parts.pop()
-                log_parts.append(f"{prefix}Roll d8 = {roll_power}.")
-                log_parts.append(f"{prefix}Empowered by Mind Flay!")
-            is_empowered_lava_lash = ability_id == "lava_lash" and has_effect(actor, "lava_surge")
-            if is_empowered_lava_lash:
-                local_scaling = {"int": 1.5}
-                roll_power = roll("d6", r)
-                if dice_data:
-                    log_parts.pop()
-                log_parts.append(f"{prefix}Roll d6 = {roll_power}.")
-                log_parts.append(f"{prefix}Empowered by Lava Surge!")
+            # Data-driven ability empowerment ("empowered_by" ability metadata).
+            # RNG-order contract: the base die was already rolled above and
+            # accuracy has already resolved, so the override die is rolled only
+            # here — after the hit lands — keeping the seeded base-roll ->
+            # accuracy -> override-roll sequence unchanged.
+            hit_empowerment = active_ability_empowerment(actor, ability)
+            if hit_empowerment is not None:
+                scaling_override = hit_empowerment.get("scaling_override")
+                if scaling_override:
+                    local_scaling = dict(scaling_override)
+                dice_override = hit_empowerment.get("dice_override") or {}
+                if dice_override.get("type"):
+                    roll_power = roll(dice_override["type"], r)
+                    if dice_data:
+                        # Replace the already-displayed base-roll log line so the
+                        # combat log only shows the override die.
+                        log_parts.pop()
+                    log_parts.append(f"{prefix}Roll {dice_override['type']} = {roll_power}.")
+                if hit_empowerment.get("log"):
+                    log_parts.append(f"{prefix}{hit_empowerment['log']}")
             is_empowered_flame_dance = bool(
                 has_effect(actor, "flame_dance")
                 and str(ability_subschool or "").lower() == "fire"
             )
-            is_empowered_arcane_shot = ability_id == "arcane_shot" and has_effect(actor, "arcane_surge")
-            if is_empowered_arcane_shot:
-                local_scaling = {"atk": 1.0}
-                roll_power = roll("d8", r)
-                if dice_data:
-                    log_parts.pop()
-                log_parts.append(f"{prefix}Roll d8 = {roll_power}.")
-                log_parts.append(f"{prefix}Empowered by Arcane Surge!")
             if flat_damage is not None:
                 raw = int(flat_damage)
             elif "atk" in local_scaling:
@@ -3209,12 +3233,12 @@ def resolve_turn(match: MatchState) -> None:
 
         if ability.get("consume_effect"):
             remove_effect(actor, ability["consume_effect"])
-        if ability_id == "final_verdict" and has_effect(actor, "paladin_final_verdict_empowered"):
-            remove_effect(actor, "paladin_final_verdict_empowered")
-        if ability_id == "mind_blast" and has_effect(actor, "mind_blast_empowered"):
-            remove_effect(actor, "mind_blast_empowered")
-        if ability_id == "lava_lash" and has_effect(actor, "lava_surge"):
-            consume_effect_stack(actor, "lava_surge", amount=1)
+        # Ability empowerment is consumed exactly once per ability execution,
+        # after a valid resolved cast — even when every attack roll missed.
+        # Rejected/denied actions return before this point and never consume.
+        active_empowerment = active_ability_empowerment(actor, ability)
+        if active_empowerment is not None:
+            consume_ability_empowerment(actor, active_empowerment)
         if had_flame_dance_at_cast_start and has_effect(actor, "flame_dance") and str(ability_subschool or "").lower() == "fire" and ability_hit_landed:
             remove_effect(actor, "flame_dance")
 

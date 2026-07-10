@@ -815,6 +815,12 @@ ABILITIES = {
         "on_hit_effects": [
             {"id": "paladin_final_verdict_empowered", "chance": 0.3, "log": "Has Final Verdict Empowered!"}
         ],
+        # Avenging Wrath's global 1.2 outgoing multiplier stays on the effect
+        # template; only the special scaling profile lives here.
+        "empowered_by": {
+            "effect_id": "avenging_wrath",
+            "scaling_override": {"atk": 1.0},
+        },
     },
     "judgment": {
         "name": "Judgment",
@@ -827,6 +833,10 @@ ABILITIES = {
         "tags": ["spell", "attack", "magic"],
         "cooldown": 3,
         "classes": ["paladin"],
+        "empowered_by": {
+            "effect_id": "avenging_wrath",
+            "scaling_override": {"atk": 1.4},
+        },
     },
     "final_verdict": {
         "name": "Final Verdict",
@@ -837,6 +847,13 @@ ABILITIES = {
         "tags": ["attack", "physical"],
         "cooldown": 6,
         "classes": ["paladin"],
+        "empowered_by": {
+            "effect_id": "paladin_final_verdict_empowered",
+            "scaling_override": {"atk": 2.0},
+            "consume": {
+                "mode": "remove",
+            },
+        },
     },
     "divine_storm": {
         "name": "Divine Storm",
@@ -985,6 +1002,15 @@ ABILITIES = {
         "on_hit_effects": [
             {"id": "shadowy_insight", "chance": 0.4, "log": "Has Shadowy Insight!"}
         ],
+        "empowered_by": {
+            "effect_id": "mind_blast_empowered",
+            "scaling_override": {"int": 1.3},
+            "dice_override": {"type": "d8", "power_on": "roll"},
+            "log": "Empowered by Mind Flay!",
+            "consume": {
+                "mode": "remove",
+            },
+        },
     },
     "vampiric_touch": {
         "name": "Vampiric Touch",
@@ -1166,7 +1192,15 @@ ABILITIES = {
         "tags": ["spell", "attack", "magic"],
         "cooldown": 3,
         "classes": ["hunter"],
-        "consume_effect": "arcane_surge",
+        "empowered_by": {
+            "effect_id": "arcane_surge",
+            "scaling_override": {"atk": 1.0},
+            "dice_override": {"type": "d8", "power_on": "roll"},
+            "log": "Empowered by Arcane Surge!",
+            "consume": {
+                "mode": "remove",
+            },
+        },
     },
     "turtle": {
         "name": "Aspect of the Turtle",
@@ -1379,6 +1413,16 @@ ABILITIES = {
         "tags": ["spell", "attack", "magic"],
         "cooldown": 0,
         "classes": ["shaman"],
+        "empowered_by": {
+            "effect_id": "lava_surge",
+            "scaling_override": {"int": 1.5},
+            "dice_override": {"type": "d6", "power_on": "roll"},
+            "log": "Empowered by Lava Surge!",
+            "consume": {
+                "mode": "stack",
+                "amount": 1,
+            },
+        },
     },
     "chain_lightning": {
         "name": "Chain Lightning",

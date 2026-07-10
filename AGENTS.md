@@ -62,6 +62,28 @@ If behavior can be represented as ability/effect/item/pet data, prefer data.
 
 If a helper is reusable across multiple abilities/items/effects, put it in `effects.py` or another focused helper module instead of embedding it inside one resolver branch.
 
+## Ability empowerment contract
+
+Fixed ability-specific empowered formula variants (an effect that changes one specific ability's scaling/dice/log, e.g. empowered Mind Blast or Final Verdict) belong in `abilities.py` under the ability's `empowered_by` metadata:
+
+```python
+"empowered_by": {
+    "effect_id": "mind_blast_empowered",
+    "scaling_override": {"int": 1.3},          # replaces base scaling
+    "dice_override": {"type": "d8", "power_on": "roll"},  # replaces base die
+    "log": "Empowered by Mind Flay!",
+    "consume": {"mode": "remove"},             # or {"mode": "stack", "amount": 1}
+}
+```
+
+Contract rules:
+
+* `resolver.py` must not add new `ability_id == ...` empowered formula branches; the generic `active_ability_empowerment()` / `consume_ability_empowerment()` path handles all `empowered_by` specs.
+* `scaling_override` and `dice_override` REPLACE the base values; they never merge or multiply.
+* Broad modifiers are separate systems and must not be folded into `empowered_by`: Flame Dance (next qualifying Fire ability, 1.5x raw), Avenging Wrath's global `outgoing_damage_mult` on its effect template, Onslaught stacks, and generic `empower_next_offense` effects.
+* Consumption timing must be explicitly declared via `consume`. No `consume` entry means the empowering effect is never consumed by the ability (Avenging Wrath). Consumption happens once per ability execution after a valid resolved cast — even when the attack roll misses — and never when the action is rejected/denied before resolution. Unknown consume modes raise instead of guessing.
+* Deterministic RNG order is part of current behavior and must be preserved unless intentionally changed: the base ability die is rolled first, then accuracy resolves, and the empowered override die is rolled only after the hit lands (replacing the displayed base-roll log line). Rolling the override die earlier would shift every later seeded roll.
+
 ## Resource pipeline rules
 
 Player resource gains must route through:
