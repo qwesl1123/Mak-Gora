@@ -639,7 +639,14 @@ def scenario_hunter_rework_phase1_phase2_regression() -> bool:
 
     arcane = ABILITIES["arcane_shot"]
     assert "requires_effect" not in arcane, "Arcane Shot should no longer require the old proc"
-    assert arcane.get("consume_effect") == "arcane_surge", "Arcane Shot should consume Arcane Surge when present"
+    assert "consume_effect" not in arcane, "Arcane Shot consumption should live inside empowered_by, not a top-level consume_effect"
+    assert arcane.get("empowered_by") == {
+        "effect_id": "arcane_surge",
+        "scaling_override": {"atk": 1.0},
+        "dice_override": {"type": "d8", "power_on": "roll"},
+        "log": "Empowered by Arcane Surge!",
+        "consume": {"mode": "remove"},
+    }, "Arcane Shot should declare its Arcane Surge empowerment via empowered_by"
     assert arcane.get("cooldown") == 3, "Arcane Shot cooldown should be 3"
     assert arcane.get("scaling") == {"atk": 0.5} and (arcane.get("dice") or {}).get("type") == "d6", "Normal Arcane Shot should use Attack 0.5x + d6"
     assert arcane.get("school") == "magical" and arcane.get("subschool") == "arcane", "Arcane Shot should remain magical Arcane"
@@ -1787,3 +1794,288 @@ def scenario_paladin_shield_of_vengeance_reset_and_no_unrelated_changes() -> boo
     assert "resets Shield of Vengeance's cooldown" in duel_html, "Avenging Wrath docs should mention Shield of Vengeance reset"
     assert "Its cooldown can be reset by Lay on Hands or Avenging Wrath." in duel_html, "Shield of Vengeance docs should mention the reset sources"
     return True
+
+
+_EMPOWERED_BY_EXPECTED_SPECS = {
+    "final_verdict": {
+        "effect_id": "paladin_final_verdict_empowered",
+        "scaling_override": {"atk": 2.0},
+        "consume": {"mode": "remove"},
+    },
+    "crusader_strike": {
+        "effect_id": "avenging_wrath",
+        "scaling_override": {"atk": 1.0},
+    },
+    "judgment": {
+        "effect_id": "avenging_wrath",
+        "scaling_override": {"atk": 1.4},
+    },
+    "mind_blast": {
+        "effect_id": "mind_blast_empowered",
+        "scaling_override": {"int": 1.3},
+        "dice_override": {"type": "d8", "power_on": "roll"},
+        "log": "Empowered by Mind Flay!",
+        "consume": {"mode": "remove"},
+    },
+    "lava_lash": {
+        "effect_id": "lava_surge",
+        "scaling_override": {"int": 1.5},
+        "dice_override": {"type": "d6", "power_on": "roll"},
+        "log": "Empowered by Lava Surge!",
+        "consume": {"mode": "stack", "amount": 1},
+    },
+    "arcane_shot": {
+        "effect_id": "arcane_surge",
+        "scaling_override": {"atk": 1.0},
+        "dice_override": {"type": "d8", "power_on": "roll"},
+        "log": "Empowered by Arcane Surge!",
+        "consume": {"mode": "remove"},
+    },
+}
+
+
+def scenario_empowered_by_metadata_validation() -> bool:
+    allowed_keys = {"effect_id", "scaling_override", "dice_override", "log", "consume"}
+    allowed_consume_keys = {"mode", "amount"}
+    allowed_stat_keys = {"atk", "int"}
+    allowed_dice_keys = {"type", "power_on"}
+    allowed_consume_modes = {"remove", "stack"}
+
+    declared = {
+        ability_id: ability["empowered_by"]
+        for ability_id, ability in ABILITIES.items()
+        if "empowered_by" in ability
+    }
+    assert set(declared) == set(_EMPOWERED_BY_EXPECTED_SPECS), (
+        f"empowered_by should be declared on exactly the six migrated abilities, found {sorted(declared)}"
+    )
+    for ability_id, expected_spec in _EMPOWERED_BY_EXPECTED_SPECS.items():
+        assert declared[ability_id] == expected_spec, f"{ability_id} empowered_by spec should match the migrated formula variant"
+
+    for ability_id, spec in declared.items():
+        assert isinstance(spec, dict), f"{ability_id} empowered_by must be a dict"
+        unsupported = set(spec) - allowed_keys
+        assert not unsupported, f"{ability_id} empowered_by carries unsupported keys {sorted(unsupported)}"
+
+        effect_id = spec.get("effect_id")
+        assert isinstance(effect_id, str) and effect_id, f"{ability_id} empowered_by.effect_id must be a non-empty string"
+        assert effect_id in EFFECT_TEMPLATES, f"{ability_id} empowered_by references unknown effect {effect_id!r}"
+
+        if "scaling_override" in spec:
+            scaling_override = spec["scaling_override"]
+            assert isinstance(scaling_override, dict) and scaling_override, f"{ability_id} scaling_override must be a non-empty dict"
+            for stat, value in scaling_override.items():
+                assert stat in allowed_stat_keys, f"{ability_id} scaling_override uses unsupported stat key {stat!r}"
+                assert isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0, (
+                    f"{ability_id} scaling_override[{stat!r}] must be a positive number"
+                )
+
+        if "dice_override" in spec:
+            dice_override = spec["dice_override"]
+            assert isinstance(dice_override, dict), f"{ability_id} dice_override must be a dict"
+            unsupported_dice = set(dice_override) - allowed_dice_keys
+            assert not unsupported_dice, f"{ability_id} dice_override carries unsupported keys {sorted(unsupported_dice)}"
+            die_type = dice_override.get("type")
+            assert isinstance(die_type, str) and re.fullmatch(r"d[1-9]\d*", die_type or ""), (
+                f"{ability_id} dice_override.type must be a valid die such as 'd8', got {die_type!r}"
+            )
+
+        if "log" in spec:
+            assert isinstance(spec["log"], str) and spec["log"], f"{ability_id} empowered_by.log must be a non-empty string"
+
+        if "consume" in spec:
+            consume = spec["consume"]
+            assert isinstance(consume, dict), f"{ability_id} empowered_by.consume must be a dict"
+            unsupported_consume = set(consume) - allowed_consume_keys
+            assert not unsupported_consume, f"{ability_id} consume carries unsupported keys {sorted(unsupported_consume)}"
+            mode = consume.get("mode")
+            assert mode in allowed_consume_modes, f"{ability_id} consume.mode must be one of {sorted(allowed_consume_modes)}, got {mode!r}"
+            if mode == "stack":
+                amount = consume.get("amount", 1)
+                assert isinstance(amount, int) and not isinstance(amount, bool) and amount > 0, (
+                    f"{ability_id} consume.amount must be a positive integer for stack mode"
+                )
+                assert EFFECT_TEMPLATES[effect_id].get("stackable") is True, (
+                    f"{ability_id} uses stack consumption but effect {effect_id!r} is not stackable"
+                )
+            else:
+                assert "amount" not in consume, f"{ability_id} consume.amount is only supported for stack mode"
+
+    # Unknown consume modes must fail loudly in the resolver instead of being
+    # silently ignored.
+    mode_match = make_match("priest", "warrior", seed=1)
+    mode_priest = mode_match.state[mode_match.players[0]]
+    try:
+        resolver.consume_ability_empowerment(
+            mode_priest,
+            {"effect_id": "mind_blast_empowered", "consume": {"mode": "banish"}},
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("consume_ability_empowerment should raise on an unsupported consume mode")
+    return True
+
+
+def scenario_paladin_empowered_by_scaling_profiles() -> bool:
+    original_roll = resolver.roll
+    original_hit = resolver.hit_chance
+    try:
+        resolver.hit_chance = lambda acc, eva: 100
+        resolver.roll = lambda die, rng: {"d6": 4, "d8": 5}.get(die, original_roll(die, rng))
+
+        verdict_match = make_match("paladin", "warrior", seed=8601)
+        paladin, warrior = _player_states(verdict_match)
+        paladin.stats["crit"] = 0
+        warrior.stats["def"] = 0
+        effects.apply_effect_by_id(paladin, "paladin_final_verdict_empowered", overrides={"duration": 5})
+        expected_verdict = int(paladin.stats["atk"] * 2.0 + 5)
+        submit_turn(verdict_match, "final_verdict", _DEF_PASS)
+        verdict_turn = _turn_lines(verdict_match, 1)
+        assert any(f"Deals {expected_verdict} damage." in line for line in verdict_turn), "Empowered Final Verdict should deal exactly Attack 2.0x + d8"
+        assert not _has_effect(paladin, "paladin_final_verdict_empowered"), "Final Verdict empowerment should be removed after use"
+
+        strike_match = make_match("paladin", "warrior", seed=8602)
+        paladin, warrior = _player_states(strike_match)
+        paladin.stats["crit"] = 0
+        warrior.stats["def"] = 0
+        effects.apply_effect_by_id(paladin, "avenging_wrath", overrides={"duration": 4})
+        # Avenging Wrath's separate global 1.2 outgoing multiplier must still
+        # combine with the empowered Attack 1.0x scaling profile.
+        expected_strike = int(int(paladin.stats["atk"] * 1.0 + 4) * 1.2)
+        submit_turn(strike_match, "crusader_strike", _DEF_PASS)
+        strike_turn = _turn_lines(strike_match, 1)
+        assert any(f"Deals {expected_strike} damage." in line for line in strike_turn), "Crusader Strike under Avenging Wrath should deal exactly [Attack 1.0x + d6] * 1.2"
+        assert _has_effect(paladin, "avenging_wrath"), "Avenging Wrath should not be consumed by Crusader Strike"
+
+        judgment_match = make_match("paladin", "warrior", seed=8603)
+        paladin, warrior = _player_states(judgment_match)
+        paladin.stats["crit"] = 0
+        warrior.stats["def"] = 0
+        warrior.stats["magic_resist"] = 0
+        effects.apply_effect_by_id(paladin, "avenging_wrath", overrides={"duration": 4})
+        expected_judgment = int(int(paladin.stats["atk"] * 1.4 + 4) * 1.2)
+        submit_turn(judgment_match, "judgment", _DEF_PASS)
+        judgment_turn = _turn_lines(judgment_match, 1)
+        assert any(f"Deals {expected_judgment} damage." in line for line in judgment_turn), "Judgment under Avenging Wrath should deal exactly [Attack 1.4x + d6] * 1.2"
+        assert _has_effect(paladin, "avenging_wrath"), "Avenging Wrath should not be consumed by Judgment"
+        return True
+    finally:
+        resolver.roll = original_roll
+        resolver.hit_chance = original_hit
+
+
+def scenario_mind_blast_empowered_formula_consume_and_rng_order() -> bool:
+    rolled_dice: list[str] = []
+    original_roll = resolver.roll
+    original_hit = resolver.hit_chance
+    try:
+        resolver.hit_chance = lambda acc, eva: 100
+
+        def spy_roll(die, rng):
+            rolled_dice.append(die)
+            return {"d6": 3, "d8": 5}.get(die, original_roll(die, rng))
+
+        resolver.roll = spy_roll
+
+        match = make_match("priest", "warrior", seed=8611)
+        priest, warrior = _player_states(match)
+        priest.stats["crit"] = 0
+        warrior.stats["def"] = 0
+        warrior.stats["magic_resist"] = 0
+        effects.apply_effect_by_id(priest, "mind_blast_empowered", overrides={"duration": 5})
+        expected = int(priest.stats["int"] * 1.3 + 5)
+        submit_turn(match, "mind_blast", _DEF_PASS)
+        turn = _turn_lines(match, 1)
+        assert any(
+            "Roll d8 = 5." in line and "Empowered by Mind Flay!" in line and f"Deals {expected} damage." in line
+            for line in turn
+        ), "Empowered Mind Blast should deal exactly Intellect 1.3x + d8 with the Mind Flay log"
+        assert not any("Roll d6 = 3." in line for line in turn), "The displayed base-roll log line should be replaced by the override roll"
+        assert not _has_effect(priest, "mind_blast_empowered"), "Mind Blast empowerment should be removed after use"
+
+        # RNG-order guardrail: the base d6 is still consumed from the seeded
+        # stream before the empowered d8 override is rolled.
+        empowered_sequence = [die for die in rolled_dice if die in ("d6", "d8")]
+        assert empowered_sequence[:2] == ["d6", "d8"], (
+            f"Empowered Mind Blast must roll the base d6 before the override d8, got {empowered_sequence}"
+        )
+        return True
+    finally:
+        resolver.roll = original_roll
+        resolver.hit_chance = original_hit
+
+
+def scenario_empowerment_consumed_on_miss_but_not_on_rejection() -> bool:
+    rolled_dice: list[str] = []
+    original_roll = resolver.roll
+    original_hit = resolver.hit_chance
+    try:
+        resolver.hit_chance = lambda acc, eva: 0
+
+        def spy_roll(die, rng):
+            rolled_dice.append(die)
+            return original_roll(die, rng)
+
+        resolver.roll = spy_roll
+
+        miss_match = make_match("priest", "warrior", seed=8621)
+        priest, _ = _player_states(miss_match)
+        effects.apply_effect_by_id(priest, "mind_blast_empowered", overrides={"duration": 5})
+        submit_turn(miss_match, "mind_blast", _DEF_PASS)
+        miss_turn = _turn_lines(miss_match, 1)
+        assert any("cast Mind Blast" in line and "Miss!" in line for line in miss_turn), "Forced-miss setup should produce an attack-roll miss"
+        assert not _has_effect(priest, "mind_blast_empowered"), "Empowerment should still be consumed on a valid cast whose attack roll misses"
+        assert "d8" not in rolled_dice, "The override die must not be rolled when the hit does not land"
+        assert not any("Empowered by Mind Flay!" in line for line in miss_turn), "Missed empowered cast should not log the empowerment"
+    finally:
+        resolver.roll = original_roll
+        resolver.hit_chance = original_hit
+
+    deny_match = make_match("priest", "warrior", seed=8622)
+    priest, _ = _player_states(deny_match)
+    effects.apply_effect_by_id(priest, "mind_blast_empowered", overrides={"duration": 5})
+    priest.res.mp = 0
+    submit_turn(deny_match, "mind_blast", _DEF_PASS)
+    deny_turn = _turn_lines(deny_match, 1)
+    assert any("didn't have enough mana" in line for line in deny_turn), "Zero-mana Mind Blast should be rejected before resolution"
+    assert _has_effect(priest, "mind_blast_empowered"), "Empowerment should not be consumed when the action is rejected before resolution"
+    return True
+
+
+def scenario_lava_surge_and_flame_dance_stack_on_lava_lash() -> bool:
+    original_roll = resolver.roll
+    original_hit = resolver.hit_chance
+    try:
+        resolver.hit_chance = lambda acc, eva: 100
+        resolver.roll = lambda die, rng: {"d4": 2, "d6": 4}.get(die, original_roll(die, rng))
+
+        match = make_match("shaman", "warrior", seed=8631)
+        shaman, warrior = _player_states(match)
+        shaman.stats["crit"] = 0
+        shaman.stats["int"] = 10
+        warrior.stats["def"] = 0
+        warrior.stats["magic_resist"] = 0
+        for _ in range(2):
+            effects.apply_effect_by_id(shaman, "lava_surge", overrides={"duration": 3})
+        effects.apply_effect_by_id(shaman, "flame_dance", overrides={"duration": 5})
+
+        # Lava Surge (empowered_by) and Flame Dance (separate raw multiplier)
+        # must keep stacking on the same Lava Lash cast.
+        expected = int(int(10 * 1.5 + 4) * 1.5)
+        submit_turn(match, "lava_lash", _DEF_PASS)
+        turn = _turn_lines(match, 1)
+        assert any(
+            "Roll d6 = 4." in line
+            and "Empowered by Lava Surge!" in line
+            and "Empowered by Flame Dance!" in line
+            and f"Deals {expected} damage." in line
+            for line in turn
+        ), "Lava Surge and Flame Dance should both empower the same Lava Lash cast"
+        surge = effects.get_effect(shaman, "lava_surge")
+        assert surge is not None and effects.effect_stack_count(surge) == 1, "Empowered Lava Lash should consume exactly one Lava Surge stack and keep the rest"
+        assert not effects.has_effect(shaman, "flame_dance"), "Flame Dance should still be consumed by its own separate landed-fire-hit rule"
+        return True
+    finally:
+        resolver.roll = original_roll
+        resolver.hit_chance = original_hit

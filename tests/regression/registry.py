@@ -258,6 +258,11 @@ from .test_classes_abilities import (
     scenario_paladin_divine_storm_behavior_and_docs,
     scenario_shield_of_vengeance_explosion_uses_absorbed_amount_for_pets,
     scenario_paladin_shield_of_vengeance_reset_and_no_unrelated_changes,
+    scenario_empowered_by_metadata_validation,
+    scenario_paladin_empowered_by_scaling_profiles,
+    scenario_mind_blast_empowered_formula_consume_and_rng_order,
+    scenario_empowerment_consumed_on_miss_but_not_on_rejection,
+    scenario_lava_surge_and_flame_dance_stack_on_lava_lash,
 )
 
 
@@ -491,6 +496,11 @@ SCENARIOS = [
     scenario_prep_selection_name_uses_current_submission,
     scenario_command_input_normalizes_abilities_and_items,
     scenario_warlock_imp_log_coloring_mapping_present,
+    scenario_empowered_by_metadata_validation,
+    scenario_paladin_empowered_by_scaling_profiles,
+    scenario_mind_blast_empowered_formula_consume_and_rng_order,
+    scenario_empowerment_consumed_on_miss_but_not_on_rejection,
+    scenario_lava_surge_and_flame_dance_stack_on_lava_lash,
 ]
 
 
