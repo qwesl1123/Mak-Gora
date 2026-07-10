@@ -3617,6 +3617,12 @@ def resolve_turn(match: MatchState) -> None:
             updated = f"{updated} {' '.join(absorb_notes)}"
         return updated
 
+    def mindgames_flip_suffix(dealt_data: Dict[str, Any]) -> str:
+        flipped_heal = int(dealt_data.get("mindgames_healing", 0) or 0)
+        if flipped_heal > 0:
+            return f" Mindgames flips damage into {flipped_heal} healing for the target."
+        return ""
+
     # Apply damage
     deferred_break_on_damage_logs: list[str] = []
     deferred_stealth_break_logs: list[str] = []
@@ -3946,9 +3952,7 @@ def resolve_turn(match: MatchState) -> None:
             f"{sid_token(target_sid)} suffers __DMG_0__ damage from {dot_name}.",
             dealt_data,
         )
-        flipped_heal = int(dealt_data.get("mindgames_healing", 0) or 0)
-        if flipped_heal > 0:
-            formatted = f"{formatted} Mindgames flips damage into {flipped_heal} healing for the target."
+        formatted = f"{formatted}{mindgames_flip_suffix(dealt_data)}"
         if not source.get("suppress_log"):
             match.log.append(formatted)
         return int(dealt_data.get("hp_damage", 0) or 0)
@@ -4119,46 +4123,33 @@ def resolve_turn(match: MatchState) -> None:
                 totals["damage"] += dealt_amount
                 total_dealt_by_actor[actor_sid] = int(total_dealt_by_actor.get(actor_sid, 0) or 0) + dealt_amount
             formatted = format_damage_log(str(entry.get("log_template") or ""), dealt_data)
-            flipped_heal = int(dealt_data.get("mindgames_healing", 0) or 0)
-            if flipped_heal > 0:
-                formatted = f"{formatted} Mindgames flips damage into {flipped_heal} healing for the target."
+            formatted = f"{formatted}{mindgames_flip_suffix(dealt_data)}"
             if formatted:
                 match.log.append(formatted)
 
-    result1_log = format_damage_log(result1["log"], dealt1_data)
-    if int(dealt1_data.get("mindgames_healing", 0) or 0) > 0:
-        result1_log = (
-            f"{result1_log} Mindgames flips damage into "
-            f"{int(dealt1_data.get('mindgames_healing', 0) or 0)} healing for the target."
-    )
-    match.log.append(result1_log)
-    if dealt1_data.get("redirect_log"):
-        match.log.append(str(dealt1_data.get("redirect_log")))
-    append_extra_logs(sids[0], sids[1], result1)
-    apply_direct_damage_dot(
-        sids[0],
-        sids[1],
-        result1,
-        dealt1_data,
-        target_label=combatant_label(sids[1]),
-    )
-    result2_log = format_damage_log(result2["log"], dealt2_data)
-    if int(dealt2_data.get("mindgames_healing", 0) or 0) > 0:
-        result2_log = (
-            f"{result2_log} Mindgames flips damage into "
-            f"{int(dealt2_data.get('mindgames_healing', 0) or 0)} healing for the target."
-    )
-    match.log.append(result2_log)
-    if dealt2_data.get("redirect_log"):
-        match.log.append(str(dealt2_data.get("redirect_log")))
-    append_extra_logs(sids[1], sids[0], result2)
-    apply_direct_damage_dot(
-        sids[1],
-        sids[0],
-        result2,
-        dealt2_data,
-        target_label=combatant_label(sids[0]),
-    )
+    def finalize_actor_result(
+        actor_sid: str,
+        target_sid: str,
+        result: Dict[str, Any],
+        dealt_data: Dict[str, Any],
+        target_label: str,
+    ) -> None:
+        result_log = format_damage_log(result["log"], dealt_data)
+        result_log = f"{result_log}{mindgames_flip_suffix(dealt_data)}"
+        match.log.append(result_log)
+        if dealt_data.get("redirect_log"):
+            match.log.append(str(dealt_data.get("redirect_log")))
+        append_extra_logs(actor_sid, target_sid, result)
+        apply_direct_damage_dot(
+            actor_sid,
+            target_sid,
+            result,
+            dealt_data,
+            target_label=target_label,
+        )
+
+    finalize_actor_result(sids[0], sids[1], result1, dealt1_data, combatant_label(sids[1]))
+    finalize_actor_result(sids[1], sids[0], result2, dealt2_data, combatant_label(sids[0]))
 
     if result1.get("deferred"):
         result1 = resolve_action(sids[0], sids[1], a1)
