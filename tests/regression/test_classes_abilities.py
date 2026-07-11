@@ -762,9 +762,16 @@ def scenario_kill_command_pet_heal_counted_once_in_totals() -> bool:
         captured_results.append(result)
         return result
 
+    def fixed_roll(die: str, rng: Any) -> int:
+        if die == "d4":
+            return 3
+        if die == "d6":
+            return 4
+        return original_roll(die, rng)
+
     try:
         resolver.hit_chance = lambda acc, eva: 100
-        resolver.roll = lambda die, rng: {"d4": 3, "d6": 4}.get(die, original_roll(die, rng))
+        resolver.roll = fixed_roll
         resolver.SPECIAL_ABILITY_HANDLERS["kill_command"] = _capturing_handler
 
         # Case 1: a damaged pet with room to spare gains the full calculated heal,
