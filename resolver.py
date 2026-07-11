@@ -985,9 +985,6 @@ def _handle_kill_command_special(ctx: SpecialAbilityHandlerContext) -> Dict[str,
     healed = max(0, int(pet.hp) - before_hp)
     ctx.log_parts.append(f"Roll d4 = {heal_roll}.")
     ctx.log_parts.append(f"Heals {pet.name} for {healed} HP.")
-    if healed > 0:
-        totals = ctx.turn_ctx.match.combat_totals.setdefault(ctx.actor_sid, {"damage": 0, "healing": 0})
-        totals["healing"] += healed
     ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
     return {"damage": 0, "healing": healed, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
 
