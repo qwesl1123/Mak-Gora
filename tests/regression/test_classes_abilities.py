@@ -96,6 +96,30 @@ def scenario_generic_on_hit_healing_mindgames_backend() -> bool:
     return True
 
 
+def scenario_mindgames_converts_requested_pre_clamp_healing_near_cap() -> bool:
+    """Mindgames converts the requested healing amount before any hp_max clamp.
+
+    A target missing only 2 HP that attempts a 25-point Healthstone heal takes
+    25 self-damage, not the 2 HP that would have fit below hp_max.
+    """
+    match = make_match("priest", "warlock", seed=6506)
+    _, warlock_sid = match.players
+    warlock = match.state[warlock_sid]
+    warlock.res.hp = warlock.res.hp_max - 2
+    hp_before = warlock.res.hp
+    requested = max(1, int(warlock.res.hp_max * 0.25))
+    assert requested > 2, "Setup: the requested Healthstone healing must exceed the 2 missing HP"
+
+    submit_turn(match, "mindgames", "healthstone")
+
+    assert warlock.res.hp == hp_before - requested, "Mindgames must convert the requested pre-clamp healing amount into self-damage, not only the HP that would have fit below hp_max"
+    assert match.combat_totals[warlock_sid]["healing"] == 0, "No normal healing should be credited when Mindgames twists the heal"
+    turn_lines = _turn_lines(match, 1)
+    assert any(f"Mindgames twists healing into {requested} self-damage." in line for line in turn_lines), "Mindgames twist log should keep reporting the requested healing amount"
+    assert not any("Healthstone restores" in line for line in turn_lines), "No normal Healthstone restore log should appear under Mindgames"
+    return True
+
+
 def scenario_special_handler_innervate_mana_and_cooldown() -> bool:
     match = make_match("druid", "warrior", seed=9111)
     druid_sid, _ = match.players
@@ -198,6 +222,26 @@ def scenario_special_handler_holy_light_parity_and_denial_order() -> bool:
     assert denied_paladin.res.hp == hp_before, "Denied Holy Light should not apply healing side effects"
     assert "holy_light" not in denied_paladin.cooldowns, "Denied Holy Light should not consume cooldown"
     assert not any("Holy Light restores" in line for line in denied_turn), "Denied Holy Light should not produce handler heal log"
+    return True
+
+
+def scenario_holy_light_near_cap_credits_actual_capped_healing() -> bool:
+    """Direct player healing caps at hp_max and credits the actual HP delta.
+
+    Holy Light requests int*2 + d4 (> 5 by construction) while the paladin is
+    missing exactly 5 HP; the result/log/totals all use the capped 5-HP gain.
+    """
+    match = make_match("paladin", "warrior", seed=6501)
+    paladin_sid, _ = match.players
+    paladin = match.state[paladin_sid]
+    assert int(paladin.stats.get("int", 0) * 2.0) > 5, "Setup: requested Holy Light healing must exceed the missing 5 HP"
+    paladin.res.hp = paladin.res.hp_max - 5
+
+    submit_turn(match, "holy_light", _DEF_PASS)
+
+    assert paladin.res.hp == paladin.res.hp_max, "Player healing must cap at hp_max"
+    assert match.combat_totals[paladin_sid]["healing"] == 5, "Healing totals must credit the actual capped HP delta, not the requested amount"
+    assert any("Holy Light restores 5 HP." in line for line in _turn_lines(match, 1)), "Holy Light log should keep reporting the actual (capped) healed amount"
     return True
 
 

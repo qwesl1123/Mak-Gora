@@ -53,16 +53,88 @@ def scenario_healing_resolves_from_negative_hp_before_winner_check() -> bool:
     warrior = match.state[warrior_sid]
 
     priest.res.hp = -6
+    # Zero mitigation so the fixed 12-damage tick (and its 100% lifesteal)
+    # lands exactly and the negative-HP arithmetic can be pinned precisely.
+    warrior.stats["def"] = 0
+    warrior.stats["magic_resist"] = 0
     effects.apply_effect_by_id(
         warrior,
         "devouring_plague",
         overrides={"duration": 2, "tick_damage": 12, "source_sid": priest_sid, "lifesteal_pct": 1.0},
     )
+    warrior_before = warrior.res.hp
 
     submit_turn(match, _DEF_PASS, _DEF_PASS)
 
+    assert warrior_before - warrior.res.hp == 12, "Setup: the unmitigated tick should deal exactly 12 HP damage"
+    assert priest.res.hp == 6, "Healing must apply to the actual negative HP value (-6 + 12 = 6), never lower-clamping transient negative HP to zero first"
     assert priest.res.hp > 0, "DoT lifesteal should revive a source from negative HP in the same turn"
     assert match.phase != "ended", "Winner finalization should happen after same-turn healing/lifesteal resolves"
+    assert any("heals 12 HP from Devouring Plague." in line for line in match.log), "Lifesteal log should report the actual healed amount"
+    return True
+
+
+def scenario_partial_healing_keeps_hp_negative_until_winner_check() -> bool:
+    """Healing smaller than the HP deficit leaves the champion negative.
+
+    The harness submit_turn() invariant assumes non-negative end-of-turn HP,
+    so this lethal-outcome contract drives the same public submit/resolve flow
+    directly.
+    """
+    match = make_match("priest", "warrior", seed=124)
+    priest_sid, warrior_sid = match.players
+    priest = match.state[priest_sid]
+    warrior = match.state[warrior_sid]
+
+    priest.res.hp = -10
+    # Zero mitigation so the fixed 4-damage tick (and its 100% lifesteal) lands exactly.
+    warrior.stats["def"] = 0
+    warrior.stats["magic_resist"] = 0
+    effects.apply_effect_by_id(
+        warrior,
+        "devouring_plague",
+        overrides={"duration": 2, "tick_damage": 4, "source_sid": priest_sid, "lifesteal_pct": 1.0},
+    )
+    warrior_before = warrior.res.hp
+    turn_before = match.turn
+
+    resolver.submit_action(match, priest_sid, {"ability_id": _DEF_PASS})
+    resolver.submit_action(match, warrior_sid, {"ability_id": _DEF_PASS})
+    resolver.resolve_turn(match)
+
+    assert match.turn == turn_before + 1, "Turn should resolve exactly once"
+    assert warrior_before - warrior.res.hp == 4, "Setup: the unmitigated tick should deal exactly 4 HP damage"
+    assert priest.res.hp == -6, "Healing must apply to the actual negative HP value (-10 + 4 = -6), not to a zero-clamped value"
+    assert match.phase == "ended" and match.winner == warrior_sid, "A champion still below zero after all healing resolves must lose at the final winner check"
+    return True
+
+
+def scenario_action_time_healing_applies_before_direct_damage() -> bool:
+    """Both champions' action-time healing completes before direct damage lands.
+
+    Near-cap healing makes the order observable: the heal caps at hp_max first
+    (crediting only the 5 HP that fit), then the enemy's direct damage applies
+    to the capped value. Deferring the heal until after direct damage would
+    credit more than 5 and leave a different final HP.
+    """
+    match = make_match("warrior", "paladin", seed=6509)
+    warrior_sid, paladin_sid = match.players
+    paladin = match.state[paladin_sid]
+    assert int(paladin.stats.get("int", 0) * 2.0) > 5, "Setup: requested Holy Light healing must exceed the missing 5 HP"
+    paladin.res.hp = paladin.res.hp_max - 5
+
+    submit_turn(match, "basic_attack", "holy_light")
+
+    dealt = int(match.combat_totals.get(warrior_sid, {}).get("damage", 0) or 0)
+    assert dealt > 0, "Setup: the seeded Basic Attack must land for the ordering pin"
+    assert match.combat_totals[paladin_sid]["healing"] == 5, "Action-time healing must see pre-damage HP: the near-cap heal credits only the 5 HP that fits"
+    assert paladin.res.hp == paladin.res.hp_max - dealt, "Direct damage must apply to the already-healed (capped) HP value"
+    turn_lines = _turn_lines(match, 1)
+    warrior_idx = next(i for i, line in enumerate(turn_lines) if "cast Basic Attack" in line)
+    heal_idx = next(i for i, line in enumerate(turn_lines) if "Holy Light restores 5 HP." in line)
+    # Log order is presentation order (p1 action line first), not application
+    # order; healing still applies before either side's direct damage.
+    assert warrior_idx < heal_idx, "Current action log presentation order (p1 line before p2 line) should remain stable"
     return True
 
 
@@ -605,6 +677,35 @@ def scenario_dragonwrath_duplicate_drain_life_does_not_heal_from_fully_absorbed_
         assert healed == 0, "heal-from-damage should not overcount absorbed duplicate damage"
         return True
     raise AssertionError("Could not find deterministic fully-absorbed Dragonwrath Drain Life duplicate proc seed in range")
+
+
+def scenario_drain_life_partial_absorb_heals_only_actual_hp_damage() -> bool:
+    """Damage-derived healing uses actual dealt HP damage, not raw/incoming.
+
+    A small absorb splits the hit: only the portion that reaches HP feeds
+    Drain Life's heal, distinguishing actual HP damage from incoming damage.
+    """
+    match = make_match("warlock", "warrior", seed=6503)
+    warlock_sid, warrior_sid = match.players
+    warlock = match.state[warlock_sid]
+    warrior = match.state[warrior_sid]
+    warlock.stats["acc"] = 999
+    warrior.stats["eva"] = 0
+    warlock.res.hp = warlock.res.hp - 80
+    effects.add_absorb(warrior, 5, source_name="Power Word: Shield", effect_id="power_word_shield")
+    warlock_before = warlock.res.hp
+    warrior_before = warrior.res.hp
+
+    submit_turn(match, "drain_life", _DEF_PASS)
+
+    healed = warlock.res.hp - warlock_before
+    dealt = warrior_before - warrior.res.hp
+    assert dealt > 0, "Setup: the seeded Drain Life must land and leave HP damage after the partial absorb"
+    assert effects.absorb_total(warrior) == 0, "Setup: the 5-point shield should be fully consumed by the hit"
+    assert healed == dealt, "Drain Life must heal from actual dealt HP damage, excluding the absorbed portion"
+    assert match.combat_totals[warlock_sid]["healing"] == dealt, "Healing totals must credit the actual healed amount"
+    assert any(f"drains {dealt} life." in line for line in match.log), "Drain Life heal log should report the actual healed amount"
+    return True
 
 
 def scenario_fury_of_azzinoth_heal_from_dealt_includes_strike_again_damage() -> bool:
