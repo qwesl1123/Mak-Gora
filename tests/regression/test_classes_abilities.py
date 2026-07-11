@@ -751,6 +751,97 @@ def scenario_hunter_rework_phase1_phase2_regression() -> bool:
     return True
 
 
+def scenario_kill_command_pet_heal_counted_once_in_totals() -> bool:
+    original_roll = resolver.roll
+    original_hit = resolver.hit_chance
+    original_handler = resolver.SPECIAL_ABILITY_HANDLERS["kill_command"]
+    captured_results: list[dict] = []
+
+    def _capturing_handler(ctx: Any) -> dict:
+        result = original_handler(ctx)
+        captured_results.append(result)
+        return result
+
+    try:
+        resolver.hit_chance = lambda acc, eva: 100
+        resolver.roll = lambda die, rng: {"d4": 3, "d6": 4}.get(die, original_roll(die, rng))
+        resolver.SPECIAL_ABILITY_HANDLERS["kill_command"] = _capturing_handler
+
+        # Case 1: a damaged pet with room to spare gains the full calculated heal,
+        # and the owner's healing total is credited exactly once.
+        room_match = make_match("hunter", "warrior", seed=9105)
+        room_hunter, room_warrior = _player_states(room_match)
+        room_warrior.stats["def"] = 0
+        room_hunter_sid = room_match.players[0]
+        submit_turn(room_match, "call_saber", _DEF_PASS)
+        saber = _active_pet(room_hunter, "frostsaber")
+        assert saber is not None, "Frostsaber should be active for Kill Command healing-total coverage"
+        saber.hp = 10
+        saber.energy = 30
+        pet_hp_before = saber.hp
+        warrior_hp_before = room_warrior.res.hp
+
+        captured_results.clear()
+        submit_turn(room_match, "kill_command", _DEF_PASS)
+        actual_healed = saber.hp - pet_hp_before
+
+        assert actual_healed == 7, "Damaged pet should gain the full Attack 0.4x + d4 heal (7 HP)"
+        assert captured_results and captured_results[-1].get("healing") == actual_healed, "Kill Command should still return the actual pet healing in its ActionResult"
+        room_totals = room_match.combat_totals.get(room_hunter_sid, {})
+        assert room_totals.get("healing") == actual_healed, "Owner healing total should be credited exactly the actual pet healing"
+        assert room_totals.get("healing") != actual_healed * 2, "Owner healing total must not be double-counted"
+
+        room_turn = _turn_lines(room_match, 2)
+        assert any("cast Kill Command" in line and "Roll d4 = 3." in line and "Heals Frostsaber for 7 HP." in line for line in room_turn), "Kill Command heal log wording should be unchanged"
+        assert any("Frostsaber bites the target" in line for line in room_turn), "Kill Command should still force the pet special attack"
+        assert room_warrior.res.hp < warrior_hp_before, "Kill Command pet special should still deal damage"
+        assert room_hunter.cooldowns.get("kill_command") == [5], "Kill Command should still enter its 6-turn cooldown (ticked to 5 after turn end)"
+
+        # Case 2: a near-cap pet only credits the actual gained HP, not the calculated amount.
+        cap_match = make_match("hunter", "warrior", seed=9105)
+        cap_hunter = cap_match.state[cap_match.players[0]]
+        cap_hunter_sid = cap_match.players[0]
+        submit_turn(cap_match, "call_saber", _DEF_PASS)
+        cap_saber = _active_pet(cap_hunter, "frostsaber")
+        assert cap_saber is not None, "Frostsaber should be active for near-cap coverage"
+        cap_saber.hp = cap_saber.hp_max - 4
+        cap_saber.energy = 30
+        cap_hp_before = cap_saber.hp
+
+        captured_results.clear()
+        submit_turn(cap_match, "kill_command", _DEF_PASS)
+        cap_actual_healed = cap_saber.hp - cap_hp_before
+
+        assert cap_saber.hp == cap_saber.hp_max, "Near-cap pet should clamp at max HP"
+        assert cap_actual_healed == 4, "Near-cap pet should only gain the room below max (4 HP)"
+        assert captured_results and captured_results[-1].get("healing") == cap_actual_healed, "Kill Command should return only the actual gained HP for a near-cap pet"
+        assert cap_match.combat_totals.get(cap_hunter_sid, {}).get("healing") == cap_actual_healed, "Near-cap pet should credit only actual gained HP once"
+
+        # Case 3: a full-HP pet produces zero healing and zero healing-total gain.
+        full_match = make_match("hunter", "warrior", seed=9105)
+        full_hunter = full_match.state[full_match.players[0]]
+        full_hunter_sid = full_match.players[0]
+        submit_turn(full_match, "call_saber", _DEF_PASS)
+        full_saber = _active_pet(full_hunter, "frostsaber")
+        assert full_saber is not None, "Frostsaber should be active for full-HP coverage"
+        full_saber.hp = full_saber.hp_max
+        full_saber.energy = 30
+
+        captured_results.clear()
+        submit_turn(full_match, "kill_command", _DEF_PASS)
+
+        assert full_saber.hp == full_saber.hp_max, "Full-HP pet should remain at max HP"
+        assert captured_results and captured_results[-1].get("healing") == 0, "Full-HP pet should produce zero healing in the ActionResult"
+        assert full_match.combat_totals.get(full_hunter_sid, {}).get("healing") == 0, "Full-HP pet should add nothing to the owner healing total"
+        full_turn = _turn_lines(full_match, 2)
+        assert any("Heals Frostsaber for 0 HP." in line for line in full_turn), "Full-HP pet heal log wording should be unchanged"
+    finally:
+        resolver.roll = original_roll
+        resolver.hit_chance = original_hit
+        resolver.SPECIAL_ABILITY_HANDLERS["kill_command"] = original_handler
+    return True
+
+
 def scenario_shadow_word_death_double_damage_reminder_wording() -> bool:
     match = make_match("priest", "warrior", seed=123)
     priest_sid, warrior_sid = match.players
