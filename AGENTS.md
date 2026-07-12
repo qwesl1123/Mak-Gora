@@ -122,6 +122,23 @@ When a resource gain is logged, the log must use the actual amount returned by `
 
 Same-action resource gains that depend on an action-start state must use the correct action snapshot. Do not let paying an action cost change that same action’s resource-gain stance mid-cast.
 
+## Player healing application contract
+
+Player healing is separate from `grant_player_resource()`. The resource helper ignores HP and must not gain an `"hp"` branch.
+
+Current load-bearing application behavior, pinned by regression tests; do not change it incidentally:
+
+* Player HP restoration caps only at `hp_max`.
+* Healing applies to the current HP value as-is. Transient negative HP must not be lower-clamped to zero before healing: healing a player at `-6` by 12 leaves them at `6`; healing by less than the deficit leaves them negative until the end-of-turn winner check.
+* Action-time healing resolves before direct damage application. Damage-derived healing (lifesteal, heal-from-dealt) uses actual dealt HP damage and resolves only after it is known. End-of-turn item/effect healing applies before that champion’s queued DoT damage and before the winner check.
+* Callers currently own formulas, dice, eligibility, timing, Mindgames decisions, log wording, and combat-total attribution. Where a healing source is currently credited to combat totals, the credited amount must use the actual HP delta. Some healing sources currently have no defined or applied healing-total credit; this contract does not resolve that policy. Log wording currently mixes requested and actual amounts per mechanic and must not be standardized incidentally.
+* Mindgames healing-to-damage converts the requested pre-clamp healing amount, not the portion that would have fit below `hp_max`.
+* `DamageApplicationResult.mindgames_healing` currently represents nominal converted damage, not necessarily actual HP restored. Direct-DoT application uses it as evidence that the source hit resolved; do not rename or redefine the field.
+* Pet HP application (`pet.hp`) remains outside this future player-only helper contract.
+* Do not add a universal healing pipeline, healing modifier stack, overheal ledger, or entity-generic healing abstraction without a concrete mechanic that needs it.
+
+This section characterizes current behavior for migration safety only. It does not endorse the currently ambiguous Mindgames/Cyclone treatment of item healing, lifesteal targets, pet-sourced healing, or Ancestral Knowledge as permanent design policy.
+
 ## Damage pipeline rules
 
 Damage that can be modified, mitigated, redirected, absorbed, immuned, logged, or used for resource/healing calculations must go through the shared damage pipeline.

@@ -78,15 +78,32 @@ def scenario_mindgames_still_allows_direct_damage_dots() -> bool:
     dragon_match = make_match("warrior", "priest", seed=123)
     dragon_warrior, dragon_priest = dragon_match.players
     dragon_match.state[dragon_warrior].res.rage = dragon_match.state[dragon_warrior].res.rage_max
+    priest = dragon_match.state[dragon_priest]
+    assert priest.res.hp == priest.res.hp_max, "Setup: the flip target should start at full HP"
     submit_turn(dragon_match, "dragon_roar", "mindgames")
     assert _has_effect(dragon_match.state[dragon_priest], "dragon_roar_bleed"), "Dragon Roar bleed should apply even when Mindgames flips the same-turn direct damage"
     assert any("Mindgames flips damage into" in line for line in dragon_match.log), "Dragon Roar scenario should still record the Mindgames flip"
+    # DamageApplicationResult["mindgames_healing"] carries the nominal converted
+    # damage, not actual HP restored. Direct-DoT application uses that nominal
+    # value as evidence the source hit resolved, which is why the bleed above
+    # applies even though the full-HP target actually gains 0 HP from the flip.
+    flip_amounts = [
+        int(m.group(1))
+        for line in dragon_match.log
+        for m in [re.search(r"Mindgames flips damage into (\d+) healing for the target\.", line)]
+        if m
+    ]
+    assert flip_amounts and all(amount > 0 for amount in flip_amounts), "Flip logs should keep reporting the positive nominal converted amount"
+    assert priest.res.hp == priest.res.hp_max, "A full-HP flip target gains no actual HP even though the nominal converted amount is positive"
 
     wildfire_match = make_match("hunter", "priest", seed=123)
+    wildfire_priest = wildfire_match.state[wildfire_match.players[1]]
+    assert wildfire_priest.res.hp == wildfire_priest.res.hp_max, "Setup: the flip target should start at full HP"
     submit_turn(wildfire_match, "wildfire_bomb", "mindgames")
     assert _has_effect(wildfire_match.state[wildfire_match.players[1]], "wildfire_burn"), "Wildfire Burn should apply even when Mindgames flips the same-turn direct damage"
     assert any("Wildfire Bomb applies Wildfire Burn" in line for line in wildfire_match.log), "Wildfire Bomb should keep its burn application log under Mindgames"
     assert not any("Wildfire Bomb applies Wildfire Burn for" in line for line in wildfire_match.log), "Wildfire Bomb burn application log should still omit the per-turn amount under Mindgames"
+    assert wildfire_priest.res.hp == wildfire_priest.res.hp_max, "The full-HP Wildfire flip target should also gain no actual HP"
     return True
 
 
@@ -111,6 +128,51 @@ def scenario_devouring_plague_heals_for_full_tick_damage() -> bool:
     warrior_loss = max(0, enemy_before_tick - warrior.res.hp)
     assert warrior_loss > 0, "Devouring Plague should deal DoT damage on tick"
     assert priest_gain == warrior_loss, "Devouring Plague should heal for 100% of tick damage dealt"
+    return True
+
+
+def scenario_end_of_turn_healing_applies_before_queued_dot_damage() -> bool:
+    """End-of-turn item/effect healing keeps its position in the stage order.
+
+    Healing mutates HP before the same champion's queued DoT damage is applied,
+    and both resolve before the winner check.
+    """
+    # Near-cap: the item heal caps at hp_max first, then the queued DoT damage
+    # applies to the capped value. Applying the DoT first would end the turn at
+    # hp_max - 7 instead of hp_max - 10.
+    cap_match = make_match("warrior", "priest", p1_items={"weapon": "staff_of_immortality"}, seed=6504)
+    warrior_sid, priest_sid = cap_match.players
+    warrior = cap_match.state[warrior_sid]
+    warrior.stats["def"] = 0
+    warrior.stats["magic_resist"] = 0
+    warrior.res.hp = warrior.res.hp_max - 1
+    effects.apply_effect_by_id(warrior, "burn", overrides={"duration": 2, "tick_damage": 10, "source_sid": priest_sid})
+
+    submit_turn(cap_match, _DEF_PASS, _DEF_PASS)
+
+    assert warrior.res.hp == warrior.res.hp_max - 10, "End-of-turn item healing must apply (and cap at hp_max) before queued DoT damage lands"
+    assert cap_match.combat_totals[warrior_sid]["healing"] == 1, "End-of-turn healing totals must credit the actual capped HP delta"
+    turn_lines = _turn_lines(cap_match, 1)
+    # The item heal log keeps its current requested-amount wording (4 HP) even
+    # though only 1 HP fit below hp_max; do not standardize this divergence.
+    heal_idx = next(i for i, line in enumerate(turn_lines) if "heals 4 HP from Staff of Immortality." in line)
+    dot_idx = next(i for i, line in enumerate(turn_lines) if "suffers 10 damage from Burn." in line)
+    assert heal_idx < dot_idx, "Item heal log should keep its position before the queued DoT application log"
+
+    # Rescue: a champion whose queued DoT alone would be lethal survives
+    # because same-stage healing applies first and the winner check runs last.
+    rescue_match = make_match("warrior", "priest", p1_items={"weapon": "staff_of_immortality"}, seed=6505)
+    warrior_sid, priest_sid = rescue_match.players
+    warrior = rescue_match.state[warrior_sid]
+    warrior.stats["def"] = 0
+    warrior.stats["magic_resist"] = 0
+    warrior.res.hp = 2
+    effects.apply_effect_by_id(warrior, "burn", overrides={"duration": 2, "tick_damage": 3, "source_sid": priest_sid})
+
+    submit_turn(rescue_match, _DEF_PASS, _DEF_PASS)
+
+    assert warrior.res.hp == 2 + 4 - 3, "End-of-turn healing then queued DoT damage should leave the champion at exactly 3 HP"
+    assert rescue_match.phase != "ended", "A champion healed above the queued DoT total must survive the end-of-turn winner check"
     return True
 
 
