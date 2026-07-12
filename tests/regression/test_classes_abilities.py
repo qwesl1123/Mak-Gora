@@ -120,6 +120,122 @@ def scenario_mindgames_converts_requested_pre_clamp_healing_near_cap() -> bool:
     return True
 
 
+def scenario_action_time_player_healing_routes_through_shared_helper() -> bool:
+    """Action-time player healing applies HP through effects.apply_player_healing().
+
+    Representative migrated paths: Holy Light (special handler), Penance Self
+    (one helper call per healing hit), and Victory Rush (generic on-hit healing
+    via _apply_mindgames_aware_healing). Paths deliberately left inline for
+    later PRs must not call the helper: Mindgames-twisted heals (self-damage),
+    end-of-turn item healing, pet HP writes (Kill Command), and damage-derived
+    healing (Drain Life).
+    """
+    original = effects.apply_player_healing
+    assert resolver.apply_player_healing is original, "resolver should share the effects.apply_player_healing primitive"
+    calls: list[tuple[int, int]] = []
+
+    def spy(target, amount):
+        gained = original(target, amount)
+        calls.append((int(amount), int(gained)))
+        return gained
+
+    # resolver imports the function directly, so patch the symbol resolver
+    # actually calls in addition to the effects module attribute.
+    effects.apply_player_healing = spy
+    resolver.apply_player_healing = spy
+    try:
+        # Holy Light: exactly one helper call; the near-cap actual gain feeds
+        # the log and healing totals.
+        holy = make_match("paladin", "warrior", seed=6501)
+        paladin_sid, _ = holy.players
+        paladin = holy.state[paladin_sid]
+        assert int(paladin.stats.get("int", 0) * 2.0) > 5, "Setup: requested Holy Light healing must exceed the missing 5 HP"
+        paladin.res.hp = paladin.res.hp_max - 5
+        calls.clear()
+        submit_turn(holy, "holy_light", _DEF_PASS)
+        assert len(calls) == 1, "Holy Light should apply its normal healing through exactly one apply_player_healing call"
+        assert calls[0][0] > 5 and calls[0][1] == 5, "Holy Light should request the formula amount and gain only the capped 5 HP"
+        assert holy.combat_totals[paladin_sid]["healing"] == 5, "Holy Light totals should credit the helper's actual gain"
+        assert any("Holy Light restores 5 HP." in line for line in _turn_lines(holy, 1)), "Holy Light log should keep the actual-gain wording"
+
+        # Penance Self: one helper call per healing hit (three hits).
+        penance = make_match("priest", "warrior", seed=6502)
+        priest_sid, _ = penance.players
+        priest = penance.state[priest_sid]
+        priest.res.hp = max(1, priest.res.hp - 60)
+        calls.clear()
+        submit_turn(penance, "penance_self", _DEF_PASS)
+        assert len(calls) == 3, "Penance Self should call apply_player_healing once per healing hit"
+        assert all(gained > 0 for _, gained in calls), "Setup: each Penance Self hit should land real healing below the cap"
+        assert penance.combat_totals[priest_sid]["healing"] == sum(gained for _, gained in calls), "Penance Self totals should sum the per-hit actual gains"
+
+        # Victory Rush: generic on-hit healing routes through the helper.
+        rush = make_match("warrior", "priest", seed=9128)
+        warrior_sid, rush_priest_sid = rush.players
+        warrior = rush.state[warrior_sid]
+        rush.state[rush_priest_sid].stats["agi"] = 0
+        warrior.stats["acc"] = 999
+        warrior.res.hp = max(1, warrior.res.hp - 50)
+        calls.clear()
+        submit_turn(rush, "victory_rush", _DEF_PASS)
+        assert len(calls) == 1, "Victory Rush on-hit healing should route through apply_player_healing"
+        assert calls[0][1] > 0, "Setup: the seeded Victory Rush heal should land below the cap"
+        assert rush.combat_totals[warrior_sid]["healing"] == calls[0][1], "Victory Rush totals should credit the helper's actual gain"
+
+        # Mindgames stays outside the helper: a twisted heal takes the
+        # requested pre-clamp self-damage without any normal-healing call.
+        twisted = make_match("priest", "warlock", seed=6506)
+        _, warlock_sid = twisted.players
+        warlock = twisted.state[warlock_sid]
+        warlock.res.hp = warlock.res.hp_max - 2
+        hp_before = warlock.res.hp
+        requested = max(1, int(warlock.res.hp_max * 0.25))
+        calls.clear()
+        submit_turn(twisted, "mindgames", "healthstone")
+        assert calls == [], "A Mindgames-twisted heal must not call apply_player_healing"
+        assert warlock.res.hp == hp_before - requested, "Twisted Healthstone should still take the requested pre-clamp self-damage"
+
+        # Not migrated in this PR: end-of-turn item healing stays inline.
+        item = make_match("warrior", "priest", p1_items={"weapon": "staff_of_immortality"}, seed=6504)
+        item_warrior = item.state[item.players[0]]
+        item_warrior.res.hp = item_warrior.res.hp_max - 20
+        calls.clear()
+        submit_turn(item, _DEF_PASS, _DEF_PASS)
+        assert any("heals 4 HP from Staff of Immortality." in line for line in _turn_lines(item, 1)), "Setup: the end-of-turn item heal should fire"
+        assert calls == [], "End-of-turn item healing is not migrated in this PR and must not call the helper"
+
+        # Not migrated in this PR: pet HP application (Kill Command) stays local.
+        pet_match = make_match("hunter", "warrior", seed=9105)
+        pet_hunter = pet_match.state[pet_match.players[0]]
+        submit_turn(pet_match, "call_saber", _DEF_PASS)
+        saber = _active_pet(pet_hunter, "frostsaber")
+        assert saber is not None, "Setup: Frostsaber should be active for the pet-heal scope check"
+        saber.hp = 10
+        saber.energy = 30
+        pet_hp_before = saber.hp
+        calls.clear()
+        submit_turn(pet_match, "kill_command", _DEF_PASS)
+        assert saber.hp > pet_hp_before, "Setup: Kill Command should heal the pet"
+        assert calls == [], "Pet HP application must stay outside the player-only helper"
+
+        # Not migrated in this PR: damage-derived healing (Drain Life) stays inline.
+        drain = make_match("warlock", "warrior", seed=6503)
+        drain_warlock_sid, _ = drain.players
+        drain_warlock = drain.state[drain_warlock_sid]
+        drain_warlock.stats["acc"] = 999
+        drain.state[drain.players[1]].stats["eva"] = 0
+        drain_warlock.res.hp = drain_warlock.res.hp - 80
+        drain_hp_before = drain_warlock.res.hp
+        calls.clear()
+        submit_turn(drain, "drain_life", _DEF_PASS)
+        assert drain_warlock.res.hp > drain_hp_before, "Setup: the seeded Drain Life should land and heal"
+        assert calls == [], "Damage-derived healing is not migrated in this PR and must not call the helper"
+    finally:
+        effects.apply_player_healing = original
+        resolver.apply_player_healing = original
+    return True
+
+
 def scenario_special_handler_innervate_mana_and_cooldown() -> bool:
     match = make_match("druid", "warrior", seed=9111)
     druid_sid, _ = match.players

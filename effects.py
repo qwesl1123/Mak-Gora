@@ -2556,6 +2556,35 @@ def grant_player_resource(
     return gained
 
 
+def apply_player_healing(target: PlayerState, amount: int) -> int:
+    """Apply player HP restoration up to hp_max and return actual HP gained.
+
+    This is the canonical final-application primitive for PLAYER HP healing.
+    It owns only amount normalization (nonpositive requests and a missing
+    ``res`` are no-ops), the upper ``hp_max`` cap, the ``res.hp`` write, and
+    the actual-gained return value.
+
+    Healing applies to the current HP value as-is: transient negative HP must
+    NOT be lower-clamped to zero first. Healing a player at ``-6`` by 12
+    leaves them at ``6`` and returns 12; healing by less than the deficit
+    leaves them negative until the end-of-turn winner check.
+
+    Everything else stays caller-owned: Mindgames conversion, Cyclone/immunity
+    eligibility, formulas/dice/Clarity of Mind, HoT scheduling, lifesteal
+    calculation, log wording, ``combat_totals`` attribution, and
+    ``ActionResult`` construction. Pet HP (``pet.hp``) is out of scope — pet
+    healing keeps its explicit local clamps.
+    """
+    amount = max(0, int(amount or 0))
+    res = getattr(target, "res", None)
+    if amount <= 0 or res is None:
+        return 0
+
+    before_hp = int(res.hp)
+    res.hp = min(int(res.hp_max), before_hp + amount)
+    return max(0, int(res.hp) - before_hp)
+
+
 def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[dict[str, Any]]:
     """Compute DoT tick events after mitigation; resolution/logging happens in resolver."""
     if is_immune_all(ps):

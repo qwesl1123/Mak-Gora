@@ -34,6 +34,7 @@ from .test_resources import (
     scenario_spirit_mana_regen_formula_and_class_baselines,
     scenario_spirit_end_of_turn_regen_is_silent_and_clamped,
     scenario_grant_player_resource_central_helper,
+    scenario_apply_player_healing_helper_contract,
 )
 from .test_items_challenger import (
     scenario_rage_crystal_increases_all_rage_gain_sources,
@@ -221,6 +222,7 @@ from .test_classes_abilities import (
     scenario_mindgames_lay_on_hands,
     scenario_special_handler_healthstone_mindgames_parity,
     scenario_mindgames_converts_requested_pre_clamp_healing_near_cap,
+    scenario_action_time_player_healing_routes_through_shared_helper,
     scenario_generic_on_hit_healing_mindgames_backend,
     scenario_special_handler_innervate_mana_and_cooldown,
     scenario_special_handler_non_handler_baseline_path_unchanged,
@@ -287,12 +289,14 @@ _DOMAIN_MODULES = (
 
 SCENARIOS = [
     scenario_grant_player_resource_central_helper,
+    scenario_apply_player_healing_helper_contract,
     scenario_mindgames_lay_on_hands,
     scenario_paladin_divine_storm_behavior_and_docs,
     scenario_shield_of_vengeance_explosion_uses_absorbed_amount_for_pets,
     scenario_paladin_shield_of_vengeance_reset_and_no_unrelated_changes,
     scenario_special_handler_healthstone_mindgames_parity,
     scenario_mindgames_converts_requested_pre_clamp_healing_near_cap,
+    scenario_action_time_player_healing_routes_through_shared_helper,
     scenario_generic_on_hit_healing_mindgames_backend,
     scenario_special_handler_innervate_mana_and_cooldown,
     scenario_special_handler_non_handler_baseline_path_unchanged,

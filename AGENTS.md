@@ -126,6 +126,10 @@ Same-action resource gains that depend on an action-start state must use the cor
 
 Player healing is separate from `grant_player_resource()`. The resource helper ignores HP and must not gain an `"hp"` branch.
 
+`effects.apply_player_healing()` is the canonical final application primitive for player HP restoration. It owns only the upper `hp_max` cap, the `res.hp` mutation, and the actual-gained return value, and it must not lower-clamp transient negative HP. Mindgames conversion, formulas/dice, eligibility, timing, log wording, combat-total attribution, and pet HP application remain caller-owned. New action-time player-healing sites must apply HP through it.
+
+Not all player-healing sites are migrated yet. The action-time paths (`_apply_heal_with_clamp()`, `_apply_mindgames_aware_healing()`, Healthstone, Holy Light, Flash Heal, Lay on Hands, Wild Growth, Penance Self, and generic on-hit healing such as Victory Rush) route through the helper. Damage-derived healing (Drain Life, Fury of Azzinoth, DoT lifesteal, the `apply_damage()` Mindgames damage-to-healing branch beyond its `_apply_heal_with_clamp()` delegation), end-of-turn item/effect healing, passive on-hit item healing (Thunderfury), Ancestral Knowledge, and owner-from-pet healing (Emerald Serpent) are still applied inline and are being migrated in later focused PRs.
+
 Current load-bearing application behavior, pinned by regression tests; do not change it incidentally:
 
 * Player HP restoration caps only at `hp_max`.

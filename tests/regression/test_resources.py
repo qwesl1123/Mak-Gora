@@ -481,3 +481,53 @@ def scenario_grant_player_resource_central_helper() -> bool:
     assert saber.energy == 12, "Pet self-resource regen (+5 energy/turn) must be unaffected by the player helper"
 
     return True
+
+
+def scenario_apply_player_healing_helper_contract() -> bool:
+    """effects.apply_player_healing() is the player-HP final-application primitive.
+
+    It owns only int normalization, the upper hp_max cap, the res.hp write,
+    and the actual-gained return — and it must not lower-clamp transient
+    negative HP. HP healing stays separate from the resource pipeline:
+    grant_player_resource() keeps ignoring HP (asserted in
+    scenario_grant_player_resource_central_helper).
+    """
+    player = make_match("warrior", "mage", seed=6511).state["p1_sid"]
+    player.res.hp_max = 100
+
+    # Normal healing: 50 + 20 = 70, return 20.
+    player.res.hp = 50
+    assert effects.apply_player_healing(player, 20) == 20, "Uncapped healing should return the full requested amount"
+    assert player.res.hp == 70, "Uncapped healing should add the full requested amount"
+
+    # Near-cap: 95 + 20 = 100, return 5.
+    player.res.hp = 95
+    assert effects.apply_player_healing(player, 20) == 5, "Near-cap healing should return only the HP that fit below hp_max"
+    assert player.res.hp == 100, "Near-cap healing should clamp at hp_max"
+
+    # Full HP: 100 + 20 = 100, return 0.
+    assert effects.apply_player_healing(player, 20) == 0, "Healing at full HP should return 0"
+    assert player.res.hp == 100, "Healing at full HP should change nothing"
+
+    # Nonpositive requested amounts are no-ops.
+    player.res.hp = 50
+    assert effects.apply_player_healing(player, 0) == 0 and player.res.hp == 50, "Zero amount should be a no-op"
+    assert effects.apply_player_healing(player, -5) == 0 and player.res.hp == 50, "Negative amount should be a no-op"
+
+    # Negative current HP heals as-is (no lower clamp): -6 + 12 = 6.
+    player.res.hp = -6
+    assert effects.apply_player_healing(player, 12) == 12, "Healing from negative HP should return the full applied delta"
+    assert player.res.hp == 6, "Healing must apply to the actual negative HP value, never zero-clamping it first"
+
+    # Partial negative recovery may leave HP negative: -10 + 4 = -6.
+    player.res.hp = -10
+    assert effects.apply_player_healing(player, 4) == 4, "Partial negative recovery should return the applied delta"
+    assert player.res.hp == -6, "Healing smaller than the deficit must leave HP negative until the winner check"
+
+    # Missing res mirrors grant_player_resource's defensive no-op contract.
+    class _NoRes:
+        res = None
+
+    assert effects.apply_player_healing(_NoRes(), 10) == 0, "Helper should be safe when target.res is missing"
+
+    return True

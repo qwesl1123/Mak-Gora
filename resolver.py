@@ -64,6 +64,7 @@ from .effects import (
     trigger_on_hit_passives,
     damage_multiplier_from_passives,
     grant_player_resource,
+    apply_player_healing,
     challenger_resource_cost_multiplier,
     challenger_resource_stance_mode,
     end_of_turn,
@@ -201,11 +202,11 @@ def _build_damage_instance_values(incoming: int, damage_instances: list[int] | N
 
 
 def _apply_heal_with_clamp(target: PlayerState, amount: int) -> int:
-    if amount <= 0:
-        return 0
-    before_hp = target.res.hp
-    target.res.hp = min(target.res.hp + amount, target.res.hp_max)
-    return target.res.hp - before_hp
+    """Compatibility wrapper kept only for apply_damage()'s Mindgames
+    damage-to-healing branch; that caller migrates to
+    effects.apply_player_healing() with the damage-derived healing paths in a
+    later PR, after which this wrapper is removed."""
+    return apply_player_healing(target, amount)
 
 
 def _apply_mindgames_aware_healing(
@@ -219,7 +220,7 @@ def _apply_mindgames_aware_healing(
     if has_effect(target, "mindgames"):
         apply_self_inflicted_magical_damage(target, heal_value)
         return 0, True
-    return _apply_heal_with_clamp(target, heal_value), False
+    return apply_player_healing(target, heal_value), False
 
 
 CLARITY_OF_MIND_EFFECT_ID = "clarity_of_mind"
@@ -995,9 +996,7 @@ def _handle_healthstone_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, 
         ctx.log_parts.append(f"Mindgames twists healing into {heal_value} self-damage.")
         ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
         return {"damage": 0, "healing": 0, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
-    before_hp = ctx.actor.res.hp
-    ctx.actor.res.hp = min(ctx.actor.res.hp + heal_value, ctx.actor.res.hp_max)
-    healed = ctx.actor.res.hp - before_hp
+    healed = apply_player_healing(ctx.actor, heal_value)
     ctx.log_parts.append(f"Healthstone restores {healed} HP.")
     ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
     return {"damage": 0, "healing": healed, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
@@ -1018,9 +1017,7 @@ def _handle_holy_light_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, A
         ctx.log_parts.append(f"Mindgames twists healing into {heal_value} self-damage.")
         ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
         return {"damage": 0, "healing": 0, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
-    before_hp = ctx.actor.res.hp
-    ctx.actor.res.hp = min(ctx.actor.res.hp + heal_value, ctx.actor.res.hp_max)
-    healed = ctx.actor.res.hp - before_hp
+    healed = apply_player_healing(ctx.actor, heal_value)
     ctx.log_parts.append(f"Holy Light restores {healed} HP.")
     ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
     return {"damage": 0, "healing": healed, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
@@ -1035,9 +1032,7 @@ def _handle_flash_heal_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, A
         ctx.log_parts.append(f"Mindgames twists healing into {heal_value} self-damage.")
         ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
         return {"damage": 0, "healing": 0, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
-    before_hp = ctx.actor.res.hp
-    ctx.actor.res.hp = min(ctx.actor.res.hp + heal_value, ctx.actor.res.hp_max)
-    healed = ctx.actor.res.hp - before_hp
+    healed = apply_player_healing(ctx.actor, heal_value)
     ctx.log_parts.append(f"Flash Heal restores {healed} HP.")
     ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
     return {"damage": 0, "healing": healed, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
@@ -1051,11 +1046,11 @@ def _handle_lay_on_hands_special(ctx: SpecialAbilityHandlerContext) -> Dict[str,
         _apply_cooldown_resets_on_cast(ctx.actor, ctx.ability, ctx.log_parts, ctx.reset_cooldown)
         ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
         return {"damage": 0, "healing": 0, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
-    ctx.actor.res.hp = ctx.actor.res.hp_max
+    healed = apply_player_healing(ctx.actor, missing_hp)
     ctx.log_parts.append("Lay on Hands restores health to full.")
     _apply_cooldown_resets_on_cast(ctx.actor, ctx.ability, ctx.log_parts, ctx.reset_cooldown)
     ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
-    return {"damage": 0, "healing": missing_hp, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
+    return {"damage": 0, "healing": healed, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
 
 
 def _handle_mass_dispel_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, Any]:
@@ -1143,9 +1138,7 @@ def _handle_wild_growth_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, 
         return {"damage": 0, "healing": 0, "log": " ".join(ctx.log_parts)}
     healing_done = 0
     if not has_flag(ctx.actor, "cycloned"):
-        before_hp = ctx.actor.res.hp
-        ctx.actor.res.hp = min(ctx.actor.res.hp + heal_value, ctx.actor.res.hp_max)
-        healing_done = ctx.actor.res.hp - before_hp
+        healing_done = apply_player_healing(ctx.actor, heal_value)
     ctx.log_parts.append(f"Wild Growth heals {heal_value} HP.")
     ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
     return {"damage": 0, "healing": healing_done, "log": " ".join(ctx.log_parts)}
@@ -2788,9 +2781,7 @@ def resolve_turn(match: MatchState) -> None:
                     apply_self_inflicted_magical_damage(actor, heal_value)
                     log_parts.append(f"Hit {hit_index}: Mindgames turns healing into {heal_value} self-damage.")
                     continue
-                before_hp = actor.res.hp
-                actor.res.hp = min(actor.res.hp + heal_value, actor.res.hp_max)
-                gained = actor.res.hp - before_hp
+                gained = apply_player_healing(actor, heal_value)
                 healing += gained
                 log_parts.append(f"Hit {hit_index}: Restores {gained} HP.")
             set_cooldown(actor, ability_id, ability)
