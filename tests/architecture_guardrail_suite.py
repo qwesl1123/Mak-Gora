@@ -973,27 +973,33 @@ def _compute_resource_aliases(
 ) -> Dict[ast.AST, set[str]]:
     """Map each scope (function / module node) to its set of resource-alias names.
 
-    A simple ``name = <rhs>`` assignment introduces an alias when ``<rhs>`` is:
+    A simple ``name = <rhs>`` binding introduces an alias when ``<rhs>`` is:
 
     * any ``*.res`` expression (per ``_is_res_object`` -- includes bare ``res``);
     * ``getattr(<expr>, "res", ...)`` (per ``_is_getattr_res``); or
     * another name already known to be an alias in the same scope.
 
+    Both plain ``Assign`` (single ``Name`` target) and value-bearing ``AnnAssign``
+    (a typed ``name: T = <rhs>``) bindings are considered, so a typed alias such as
+    ``target_res: Resources = player.res`` is tracked just like an untyped one.
+
     The third rule is applied via a fixed-point pass so propagation chains like
     ``first = player.res`` / ``second = first`` / ``second.hp += ...`` resolve.
-    Only single-``Name``-target assignments seed aliases; the pass is intentionally
+    Only single-``Name``-target bindings seed aliases; the pass is intentionally
     shallow (no container/attribute/call/return laundering) and strictly
     intra-scope, so nested and sibling functions keep independent alias sets.
     """
     scope_assigns: Dict[ast.AST, List[Tuple[str, ast.AST]]] = {}
+
+    def _add(name_node: ast.AST, value: Optional[ast.AST], scope_node: ast.AST) -> None:
+        if value is not None and isinstance(name_node, ast.Name):
+            scope_assigns.setdefault(scope_node, []).append((name_node.id, value))
+
     for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Assign)
-            and len(node.targets) == 1
-            and isinstance(node.targets[0], ast.Name)
-        ):
-            scope = _owning_scope(node, parents)
-            scope_assigns.setdefault(scope, []).append((node.targets[0].id, node.value))
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            _add(node.targets[0], node.value, _owning_scope(node, parents))
+        elif isinstance(node, ast.AnnAssign):
+            _add(node.target, node.value, _owning_scope(node, parents))
 
     aliases: Dict[ast.AST, set[str]] = {}
     for scope, assigns in scope_assigns.items():
@@ -1169,6 +1175,10 @@ _SELFTEST_BAD_SOURCES: Tuple[Tuple[str, str], ...] = (
      "    setattr(resources, \"hp\", heal)\n"),
     ("bad_propagated_alias",
      "def bad_propagated_alias(player, heal):\n    first = player.res\n    second = first\n    second.hp += heal\n"),
+    # A typed (annotated) alias binding must seed the alias set too, so the
+    # subsequent `.hp` write is caught (3rd Codex review on PR #34).
+    ("bad_annotated_alias",
+     "def bad_annotated_alias(player, heal):\n    target_res: object = player.res\n    target_res.hp += heal\n"),
 )
 
 _SELFTEST_PET_SOURCES: Tuple[Tuple[str, str], ...] = (
