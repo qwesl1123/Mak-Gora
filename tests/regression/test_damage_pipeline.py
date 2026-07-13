@@ -729,6 +729,143 @@ def scenario_fury_of_azzinoth_heal_from_dealt_includes_strike_again_damage() -> 
     raise AssertionError("Could not find deterministic Fury of Azzinoth strike-again proc seed in range")
 
 
+def scenario_damage_derived_player_healing_routes_through_shared_helper() -> bool:
+    """Damage-derived player healing applies HP through effects.apply_player_healing().
+
+    Migrated paths: Fury of Azzinoth (full heal_from_dealt_damage), Drain Life
+    (fractional heal_from_damage), periodic DoT lifesteal_pct (Devouring
+    Plague), and apply_damage()'s Mindgames damage-to-healing branch. Every
+    heal amount derives from actual resolved HP damage, and the Mindgames
+    branch keeps reporting the nominal converted amount regardless of the
+    helper's actual-gain return. Effect/HoT regeneration (Healing Stream)
+    stays inline for the next migration and must not call the helper.
+    """
+    original = effects.apply_player_healing
+    assert resolver.apply_player_healing is original, "resolver should share the effects.apply_player_healing primitive"
+    calls: list[tuple[object, int, int]] = []
+
+    def spy(target, amount):
+        gained = original(target, amount)
+        calls.append((target, int(amount), int(gained)))
+        return gained
+
+    # resolver imports the function directly, so patch the symbol resolver
+    # actually calls in addition to the effects module attribute.
+    effects.apply_player_healing = spy
+    resolver.apply_player_healing = spy
+    try:
+        # Fury of Azzinoth: one post-damage helper call requesting the total
+        # actual dealt HP damage (seed 6510 includes a strike-again event).
+        fury = make_match("rogue", "warrior", p1_items={"weapon": "twin_blades_azzinoth"}, seed=6510)
+        rogue_sid, fury_warrior_sid = fury.players
+        rogue = fury.state[rogue_sid]
+        fury_warrior = fury.state[fury_warrior_sid]
+        rogue.res.hp = max(1, rogue.res.hp - 80)
+        fury_warrior_before = fury_warrior.res.hp
+        calls.clear()
+        submit_turn(fury, "fury_of_azzinoth", _DEF_PASS)
+        dealt = fury_warrior_before - fury_warrior.res.hp
+        assert dealt > 0, "Setup: Fury of Azzinoth should land HP damage"
+        assert any("strikes again with Twin Blades of Azzinoth" in line for line in fury.log), "Setup: seed 6510 should include a strike-again damage event"
+        assert len(calls) == 1, "Fury of Azzinoth should heal through exactly one apply_player_healing call"
+        assert calls[0][0] is rogue, "heal_from_dealt_damage should heal the acting rogue"
+        assert calls[0][1] == dealt, "Requested healing should equal the total actual dealt HP damage, including strike-again damage"
+        assert calls[0][2] == dealt, "Setup: the 80-HP deficit should keep the full heal below the cap"
+        assert fury.combat_totals[rogue_sid]["healing"] == dealt, "Totals should credit the helper's actual gain"
+        assert any(f"heals {dealt} HP from Fury of Azzinoth." in line for line in _turn_lines(fury, 1)), "Fury of Azzinoth heal log wording should be unchanged"
+
+        # Drain Life: one helper call requesting int(actual dealt HP damage *
+        # heal_from_damage); the absorbed portion contributes nothing.
+        drain = make_match("warlock", "warrior", seed=6503)
+        warlock_sid, drain_warrior_sid = drain.players
+        warlock = drain.state[warlock_sid]
+        drain_warrior = drain.state[drain_warrior_sid]
+        warlock.stats["acc"] = 999
+        drain_warrior.stats["eva"] = 0
+        warlock.res.hp = warlock.res.hp - 80
+        effects.add_absorb(drain_warrior, 5, source_name="Power Word: Shield", effect_id="power_word_shield")
+        drain_warrior_before = drain_warrior.res.hp
+        calls.clear()
+        submit_turn(drain, "drain_life", _DEF_PASS)
+        drain_dealt = drain_warrior_before - drain_warrior.res.hp
+        assert drain_dealt > 0, "Setup: the seeded Drain Life should leave HP damage past the partial absorb"
+        assert effects.absorb_total(drain_warrior) == 0, "Setup: the 5-point shield should be fully consumed by the hit"
+        expected_request = int(drain_dealt * float(ABILITIES["drain_life"]["heal_from_damage"]))
+        assert len(calls) == 1, "Drain Life should heal through exactly one apply_player_healing call"
+        assert calls[0][0] is warlock, "heal_from_damage should heal the acting warlock"
+        assert calls[0][1] == expected_request, "Requested healing should be int(actual dealt * heal_from_damage), excluding the absorbed portion"
+        assert calls[0][2] == expected_request, "Setup: the 80-HP deficit should keep the full drain below the cap"
+        assert drain.combat_totals[warlock_sid]["healing"] == expected_request, "Totals should credit the helper's actual gain"
+        assert any(f"drains {expected_request} life." in line for line in _turn_lines(drain, 1)), "Drain Life log wording should be unchanged"
+
+        # DoT lifesteal: the helper request derives from the actual post-absorb
+        # tick HP damage (12 nominal - 5 absorbed = 7), so it is only knowable
+        # after resolve_dot_tick(); negative-HP recovery still works.
+        dot = make_match("priest", "warrior", seed=123)
+        priest_sid, dot_warrior_sid = dot.players
+        priest = dot.state[priest_sid]
+        dot_warrior = dot.state[dot_warrior_sid]
+        priest.res.hp = -6
+        dot_warrior.stats["def"] = 0
+        dot_warrior.stats["magic_resist"] = 0
+        effects.add_absorb(dot_warrior, 5, source_name="Power Word: Shield", effect_id="power_word_shield")
+        effects.apply_effect_by_id(
+            dot_warrior,
+            "devouring_plague",
+            overrides={"duration": 2, "tick_damage": 12, "source_sid": priest_sid, "lifesteal_pct": 1.0},
+        )
+        dot_warrior_before = dot_warrior.res.hp
+        calls.clear()
+        submit_turn(dot, _DEF_PASS, _DEF_PASS)
+        tick_hp_damage = dot_warrior_before - dot_warrior.res.hp
+        assert tick_hp_damage == 7, "Setup: the 12-damage tick should leave exactly 7 HP damage after the 5-point absorb"
+        assert len(calls) == 1, "DoT lifesteal should heal through exactly one apply_player_healing call"
+        assert calls[0][0] is priest, "lifesteal_pct should heal the DoT source player"
+        assert calls[0][1] == int(tick_hp_damage * 1.0), "Requested healing should derive from the actual post-absorb tick HP damage, not the nominal tick"
+        assert calls[0][2] == 7 and priest.res.hp == 1, "Lifesteal must recover the actual negative HP value (-6 + 7 = 1)"
+        assert dot.phase != "ended", "The recovered source must survive the end-of-turn winner check"
+        assert dot.combat_totals[priest_sid]["healing"] == 7, "Totals should credit the helper's actual gain"
+        assert any("heals 7 HP from Devouring Plague." in line for line in _turn_lines(dot, 1)), "DoT lifesteal log wording should be unchanged"
+
+        # Mindgames damage-to-healing: each flip (the direct Dragon Roar hit
+        # and the same-turn Dragon Roar Bleed tick) calls the helper with the
+        # positive nominal converted amount; the full-HP target gains 0 actual
+        # HP, yet the nominal mindgames_healing packet still lets the
+        # direct-damage DoT apply.
+        flip = make_match("warrior", "priest", seed=123)
+        flip_warrior_sid, flip_priest_sid = flip.players
+        flip.state[flip_warrior_sid].res.rage = flip.state[flip_warrior_sid].res.rage_max
+        flip_priest = flip.state[flip_priest_sid]
+        assert flip_priest.res.hp == flip_priest.res.hp_max, "Setup: the flip target should start at full HP"
+        calls.clear()
+        submit_turn(flip, "dragon_roar", "mindgames")
+        assert len(calls) == 2, "The direct hit and the same-turn bleed tick should each flip through one apply_player_healing call"
+        assert all(target is flip_priest for target, _, _ in calls), "Every flip should heal the damage target"
+        assert all(requested > 0 and gained == 0 for _, requested, gained in calls), "Each helper call should receive the positive nominal converted amount while the full-HP target gains 0"
+        flip_lines = [line for line in _turn_lines(flip, 1) if "Mindgames flips damage into" in line]
+        logged_amounts = [int(re.search(r"Mindgames flips damage into (\d+) healing for the target\.", line).group(1)) for line in flip_lines]
+        assert logged_amounts == [requested for _, requested, _ in calls], "Flip log wording should keep reporting exactly the nominal amounts the helper received"
+        assert flip_priest.res.hp == flip_priest.res.hp_max, "No ordinary damage may reach the flip target's HP"
+        assert _has_effect(flip_priest, "dragon_roar_bleed"), "The nominal mindgames_healing packet should still let the direct-damage DoT apply"
+
+        # Still inline for the next migration: effect/HoT regeneration
+        # (Healing Stream) must not call the helper on its tick turn.
+        hot = make_match("shaman", "warrior", seed=7002)
+        shaman_sid, _hot_enemy_sid = hot.players
+        shaman = hot.state[shaman_sid]
+        shaman.res.hp = 50
+        submit_turn(hot, "healing_stream", _DEF_PASS)
+        hp_after_cast = shaman.res.hp
+        calls.clear()
+        submit_turn(hot, _DEF_PASS, _DEF_PASS)
+        assert shaman.res.hp > hp_after_cast, "Setup: the Healing Stream HoT tick should heal"
+        assert calls == [], "Effect/HoT regeneration is not migrated in this PR and must not call the helper"
+    finally:
+        effects.apply_player_healing = original
+        resolver.apply_player_healing = original
+    return True
+
+
 def scenario_thunderfury_lightning_uses_damage_pipeline() -> bool:
     for seed in range(1, 600):
         match = make_match("warrior", "priest", p1_items={"weapon": "thunderfury"}, seed=seed)

@@ -201,14 +201,6 @@ def _build_damage_instance_values(incoming: int, damage_instances: list[int] | N
     return instance_values
 
 
-def _apply_heal_with_clamp(target: PlayerState, amount: int) -> int:
-    """Compatibility wrapper kept only for apply_damage()'s Mindgames
-    damage-to-healing branch; that caller migrates to
-    effects.apply_player_healing() with the damage-derived healing paths in a
-    later PR, after which this wrapper is removed."""
-    return apply_player_healing(target, amount)
-
-
 def _apply_mindgames_aware_healing(
     target: PlayerState,
     amount: int,
@@ -422,9 +414,7 @@ def _resolve_actor_post_damage_reactions_stage(
     resource_challenger_mode: str | None = None,
 ) -> None:
     if dealt > 0 and ability.get("heal_from_dealt_damage") and actor.res:
-        before_hp = actor.res.hp
-        actor.res.hp = min(actor.res.hp + dealt, actor.res.hp_max)
-        gained = actor.res.hp - before_hp
+        gained = apply_player_healing(actor, dealt)
         if gained > 0:
             log.append(f"{sid_token(actor_sid)} heals {gained} HP from {ability.get('name', 'their attack')}.")
             totals = combat_totals.setdefault(actor_sid, {"damage": 0, "healing": 0})
@@ -449,9 +439,7 @@ def _resolve_actor_post_damage_reactions_stage(
     lifesteal = float(ability.get("heal_from_damage", 0) or 0)
     if dealt > 0 and lifesteal > 0 and actor.res:
         heal_value = int(dealt * lifesteal)
-        before_hp = actor.res.hp
-        actor.res.hp = min(actor.res.hp + heal_value, actor.res.hp_max)
-        gained = actor.res.hp - before_hp
+        gained = apply_player_healing(actor, heal_value)
         if gained > 0:
             log.append(f"{sid_token(actor_sid)} drains {gained} life.")
             totals = combat_totals.setdefault(actor_sid, {"damage": 0, "healing": 0})
@@ -1317,9 +1305,7 @@ def resolve_end_of_turn_stage(
             if lifesteal_pct > 0 and source_sid in match.state:
                 healer = match.state[source_sid]
                 heal_value = int(damage * lifesteal_pct)
-                before_hp = healer.res.hp
-                healer.res.hp = min(healer.res.hp + heal_value, healer.res.hp_max)
-                gained = healer.res.hp - before_hp
+                gained = apply_player_healing(healer, heal_value)
                 if gained > 0:
                     effect_id = source.get("effect_id")
                     source_name = effect_name(effect_id) if effect_id else "DoT"
@@ -3736,7 +3722,11 @@ def resolve_turn(match: MatchState) -> None:
                 )
 
         if is_player_target and mindgames_flip_damage and source.sid != target.sid:
-            _apply_heal_with_clamp(target, incoming)
+            # The helper's actual-gain return is intentionally ignored:
+            # ``mindgames_healing`` must stay the nominal converted damage so
+            # apply_direct_damage_dot() still sees the hit as resolved even
+            # when the target is at full HP and gains nothing.
+            apply_player_healing(target, incoming)
             instance_results = [{"absorbed": 0, "hp_damage": value, "absorbed_breakdown": []} for value in instance_values]
             return {
                 "hp_damage": 0,
