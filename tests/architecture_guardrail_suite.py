@@ -985,9 +985,12 @@ def _compute_resource_aliases(
 
     The third rule is applied via a fixed-point pass so propagation chains like
     ``first = player.res`` / ``second = first`` / ``second.hp += ...`` resolve.
-    Only single-``Name``-target bindings seed aliases; the pass is intentionally
-    shallow (no container/attribute/call/return laundering) and strictly
-    intra-scope, so nested and sibling functions keep independent alias sets.
+    Each simple ``Name`` binding seeds an alias, including every ``Name`` target of
+    a chained assignment (``primary = target_res = player.res`` seeds both), while
+    non-``Name`` targets (attributes, tuples) are ignored here. The pass is
+    intentionally shallow (no container/attribute/call/return laundering) and
+    strictly intra-scope, so nested and sibling functions keep independent alias
+    sets.
     """
     scope_assigns: Dict[ast.AST, List[Tuple[str, ast.AST]]] = {}
 
@@ -996,8 +999,10 @@ def _compute_resource_aliases(
             scope_assigns.setdefault(scope_node, []).append((name_node.id, value))
 
     for node in ast.walk(tree):
-        if isinstance(node, ast.Assign) and len(node.targets) == 1:
-            _add(node.targets[0], node.value, _owning_scope(node, parents))
+        if isinstance(node, ast.Assign):
+            scope = _owning_scope(node, parents)
+            for target in node.targets:  # a = b = value -> seed every Name target
+                _add(target, node.value, scope)
         elif isinstance(node, ast.AnnAssign):
             _add(node.target, node.value, _owning_scope(node, parents))
 
@@ -1179,6 +1184,10 @@ _SELFTEST_BAD_SOURCES: Tuple[Tuple[str, str], ...] = (
     # subsequent `.hp` write is caught (3rd Codex review on PR #34).
     ("bad_annotated_alias",
      "def bad_annotated_alias(player, heal):\n    target_res: object = player.res\n    target_res.hp += heal\n"),
+    # A chained assignment must seed every Name target as an alias, so a write
+    # through any of them is caught (4th Codex review on PR #34).
+    ("bad_chained_alias",
+     "def bad_chained_alias(player, heal):\n    primary = target_res = player.res\n    target_res.hp += heal\n"),
 )
 
 _SELFTEST_PET_SOURCES: Tuple[Tuple[str, str], ...] = (
