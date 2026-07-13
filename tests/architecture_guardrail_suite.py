@@ -820,11 +820,14 @@ def guardrail_queued_damage_event_literals() -> Tuple[bool, str]:
 # expression, from ``getattr(<expr>, "res", ...)``, or from another known alias
 # (a small fixed-point pass, so ``second = first`` chains resolve) is treated as a
 # player-resource object; ``<alias>.hp`` and ``setattr(<alias>, "hp", ...)`` are
-# then flagged too. Alias sets are per-scope: nested and sibling functions never
-# share aliases, so this stays intra-function and never becomes cross-function
+# then flagged too. Alias visibility follows LEXICAL scope: a nested helper sees
+# aliases bound in the functions that enclose it (closure semantics), while a
+# name the nested scope binds locally (e.g. a same-named parameter) shadows the
+# outer alias. Sibling functions never share aliases -- they are not on each
+# other's scope chain -- so this stays lexical and never becomes cross-function
 # data-flow or type inference. It is deliberately shallow -- it catches the obvious
-# ``r = x.res; r.hp -= v`` rebind, not aliases laundered through containers,
-# attributes, calls, or returns.
+# ``r = x.res; r.hp -= v`` rebind (including from an enclosing scope), not aliases
+# laundered through containers, attributes, calls, or returns.
 
 
 class _HpMutation(NamedTuple):
@@ -933,6 +936,50 @@ def _owning_scope(node: ast.AST, parents: Dict[ast.AST, ast.AST]) -> ast.AST:
     return node  # unreachable for a parsed module, but keeps the type total
 
 
+def _enclosing_scope(scope: ast.AST, parents: Dict[ast.AST, ast.AST]) -> Optional[ast.AST]:
+    """Return the lexically enclosing scope of ``scope`` (its parent def/module).
+
+    Used to resolve CLOSURE aliases: a nested function sees names bound in the
+    functions that lexically contain it. Returns ``None`` above the module root.
+    """
+    cur = parents.get(scope)
+    while cur is not None:
+        if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Module)):
+            return cur
+        cur = parents.get(cur)
+    return None
+
+
+def _collect_scope_local_names(
+    tree: ast.AST, parents: Dict[ast.AST, ast.AST]
+) -> Dict[ast.AST, set[str]]:
+    """Map each scope to the set of names it binds locally (params + Store names).
+
+    A name a scope binds locally SHADOWS the same name in enclosing scopes, so
+    closure-alias resolution must not inherit an outer resource alias when the
+    inner scope rebinds that name (e.g. a nested function parameter of the same
+    name). Store-context ``Name`` targets cover assignment / ``for`` / ``with as``
+    / ``except as`` bindings; function parameters are added explicitly. This is a
+    safe over-approximation: attributing a name to a scope it doesn't truly own
+    only suppresses inheritance (fewer detections), never invents a false one.
+    """
+    locals_by_scope: Dict[ast.AST, set[str]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            args = node.args
+            names = locals_by_scope.setdefault(node, set())
+            for arg in (*args.posonlyargs, *args.args, *args.kwonlyargs):
+                names.add(arg.arg)
+            if args.vararg:
+                names.add(args.vararg.arg)
+            if args.kwarg:
+                names.add(args.kwarg.arg)
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            scope = _owning_scope(node, parents)
+            locals_by_scope.setdefault(scope, set()).add(node.id)
+    return locals_by_scope
+
+
 def _record(
     node: ast.AST,
     kind: str,
@@ -992,9 +1039,11 @@ def _compute_resource_aliases(
     Each simple ``Name`` binding seeds an alias, including every ``Name`` target of
     a chained assignment (``primary = target_res = player.res`` seeds both), while
     non-``Name`` targets (attributes, tuples) are ignored here. The pass is
-    intentionally shallow (no container/attribute/call/return laundering) and
-    strictly intra-scope, so nested and sibling functions keep independent alias
-    sets.
+    intentionally shallow (no container/attribute/call/return laundering). This map
+    holds each scope's OWN aliases; closure visibility (merging aliases from
+    lexically enclosing scopes, with inner-scope shadowing) is applied at lookup
+    time in ``_find_player_hp_mutations``. Sibling scopes therefore never share
+    aliases.
     """
     scope_assigns: Dict[ast.AST, List[Tuple[str, ast.AST]]] = {}
 
@@ -1046,11 +1095,29 @@ def _find_player_hp_mutations(source: str, basename: str) -> List[_HpMutation]:
     tree = ast.parse(source)
     parents = _build_parent_map(tree)
     aliases_by_scope = _compute_resource_aliases(tree, parents)
+    locals_by_scope = _collect_scope_local_names(tree, parents)
     source_lines = source.splitlines()
     mutations: List[_HpMutation] = []
 
     def scope_aliases(node: ast.AST) -> set[str]:
-        return aliases_by_scope.get(_owning_scope(node, parents), set())
+        """Aliases visible at ``node``: its own scope plus enclosing scopes.
+
+        Walks the lexical scope chain outward (closure semantics), so a nested
+        helper that closes over an outer resource alias sees it. A name a NEARER
+        scope binds locally shadows the same name in enclosing scopes, so an inner
+        parameter/local of the same name correctly hides an outer alias. Sibling
+        functions never share aliases because they are not on each other's chain.
+        """
+        visible: set[str] = set()
+        shadowed: set[str] = set()
+        scope: Optional[ast.AST] = _owning_scope(node, parents)
+        while scope is not None:
+            for name in aliases_by_scope.get(scope, set()):
+                if name not in shadowed:
+                    visible.add(name)
+            shadowed |= locals_by_scope.get(scope, set())
+            scope = _enclosing_scope(scope, parents)
+        return visible
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
@@ -1198,6 +1265,11 @@ _SELFTEST_BAD_SOURCES: Tuple[Tuple[str, str], ...] = (
      "def bad_inline_getattr(target, heal):\n    getattr(target, \"res\", None).hp += heal\n"),
     ("bad_inline_getattr_setattr",
      "def bad_inline_getattr_setattr(target, heal):\n    setattr(getattr(target, \"res\", None), \"hp\", heal)\n"),
+    # A nested helper that closes over an outer resource alias must be flagged
+    # (6th Codex review on PR #34): alias visibility follows lexical scope.
+    ("bad_closure_alias",
+     "def bad_closure_alias(player, amount):\n    target_res = player.res\n"
+     "    def heal():\n        target_res.hp += amount\n"),
 )
 
 _SELFTEST_PET_SOURCES: Tuple[Tuple[str, str], ...] = (
@@ -1213,6 +1285,11 @@ _SELFTEST_PET_SOURCES: Tuple[Tuple[str, str], ...] = (
     ("clean_sibling_scope",
      "def defines_alias(player):\n    first = player.res\n"
      "def other(first, heal):\n    first.hp += heal\n"),
+    # Negative: a nested function whose own PARAMETER shadows an outer resource
+    # alias name must not inherit the outer alias -- the local binding wins.
+    ("clean_closure_shadowed_param",
+     "def outer(player, heal):\n    target_res = player.res\n"
+     "    def inner(target_res, amount):\n        target_res.hp += amount\n"),
 )
 
 
