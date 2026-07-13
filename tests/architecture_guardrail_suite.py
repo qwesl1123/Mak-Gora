@@ -5,7 +5,7 @@ source files as text and assert that a handful of high-risk architectural
 invariants from ``AGENTS.md`` still hold. They intentionally do NOT import or
 run the engine, so they are fast and have no gameplay side effects.
 
-Guardrails implemented here:
+Six guardrails are implemented here:
 
 1. Player resource gains: direct gameplay writes to ``player.res.mp`` /
    ``player.res.energy`` / ``player.res.rage`` in engine gameplay files are
@@ -31,6 +31,11 @@ Guardrails implemented here:
    ``"type": "damage_event"`` dict literals in gameplay producers are flagged;
    queued events must be built via ``damage_events.make_queued_damage_event()``.
 
+6. Player HP restoration: direct player-resource HP mutations are rejected
+   unless they are the canonical ``apply_player_healing`` write or a narrow,
+   documented non-healing exception. Pet HP remains outside this player-only
+   rule.
+
 Design notes / limitations:
 
 * These checks are deliberately conservative. They catch the *obvious* bad
@@ -39,15 +44,18 @@ Design notes / limitations:
 * Where a check relies on isolating a function body, it uses indentation-based
   extraction rather than a full parser. This is robust for the current engine
   layout and is documented at each use.
+* The player-HP mutation check uses Python's built-in AST so assignments and
+  ``setattr`` calls can be distinguished from reads and bare pet HP writes.
 * Every allowlist entry is narrow (file + enclosing function + exact code
   snippet) and carries a reason, so it is easy to audit and hard to abuse.
 """
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, NamedTuple, Optional, Tuple
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -80,11 +88,11 @@ def _gameplay_file(basename: str) -> Optional[Path]:
     return None
 
 
-# Engine gameplay files that participate in the resource / damage pipelines.
+# Engine gameplay files that participate in the resource / damage / healing pipelines.
 # NOTE: When a new engine gameplay module is added (e.g. a dedicated combat or
-# damage module), append its basename here so the resource-write guardrail scans
-# it too. Do NOT add data modules (abilities.py / items.py / pets.py), tests, or
-# duel.html -- those are out of scope by design.
+# damage module), append its basename here so the resource-write and player-HP
+# guardrails scan it too. Do NOT add data modules (abilities.py / items.py /
+# pets.py), tests, or duel.html -- those are out of scope by design.
 GAMEPLAY_FILE_BASENAMES: Tuple[str, ...] = (
     "resolver.py",
     "effects.py",
@@ -787,6 +795,456 @@ def guardrail_queued_damage_event_literals() -> Tuple[bool, str]:
 
 
 # =========================================================================== #
+# Guardrail 6: player HP restoration must route through apply_player_healing.
+# =========================================================================== #
+
+
+class _PlayerHpMutation(NamedTuple):
+    """One direct player-resource HP mutation found in production source."""
+
+    basename: str
+    function: str
+    lineno: int
+    snippet: str
+    kind: str
+
+
+def _attribute_chain(node: ast.AST) -> Optional[Tuple[str, ...]]:
+    """Return a dotted name/attribute chain, or ``None`` for complex bases."""
+    parts: List[str] = []
+    current = node
+    while isinstance(current, ast.Attribute):
+        parts.append(current.attr)
+        current = current.value
+    if not isinstance(current, ast.Name):
+        return None
+    parts.append(current.id)
+    return tuple(reversed(parts))
+
+
+def _is_player_hp_target(node: ast.AST) -> bool:
+    """Return whether an assignment target is ``*.res.hp`` or exact ``res.hp``.
+
+    The structural fallback catches complex bases such as
+    ``match.state[sid].res.hp`` without attempting type or data-flow inference.
+    Bare entity fields such as ``pet.hp`` intentionally do not match.
+    """
+    if not isinstance(node, ast.Attribute) or node.attr != "hp":
+        return False
+    chain = _attribute_chain(node)
+    if chain == ("res", "hp"):
+        return True
+    if chain is not None and len(chain) >= 3 and chain[-2:] == ("res", "hp"):
+        return True
+    return isinstance(node.value, ast.Attribute) and node.value.attr == "res"
+
+
+def _is_player_hp_setattr_target(node: ast.AST) -> bool:
+    """Return whether ``node`` is a player ``res`` object used by setattr."""
+    if isinstance(node, ast.Name):
+        return node.id == "res"
+    return isinstance(node, ast.Attribute) and node.attr == "res"
+
+
+def _assignment_targets(node: ast.AST) -> List[ast.AST]:
+    """Flatten destructured assignment targets while preserving each leaf."""
+    if isinstance(node, (ast.Tuple, ast.List)):
+        targets: List[ast.AST] = []
+        for element in node.elts:
+            targets.extend(_assignment_targets(element))
+        return targets
+    if isinstance(node, ast.Starred):
+        return _assignment_targets(node.value)
+    return [node]
+
+
+def _source_statement(source: str, node: ast.AST) -> str:
+    """Return the exact stripped source segment for one mutation statement."""
+    segment = ast.get_source_segment(source, node)
+    if segment is None:
+        return "<source unavailable>"
+    return segment.strip()
+
+
+class _PlayerHpMutationVisitor(ast.NodeVisitor):
+    """Collect obvious direct player-resource HP writes with function ownership."""
+
+    def __init__(self, source: str, basename: str) -> None:
+        self.source = source
+        self.basename = basename
+        self.mutations: List[_PlayerHpMutation] = []
+        self._function_stack: List[str] = []
+        self._statement_stack: List[ast.stmt] = []
+
+    def visit(self, node: ast.AST):  # type: ignore[override]
+        is_statement = isinstance(node, ast.stmt)
+        if is_statement:
+            self._statement_stack.append(node)
+        try:
+            return super().visit(node)
+        finally:
+            if is_statement:
+                self._statement_stack.pop()
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._function_stack.append(node.name)
+        try:
+            self.generic_visit(node)
+        finally:
+            self._function_stack.pop()
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._function_stack.append(node.name)
+        try:
+            self.generic_visit(node)
+        finally:
+            self._function_stack.pop()
+
+    def _record(self, node: ast.AST, kind: str) -> None:
+        statement: ast.AST = self._statement_stack[-1] if self._statement_stack else node
+        self.mutations.append(
+            _PlayerHpMutation(
+                basename=self.basename,
+                function=self._function_stack[-1] if self._function_stack else "<module>",
+                lineno=int(getattr(statement, "lineno", getattr(node, "lineno", 0))),
+                snippet=_source_statement(self.source, statement),
+                kind=kind,
+            )
+        )
+
+    def visit_Assign(self, node: ast.Assign) -> None:
+        for target_group in node.targets:
+            for target in _assignment_targets(target_group):
+                if _is_player_hp_target(target):
+                    self._record(node, "assignment")
+        self.generic_visit(node)
+
+    def visit_AnnAssign(self, node: ast.AnnAssign) -> None:
+        for target in _assignment_targets(node.target):
+            if _is_player_hp_target(target):
+                self._record(node, "annotated assignment")
+        self.generic_visit(node)
+
+    def visit_AugAssign(self, node: ast.AugAssign) -> None:
+        for target in _assignment_targets(node.target):
+            if _is_player_hp_target(target):
+                self._record(node, "augmented assignment")
+        self.generic_visit(node)
+
+    def visit_Call(self, node: ast.Call) -> None:
+        function_chain = _attribute_chain(node.func)
+        is_setattr = (
+            isinstance(node.func, ast.Name) and node.func.id == "setattr"
+        ) or function_chain == ("builtins", "setattr")
+        if (
+            is_setattr
+            and len(node.args) >= 2
+            and isinstance(node.args[1], ast.Constant)
+            and node.args[1].value == "hp"
+            and _is_player_hp_setattr_target(node.args[0])
+        ):
+            self._record(node, "setattr")
+        self.generic_visit(node)
+
+
+def _find_player_hp_mutations(
+    source: str,
+    basename: str,
+) -> List[_PlayerHpMutation]:
+    """Return direct player-resource HP writes found by the narrow AST detector."""
+    tree = ast.parse(source, filename=basename)
+    visitor = _PlayerHpMutationVisitor(source, basename)
+    visitor.visit(tree)
+    return visitor.mutations
+
+
+# Narrow current-source inventory. Matching requires the file basename, nearest
+# enclosing function, and exact stripped source statement. The canonical helper
+# is the only entry that applies positive player HP restoration; every other
+# entry documents why the mutation is not healing.
+ALLOWED_PLAYER_HP_MUTATIONS: Tuple[Dict[str, str], ...] = (
+    {
+        "file": "effects.py",
+        "function": "apply_player_healing",
+        "snippet": "res.hp = min(int(res.hp_max), before_hp + amount)",
+        "reason": (
+            "This is the centralized player-healing primitive. It owns the "
+            "hp_max-capped HP write and returns the actual capped gain."
+        ),
+    },
+    {
+        "file": "resolver.py",
+        "function": "_apply_damage_application_stage",
+        "snippet": "target_entity.res.hp -= total_remaining",
+        "reason": (
+            "This subtracts final resolved player HP damage after absorb "
+            "consumption; it is damage application, not healing."
+        ),
+    },
+    {
+        "file": "resolver.py",
+        "function": "apply_self_inflicted_magical_damage",
+        "snippet": "ps.res.hp -= remaining",
+        "reason": (
+            "This subtracts resolved Mindgames self-damage after protection and "
+            "absorb checks; it is damage application, not healing."
+        ),
+    },
+    {
+        "file": "resolver.py",
+        "function": "apply_hp_sacrifice_absorb",
+        "snippet": "actor.res.hp = max(min_hp_leave, int(actor.res.hp) - sacrificed_hp)",
+        "reason": (
+            "This deliberately spends the actor's HP to create an absorb while "
+            "preserving the configured minimum; it is sacrifice, not healing."
+        ),
+    },
+)
+
+
+def _player_hp_mutation_key(
+    mutation: _PlayerHpMutation,
+) -> Tuple[str, str, str]:
+    return mutation.basename, mutation.function, mutation.snippet
+
+
+def _allowed_player_hp_mutation_key(entry: Dict[str, str]) -> Tuple[str, str, str]:
+    # Empty fallbacks let malformed entries reach the guardrail's explicit
+    # schema failure instead of crashing later with an unhelpful KeyError.
+    return entry.get("file", ""), entry.get("function", ""), entry.get("snippet", "")
+
+
+def _is_allowed_player_hp_mutation(mutation: _PlayerHpMutation) -> bool:
+    key = _player_hp_mutation_key(mutation)
+    return any(
+        _allowed_player_hp_mutation_key(entry) == key
+        for entry in ALLOWED_PLAYER_HP_MUTATIONS
+    )
+
+
+def _player_hp_detector_self_check() -> List[str]:
+    """Exercise every detector form and prove bare pet HP remains ignored."""
+    synthetic_source = '''
+def bad_plus(player):
+    player.res.hp += 5
+
+def bad_minus(player, damage):
+    player.res.hp -= damage
+
+def bad_multiply(player):
+    player.res.hp *= 2
+
+def bad_add(player, heal):
+    player.res.hp = player.res.hp + heal
+
+def bad_min(player, heal):
+    player.res.hp = min(player.res.hp + heal, player.res.hp_max)
+
+def bad_full(player):
+    player.res.hp = player.res.hp_max
+
+def bad_setattr(player, heal):
+    setattr(player.res, "hp", player.res.hp + heal)
+
+def bad_setattr_alias(res, heal):
+    setattr(res, "hp", res.hp + heal)
+
+def bad_alias(res, heal):
+    res.hp += heal
+
+def bad_annotated(player):
+    player.res.hp: int = 5
+
+def bad_multi(a, b, value):
+    a.res.hp = b.res.hp = value
+
+def bad_complex(players, sid):
+    players[sid].res.hp = 0
+
+def outer(player):
+    def bad_nested():
+        player.res.hp = player.res.hp_max
+
+def allowed_pet_heal(pet, heal):
+    pet.hp = min(pet.hp + heal, pet.hp_max)
+
+def allowed_pet_damage(pet, damage):
+    pet.hp -= damage
+
+def allowed_pet_setattr(pet, heal):
+    setattr(pet, "hp", pet.hp + heal)
+'''
+    mutations = _find_player_hp_mutations(synthetic_source, "<player-hp-self-check>")
+    expected: Dict[str, Tuple[int, str]] = {
+        "bad_plus": (1, "augmented assignment"),
+        "bad_minus": (1, "augmented assignment"),
+        "bad_multiply": (1, "augmented assignment"),
+        "bad_add": (1, "assignment"),
+        "bad_min": (1, "assignment"),
+        "bad_full": (1, "assignment"),
+        "bad_setattr": (1, "setattr"),
+        "bad_setattr_alias": (1, "setattr"),
+        "bad_alias": (1, "augmented assignment"),
+        "bad_annotated": (1, "annotated assignment"),
+        "bad_multi": (2, "assignment"),
+        "bad_complex": (1, "assignment"),
+        "bad_nested": (1, "assignment"),
+    }
+    problems: List[str] = []
+    by_function: Dict[str, List[_PlayerHpMutation]] = {}
+    for mutation in mutations:
+        by_function.setdefault(mutation.function, []).append(mutation)
+
+    for function, (expected_count, expected_kind) in expected.items():
+        found = by_function.get(function, [])
+        if len(found) != expected_count:
+            problems.append(
+                f"{function}(): expected {expected_count} mutation(s), found {len(found)}"
+            )
+        wrong_kinds = sorted({mutation.kind for mutation in found if mutation.kind != expected_kind})
+        if wrong_kinds:
+            problems.append(
+                f"{function}(): expected kind {expected_kind!r}, found {wrong_kinds}"
+            )
+
+    unexpected_functions = sorted(set(by_function) - set(expected))
+    if unexpected_functions:
+        problems.append(
+            "bare pet or otherwise out-of-scope HP writes were misclassified in: "
+            + ", ".join(f"{name}()" for name in unexpected_functions)
+        )
+    return problems
+
+
+def _top_level_function_defined(source: str, function: str, basename: str) -> bool:
+    tree = ast.parse(source, filename=basename)
+    return any(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == function
+        for node in tree.body
+    )
+
+
+def guardrail_player_hp_writes() -> Tuple[bool, str]:
+    """Reject unclassified direct player-resource HP mutations.
+
+    Detection deliberately happens before allowlist classification. The check
+    catches assignments, annotated/augmented assignments, and obvious literal
+    ``setattr(..., "hp", ...)`` bypasses for ``*.res`` and the exact local
+    ``res`` alias. Bare entity HP fields remain out of scope so pet mutation and
+    healing stay explicit and local.
+    """
+    detector_problems = _player_hp_detector_self_check()
+    if detector_problems:
+        detail = "\n".join(f"  - {problem}" for problem in detector_problems)
+        return False, "Player HP mutation detector self-check failed:\n" + detail
+
+    sources: Dict[str, str] = {}
+    mutations: List[_PlayerHpMutation] = []
+    for basename in GAMEPLAY_FILE_BASENAMES:
+        path = _gameplay_file(basename)
+        if path is None:
+            continue
+        source = _read(path)
+        sources[basename] = source
+        mutations.extend(_find_player_hp_mutations(source, basename))
+
+    if not sources:
+        return False, "No gameplay files were found to scan for player HP writes."
+
+    architecture_problems: List[str] = []
+    effects_source = sources.get("effects.py")
+    if effects_source is None:
+        architecture_problems.append("effects.py was not found in the gameplay scan scope")
+    elif not _top_level_function_defined(
+        effects_source, "apply_player_healing", "effects.py"
+    ):
+        architecture_problems.append(
+            "effects.py no longer defines top-level apply_player_healing()"
+        )
+
+    required_fields = {"file", "function", "snippet", "reason"}
+    allowlist_keys: List[Tuple[str, str, str]] = []
+    for index, entry in enumerate(ALLOWED_PLAYER_HP_MUTATIONS, start=1):
+        missing = sorted(required_fields - set(entry))
+        if missing:
+            architecture_problems.append(
+                f"ALLOWED_PLAYER_HP_MUTATIONS entry {index} lacks: {', '.join(missing)}"
+            )
+            continue
+        key = _allowed_player_hp_mutation_key(entry)
+        allowlist_keys.append(key)
+        if any(not value.strip() for value in key):
+            architecture_problems.append(
+                f"ALLOWED_PLAYER_HP_MUTATIONS entry {index} has a blank match field"
+            )
+        if "*" in entry["file"] or "*" in entry["function"]:
+            architecture_problems.append(
+                f"ALLOWED_PLAYER_HP_MUTATIONS entry {index} uses a file/function wildcard"
+            )
+        if not entry["reason"].strip():
+            architecture_problems.append(
+                f"ALLOWED_PLAYER_HP_MUTATIONS entry {index} has no documented reason"
+            )
+
+    duplicate_keys = sorted({key for key in allowlist_keys if allowlist_keys.count(key) > 1})
+    for key in duplicate_keys:
+        architecture_problems.append(
+            "duplicate ALLOWED_PLAYER_HP_MUTATIONS entry: " + " / ".join(key)
+        )
+
+    current_keys = {_player_hp_mutation_key(mutation) for mutation in mutations}
+    for key in allowlist_keys:
+        if key not in current_keys:
+            architecture_problems.append(
+                "stale or non-exact ALLOWED_PLAYER_HP_MUTATIONS entry: "
+                + " / ".join(key)
+            )
+
+    canonical_mutations = [
+        mutation
+        for mutation in mutations
+        if mutation.basename == "effects.py"
+        and mutation.function == "apply_player_healing"
+        and _is_allowed_player_hp_mutation(mutation)
+    ]
+    if not canonical_mutations:
+        architecture_problems.append(
+            "apply_player_healing() has no HP mutation recognized by its exact "
+            "ALLOWED_PLAYER_HP_MUTATIONS entry"
+        )
+
+    violations = [
+        mutation for mutation in mutations if not _is_allowed_player_hp_mutation(mutation)
+    ]
+    if violations:
+        detail = "\n".join(
+            "  - "
+            f"{mutation.basename}:{mutation.lineno} (in {mutation.function}(), "
+            f"{mutation.kind}): {' '.join(mutation.snippet.splitlines())}"
+            for mutation in violations
+        )
+        return False, (
+            "Direct player HP mutation(s) outside effects.apply_player_healing().\n"
+            "All production player HP restoration must route through the shared helper.\n"
+            "Damage, sacrifice, setup, and other non-healing writes require a narrow,\n"
+            "documented ALLOWED_PLAYER_HP_MUTATIONS entry. Route restoration through\n"
+            "effects.apply_player_healing(); do not allowlist ordinary restoration:\n"
+            + detail
+        )
+
+    if architecture_problems:
+        detail = "\n".join(f"  - {problem}" for problem in architecture_problems)
+        return False, "Player HP guardrail architecture assertion(s) failed:\n" + detail
+
+    return True, (
+        f"Scanned {', '.join(sources)}; all {len(mutations)} direct player HP "
+        "mutation(s) are narrowly classified, the canonical helper write is "
+        "present, and bare pet HP remains outside this player-only guardrail."
+    )
+
+
+# =========================================================================== #
 # Runner plumbing (mirrors the other suites' run_all() contract).
 # =========================================================================== #
 
@@ -796,6 +1254,7 @@ _GUARDRAILS: Tuple[Tuple[str, Callable[[], Tuple[bool, str]]], ...] = (
     ("guardrail_raw_proc_bonus_damage", guardrail_raw_proc_bonus_damage),
     ("guardrail_resource_gain_logs_use_gained", guardrail_resource_gain_logs_use_gained),
     ("guardrail_queued_damage_event_literals", guardrail_queued_damage_event_literals),
+    ("guardrail_player_hp_writes", guardrail_player_hp_writes),
 )
 
 
