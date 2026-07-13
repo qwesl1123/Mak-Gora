@@ -1396,9 +1396,10 @@ def resolve_end_of_turn_stage(
             current_int = max(0, int(ps.stats.get("int", 0) or 0))
             heal_value = int(ps.res.hp_max * 0.03)
             if heal_value > 0 and ps.res.hp > 0:
-                before_hp = ps.res.hp
-                ps.res.hp = min(ps.res.hp + heal_value, ps.res.hp_max)
-                gained = ps.res.hp - before_hp
+                # Caller-owned liveness gate: Ancestral Knowledge must not revive
+                # a champion from zero or negative HP even though the helper
+                # itself supports healing from negative values.
+                gained = apply_player_healing(ps, heal_value)
                 if gained > 0:
                     match.log.append(f"{sid_token(sid)} restores {gained} HP from Ancestral Knowledge.")
                     totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
