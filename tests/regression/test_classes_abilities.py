@@ -127,8 +127,9 @@ def scenario_action_time_player_healing_routes_through_shared_helper() -> bool:
     (one helper call per healing hit), and Victory Rush (generic on-hit healing
     via _apply_mindgames_aware_healing). Paths deliberately left inline for
     later PRs must not call the helper: Mindgames-twisted heals (self-damage),
-    end-of-turn item healing, pet HP writes (Kill Command), and damage-derived
-    healing (Drain Life).
+    end-of-turn item healing, and pet HP writes (Kill Command). Damage-derived
+    healing is covered by
+    scenario_damage_derived_player_healing_routes_through_shared_helper.
     """
     original = effects.apply_player_healing
     assert resolver.apply_player_healing is original, "resolver should share the effects.apply_player_healing primitive"
@@ -217,19 +218,6 @@ def scenario_action_time_player_healing_routes_through_shared_helper() -> bool:
         submit_turn(pet_match, "kill_command", _DEF_PASS)
         assert saber.hp > pet_hp_before, "Setup: Kill Command should heal the pet"
         assert calls == [], "Pet HP application must stay outside the player-only helper"
-
-        # Not migrated in this PR: damage-derived healing (Drain Life) stays inline.
-        drain = make_match("warlock", "warrior", seed=6503)
-        drain_warlock_sid, _ = drain.players
-        drain_warlock = drain.state[drain_warlock_sid]
-        drain_warlock.stats["acc"] = 999
-        drain.state[drain.players[1]].stats["eva"] = 0
-        drain_warlock.res.hp = drain_warlock.res.hp - 80
-        drain_hp_before = drain_warlock.res.hp
-        calls.clear()
-        submit_turn(drain, "drain_life", _DEF_PASS)
-        assert drain_warlock.res.hp > drain_hp_before, "Setup: the seeded Drain Life should land and heal"
-        assert calls == [], "Damage-derived healing is not migrated in this PR and must not call the helper"
     finally:
         effects.apply_player_healing = original
         resolver.apply_player_healing = original
