@@ -855,14 +855,18 @@ def _is_res_object(node: ast.AST, alias_names: Optional[set[str]] = None) -> boo
 
     Structural, root-agnostic: any ``ast.Attribute`` whose final attribute is
     ``res`` qualifies (``player.res``, ``match.state[sid].res``,
-    ``get_player().res``), as does the bare ``ast.Name`` ``res``. When
-    ``alias_names`` is supplied, a local name bound to a resource object in the
-    same scope (see ``_compute_resource_aliases``) also qualifies -- so a rebound
-    ``target_res = player.res`` is recognized as a resource object too. This is
-    the setattr base test -- ``setattr(<res-object>, "hp", ...)`` writes player HP.
+    ``get_player().res``), as does the bare ``ast.Name`` ``res`` and a direct
+    ``getattr(<expr>, "res", ...)`` call (so an inline dynamic lookup like
+    ``getattr(target, "res", None).hp`` is recognized without an intermediate
+    binding). When ``alias_names`` is supplied, a local name bound to a resource
+    object in the same scope (see ``_compute_resource_aliases``) also qualifies --
+    so a rebound ``target_res = player.res`` is recognized too. This is the setattr
+    base test -- ``setattr(<res-object>, "hp", ...)`` writes player HP.
     """
     if isinstance(node, ast.Attribute):
         return node.attr == "res"
+    if _is_getattr_res(node):
+        return True
     if isinstance(node, ast.Name):
         if node.id == "res":
             return True
@@ -1188,6 +1192,12 @@ _SELFTEST_BAD_SOURCES: Tuple[Tuple[str, str], ...] = (
     # through any of them is caught (4th Codex review on PR #34).
     ("bad_chained_alias",
      "def bad_chained_alias(player, heal):\n    primary = target_res = player.res\n    target_res.hp += heal\n"),
+    # An inline dynamic `getattr(..., "res", ...)` base must be flagged without an
+    # intermediate binding (5th Codex review on PR #34).
+    ("bad_inline_getattr",
+     "def bad_inline_getattr(target, heal):\n    getattr(target, \"res\", None).hp += heal\n"),
+    ("bad_inline_getattr_setattr",
+     "def bad_inline_getattr_setattr(target, heal):\n    setattr(getattr(target, \"res\", None), \"hp\", heal)\n"),
 )
 
 _SELFTEST_PET_SOURCES: Tuple[Tuple[str, str], ...] = (
