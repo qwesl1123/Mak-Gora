@@ -2249,9 +2249,8 @@ def trigger_on_hit_passives(
                     roll_power,
                 )
             if heal_value > 0 and attacker.res:
-                before_hp = attacker.res.hp
-                attacker.res.hp = min(attacker.res.hp + heal_value, attacker.res.hp_max)
-                bonus_healing += attacker.res.hp - before_hp
+                gained = apply_player_healing(attacker, heal_value)
+                bonus_healing += gained
                 log_lines.append(
                     f"{attacker.sid[:5]} draws strength from {effect.get('source_item', 'item')}, healing {heal_value} HP."
                 )
@@ -2647,9 +2646,8 @@ def trigger_end_of_turn_passives(ps: PlayerState, log: List[str], label: str) ->
         if passive.get("type") == "heal_self":
             heal_value = int(passive.get("value", 0) or 0)
             if heal_value > 0:
-                before_hp = ps.res.hp
-                ps.res.hp = min(ps.res.hp + heal_value, ps.res.hp_max)
-                total_healing += ps.res.hp - before_hp
+                gained = apply_player_healing(ps, heal_value)
+                total_healing += gained
                 log.append(
                     f"{label} heals {heal_value} HP from {effect.get('source_item', 'item')}."
                 )
@@ -2699,9 +2697,8 @@ def trigger_end_of_turn_effects(ps: PlayerState, log: List[str], label: str) -> 
                         f"{label} is twisted by Mindgames and takes {hp_gain} self-damage instead of healing from {effect_name}."
                     )
             else:
-                before_hp = ps.res.hp
-                ps.res.hp = min(ps.res.hp + hp_gain, ps.res.hp_max)
-                total_healing += ps.res.hp - before_hp
+                gained = apply_player_healing(ps, hp_gain)
+                total_healing += gained
         # Route mp/energy regen through grant_player_resource so the Challenger/
         # passive gain multiplier and cap are applied in one place, and report the
         # amount actually gained after the cap (HP stays untouched by design).

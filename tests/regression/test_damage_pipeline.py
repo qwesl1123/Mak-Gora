@@ -738,7 +738,8 @@ def scenario_damage_derived_player_healing_routes_through_shared_helper() -> boo
     heal amount derives from actual resolved HP damage, and the Mindgames
     branch keeps reporting the nominal converted amount regardless of the
     helper's actual-gain return. Effect/HoT regeneration (Healing Stream)
-    stays inline for the next migration and must not call the helper.
+    now routes through the helper as well (full coverage in
+    scenario_passive_and_end_of_turn_player_healing_routes_through_shared_helper).
     """
     original = effects.apply_player_healing
     assert resolver.apply_player_healing is original, "resolver should share the effects.apply_player_healing primitive"
@@ -848,18 +849,18 @@ def scenario_damage_derived_player_healing_routes_through_shared_helper() -> boo
         assert flip_priest.res.hp == flip_priest.res.hp_max, "No ordinary damage may reach the flip target's HP"
         assert _has_effect(flip_priest, "dragon_roar_bleed"), "The nominal mindgames_healing packet should still let the direct-damage DoT apply"
 
-        # Still inline for the next migration: effect/HoT regeneration
-        # (Healing Stream) must not call the helper on its tick turn.
+        # Effect/HoT regeneration (Healing Stream) now routes through the helper.
         hot = make_match("shaman", "warrior", seed=7002)
         shaman_sid, _hot_enemy_sid = hot.players
         shaman = hot.state[shaman_sid]
         shaman.res.hp = 50
         submit_turn(hot, "healing_stream", _DEF_PASS)
         hp_after_cast = shaman.res.hp
+        hot_regen = next(int((fx.get("regen") or {}).get("hp") or 0) for fx in shaman.effects if fx.get("id") == "healing_stream")
         calls.clear()
         submit_turn(hot, _DEF_PASS, _DEF_PASS)
         assert shaman.res.hp > hp_after_cast, "Setup: the Healing Stream HoT tick should heal"
-        assert calls == [], "Effect/HoT regeneration is not migrated in this PR and must not call the helper"
+        assert calls == [(shaman, hot_regen, hot_regen)], "The HoT tick should route its regen['hp'] request through exactly one apply_player_healing call"
     finally:
         effects.apply_player_healing = original
         resolver.apply_player_healing = original

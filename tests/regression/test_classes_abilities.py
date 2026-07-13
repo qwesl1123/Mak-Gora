@@ -125,11 +125,13 @@ def scenario_action_time_player_healing_routes_through_shared_helper() -> bool:
 
     Representative migrated paths: Holy Light (special handler), Penance Self
     (one helper call per healing hit), and Victory Rush (generic on-hit healing
-    via _apply_mindgames_aware_healing). Paths deliberately left inline for
-    later PRs must not call the helper: Mindgames-twisted heals (self-damage),
-    end-of-turn item healing, and pet HP writes (Kill Command). Damage-derived
-    healing is covered by
-    scenario_damage_derived_player_healing_routes_through_shared_helper.
+    via _apply_mindgames_aware_healing). Paths that must never call the helper:
+    Mindgames-twisted heals (self-damage) and pet HP writes (Kill Command).
+    Damage-derived healing is covered by
+    scenario_damage_derived_player_healing_routes_through_shared_helper;
+    passive/end-of-turn healing (items, HoT regen, Ancestral Knowledge, Emerald
+    Serpent owner healing) is covered by
+    scenario_passive_and_end_of_turn_player_healing_routes_through_shared_helper.
     """
     original = effects.apply_player_healing
     assert resolver.apply_player_healing is original, "resolver should share the effects.apply_player_healing primitive"
@@ -196,14 +198,15 @@ def scenario_action_time_player_healing_routes_through_shared_helper() -> bool:
         assert calls == [], "A Mindgames-twisted heal must not call apply_player_healing"
         assert warlock.res.hp == hp_before - requested, "Twisted Healthstone should still take the requested pre-clamp self-damage"
 
-        # Not migrated in this PR: end-of-turn item healing stays inline.
+        # End-of-turn item healing now routes through the helper (full coverage
+        # in scenario_passive_and_end_of_turn_player_healing_routes_through_shared_helper).
         item = make_match("warrior", "priest", p1_items={"weapon": "staff_of_immortality"}, seed=6504)
         item_warrior = item.state[item.players[0]]
         item_warrior.res.hp = item_warrior.res.hp_max - 20
         calls.clear()
         submit_turn(item, _DEF_PASS, _DEF_PASS)
         assert any("heals 4 HP from Staff of Immortality." in line for line in _turn_lines(item, 1)), "Setup: the end-of-turn item heal should fire"
-        assert calls == [], "End-of-turn item healing is not migrated in this PR and must not call the helper"
+        assert calls == [(4, 4)], "End-of-turn item healing should route the requested 4 HP through the helper"
 
         # Not migrated in this PR: pet HP application (Kill Command) stays local.
         pet_match = make_match("hunter", "warrior", seed=9105)

@@ -13,6 +13,7 @@ from .effects import (
     is_immune_all,
     is_damage_immune,
     apply_effect_by_id,
+    apply_player_healing,
     grant_player_resource,
 )
 
@@ -641,16 +642,17 @@ def _run_pet_special(
         remaining = int(dealt.get("hp_damage", 0) or 0)
         if remaining > 0:
             heal_value = remaining // 2
+            # Pet HP stays locally clamped: apply_player_healing() is player-only.
             before_pet = pet.hp
             pet.hp = min(pet.hp + heal_value, pet.hp_max)
-            before_owner = owner.res.hp
-            owner.res.hp = min(owner.res.hp + heal_value, owner.res.hp_max)
+            pet_gained = pet.hp - before_pet
+            owner_gained = apply_player_healing(owner, heal_value)
             match.log.append(
-                f"{pet.name} restores {pet.hp - before_pet} HP to itself and {owner.res.hp - before_owner} HP to {_owner_label(owner_sid)}."
+                f"{pet.name} restores {pet_gained} HP to itself and {owner_gained} HP to {_owner_label(owner_sid)}."
             )
             totals = match.combat_totals.setdefault(owner_sid, {"damage": 0, "healing": 0})
             totals["damage"] += remaining
-            totals["healing"] += (pet.hp - before_pet) + (owner.res.hp - before_owner)
+            totals["healing"] += pet_gained + owner_gained
         return
 
     if special_id == "blocking_defence":
