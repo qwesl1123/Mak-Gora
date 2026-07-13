@@ -1058,9 +1058,10 @@ def _compute_resource_aliases(
     * ``getattr(<expr>, "res", ...)`` (per ``_is_getattr_res``); or
     * another name already known to be an alias in the same scope.
 
-    Both plain ``Assign`` (single ``Name`` target) and value-bearing ``AnnAssign``
-    (a typed ``name: T = <rhs>``) bindings are considered, so a typed alias such as
-    ``target_res: Resources = player.res`` is tracked just like an untyped one.
+    Plain ``Assign``, value-bearing ``AnnAssign`` (a typed ``name: T = <rhs>``),
+    and ``NamedExpr`` walrus bindings (``(name := <rhs>)``) are all considered, so a
+    typed alias (``target_res: Resources = player.res``) or a walrus alias
+    (``if (target_res := player.res): ...``) is tracked just like a plain one.
 
     The third rule is applied via a fixed-point pass so propagation chains like
     ``first = player.res`` / ``second = first`` / ``second.hp += ...`` resolve.
@@ -1089,6 +1090,8 @@ def _compute_resource_aliases(
             for target in node.targets:  # a = b = value -> seed every Name target
                 _seed(target, node.value, scope)
         elif isinstance(node, ast.AnnAssign):
+            _seed(node.target, node.value, _owning_scope(node, parents))
+        elif isinstance(node, ast.NamedExpr):  # walrus: (target := value)
             _seed(node.target, node.value, _owning_scope(node, parents))
 
     aliases: Dict[ast.AST, set[str]] = {}
@@ -1309,6 +1312,10 @@ _SELFTEST_BAD_SOURCES: Tuple[Tuple[str, str], ...] = (
     ("bad_destructured_alias_pair",
      "def bad_destructured_alias_pair(player, other, heal):\n"
      "    target_res, spare = player.res, other\n    target_res.hp += heal\n"),
+    # A resource bound via a walrus assignment expression must seed the alias too
+    # (8th Codex review on PR #34): ast.NamedExpr binding.
+    ("bad_walrus_alias",
+     "def bad_walrus_alias(player, heal):\n    if (target_res := player.res):\n        target_res.hp += heal\n"),
 )
 
 _SELFTEST_PET_SOURCES: Tuple[Tuple[str, str], ...] = (
