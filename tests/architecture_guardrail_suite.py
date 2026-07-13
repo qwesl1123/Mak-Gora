@@ -1093,6 +1093,14 @@ def _compute_resource_aliases(
             _seed(node.target, node.value, _owning_scope(node, parents))
         elif isinstance(node, ast.NamedExpr):  # walrus: (target := value)
             _seed(node.target, node.value, _owning_scope(node, parents))
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            # for TARGET in (a, b, ...): the loop var takes each element in turn,
+            # so pair TARGET with every element of a literal iterable. Non-literal
+            # iterables (a name/call) are opaque and seed nothing.
+            if isinstance(node.iter, (ast.Tuple, ast.List)):
+                scope = _owning_scope(node, parents)
+                for element in node.iter.elts:
+                    _seed(node.target, element, scope)
 
     aliases: Dict[ast.AST, set[str]] = {}
     for scope, assigns in scope_assigns.items():
@@ -1316,6 +1324,10 @@ _SELFTEST_BAD_SOURCES: Tuple[Tuple[str, str], ...] = (
     # (8th Codex review on PR #34): ast.NamedExpr binding.
     ("bad_walrus_alias",
      "def bad_walrus_alias(player, heal):\n    if (target_res := player.res):\n        target_res.hp += heal\n"),
+    # A resource bound via a loop target over a literal iterable must seed the
+    # alias too (9th Codex review on PR #34): ast.For target.
+    ("bad_loop_alias",
+     "def bad_loop_alias(player, heal):\n    for target_res in (player.res,):\n        target_res.hp += heal\n"),
 )
 
 _SELFTEST_PET_SOURCES: Tuple[Tuple[str, str], ...] = (
