@@ -801,11 +801,19 @@ def guardrail_queued_damage_event_literals() -> Tuple[bool, str]:
 #
 # Unlike guardrails 1 & 5, which match on source text, this guardrail parses the
 # gameplay modules with Python's ``ast`` so it can identify assignment TARGETS
-# precisely and distinguish PLAYER resource HP (an attribute chain ending in
-# ``*.res.hp``, including the bare local alias ``res.hp``) from PET HP (a bare
-# entity ``pet.hp`` with no ``.res`` segment). Pet HP is intentionally out of
+# precisely and distinguish PLAYER resource HP (any expression whose structural
+# suffix is ``.res.hp``, including the bare local alias ``res.hp``) from PET HP (a
+# bare entity ``pet.hp`` with no ``.res`` segment). Pet HP is intentionally out of
 # scope: pet healing/damage/death/regen keep their explicit local ``pet.hp``
 # clamps and must NOT be forced through the player helper.
+#
+# Recognition is STRUCTURAL, not name-rooted: it inspects only the trailing
+# ``.res.hp`` (or ``.res`` for setattr) attribute segments, so it flags writes
+# rooted in a subscript, call, or longer expression (``match.state[sid].res.hp``,
+# ``players[0].res.hp``, ``get_player().res.hp``) just as readily as a plain
+# ``player.res.hp``. It does not resolve the root object -- that would require
+# data-flow analysis the guardrail deliberately avoids -- but a player HP write is
+# recognized by its ``.res.hp`` shape regardless of what the root evaluates to.
 
 
 class _HpMutation(NamedTuple):
@@ -819,50 +827,38 @@ class _HpMutation(NamedTuple):
     kind: str         # "assign" | "augassign" | "annassign" | "setattr"
 
 
-def _attribute_chain(node: ast.AST) -> Optional[Tuple[str, ...]]:
-    """Return the dotted name chain of an attribute/name expression, or ``None``.
+def _is_res_object(node: ast.AST) -> bool:
+    """True iff ``node`` is a ``*.res`` object (or the bare local alias ``res``).
 
-    ``player.res.hp`` -> ``("player", "res", "hp")``; a bare ``res`` -> ``("res",)``.
-    Only plain ``Name``-rooted attribute chains are resolved; anything rooted in a
-    call/subscript/other expression (e.g. ``get_player().res.hp``) returns
-    ``None`` -- the guardrail deliberately does not chase such forms (see the
-    "obvious bypasses, not full data-flow" note below).
+    Structural, root-agnostic: any ``ast.Attribute`` whose final attribute is
+    ``res`` qualifies (``player.res``, ``match.state[sid].res``,
+    ``get_player().res``), as does the bare ``ast.Name`` ``res``. This is the
+    setattr base test -- ``setattr(<*.res>, "hp", ...)`` writes player resource HP.
     """
-    parts: List[str] = []
-    cur = node
-    while isinstance(cur, ast.Attribute):
-        parts.append(cur.attr)
-        cur = cur.value
-    if isinstance(cur, ast.Name):
-        parts.append(cur.id)
-        return tuple(reversed(parts))
-    return None
+    if isinstance(node, ast.Attribute):
+        return node.attr == "res"
+    if isinstance(node, ast.Name):
+        return node.id == "res"
+    return False
 
 
 def _is_player_hp_target(node: ast.AST) -> bool:
     """True iff ``node`` is a PLAYER resource HP target (``*.res.hp`` / ``res.hp``).
 
-    The chain must end in the two segments ``res`` then ``hp``. This matches
-    ``player.res.hp`` / ``actor.res.hp`` / ``ps.res.hp`` and the bare local alias
-    ``res.hp``, while rejecting bare ``pet.hp`` (no ``.res`` segment) and guarding
-    against ``.res.hp_max`` (which ends in ``hp_max``, not ``hp``).
+    Recognized structurally by the trailing two segments: an ``ast.Attribute``
+    ``.hp`` whose immediate value is a ``*.res`` object (per ``_is_res_object``).
+    This matches ``player.res.hp``, the bare alias ``res.hp``, and subscript/call
+    rooted forms like ``match.state[sid].res.hp``, ``players[0].res.hp``, and
+    ``get_player().res.hp`` -- regardless of the root expression.
+
+    It rejects bare ``pet.hp`` (its value ``pet`` is not a ``.res`` object) and
+    guards against ``.res.hp_max`` (the final attribute is ``hp_max``, not ``hp``).
     """
-    chain = _attribute_chain(node)
-    if chain is None:
-        return False
-    return len(chain) >= 2 and chain[-1] == "hp" and chain[-2] == "res"
-
-
-def _is_res_object(node: ast.AST) -> bool:
-    """True iff ``node`` is a ``*.res`` (or bare ``res``) object -- a setattr base.
-
-    Used for ``setattr(<obj>, "hp", ...)`` detection: an ``<obj>`` whose chain
-    ends in ``res`` means the setattr writes player resource HP.
-    """
-    chain = _attribute_chain(node)
-    if chain is None:
-        return False
-    return chain[-1] == "res"
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == "hp"
+        and _is_res_object(node.value)
+    )
 
 
 def _build_parent_map(tree: ast.AST) -> Dict[ast.AST, ast.AST]:
@@ -909,14 +905,33 @@ def _record(
     )
 
 
+def _flatten_targets(target: ast.AST) -> List[ast.AST]:
+    """Flatten an assignment target into its leaf expressions.
+
+    Recurses through ``Tuple``/``List`` destructuring targets (and unwraps
+    ``Starred``) so that ``a.res.hp, rest = ...`` and nested forms like
+    ``(a.res.hp, (b, c)) = ...`` still surface the ``*.res.hp`` leaf. Non-container
+    targets are returned as-is.
+    """
+    if isinstance(target, (ast.Tuple, ast.List)):
+        leaves: List[ast.AST] = []
+        for elt in target.elts:
+            leaves.extend(_flatten_targets(elt))
+        return leaves
+    if isinstance(target, ast.Starred):
+        return _flatten_targets(target.value)
+    return [target]
+
+
 def _find_player_hp_mutations(source: str, basename: str) -> List[_HpMutation]:
     """Return every direct player-resource HP write in ``source``.
 
-    Handles ``Assign`` (incl. multi-target chains), ``AnnAssign``, ``AugAssign``,
-    and ``setattr(<*.res>, "hp", ...)`` calls. RHS arithmetic is NOT inspected:
-    the scan finds ALL ``*.res.hp`` writes (healing, damage, sacrifice, death,
-    setup) and the allowlist then decides which are legitimate non-healing writes.
-    This ordering is deliberate -- it is far safer than trying to infer whether an
+    Handles ``Assign`` (incl. multi-target chains and ``Tuple``/``List``
+    destructuring targets), ``AnnAssign``, ``AugAssign``, and
+    ``setattr(<*.res>, "hp", ...)`` calls. RHS arithmetic is NOT inspected: the
+    scan finds ALL ``*.res.hp`` writes (healing, damage, sacrifice, death, setup)
+    and the allowlist then decides which are legitimate non-healing writes. This
+    ordering is deliberate -- it is far safer than trying to infer whether an
     arbitrary right-hand side is a positive (healing) or negative (damage) delta.
     """
     tree = ast.parse(source)
@@ -926,9 +941,12 @@ def _find_player_hp_mutations(source: str, basename: str) -> List[_HpMutation]:
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
-            for target in node.targets:  # a = b = value -> inspect every target
-                if _is_player_hp_target(target):
-                    mutations.append(_record(node, "assign", basename, source_lines, source, parents))
+            # a = b = value -> inspect every target; destructuring targets
+            # (a.res.hp, rest = ...) are flattened to their leaves.
+            for target in node.targets:
+                for leaf in _flatten_targets(target):
+                    if _is_player_hp_target(leaf):
+                        mutations.append(_record(node, "assign", basename, source_lines, source, parents))
         elif isinstance(node, ast.AnnAssign):
             if node.value is not None and _is_player_hp_target(node.target):
                 mutations.append(_record(node, "annassign", basename, source_lines, source, parents))
@@ -1031,6 +1049,13 @@ _SELFTEST_BAD_SOURCES: Tuple[Tuple[str, str], ...] = (
     ("bad_full", "def bad_full(player):\n    player.res.hp = player.res.hp_max\n"),
     ("bad_setattr", "def bad_setattr(player, heal):\n    setattr(player.res, \"hp\", player.res.hp + heal)\n"),
     ("bad_alias", "def bad_alias(res, heal):\n    res.hp += heal\n"),
+    # Non-Name roots must be flagged too (Codex review on PR #34): the target's
+    # structural `.res.hp` suffix is what matters, not whether the root is a plain
+    # Name -- subscript, index, and call roots are all real bypass shapes.
+    ("bad_subscript_aug", "def bad_subscript_aug(match, sid, heal):\n    match.state[sid].res.hp += heal\n"),
+    ("bad_index_assign", "def bad_index_assign(players, heal):\n    players[0].res.hp = players[0].res.hp + heal\n"),
+    ("bad_subscript_setattr", "def bad_subscript_setattr(match, sid, heal):\n    setattr(match.state[sid].res, \"hp\", heal)\n"),
+    ("bad_call_root", "def bad_call_root(get_player):\n    get_player().res.hp = get_player().res.hp_max\n"),
 )
 
 _SELFTEST_PET_SOURCES: Tuple[Tuple[str, str], ...] = (
