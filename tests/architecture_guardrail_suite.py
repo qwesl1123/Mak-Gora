@@ -31,6 +31,13 @@ Guardrails implemented here:
    ``"type": "damage_event"`` dict literals in gameplay producers are flagged;
    queued events must be built via ``damage_events.make_queued_damage_event()``.
 
+6. Player HP restoration: direct player resource HP mutations are rejected unless
+   they are the canonical ``apply_player_healing`` write or a narrow documented
+   non-healing exception (damage subtraction, HP sacrifice/spending, or embedded
+   debug/setup). Pet HP remains outside this player-only rule. This guardrail
+   uses Python's ``ast`` module to recognize assignment targets accurately and to
+   distinguish player resource HP (``*.res.hp``) from pet HP (bare ``pet.hp``).
+
 Design notes / limitations:
 
 * These checks are deliberately conservative. They catch the *obvious* bad
@@ -45,9 +52,10 @@ Design notes / limitations:
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, NamedTuple, Optional, Tuple
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -80,11 +88,12 @@ def _gameplay_file(basename: str) -> Optional[Path]:
     return None
 
 
-# Engine gameplay files that participate in the resource / damage pipelines.
+# Engine gameplay files that participate in the resource / damage / healing
+# pipelines.
 # NOTE: When a new engine gameplay module is added (e.g. a dedicated combat or
-# damage module), append its basename here so the resource-write guardrail scans
-# it too. Do NOT add data modules (abilities.py / items.py / pets.py), tests, or
-# duel.html -- those are out of scope by design.
+# damage module), append its basename here so the resource-write and player-HP
+# guardrails scan it too. Do NOT add data modules (abilities.py / items.py /
+# pets.py), tests, or duel.html -- those are out of scope by design.
 GAMEPLAY_FILE_BASENAMES: Tuple[str, ...] = (
     "resolver.py",
     "effects.py",
@@ -787,6 +796,350 @@ def guardrail_queued_damage_event_literals() -> Tuple[bool, str]:
 
 
 # =========================================================================== #
+# Guardrail 6: player HP restoration must route through apply_player_healing.
+# =========================================================================== #
+#
+# Unlike guardrails 1 & 5, which match on source text, this guardrail parses the
+# gameplay modules with Python's ``ast`` so it can identify assignment TARGETS
+# precisely and distinguish PLAYER resource HP (an attribute chain ending in
+# ``*.res.hp``, including the bare local alias ``res.hp``) from PET HP (a bare
+# entity ``pet.hp`` with no ``.res`` segment). Pet HP is intentionally out of
+# scope: pet healing/damage/death/regen keep their explicit local ``pet.hp``
+# clamps and must NOT be forced through the player helper.
+
+
+class _HpMutation(NamedTuple):
+    """One direct player-resource HP write found by the AST scan."""
+
+    basename: str
+    function: str
+    lineno: int
+    snippet: str      # exact stripped physical source line (for readable output)
+    statement: str    # normalized (whitespace-collapsed) full statement
+    kind: str         # "assign" | "augassign" | "annassign" | "setattr"
+
+
+def _attribute_chain(node: ast.AST) -> Optional[Tuple[str, ...]]:
+    """Return the dotted name chain of an attribute/name expression, or ``None``.
+
+    ``player.res.hp`` -> ``("player", "res", "hp")``; a bare ``res`` -> ``("res",)``.
+    Only plain ``Name``-rooted attribute chains are resolved; anything rooted in a
+    call/subscript/other expression (e.g. ``get_player().res.hp``) returns
+    ``None`` -- the guardrail deliberately does not chase such forms (see the
+    "obvious bypasses, not full data-flow" note below).
+    """
+    parts: List[str] = []
+    cur = node
+    while isinstance(cur, ast.Attribute):
+        parts.append(cur.attr)
+        cur = cur.value
+    if isinstance(cur, ast.Name):
+        parts.append(cur.id)
+        return tuple(reversed(parts))
+    return None
+
+
+def _is_player_hp_target(node: ast.AST) -> bool:
+    """True iff ``node`` is a PLAYER resource HP target (``*.res.hp`` / ``res.hp``).
+
+    The chain must end in the two segments ``res`` then ``hp``. This matches
+    ``player.res.hp`` / ``actor.res.hp`` / ``ps.res.hp`` and the bare local alias
+    ``res.hp``, while rejecting bare ``pet.hp`` (no ``.res`` segment) and guarding
+    against ``.res.hp_max`` (which ends in ``hp_max``, not ``hp``).
+    """
+    chain = _attribute_chain(node)
+    if chain is None:
+        return False
+    return len(chain) >= 2 and chain[-1] == "hp" and chain[-2] == "res"
+
+
+def _is_res_object(node: ast.AST) -> bool:
+    """True iff ``node`` is a ``*.res`` (or bare ``res``) object -- a setattr base.
+
+    Used for ``setattr(<obj>, "hp", ...)`` detection: an ``<obj>`` whose chain
+    ends in ``res`` means the setattr writes player resource HP.
+    """
+    chain = _attribute_chain(node)
+    if chain is None:
+        return False
+    return chain[-1] == "res"
+
+
+def _build_parent_map(tree: ast.AST) -> Dict[ast.AST, ast.AST]:
+    parents: Dict[ast.AST, ast.AST] = {}
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parents[child] = parent
+    return parents
+
+
+def _ast_enclosing_function(node: ast.AST, parents: Dict[ast.AST, ast.AST]) -> str:
+    """Return the nearest enclosing ``def``/``async def`` name, or ``<module>``.
+
+    Nested functions report their innermost enclosing function (the resolver's
+    HP writes live in nested helpers such as ``apply_self_inflicted_magical_damage``),
+    which is exactly the granularity the allowlist matches on.
+    """
+    cur: Optional[ast.AST] = parents.get(node)
+    while cur is not None:
+        if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return cur.name
+        cur = parents.get(cur)
+    return "<module>"
+
+
+def _record(
+    node: ast.AST,
+    kind: str,
+    basename: str,
+    source_lines: List[str],
+    source: str,
+    parents: Dict[ast.AST, ast.AST],
+) -> _HpMutation:
+    line = source_lines[node.lineno - 1].strip() if 0 < node.lineno <= len(source_lines) else ""
+    segment = ast.get_source_segment(source, node) or line
+    statement = " ".join(segment.split())
+    return _HpMutation(
+        basename=basename,
+        function=_ast_enclosing_function(node, parents),
+        lineno=node.lineno,
+        snippet=line,
+        statement=statement,
+        kind=kind,
+    )
+
+
+def _find_player_hp_mutations(source: str, basename: str) -> List[_HpMutation]:
+    """Return every direct player-resource HP write in ``source``.
+
+    Handles ``Assign`` (incl. multi-target chains), ``AnnAssign``, ``AugAssign``,
+    and ``setattr(<*.res>, "hp", ...)`` calls. RHS arithmetic is NOT inspected:
+    the scan finds ALL ``*.res.hp`` writes (healing, damage, sacrifice, death,
+    setup) and the allowlist then decides which are legitimate non-healing writes.
+    This ordering is deliberate -- it is far safer than trying to infer whether an
+    arbitrary right-hand side is a positive (healing) or negative (damage) delta.
+    """
+    tree = ast.parse(source)
+    parents = _build_parent_map(tree)
+    source_lines = source.splitlines()
+    mutations: List[_HpMutation] = []
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:  # a = b = value -> inspect every target
+                if _is_player_hp_target(target):
+                    mutations.append(_record(node, "assign", basename, source_lines, source, parents))
+        elif isinstance(node, ast.AnnAssign):
+            if node.value is not None and _is_player_hp_target(node.target):
+                mutations.append(_record(node, "annassign", basename, source_lines, source, parents))
+        elif isinstance(node, ast.AugAssign):
+            if _is_player_hp_target(node.target):
+                mutations.append(_record(node, "augassign", basename, source_lines, source, parents))
+        elif isinstance(node, ast.Call):
+            func = node.func
+            if (
+                isinstance(func, ast.Name)
+                and func.id == "setattr"
+                and len(node.args) >= 2
+                and isinstance(node.args[1], ast.Constant)
+                and node.args[1].value == "hp"
+                and _is_res_object(node.args[0])
+            ):
+                mutations.append(_record(node, "setattr", basename, source_lines, source, parents))
+
+    return mutations
+
+
+# Narrow, auditable allowlist for direct player-resource HP writes, same shape as
+# ALLOWED_RESOURCE_MUTATIONS: each entry names a (file basename, enclosing
+# function, exact statement) plus a reason that explains why the write is NOT
+# player healing. Matching is by basename + function + exact statement (the
+# stripped physical line OR the whitespace-normalized full statement), so it can
+# never become a file-wide, function-wide, substring, or line-number exemption.
+#
+# Exactly ONE entry is a positive restoration write: the canonical mutation
+# inside effects.apply_player_healing(). Every other entry is damage subtraction
+# or explicit HP spending, and must stay local precisely because it is not
+# healing. Adding a new entry forces reviewer attention on the healing pipeline.
+ALLOWED_PLAYER_HP_MUTATIONS: Tuple[Dict[str, str], ...] = (
+    {
+        "file": "effects.py",
+        "function": "apply_player_healing",
+        "snippet": "res.hp = min(int(res.hp_max), before_hp + amount)",
+        "reason": (
+            "CANONICAL player-healing write. apply_player_healing() is the "
+            "centralized final player-HP restoration primitive: it caps at hp_max, "
+            "performs the single res.hp mutation, and returns the actual capped "
+            "gain. This is the only allowlisted POSITIVE player-HP application; all "
+            "other production restoration must route through this function."
+        ),
+    },
+    {
+        "file": "resolver.py",
+        "function": "_apply_damage_application_stage",
+        "snippet": "target_entity.res.hp -= total_remaining",
+        "reason": (
+            "Damage subtraction, not healing. This is the post-absorb HP loss in "
+            "the damage-application resolution stage (the player branch of the "
+            "damage pipeline); it reduces HP by resolved incoming damage and must "
+            "not route through apply_player_healing()."
+        ),
+    },
+    {
+        "file": "resolver.py",
+        "function": "apply_self_inflicted_magical_damage",
+        "snippet": "ps.res.hp -= remaining",
+        "reason": (
+            "Damage subtraction, not healing. Applies post-absorb self-inflicted "
+            "Mindgames magical damage to the caster's HP; a negative HP delta, so "
+            "it is out of scope for the healing helper."
+        ),
+    },
+    {
+        "file": "resolver.py",
+        "function": "apply_hp_sacrifice_absorb",
+        "snippet": "actor.res.hp = max(min_hp_leave, int(actor.res.hp) - sacrificed_hp)",
+        "reason": (
+            "HP sacrifice / explicit HP spending, not healing. Deliberately reduces "
+            "the actor's HP as a cost (converting sacrificed HP into an absorb "
+            "shield), clamped to min_hp_leave. It is a cost mechanic and must stay "
+            "local rather than routing through apply_player_healing()."
+        ),
+    },
+)
+
+
+def _is_allowed_player_hp_mutation(mutation: _HpMutation) -> bool:
+    for entry in ALLOWED_PLAYER_HP_MUTATIONS:
+        if (
+            entry["file"] == mutation.basename
+            and entry["function"] == mutation.function
+            and entry["snippet"] in (mutation.snippet, mutation.statement)
+        ):
+            return True
+    return False
+
+
+# Synthetic self-test cases. A guardrail is worthless if its detector silently
+# stops matching, so before trusting the real scan we assert the detector still
+# flags obvious bypasses and still ignores pet HP. Each "bad" source MUST yield
+# >=1 player-HP mutation; each "pet" source MUST yield exactly 0.
+_SELFTEST_BAD_SOURCES: Tuple[Tuple[str, str], ...] = (
+    ("bad_plus", "def bad_plus(player):\n    player.res.hp += 5\n"),
+    ("bad_add", "def bad_add(player, heal):\n    player.res.hp = player.res.hp + heal\n"),
+    ("bad_min", "def bad_min(player, heal):\n    player.res.hp = min(player.res.hp + heal, player.res.hp_max)\n"),
+    ("bad_full", "def bad_full(player):\n    player.res.hp = player.res.hp_max\n"),
+    ("bad_setattr", "def bad_setattr(player, heal):\n    setattr(player.res, \"hp\", player.res.hp + heal)\n"),
+    ("bad_alias", "def bad_alias(res, heal):\n    res.hp += heal\n"),
+)
+
+_SELFTEST_PET_SOURCES: Tuple[Tuple[str, str], ...] = (
+    ("allowed_pet_heal", "def allowed_pet_heal(pet, heal):\n    pet.hp = min(pet.hp + heal, pet.hp_max)\n"),
+    ("allowed_pet_damage", "def allowed_pet_damage(pet, damage):\n    pet.hp -= damage\n"),
+)
+
+
+def _run_detector_self_tests() -> List[str]:
+    """Return a list of self-test failures (empty when the detector is healthy)."""
+    problems: List[str] = []
+    for name, src in _SELFTEST_BAD_SOURCES:
+        found = _find_player_hp_mutations(src, f"<selftest:{name}>")
+        if not found:
+            problems.append(
+                f"detector self-test '{name}' regressed: expected a player-HP "
+                "mutation to be detected, but none was found."
+            )
+    for name, src in _SELFTEST_PET_SOURCES:
+        found = _find_player_hp_mutations(src, f"<selftest:{name}>")
+        if found:
+            problems.append(
+                f"detector self-test '{name}' regressed: pet HP write was "
+                f"misclassified as a player-resource write ({found[0].snippet!r})."
+            )
+    return problems
+
+
+def guardrail_player_hp_writes() -> Tuple[bool, str]:
+    """Fail on un-allowlisted direct player-resource HP writes (`*.res.hp`).
+
+    All production player HP RESTORATION must route through
+    ``effects.apply_player_healing()``. Direct ``*.res.hp`` writes are prohibited
+    unless they are the canonical mutation inside that helper or a narrow,
+    documented non-healing exception (damage subtraction, HP sacrifice/spending,
+    embedded debug/setup) in ``ALLOWED_PLAYER_HP_MUTATIONS``. Pet HP (bare
+    ``pet.hp``) is out of scope and stays explicit and local.
+    """
+    # (0) Detector self-tests: a broken matcher must fail loudly, not pass by
+    #     silently matching nothing.
+    self_test_problems = _run_detector_self_tests()
+    if self_test_problems:
+        detail = "\n".join(f"  - {p}" for p in self_test_problems)
+        return False, "Player-HP detector self-test(s) failed:\n" + detail
+
+    # (1) Current-source assertion: the canonical helper must still exist and the
+    #     allowlist must still recognize its HP mutation.
+    effects_path = _gameplay_file("effects.py")
+    if effects_path is None:
+        return False, "effects.py not found; cannot verify apply_player_healing()."
+    effects_source = _read(effects_path)
+    if "def apply_player_healing(" not in effects_source:
+        return False, (
+            "effects.py no longer defines apply_player_healing(); the canonical "
+            "player-healing primitive is missing."
+        )
+    canonical = _extract_function(effects_source, "apply_player_healing")
+    canonical_muts = _find_player_hp_mutations(canonical or "", "effects.py") if canonical else []
+    if not canonical_muts:
+        return False, (
+            "apply_player_healing() no longer contains a recognizable player-HP "
+            "mutation; the canonical healing write may have changed shape."
+        )
+    if not all(_is_allowed_player_hp_mutation(m) for m in canonical_muts):
+        return False, (
+            "apply_player_healing()'s HP mutation is not recognized by "
+            "ALLOWED_PLAYER_HP_MUTATIONS; the canonical allowlist snippet may be "
+            "out of date with the helper's actual write."
+        )
+
+    # (2) Scan every gameplay module and classify each player-HP mutation.
+    violations: List[str] = []
+    scanned: List[str] = []
+    for basename in GAMEPLAY_FILE_BASENAMES:
+        path = _gameplay_file(basename)
+        if path is None:
+            continue
+        scanned.append(basename)
+        for mutation in _find_player_hp_mutations(_read(path), basename):
+            if _is_allowed_player_hp_mutation(mutation):
+                continue
+            violations.append(
+                f"{mutation.basename}:{mutation.lineno} "
+                f"(in {mutation.function}()): {mutation.snippet}"
+            )
+
+    if not scanned:
+        return False, "No gameplay files were found to scan for player-HP writes."
+
+    if violations:
+        detail = "\n".join(f"  - {v}" for v in violations)
+        return False, (
+            "Direct player HP mutation(s) outside effects.apply_player_healing().\n"
+            "All production player HP restoration must route through the shared "
+            "helper. Damage, sacrifice, setup, and other non-healing writes require "
+            "a narrow, documented ALLOWED_PLAYER_HP_MUTATIONS entry:\n\n" + detail +
+            "\n\nEither route restoration through effects.apply_player_healing(), "
+            "or -- only if this write is genuinely NOT healing -- add a narrow "
+            "documented exception. Do NOT allowlist ordinary restoration."
+        )
+    return True, (
+        f"Scanned {', '.join(scanned)}; every direct player-resource HP write is "
+        "the canonical apply_player_healing() mutation or a documented non-healing "
+        f"exception ({len(ALLOWED_PLAYER_HP_MUTATIONS)} allowlisted). Pet HP "
+        "(bare pet.hp) is correctly out of scope."
+    )
+
+
+# =========================================================================== #
 # Runner plumbing (mirrors the other suites' run_all() contract).
 # =========================================================================== #
 
@@ -796,6 +1149,7 @@ _GUARDRAILS: Tuple[Tuple[str, Callable[[], Tuple[bool, str]]], ...] = (
     ("guardrail_raw_proc_bonus_damage", guardrail_raw_proc_bonus_damage),
     ("guardrail_resource_gain_logs_use_gained", guardrail_resource_gain_logs_use_gained),
     ("guardrail_queued_damage_event_literals", guardrail_queued_damage_event_literals),
+    ("guardrail_player_hp_writes", guardrail_player_hp_writes),
 )
 
 
