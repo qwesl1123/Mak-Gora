@@ -811,9 +811,20 @@ def guardrail_queued_damage_event_literals() -> Tuple[bool, str]:
 # ``.res.hp`` (or ``.res`` for setattr) attribute segments, so it flags writes
 # rooted in a subscript, call, or longer expression (``match.state[sid].res.hp``,
 # ``players[0].res.hp``, ``get_player().res.hp``) just as readily as a plain
-# ``player.res.hp``. It does not resolve the root object -- that would require
-# data-flow analysis the guardrail deliberately avoids -- but a player HP write is
-# recognized by its ``.res.hp`` shape regardless of what the root evaluates to.
+# ``player.res.hp``. A player HP write is recognized by its ``.res.hp`` shape
+# regardless of what the root evaluates to.
+#
+# On top of the structural shape, the guardrail also tracks function-local
+# resource ALIASES so a write cannot hide behind a one-line rebind. Within each
+# function (and the module) scope, a local name bound from any ``*.res``
+# expression, from ``getattr(<expr>, "res", ...)``, or from another known alias
+# (a small fixed-point pass, so ``second = first`` chains resolve) is treated as a
+# player-resource object; ``<alias>.hp`` and ``setattr(<alias>, "hp", ...)`` are
+# then flagged too. Alias sets are per-scope: nested and sibling functions never
+# share aliases, so this stays intra-function and never becomes cross-function
+# data-flow or type inference. It is deliberately shallow -- it catches the obvious
+# ``r = x.res; r.hp -= v`` rebind, not aliases laundered through containers,
+# attributes, calls, or returns.
 
 
 class _HpMutation(NamedTuple):
@@ -827,37 +838,56 @@ class _HpMutation(NamedTuple):
     kind: str         # "assign" | "augassign" | "annassign" | "setattr"
 
 
-def _is_res_object(node: ast.AST) -> bool:
-    """True iff ``node`` is a ``*.res`` object (or the bare local alias ``res``).
+def _is_getattr_res(node: ast.AST) -> bool:
+    """True iff ``node`` is ``getattr(<expr>, "res", ...)`` -- a dynamic ``.res`` read."""
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "getattr"
+        and len(node.args) >= 2
+        and isinstance(node.args[1], ast.Constant)
+        and node.args[1].value == "res"
+    )
+
+
+def _is_res_object(node: ast.AST, alias_names: Optional[set[str]] = None) -> bool:
+    """True iff ``node`` refers to a player-resource (``*.res``) object.
 
     Structural, root-agnostic: any ``ast.Attribute`` whose final attribute is
     ``res`` qualifies (``player.res``, ``match.state[sid].res``,
-    ``get_player().res``), as does the bare ``ast.Name`` ``res``. This is the
-    setattr base test -- ``setattr(<*.res>, "hp", ...)`` writes player resource HP.
+    ``get_player().res``), as does the bare ``ast.Name`` ``res``. When
+    ``alias_names`` is supplied, a local name bound to a resource object in the
+    same scope (see ``_compute_resource_aliases``) also qualifies -- so a rebound
+    ``target_res = player.res`` is recognized as a resource object too. This is
+    the setattr base test -- ``setattr(<res-object>, "hp", ...)`` writes player HP.
     """
     if isinstance(node, ast.Attribute):
         return node.attr == "res"
     if isinstance(node, ast.Name):
-        return node.id == "res"
+        if node.id == "res":
+            return True
+        if alias_names is not None and node.id in alias_names:
+            return True
     return False
 
 
-def _is_player_hp_target(node: ast.AST) -> bool:
-    """True iff ``node`` is a PLAYER resource HP target (``*.res.hp`` / ``res.hp``).
+def _is_player_hp_target(node: ast.AST, alias_names: Optional[set[str]] = None) -> bool:
+    """True iff ``node`` is a PLAYER resource HP target (``<res-object>.hp``).
 
-    Recognized structurally by the trailing two segments: an ``ast.Attribute``
-    ``.hp`` whose immediate value is a ``*.res`` object (per ``_is_res_object``).
-    This matches ``player.res.hp``, the bare alias ``res.hp``, and subscript/call
-    rooted forms like ``match.state[sid].res.hp``, ``players[0].res.hp``, and
-    ``get_player().res.hp`` -- regardless of the root expression.
+    Recognized by the trailing two segments: an ``ast.Attribute`` ``.hp`` whose
+    immediate value is a resource object (per ``_is_res_object``). This matches
+    ``player.res.hp``, the bare alias ``res.hp``, subscript/call rooted forms like
+    ``match.state[sid].res.hp`` / ``players[0].res.hp`` / ``get_player().res.hp``,
+    and -- when ``alias_names`` is supplied -- function-local resource aliases such
+    as ``target_res.hp`` where ``target_res = player.res``.
 
-    It rejects bare ``pet.hp`` (its value ``pet`` is not a ``.res`` object) and
+    It rejects bare ``pet.hp`` (its value ``pet`` is not a resource object) and
     guards against ``.res.hp_max`` (the final attribute is ``hp_max``, not ``hp``).
     """
     return (
         isinstance(node, ast.Attribute)
         and node.attr == "hp"
-        and _is_res_object(node.value)
+        and _is_res_object(node.value, alias_names)
     )
 
 
@@ -882,6 +912,21 @@ def _ast_enclosing_function(node: ast.AST, parents: Dict[ast.AST, ast.AST]) -> s
             return cur.name
         cur = parents.get(cur)
     return "<module>"
+
+
+def _owning_scope(node: ast.AST, parents: Dict[ast.AST, ast.AST]) -> ast.AST:
+    """Return the nearest enclosing function node, or the module root.
+
+    This is the ALIAS scope key: the innermost ``def``/``async def`` a node lives
+    in, falling back to the ``Module`` root. Nested and sibling functions get
+    distinct scopes, so their resource-alias sets never bleed into one another.
+    """
+    cur: Optional[ast.AST] = node
+    while cur is not None:
+        if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Module)):
+            return cur
+        cur = parents.get(cur)
+    return node  # unreachable for a parsed module, but keeps the type total
 
 
 def _record(
@@ -923,35 +968,89 @@ def _flatten_targets(target: ast.AST) -> List[ast.AST]:
     return [target]
 
 
+def _compute_resource_aliases(
+    tree: ast.AST, parents: Dict[ast.AST, ast.AST]
+) -> Dict[ast.AST, set[str]]:
+    """Map each scope (function / module node) to its set of resource-alias names.
+
+    A simple ``name = <rhs>`` assignment introduces an alias when ``<rhs>`` is:
+
+    * any ``*.res`` expression (per ``_is_res_object`` -- includes bare ``res``);
+    * ``getattr(<expr>, "res", ...)`` (per ``_is_getattr_res``); or
+    * another name already known to be an alias in the same scope.
+
+    The third rule is applied via a fixed-point pass so propagation chains like
+    ``first = player.res`` / ``second = first`` / ``second.hp += ...`` resolve.
+    Only single-``Name``-target assignments seed aliases; the pass is intentionally
+    shallow (no container/attribute/call/return laundering) and strictly
+    intra-scope, so nested and sibling functions keep independent alias sets.
+    """
+    scope_assigns: Dict[ast.AST, List[Tuple[str, ast.AST]]] = {}
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+        ):
+            scope = _owning_scope(node, parents)
+            scope_assigns.setdefault(scope, []).append((node.targets[0].id, node.value))
+
+    aliases: Dict[ast.AST, set[str]] = {}
+    for scope, assigns in scope_assigns.items():
+        names: set[str] = set()
+        changed = True
+        while changed:  # fixed point over name -> name propagation
+            changed = False
+            for name, rhs in assigns:
+                if name in names:
+                    continue
+                if (
+                    _is_res_object(rhs)
+                    or _is_getattr_res(rhs)
+                    or (isinstance(rhs, ast.Name) and rhs.id in names)
+                ):
+                    names.add(name)
+                    changed = True
+        aliases[scope] = names
+    return aliases
+
+
 def _find_player_hp_mutations(source: str, basename: str) -> List[_HpMutation]:
     """Return every direct player-resource HP write in ``source``.
 
     Handles ``Assign`` (incl. multi-target chains and ``Tuple``/``List``
     destructuring targets), ``AnnAssign``, ``AugAssign``, and
-    ``setattr(<*.res>, "hp", ...)`` calls. RHS arithmetic is NOT inspected: the
-    scan finds ALL ``*.res.hp`` writes (healing, damage, sacrifice, death, setup)
-    and the allowlist then decides which are legitimate non-healing writes. This
-    ordering is deliberate -- it is far safer than trying to infer whether an
-    arbitrary right-hand side is a positive (healing) or negative (damage) delta.
+    ``setattr(<res-object>, "hp", ...)`` calls, where a "res object" is a ``*.res``
+    expression, the bare alias ``res``, or a function-local resource alias resolved
+    by ``_compute_resource_aliases``. RHS arithmetic is NOT inspected: the scan
+    finds ALL such HP writes (healing, damage, sacrifice, death, setup) and the
+    allowlist then decides which are legitimate non-healing writes. This ordering
+    is deliberate -- it is far safer than trying to infer whether an arbitrary
+    right-hand side is a positive (healing) or negative (damage) delta.
     """
     tree = ast.parse(source)
     parents = _build_parent_map(tree)
+    aliases_by_scope = _compute_resource_aliases(tree, parents)
     source_lines = source.splitlines()
     mutations: List[_HpMutation] = []
+
+    def scope_aliases(node: ast.AST) -> set[str]:
+        return aliases_by_scope.get(_owning_scope(node, parents), set())
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
             # a = b = value -> inspect every target; destructuring targets
             # (a.res.hp, rest = ...) are flattened to their leaves.
+            aliases = scope_aliases(node)
             for target in node.targets:
                 for leaf in _flatten_targets(target):
-                    if _is_player_hp_target(leaf):
+                    if _is_player_hp_target(leaf, aliases):
                         mutations.append(_record(node, "assign", basename, source_lines, source, parents))
         elif isinstance(node, ast.AnnAssign):
-            if node.value is not None and _is_player_hp_target(node.target):
+            if node.value is not None and _is_player_hp_target(node.target, scope_aliases(node)):
                 mutations.append(_record(node, "annassign", basename, source_lines, source, parents))
         elif isinstance(node, ast.AugAssign):
-            if _is_player_hp_target(node.target):
+            if _is_player_hp_target(node.target, scope_aliases(node)):
                 mutations.append(_record(node, "augassign", basename, source_lines, source, parents))
         elif isinstance(node, ast.Call):
             func = node.func
@@ -961,7 +1060,7 @@ def _find_player_hp_mutations(source: str, basename: str) -> List[_HpMutation]:
                 and len(node.args) >= 2
                 and isinstance(node.args[1], ast.Constant)
                 and node.args[1].value == "hp"
-                and _is_res_object(node.args[0])
+                and _is_res_object(node.args[0], scope_aliases(node))
             ):
                 mutations.append(_record(node, "setattr", basename, source_lines, source, parents))
 
@@ -1056,11 +1155,35 @@ _SELFTEST_BAD_SOURCES: Tuple[Tuple[str, str], ...] = (
     ("bad_index_assign", "def bad_index_assign(players, heal):\n    players[0].res.hp = players[0].res.hp + heal\n"),
     ("bad_subscript_setattr", "def bad_subscript_setattr(match, sid, heal):\n    setattr(match.state[sid].res, \"hp\", heal)\n"),
     ("bad_call_root", "def bad_call_root(get_player):\n    get_player().res.hp = get_player().res.hp_max\n"),
+    # Function-local resource aliases must be flagged too (2nd Codex review on
+    # PR #34): a one-line rebind of `.res` (or getattr(..., "res")) must not hide
+    # the subsequent `.hp` write. Propagation chains (`second = first`) resolve via
+    # the fixed-point pass.
+    ("bad_attribute_alias",
+     "def bad_attribute_alias(player, heal):\n    target_res = player.res\n    target_res.hp += heal\n"),
+    ("bad_getattr_alias",
+     "def bad_getattr_alias(target, heal):\n    target_res = getattr(target, \"res\", None)\n"
+     "    target_res.hp = min(target_res.hp + heal, target_res.hp_max)\n"),
+    ("bad_alias_setattr",
+     "def bad_alias_setattr(target, heal):\n    resources = getattr(target, \"res\", None)\n"
+     "    setattr(resources, \"hp\", heal)\n"),
+    ("bad_propagated_alias",
+     "def bad_propagated_alias(player, heal):\n    first = player.res\n    second = first\n    second.hp += heal\n"),
 )
 
 _SELFTEST_PET_SOURCES: Tuple[Tuple[str, str], ...] = (
     ("allowed_pet_heal", "def allowed_pet_heal(pet, heal):\n    pet.hp = min(pet.hp + heal, pet.hp_max)\n"),
     ("allowed_pet_damage", "def allowed_pet_damage(pet, damage):\n    pet.hp -= damage\n"),
+    # Negative: a local bound from a NON-``.res`` attribute is not a resource
+    # alias, so writing its ``.hp`` must stay unflagged (guards the alias tracker
+    # against over-reach onto arbitrary ``x.hp`` locals).
+    ("clean_unrelated_alias",
+     "def clean_unrelated_alias(entity, heal):\n    snapshot = entity.stats\n    snapshot.hp += heal\n"),
+    # Negative: aliases are per-scope -- an alias defined in a SIBLING function
+    # must not make a bare `first.hp` write in another function a player-HP write.
+    ("clean_sibling_scope",
+     "def defines_alias(player):\n    first = player.res\n"
+     "def other(first, heal):\n    first.hp += heal\n"),
 )
 
 
@@ -1078,7 +1201,7 @@ def _run_detector_self_tests() -> List[str]:
         found = _find_player_hp_mutations(src, f"<selftest:{name}>")
         if found:
             problems.append(
-                f"detector self-test '{name}' regressed: pet HP write was "
+                f"detector self-test '{name}' regressed: a non-player HP write was "
                 f"misclassified as a player-resource write ({found[0].snippet!r})."
             )
     return problems
