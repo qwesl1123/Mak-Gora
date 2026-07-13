@@ -1019,6 +1019,34 @@ def _flatten_targets(target: ast.AST) -> List[ast.AST]:
     return [target]
 
 
+def _iter_alias_bindings(target: ast.AST, value: ast.AST) -> List[Tuple[str, ast.AST]]:
+    """Yield ``(name, bound_value)`` pairs a binding introduces, for alias seeding.
+
+    * ``name = <value>`` -> ``(name, <value>)``.
+    * Tuple/list unpacking is paired element-wise ONLY when both sides are
+      tuple/list literals of equal length with no ``Starred`` target -- e.g.
+      ``target_res, = (player.res,)`` -> ``(target_res, player.res)`` and
+      ``a, b = x.res, y.res`` -> ``(a, x.res)``, ``(b, y.res)``. Non-decomposable
+      pairings (a starred target, a length mismatch, or a value that is not a
+      literal tuple/list such as a call) yield nothing -- the guardrail does not
+      guess how an opaque right-hand side unpacks. Attribute/subscript targets are
+      not alias names and yield nothing.
+    """
+    if isinstance(target, ast.Name):
+        return [(target.id, value)]
+    if (
+        isinstance(target, (ast.Tuple, ast.List))
+        and isinstance(value, (ast.Tuple, ast.List))
+        and not any(isinstance(elt, ast.Starred) for elt in target.elts)
+        and len(target.elts) == len(value.elts)
+    ):
+        pairs: List[Tuple[str, ast.AST]] = []
+        for elt_target, elt_value in zip(target.elts, value.elts):
+            pairs.extend(_iter_alias_bindings(elt_target, elt_value))
+        return pairs
+    return []
+
+
 def _compute_resource_aliases(
     tree: ast.AST, parents: Dict[ast.AST, ast.AST]
 ) -> Dict[ast.AST, set[str]]:
@@ -1037,8 +1065,10 @@ def _compute_resource_aliases(
     The third rule is applied via a fixed-point pass so propagation chains like
     ``first = player.res`` / ``second = first`` / ``second.hp += ...`` resolve.
     Each simple ``Name`` binding seeds an alias, including every ``Name`` target of
-    a chained assignment (``primary = target_res = player.res`` seeds both), while
-    non-``Name`` targets (attributes, tuples) are ignored here. The pass is
+    a chained assignment (``primary = target_res = player.res`` seeds both) and each
+    ``Name`` of a tuple/list unpacking paired element-wise with a tuple/list value
+    (``target_res, = (player.res,)`` seeds ``target_res``; see
+    ``_iter_alias_bindings``). Attribute targets are ignored here. The pass is
     intentionally shallow (no container/attribute/call/return laundering). This map
     holds each scope's OWN aliases; closure visibility (merging aliases from
     lexically enclosing scopes, with inner-scope shadowing) is applied at lookup
@@ -1047,17 +1077,19 @@ def _compute_resource_aliases(
     """
     scope_assigns: Dict[ast.AST, List[Tuple[str, ast.AST]]] = {}
 
-    def _add(name_node: ast.AST, value: Optional[ast.AST], scope_node: ast.AST) -> None:
-        if value is not None and isinstance(name_node, ast.Name):
-            scope_assigns.setdefault(scope_node, []).append((name_node.id, value))
+    def _seed(target: ast.AST, value: Optional[ast.AST], scope_node: ast.AST) -> None:
+        if value is None:
+            return
+        for name, bound in _iter_alias_bindings(target, value):
+            scope_assigns.setdefault(scope_node, []).append((name, bound))
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
             scope = _owning_scope(node, parents)
             for target in node.targets:  # a = b = value -> seed every Name target
-                _add(target, node.value, scope)
+                _seed(target, node.value, scope)
         elif isinstance(node, ast.AnnAssign):
-            _add(node.target, node.value, _owning_scope(node, parents))
+            _seed(node.target, node.value, _owning_scope(node, parents))
 
     aliases: Dict[ast.AST, set[str]] = {}
     for scope, assigns in scope_assigns.items():
@@ -1270,6 +1302,13 @@ _SELFTEST_BAD_SOURCES: Tuple[Tuple[str, str], ...] = (
     ("bad_closure_alias",
      "def bad_closure_alias(player, amount):\n    target_res = player.res\n"
      "    def heal():\n        target_res.hp += amount\n"),
+    # A resource bound through tuple/list unpacking must seed the alias too
+    # (7th Codex review on PR #34): element-wise pairing of literal tuples/lists.
+    ("bad_destructured_alias",
+     "def bad_destructured_alias(player, heal):\n    target_res, = (player.res,)\n    target_res.hp += heal\n"),
+    ("bad_destructured_alias_pair",
+     "def bad_destructured_alias_pair(player, other, heal):\n"
+     "    target_res, spare = player.res, other\n    target_res.hp += heal\n"),
 )
 
 _SELFTEST_PET_SOURCES: Tuple[Tuple[str, str], ...] = (
