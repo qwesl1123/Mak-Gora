@@ -31,6 +31,13 @@ Guardrails implemented here:
    ``"type": "damage_event"`` dict literals in gameplay producers are flagged;
    queued events must be built via ``damage_events.make_queued_damage_event()``.
 
+6. Player HP restoration: direct player resource HP mutations are rejected unless
+   they are the canonical ``apply_player_healing`` write or a narrow documented
+   non-healing exception (damage subtraction, HP sacrifice/spending, or embedded
+   debug/setup). Pet HP remains outside this player-only rule. This guardrail
+   uses Python's ``ast`` module to recognize assignment targets accurately and to
+   distinguish player resource HP (``*.res.hp``) from pet HP (bare ``pet.hp``).
+
 Design notes / limitations:
 
 * These checks are deliberately conservative. They catch the *obvious* bad
@@ -45,9 +52,10 @@ Design notes / limitations:
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, NamedTuple, Optional, Tuple
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -80,11 +88,12 @@ def _gameplay_file(basename: str) -> Optional[Path]:
     return None
 
 
-# Engine gameplay files that participate in the resource / damage pipelines.
+# Engine gameplay files that participate in the resource / damage / healing
+# pipelines.
 # NOTE: When a new engine gameplay module is added (e.g. a dedicated combat or
-# damage module), append its basename here so the resource-write guardrail scans
-# it too. Do NOT add data modules (abilities.py / items.py / pets.py), tests, or
-# duel.html -- those are out of scope by design.
+# damage module), append its basename here so the resource-write and player-HP
+# guardrails scan it too. Do NOT add data modules (abilities.py / items.py /
+# pets.py), tests, or duel.html -- those are out of scope by design.
 GAMEPLAY_FILE_BASENAMES: Tuple[str, ...] = (
     "resolver.py",
     "effects.py",
@@ -787,6 +796,662 @@ def guardrail_queued_damage_event_literals() -> Tuple[bool, str]:
 
 
 # =========================================================================== #
+# Guardrail 6: player HP restoration must route through apply_player_healing.
+# =========================================================================== #
+#
+# Unlike guardrails 1 & 5, which match on source text, this guardrail parses the
+# gameplay modules with Python's ``ast`` so it can identify assignment TARGETS
+# precisely and distinguish PLAYER resource HP (any expression whose structural
+# suffix is ``.res.hp``, including the bare local alias ``res.hp``) from PET HP (a
+# bare entity ``pet.hp`` with no ``.res`` segment). Pet HP is intentionally out of
+# scope: pet healing/damage/death/regen keep their explicit local ``pet.hp``
+# clamps and must NOT be forced through the player helper.
+#
+# Recognition is STRUCTURAL, not name-rooted: it inspects only the trailing
+# ``.res.hp`` (or ``.res`` for setattr) attribute segments, so it flags writes
+# rooted in a subscript, call, or longer expression (``match.state[sid].res.hp``,
+# ``players[0].res.hp``, ``get_player().res.hp``) just as readily as a plain
+# ``player.res.hp``. A player HP write is recognized by its ``.res.hp`` shape
+# regardless of what the root evaluates to.
+#
+# On top of the structural shape, the guardrail also tracks function-local
+# resource ALIASES so a write cannot hide behind a one-line rebind. Within each
+# function (and the module) scope, a local name bound from any ``*.res``
+# expression, from ``getattr(<expr>, "res", ...)``, or from another known alias
+# (a small fixed-point pass, so ``second = first`` chains resolve) is treated as a
+# player-resource object; ``<alias>.hp`` and ``setattr(<alias>, "hp", ...)`` are
+# then flagged too. Alias visibility follows LEXICAL scope: a nested helper sees
+# aliases bound in the functions that enclose it (closure semantics), while a
+# name the nested scope binds locally (e.g. a same-named parameter) shadows the
+# outer alias. Sibling functions never share aliases -- they are not on each
+# other's scope chain -- so this stays lexical and never becomes cross-function
+# data-flow or type inference. It is deliberately shallow -- it catches the obvious
+# ``r = x.res; r.hp -= v`` rebind (including from an enclosing scope), not aliases
+# laundered through containers, attributes, calls, or returns.
+
+
+class _HpMutation(NamedTuple):
+    """One direct player-resource HP write found by the AST scan."""
+
+    basename: str
+    function: str
+    lineno: int
+    snippet: str      # exact stripped physical source line (for readable output)
+    statement: str    # normalized (whitespace-collapsed) full statement
+    kind: str         # "assign" | "augassign" | "annassign" | "setattr"
+
+
+def _is_getattr_res(node: ast.AST) -> bool:
+    """True iff ``node`` is ``getattr(<expr>, "res", ...)`` -- a dynamic ``.res`` read."""
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "getattr"
+        and len(node.args) >= 2
+        and isinstance(node.args[1], ast.Constant)
+        and node.args[1].value == "res"
+    )
+
+
+def _is_res_object(node: ast.AST, alias_names: Optional[set[str]] = None) -> bool:
+    """True iff ``node`` refers to a player-resource (``*.res``) object.
+
+    Structural, root-agnostic: any ``ast.Attribute`` whose final attribute is
+    ``res`` qualifies (``player.res``, ``match.state[sid].res``,
+    ``get_player().res``), as does the bare ``ast.Name`` ``res`` and a direct
+    ``getattr(<expr>, "res", ...)`` call (so an inline dynamic lookup like
+    ``getattr(target, "res", None).hp`` is recognized without an intermediate
+    binding). When ``alias_names`` is supplied, a local name bound to a resource
+    object in the same scope (see ``_compute_resource_aliases``) also qualifies --
+    so a rebound ``target_res = player.res`` is recognized too. This is the setattr
+    base test -- ``setattr(<res-object>, "hp", ...)`` writes player HP.
+    """
+    if isinstance(node, ast.Attribute):
+        return node.attr == "res"
+    if _is_getattr_res(node):
+        return True
+    if isinstance(node, ast.Name):
+        if node.id == "res":
+            return True
+        if alias_names is not None and node.id in alias_names:
+            return True
+    return False
+
+
+def _is_player_hp_target(node: ast.AST, alias_names: Optional[set[str]] = None) -> bool:
+    """True iff ``node`` is a PLAYER resource HP target (``<res-object>.hp``).
+
+    Recognized by the trailing two segments: an ``ast.Attribute`` ``.hp`` whose
+    immediate value is a resource object (per ``_is_res_object``). This matches
+    ``player.res.hp``, the bare alias ``res.hp``, subscript/call rooted forms like
+    ``match.state[sid].res.hp`` / ``players[0].res.hp`` / ``get_player().res.hp``,
+    and -- when ``alias_names`` is supplied -- function-local resource aliases such
+    as ``target_res.hp`` where ``target_res = player.res``.
+
+    It rejects bare ``pet.hp`` (its value ``pet`` is not a resource object) and
+    guards against ``.res.hp_max`` (the final attribute is ``hp_max``, not ``hp``).
+    """
+    return (
+        isinstance(node, ast.Attribute)
+        and node.attr == "hp"
+        and _is_res_object(node.value, alias_names)
+    )
+
+
+def _build_parent_map(tree: ast.AST) -> Dict[ast.AST, ast.AST]:
+    parents: Dict[ast.AST, ast.AST] = {}
+    for parent in ast.walk(tree):
+        for child in ast.iter_child_nodes(parent):
+            parents[child] = parent
+    return parents
+
+
+def _ast_enclosing_function(node: ast.AST, parents: Dict[ast.AST, ast.AST]) -> str:
+    """Return the nearest enclosing ``def``/``async def`` name, or ``<module>``.
+
+    Nested functions report their innermost enclosing function (the resolver's
+    HP writes live in nested helpers such as ``apply_self_inflicted_magical_damage``),
+    which is exactly the granularity the allowlist matches on.
+    """
+    cur: Optional[ast.AST] = parents.get(node)
+    while cur is not None:
+        if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            return cur.name
+        cur = parents.get(cur)
+    return "<module>"
+
+
+def _owning_scope(node: ast.AST, parents: Dict[ast.AST, ast.AST]) -> ast.AST:
+    """Return the nearest enclosing function node, or the module root.
+
+    This is the ALIAS scope key: the innermost ``def``/``async def`` a node lives
+    in, falling back to the ``Module`` root. Nested and sibling functions get
+    distinct scopes, so their resource-alias sets never bleed into one another.
+    """
+    cur: Optional[ast.AST] = node
+    while cur is not None:
+        if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Module)):
+            return cur
+        cur = parents.get(cur)
+    return node  # unreachable for a parsed module, but keeps the type total
+
+
+def _enclosing_scope(scope: ast.AST, parents: Dict[ast.AST, ast.AST]) -> Optional[ast.AST]:
+    """Return the lexically enclosing scope of ``scope`` (its parent def/module).
+
+    Used to resolve CLOSURE aliases: a nested function sees names bound in the
+    functions that lexically contain it. Returns ``None`` above the module root.
+    """
+    cur = parents.get(scope)
+    while cur is not None:
+        if isinstance(cur, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Module)):
+            return cur
+        cur = parents.get(cur)
+    return None
+
+
+def _collect_scope_local_names(
+    tree: ast.AST, parents: Dict[ast.AST, ast.AST]
+) -> Dict[ast.AST, set[str]]:
+    """Map each scope to the set of names it binds locally (params + Store names).
+
+    A name a scope binds locally SHADOWS the same name in enclosing scopes, so
+    closure-alias resolution must not inherit an outer resource alias when the
+    inner scope rebinds that name (e.g. a nested function parameter of the same
+    name). Store-context ``Name`` targets cover assignment / ``for`` / ``with as``
+    / ``except as`` bindings; function parameters are added explicitly. This is a
+    safe over-approximation: attributing a name to a scope it doesn't truly own
+    only suppresses inheritance (fewer detections), never invents a false one.
+    """
+    locals_by_scope: Dict[ast.AST, set[str]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            args = node.args
+            names = locals_by_scope.setdefault(node, set())
+            for arg in (*args.posonlyargs, *args.args, *args.kwonlyargs):
+                names.add(arg.arg)
+            if args.vararg:
+                names.add(args.vararg.arg)
+            if args.kwarg:
+                names.add(args.kwarg.arg)
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            scope = _owning_scope(node, parents)
+            locals_by_scope.setdefault(scope, set()).add(node.id)
+    return locals_by_scope
+
+
+def _record(
+    node: ast.AST,
+    kind: str,
+    basename: str,
+    source_lines: List[str],
+    source: str,
+    parents: Dict[ast.AST, ast.AST],
+) -> _HpMutation:
+    line = source_lines[node.lineno - 1].strip() if 0 < node.lineno <= len(source_lines) else ""
+    segment = ast.get_source_segment(source, node) or line
+    statement = " ".join(segment.split())
+    return _HpMutation(
+        basename=basename,
+        function=_ast_enclosing_function(node, parents),
+        lineno=node.lineno,
+        snippet=line,
+        statement=statement,
+        kind=kind,
+    )
+
+
+def _flatten_targets(target: ast.AST) -> List[ast.AST]:
+    """Flatten an assignment target into its leaf expressions.
+
+    Recurses through ``Tuple``/``List`` destructuring targets (and unwraps
+    ``Starred``) so that ``a.res.hp, rest = ...`` and nested forms like
+    ``(a.res.hp, (b, c)) = ...`` still surface the ``*.res.hp`` leaf. Non-container
+    targets are returned as-is.
+    """
+    if isinstance(target, (ast.Tuple, ast.List)):
+        leaves: List[ast.AST] = []
+        for elt in target.elts:
+            leaves.extend(_flatten_targets(elt))
+        return leaves
+    if isinstance(target, ast.Starred):
+        return _flatten_targets(target.value)
+    return [target]
+
+
+def _iter_alias_bindings(target: ast.AST, value: ast.AST) -> List[Tuple[str, ast.AST]]:
+    """Yield ``(name, bound_value)`` pairs a binding introduces, for alias seeding.
+
+    * ``name = <value>`` -> ``(name, <value>)``.
+    * Tuple/list unpacking is paired element-wise ONLY when both sides are
+      tuple/list literals of equal length with no ``Starred`` target -- e.g.
+      ``target_res, = (player.res,)`` -> ``(target_res, player.res)`` and
+      ``a, b = x.res, y.res`` -> ``(a, x.res)``, ``(b, y.res)``. Non-decomposable
+      pairings (a starred target, a length mismatch, or a value that is not a
+      literal tuple/list such as a call) yield nothing -- the guardrail does not
+      guess how an opaque right-hand side unpacks. Attribute/subscript targets are
+      not alias names and yield nothing.
+    """
+    if isinstance(target, ast.Name):
+        return [(target.id, value)]
+    if (
+        isinstance(target, (ast.Tuple, ast.List))
+        and isinstance(value, (ast.Tuple, ast.List))
+        and not any(isinstance(elt, ast.Starred) for elt in target.elts)
+        and len(target.elts) == len(value.elts)
+    ):
+        pairs: List[Tuple[str, ast.AST]] = []
+        for elt_target, elt_value in zip(target.elts, value.elts):
+            pairs.extend(_iter_alias_bindings(elt_target, elt_value))
+        return pairs
+    return []
+
+
+def _compute_resource_aliases(
+    tree: ast.AST, parents: Dict[ast.AST, ast.AST]
+) -> Dict[ast.AST, set[str]]:
+    """Map each scope (function / module node) to its set of resource-alias names.
+
+    A simple ``name = <rhs>`` binding introduces an alias when ``<rhs>`` is:
+
+    * any ``*.res`` expression (per ``_is_res_object`` -- includes bare ``res``);
+    * ``getattr(<expr>, "res", ...)`` (per ``_is_getattr_res``); or
+    * another name already known to be an alias in the same scope.
+
+    Plain ``Assign``, value-bearing ``AnnAssign`` (a typed ``name: T = <rhs>``),
+    and ``NamedExpr`` walrus bindings (``(name := <rhs>)``) are all considered, so a
+    typed alias (``target_res: Resources = player.res``) or a walrus alias
+    (``if (target_res := player.res): ...``) is tracked just like a plain one.
+
+    The third rule is applied via a fixed-point pass so propagation chains like
+    ``first = player.res`` / ``second = first`` / ``second.hp += ...`` resolve.
+    Each simple ``Name`` binding seeds an alias, including every ``Name`` target of
+    a chained assignment (``primary = target_res = player.res`` seeds both) and each
+    ``Name`` of a tuple/list unpacking paired element-wise with a tuple/list value
+    (``target_res, = (player.res,)`` seeds ``target_res``; see
+    ``_iter_alias_bindings``). Attribute targets are ignored here. The pass is
+    intentionally shallow (no container/attribute/call/return laundering). This map
+    holds each scope's OWN aliases; closure visibility (merging aliases from
+    lexically enclosing scopes, with inner-scope shadowing) is applied at lookup
+    time in ``_find_player_hp_mutations``. Sibling scopes therefore never share
+    aliases.
+    """
+    scope_assigns: Dict[ast.AST, List[Tuple[str, ast.AST]]] = {}
+
+    def _seed(target: ast.AST, value: Optional[ast.AST], scope_node: ast.AST) -> None:
+        if value is None:
+            return
+        for name, bound in _iter_alias_bindings(target, value):
+            scope_assigns.setdefault(scope_node, []).append((name, bound))
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            scope = _owning_scope(node, parents)
+            for target in node.targets:  # a = b = value -> seed every Name target
+                _seed(target, node.value, scope)
+        elif isinstance(node, ast.AnnAssign):
+            _seed(node.target, node.value, _owning_scope(node, parents))
+        elif isinstance(node, ast.NamedExpr):  # walrus: (target := value)
+            _seed(node.target, node.value, _owning_scope(node, parents))
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            # for TARGET in (a, b, ...): the loop var takes each element in turn,
+            # so pair TARGET with every element of a literal iterable. Non-literal
+            # iterables (a name/call) are opaque and seed nothing.
+            if isinstance(node.iter, (ast.Tuple, ast.List)):
+                scope = _owning_scope(node, parents)
+                for element in node.iter.elts:
+                    _seed(node.target, element, scope)
+
+    aliases: Dict[ast.AST, set[str]] = {}
+    for scope, assigns in scope_assigns.items():
+        names: set[str] = set()
+        changed = True
+        while changed:  # fixed point over name -> name propagation
+            changed = False
+            for name, rhs in assigns:
+                if name in names:
+                    continue
+                if (
+                    _is_res_object(rhs)
+                    or _is_getattr_res(rhs)
+                    or (isinstance(rhs, ast.Name) and rhs.id in names)
+                ):
+                    names.add(name)
+                    changed = True
+        aliases[scope] = names
+    return aliases
+
+
+def _find_player_hp_mutations(source: str, basename: str) -> List[_HpMutation]:
+    """Return every direct player-resource HP write in ``source``.
+
+    Handles ``Assign`` (incl. multi-target chains and ``Tuple``/``List``
+    destructuring targets), ``AnnAssign``, ``AugAssign``, and
+    ``setattr(<res-object>, "hp", ...)`` calls, where a "res object" is a ``*.res``
+    expression, the bare alias ``res``, or a function-local resource alias resolved
+    by ``_compute_resource_aliases``. RHS arithmetic is NOT inspected: the scan
+    finds ALL such HP writes (healing, damage, sacrifice, death, setup) and the
+    allowlist then decides which are legitimate non-healing writes. This ordering
+    is deliberate -- it is far safer than trying to infer whether an arbitrary
+    right-hand side is a positive (healing) or negative (damage) delta.
+    """
+    tree = ast.parse(source)
+    parents = _build_parent_map(tree)
+    aliases_by_scope = _compute_resource_aliases(tree, parents)
+    locals_by_scope = _collect_scope_local_names(tree, parents)
+    source_lines = source.splitlines()
+    mutations: List[_HpMutation] = []
+
+    def scope_aliases(node: ast.AST) -> set[str]:
+        """Aliases visible at ``node``: its own scope plus enclosing scopes.
+
+        Walks the lexical scope chain outward (closure semantics), so a nested
+        helper that closes over an outer resource alias sees it. A name a NEARER
+        scope binds locally shadows the same name in enclosing scopes, so an inner
+        parameter/local of the same name correctly hides an outer alias. Sibling
+        functions never share aliases because they are not on each other's chain.
+        """
+        visible: set[str] = set()
+        shadowed: set[str] = set()
+        scope: Optional[ast.AST] = _owning_scope(node, parents)
+        while scope is not None:
+            for name in aliases_by_scope.get(scope, set()):
+                if name not in shadowed:
+                    visible.add(name)
+            shadowed |= locals_by_scope.get(scope, set())
+            scope = _enclosing_scope(scope, parents)
+        return visible
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            # a = b = value -> inspect every target; destructuring targets
+            # (a.res.hp, rest = ...) are flattened to their leaves.
+            aliases = scope_aliases(node)
+            for target in node.targets:
+                for leaf in _flatten_targets(target):
+                    if _is_player_hp_target(leaf, aliases):
+                        mutations.append(_record(node, "assign", basename, source_lines, source, parents))
+        elif isinstance(node, ast.AnnAssign):
+            if node.value is not None and _is_player_hp_target(node.target, scope_aliases(node)):
+                mutations.append(_record(node, "annassign", basename, source_lines, source, parents))
+        elif isinstance(node, ast.AugAssign):
+            if _is_player_hp_target(node.target, scope_aliases(node)):
+                mutations.append(_record(node, "augassign", basename, source_lines, source, parents))
+        elif isinstance(node, ast.Call):
+            func = node.func
+            if (
+                isinstance(func, ast.Name)
+                and func.id == "setattr"
+                and len(node.args) >= 2
+                and isinstance(node.args[1], ast.Constant)
+                and node.args[1].value == "hp"
+                and _is_res_object(node.args[0], scope_aliases(node))
+            ):
+                mutations.append(_record(node, "setattr", basename, source_lines, source, parents))
+
+    return mutations
+
+
+# Narrow, auditable allowlist for direct player-resource HP writes, same shape as
+# ALLOWED_RESOURCE_MUTATIONS: each entry names a (file basename, enclosing
+# function, exact statement) plus a reason that explains why the write is NOT
+# player healing. Matching is by basename + function + exact statement (the
+# stripped physical line OR the whitespace-normalized full statement), so it can
+# never become a file-wide, function-wide, substring, or line-number exemption.
+#
+# Exactly ONE entry is a positive restoration write: the canonical mutation
+# inside effects.apply_player_healing(). Every other entry is damage subtraction
+# or explicit HP spending, and must stay local precisely because it is not
+# healing. Adding a new entry forces reviewer attention on the healing pipeline.
+ALLOWED_PLAYER_HP_MUTATIONS: Tuple[Dict[str, str], ...] = (
+    {
+        "file": "effects.py",
+        "function": "apply_player_healing",
+        "snippet": "res.hp = min(int(res.hp_max), before_hp + amount)",
+        "reason": (
+            "CANONICAL player-healing write. apply_player_healing() is the "
+            "centralized final player-HP restoration primitive: it caps at hp_max, "
+            "performs the single res.hp mutation, and returns the actual capped "
+            "gain. This is the only allowlisted POSITIVE player-HP application; all "
+            "other production restoration must route through this function."
+        ),
+    },
+    {
+        "file": "resolver.py",
+        "function": "_apply_damage_application_stage",
+        "snippet": "target_entity.res.hp -= total_remaining",
+        "reason": (
+            "Damage subtraction, not healing. This is the post-absorb HP loss in "
+            "the damage-application resolution stage (the player branch of the "
+            "damage pipeline); it reduces HP by resolved incoming damage and must "
+            "not route through apply_player_healing()."
+        ),
+    },
+    {
+        "file": "resolver.py",
+        "function": "apply_self_inflicted_magical_damage",
+        "snippet": "ps.res.hp -= remaining",
+        "reason": (
+            "Damage subtraction, not healing. Applies post-absorb self-inflicted "
+            "Mindgames magical damage to the caster's HP; a negative HP delta, so "
+            "it is out of scope for the healing helper."
+        ),
+    },
+    {
+        "file": "resolver.py",
+        "function": "apply_hp_sacrifice_absorb",
+        "snippet": "actor.res.hp = max(min_hp_leave, int(actor.res.hp) - sacrificed_hp)",
+        "reason": (
+            "HP sacrifice / explicit HP spending, not healing. Deliberately reduces "
+            "the actor's HP as a cost (converting sacrificed HP into an absorb "
+            "shield), clamped to min_hp_leave. It is a cost mechanic and must stay "
+            "local rather than routing through apply_player_healing()."
+        ),
+    },
+)
+
+
+def _is_allowed_player_hp_mutation(mutation: _HpMutation) -> bool:
+    for entry in ALLOWED_PLAYER_HP_MUTATIONS:
+        if (
+            entry["file"] == mutation.basename
+            and entry["function"] == mutation.function
+            and entry["snippet"] in (mutation.snippet, mutation.statement)
+        ):
+            return True
+    return False
+
+
+# Synthetic self-test cases. A guardrail is worthless if its detector silently
+# stops matching, so before trusting the real scan we assert the detector still
+# flags obvious bypasses and still ignores pet HP. Each "bad" source MUST yield
+# >=1 player-HP mutation; each "pet" source MUST yield exactly 0.
+_SELFTEST_BAD_SOURCES: Tuple[Tuple[str, str], ...] = (
+    ("bad_plus", "def bad_plus(player):\n    player.res.hp += 5\n"),
+    ("bad_add", "def bad_add(player, heal):\n    player.res.hp = player.res.hp + heal\n"),
+    ("bad_min", "def bad_min(player, heal):\n    player.res.hp = min(player.res.hp + heal, player.res.hp_max)\n"),
+    ("bad_full", "def bad_full(player):\n    player.res.hp = player.res.hp_max\n"),
+    ("bad_setattr", "def bad_setattr(player, heal):\n    setattr(player.res, \"hp\", player.res.hp + heal)\n"),
+    ("bad_alias", "def bad_alias(res, heal):\n    res.hp += heal\n"),
+    # Non-Name roots must be flagged too (Codex review on PR #34): the target's
+    # structural `.res.hp` suffix is what matters, not whether the root is a plain
+    # Name -- subscript, index, and call roots are all real bypass shapes.
+    ("bad_subscript_aug", "def bad_subscript_aug(match, sid, heal):\n    match.state[sid].res.hp += heal\n"),
+    ("bad_index_assign", "def bad_index_assign(players, heal):\n    players[0].res.hp = players[0].res.hp + heal\n"),
+    ("bad_subscript_setattr", "def bad_subscript_setattr(match, sid, heal):\n    setattr(match.state[sid].res, \"hp\", heal)\n"),
+    ("bad_call_root", "def bad_call_root(get_player):\n    get_player().res.hp = get_player().res.hp_max\n"),
+    # Function-local resource aliases must be flagged too (2nd Codex review on
+    # PR #34): a one-line rebind of `.res` (or getattr(..., "res")) must not hide
+    # the subsequent `.hp` write. Propagation chains (`second = first`) resolve via
+    # the fixed-point pass.
+    ("bad_attribute_alias",
+     "def bad_attribute_alias(player, heal):\n    target_res = player.res\n    target_res.hp += heal\n"),
+    ("bad_getattr_alias",
+     "def bad_getattr_alias(target, heal):\n    target_res = getattr(target, \"res\", None)\n"
+     "    target_res.hp = min(target_res.hp + heal, target_res.hp_max)\n"),
+    ("bad_alias_setattr",
+     "def bad_alias_setattr(target, heal):\n    resources = getattr(target, \"res\", None)\n"
+     "    setattr(resources, \"hp\", heal)\n"),
+    ("bad_propagated_alias",
+     "def bad_propagated_alias(player, heal):\n    first = player.res\n    second = first\n    second.hp += heal\n"),
+    # A typed (annotated) alias binding must seed the alias set too, so the
+    # subsequent `.hp` write is caught (3rd Codex review on PR #34).
+    ("bad_annotated_alias",
+     "def bad_annotated_alias(player, heal):\n    target_res: object = player.res\n    target_res.hp += heal\n"),
+    # A chained assignment must seed every Name target as an alias, so a write
+    # through any of them is caught (4th Codex review on PR #34).
+    ("bad_chained_alias",
+     "def bad_chained_alias(player, heal):\n    primary = target_res = player.res\n    target_res.hp += heal\n"),
+    # An inline dynamic `getattr(..., "res", ...)` base must be flagged without an
+    # intermediate binding (5th Codex review on PR #34).
+    ("bad_inline_getattr",
+     "def bad_inline_getattr(target, heal):\n    getattr(target, \"res\", None).hp += heal\n"),
+    ("bad_inline_getattr_setattr",
+     "def bad_inline_getattr_setattr(target, heal):\n    setattr(getattr(target, \"res\", None), \"hp\", heal)\n"),
+    # A nested helper that closes over an outer resource alias must be flagged
+    # (6th Codex review on PR #34): alias visibility follows lexical scope.
+    ("bad_closure_alias",
+     "def bad_closure_alias(player, amount):\n    target_res = player.res\n"
+     "    def heal():\n        target_res.hp += amount\n"),
+    # A resource bound through tuple/list unpacking must seed the alias too
+    # (7th Codex review on PR #34): element-wise pairing of literal tuples/lists.
+    ("bad_destructured_alias",
+     "def bad_destructured_alias(player, heal):\n    target_res, = (player.res,)\n    target_res.hp += heal\n"),
+    ("bad_destructured_alias_pair",
+     "def bad_destructured_alias_pair(player, other, heal):\n"
+     "    target_res, spare = player.res, other\n    target_res.hp += heal\n"),
+    # A resource bound via a walrus assignment expression must seed the alias too
+    # (8th Codex review on PR #34): ast.NamedExpr binding.
+    ("bad_walrus_alias",
+     "def bad_walrus_alias(player, heal):\n    if (target_res := player.res):\n        target_res.hp += heal\n"),
+    # A resource bound via a loop target over a literal iterable must seed the
+    # alias too (9th Codex review on PR #34): ast.For target.
+    ("bad_loop_alias",
+     "def bad_loop_alias(player, heal):\n    for target_res in (player.res,):\n        target_res.hp += heal\n"),
+)
+
+_SELFTEST_PET_SOURCES: Tuple[Tuple[str, str], ...] = (
+    ("allowed_pet_heal", "def allowed_pet_heal(pet, heal):\n    pet.hp = min(pet.hp + heal, pet.hp_max)\n"),
+    ("allowed_pet_damage", "def allowed_pet_damage(pet, damage):\n    pet.hp -= damage\n"),
+    # Negative: a local bound from a NON-``.res`` attribute is not a resource
+    # alias, so writing its ``.hp`` must stay unflagged (guards the alias tracker
+    # against over-reach onto arbitrary ``x.hp`` locals).
+    ("clean_unrelated_alias",
+     "def clean_unrelated_alias(entity, heal):\n    snapshot = entity.stats\n    snapshot.hp += heal\n"),
+    # Negative: aliases are per-scope -- an alias defined in a SIBLING function
+    # must not make a bare `first.hp` write in another function a player-HP write.
+    ("clean_sibling_scope",
+     "def defines_alias(player):\n    first = player.res\n"
+     "def other(first, heal):\n    first.hp += heal\n"),
+    # Negative: a nested function whose own PARAMETER shadows an outer resource
+    # alias name must not inherit the outer alias -- the local binding wins.
+    ("clean_closure_shadowed_param",
+     "def outer(player, heal):\n    target_res = player.res\n"
+     "    def inner(target_res, amount):\n        target_res.hp += amount\n"),
+)
+
+
+def _run_detector_self_tests() -> List[str]:
+    """Return a list of self-test failures (empty when the detector is healthy)."""
+    problems: List[str] = []
+    for name, src in _SELFTEST_BAD_SOURCES:
+        found = _find_player_hp_mutations(src, f"<selftest:{name}>")
+        if not found:
+            problems.append(
+                f"detector self-test '{name}' regressed: expected a player-HP "
+                "mutation to be detected, but none was found."
+            )
+    for name, src in _SELFTEST_PET_SOURCES:
+        found = _find_player_hp_mutations(src, f"<selftest:{name}>")
+        if found:
+            problems.append(
+                f"detector self-test '{name}' regressed: a non-player HP write was "
+                f"misclassified as a player-resource write ({found[0].snippet!r})."
+            )
+    return problems
+
+
+def guardrail_player_hp_writes() -> Tuple[bool, str]:
+    """Fail on un-allowlisted direct player-resource HP writes (`*.res.hp`).
+
+    All production player HP RESTORATION must route through
+    ``effects.apply_player_healing()``. Direct ``*.res.hp`` writes are prohibited
+    unless they are the canonical mutation inside that helper or a narrow,
+    documented non-healing exception (damage subtraction, HP sacrifice/spending,
+    embedded debug/setup) in ``ALLOWED_PLAYER_HP_MUTATIONS``. Pet HP (bare
+    ``pet.hp``) is out of scope and stays explicit and local.
+    """
+    # (0) Detector self-tests: a broken matcher must fail loudly, not pass by
+    #     silently matching nothing.
+    self_test_problems = _run_detector_self_tests()
+    if self_test_problems:
+        detail = "\n".join(f"  - {p}" for p in self_test_problems)
+        return False, "Player-HP detector self-test(s) failed:\n" + detail
+
+    # (1) Current-source assertion: the canonical helper must still exist and the
+    #     allowlist must still recognize its HP mutation.
+    effects_path = _gameplay_file("effects.py")
+    if effects_path is None:
+        return False, "effects.py not found; cannot verify apply_player_healing()."
+    effects_source = _read(effects_path)
+    if "def apply_player_healing(" not in effects_source:
+        return False, (
+            "effects.py no longer defines apply_player_healing(); the canonical "
+            "player-healing primitive is missing."
+        )
+    canonical = _extract_function(effects_source, "apply_player_healing")
+    canonical_muts = _find_player_hp_mutations(canonical or "", "effects.py") if canonical else []
+    if not canonical_muts:
+        return False, (
+            "apply_player_healing() no longer contains a recognizable player-HP "
+            "mutation; the canonical healing write may have changed shape."
+        )
+    if not all(_is_allowed_player_hp_mutation(m) for m in canonical_muts):
+        return False, (
+            "apply_player_healing()'s HP mutation is not recognized by "
+            "ALLOWED_PLAYER_HP_MUTATIONS; the canonical allowlist snippet may be "
+            "out of date with the helper's actual write."
+        )
+
+    # (2) Scan every gameplay module and classify each player-HP mutation.
+    violations: List[str] = []
+    scanned: List[str] = []
+    for basename in GAMEPLAY_FILE_BASENAMES:
+        path = _gameplay_file(basename)
+        if path is None:
+            continue
+        scanned.append(basename)
+        for mutation in _find_player_hp_mutations(_read(path), basename):
+            if _is_allowed_player_hp_mutation(mutation):
+                continue
+            violations.append(
+                f"{mutation.basename}:{mutation.lineno} "
+                f"(in {mutation.function}()): {mutation.snippet}"
+            )
+
+    if not scanned:
+        return False, "No gameplay files were found to scan for player-HP writes."
+
+    if violations:
+        detail = "\n".join(f"  - {v}" for v in violations)
+        return False, (
+            "Direct player HP mutation(s) outside effects.apply_player_healing().\n"
+            "All production player HP restoration must route through the shared "
+            "helper. Damage, sacrifice, setup, and other non-healing writes require "
+            "a narrow, documented ALLOWED_PLAYER_HP_MUTATIONS entry:\n\n" + detail +
+            "\n\nEither route restoration through effects.apply_player_healing(), "
+            "or -- only if this write is genuinely NOT healing -- add a narrow "
+            "documented exception. Do NOT allowlist ordinary restoration."
+        )
+    return True, (
+        f"Scanned {', '.join(scanned)}; every direct player-resource HP write is "
+        "the canonical apply_player_healing() mutation or a documented non-healing "
+        f"exception ({len(ALLOWED_PLAYER_HP_MUTATIONS)} allowlisted). Pet HP "
+        "(bare pet.hp) is correctly out of scope."
+    )
+
+
+# =========================================================================== #
 # Runner plumbing (mirrors the other suites' run_all() contract).
 # =========================================================================== #
 
@@ -796,6 +1461,7 @@ _GUARDRAILS: Tuple[Tuple[str, Callable[[], Tuple[bool, str]]], ...] = (
     ("guardrail_raw_proc_bonus_damage", guardrail_raw_proc_bonus_damage),
     ("guardrail_resource_gain_logs_use_gained", guardrail_resource_gain_logs_use_gained),
     ("guardrail_queued_damage_event_literals", guardrail_queued_damage_event_literals),
+    ("guardrail_player_hp_writes", guardrail_player_hp_writes),
 )
 
 
