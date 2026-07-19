@@ -187,10 +187,9 @@ def scenario_passive_and_end_of_turn_player_healing_routes_through_shared_helper
     Knowledge, and Emerald Serpent Lightning Breath owner healing. This
     completes migration of the known production player-healing application
     sites. Preserved caller-owned policies: Mindgames-twisted HoT ticks convert
-    to queued self-damage without any normal healing call, Ancestral Knowledge
-    keeps its living-player (hp > 0) gate, item and effect logs keep reporting
-    the requested amount rather than the actual capped gain, and pet HP stays
-    locally clamped outside the player-only helper.
+    to queued self-damage without any normal healing call, item and effect logs
+    keep reporting the requested amount rather than the actual capped gain, and
+    pet HP stays locally clamped outside the player-only helper.
     """
     original = effects.apply_player_healing
     assert resolver.apply_player_healing is original, "resolver should share the effects.apply_player_healing primitive"
@@ -320,18 +319,41 @@ def scenario_passive_and_end_of_turn_player_healing_routes_through_shared_helper
         assert ak_shaman.stats["int"] == ak_int_before + ak_int_gain, "Ancestral Knowledge Intellect gain must be unchanged"
         assert any(f"gains +{ak_int_gain} Intellect from Ancestral Knowledge." in line for line in ak_lines), "Ancestral Knowledge Intellect log wording must be unchanged"
 
-        # Ancestral Knowledge living-player gate: a shaman at zero HP with an
-        # absorb is not revived because the caller-owned hp > 0 gate remains.
+        # Full HP still requests the normal heal through the helper, but credits
+        # no healing and leaves the independent Intellect component intact.
+        full = make_match("shaman", "warrior", seed=6604)
+        full_shaman_sid, _ = full.players
+        full_shaman = full.state[full_shaman_sid]
+        effects.add_absorb(full_shaman, 10, source_name="Test Shield", effect_id="power_word_shield")
+        full_request = int(full_shaman.res.hp_max * 0.03)
+        full_int_before = int(full_shaman.stats["int"])
+        full_int_gain = max(1, int(full_int_before * 0.03))
+        full_totals_before = dict(full.combat_totals[full_shaman_sid])
+        calls.clear()
+        submit_turn(full, _DEF_PASS, _DEF_PASS)
+        assert calls == [(full_shaman, full_request, 0)], "A full-HP Ancestral Knowledge trigger should still make one capped helper call"
+        assert full.combat_totals[full_shaman_sid] == full_totals_before, "Zero actual gain must not add healing totals"
+        assert not any("HP from Ancestral Knowledge." in line for line in _turn_lines(full, 1)), "Zero actual gain must not emit a healing-success log"
+        assert full_shaman.stats["int"] == full_int_before + full_int_gain, "The Intellect component must still apply at full HP"
+
+        # The former living-player gate is gone: zero HP uses the same helper
+        # path and temporary-HP arithmetic as every other player heal.
         downed = make_match("shaman", "warrior", seed=6604)
         downed_shaman_sid, _ = downed.players
         downed_shaman = downed.state[downed_shaman_sid]
         effects.add_absorb(downed_shaman, 10, source_name="Test Shield", effect_id="power_word_shield")
         downed_shaman.res.hp = 0
+        downed_request = int(downed_shaman.res.hp_max * 0.03)
+        downed_int_before = int(downed_shaman.stats["int"])
+        downed_int_gain = max(1, int(downed_int_before * 0.03))
         calls.clear()
         submit_turn(downed, _DEF_PASS, _DEF_PASS)
-        assert not any(target is downed_shaman for target, _, _ in calls), "The hp > 0 gate must keep Ancestral Knowledge from calling the helper for a downed shaman"
-        assert downed_shaman.res.hp == 0, "A shaman at zero HP must not be revived by Ancestral Knowledge"
-        assert not any("HP from Ancestral Knowledge." in line for line in _turn_lines(downed, 1)), "No Ancestral Knowledge healing log should appear for a downed shaman"
+        assert calls == [(downed_shaman, downed_request, downed_request)], "A zero-HP Shaman should route Ancestral Knowledge through the healing helper"
+        assert downed_shaman.res.hp == downed_request > 0, "Ancestral Knowledge should restore a Shaman from exactly zero HP"
+        assert downed.combat_totals[downed_shaman_sid]["healing"] == downed_request, "Zero-HP recovery should credit the full actual gain"
+        assert downed.phase != "ended", "The recovered Shaman should survive the final winner check"
+        assert any(f"restores {downed_request} HP from Ancestral Knowledge." in line for line in _turn_lines(downed, 1)), "Zero-HP recovery should use the existing actual-gained log"
+        assert downed_shaman.stats["int"] == downed_int_before + downed_int_gain, "The Intellect component must still apply at zero HP"
 
         # Emerald Serpent Lightning Breath: exactly one player-healing call for
         # the owner requesting actual_damage // 2; the pet heals through its own
@@ -369,6 +391,216 @@ def scenario_passive_and_end_of_turn_player_healing_routes_through_shared_helper
         effects.apply_player_healing = original
         resolver.apply_player_healing = original
         PET_AI.apply_player_healing = original
+    return True
+
+
+def scenario_ancestral_knowledge_temporary_nonpositive_hp_rules() -> bool:
+    rescue = make_match("shaman", "warrior", seed=6610)
+    rescue_sid, _ = rescue.players
+    rescue_shaman = rescue.state[rescue_sid]
+    rescue_shaman.res.hp_max = 400
+    rescue_shaman.res.hp = -6
+    effects.add_absorb(rescue_shaman, 50, source_name="Test Shield", effect_id="power_word_shield")
+    rescue_request = int(rescue_shaman.res.hp_max * 0.03)
+    rescue_int_before = int(rescue_shaman.stats["int"])
+    rescue_int_gain = max(1, int(rescue_int_before * 0.03))
+    rescue_healing_before = int(rescue.combat_totals[rescue_sid]["healing"])
+
+    submit_turn(rescue, _DEF_PASS, _DEF_PASS)
+
+    assert rescue_request == 12, "Setup: 3% of 400 HP should request exactly 12 healing"
+    assert rescue_shaman.res.hp == 6, "Healing must use the current -6 HP value directly (-6 + 12 = 6)"
+    assert rescue.combat_totals[rescue_sid]["healing"] == rescue_healing_before + 12, "Negative-HP recovery should credit the full actual 12 HP delta"
+    assert rescue_shaman.stats["int"] == rescue_int_before + rescue_int_gain, "Negative-HP recovery must preserve the Intellect increase"
+    assert rescue.phase != "ended", "A Shaman restored above zero must survive the final winner check"
+    assert any("restores 12 HP from Ancestral Knowledge." in line for line in _turn_lines(rescue, 1)), "Negative-HP recovery should retain the actual-gained healing log"
+
+    insufficient = make_match("shaman", "warrior", seed=6611)
+    insufficient_sid, enemy_sid = insufficient.players
+    insufficient_shaman = insufficient.state[insufficient_sid]
+    insufficient_shaman.res.hp_max = 134
+    insufficient_shaman.res.hp = -10
+    effects.add_absorb(insufficient_shaman, 50, source_name="Test Shield", effect_id="power_word_shield")
+    insufficient_request = int(insufficient_shaman.res.hp_max * 0.03)
+    insufficient_int_before = int(insufficient_shaman.stats["int"])
+    insufficient_int_gain = max(1, int(insufficient_int_before * 0.03))
+    insufficient_healing_before = int(insufficient.combat_totals[insufficient_sid]["healing"])
+    turn_before = insufficient.turn
+
+    resolver.submit_action(insufficient, insufficient_sid, {"ability_id": _DEF_PASS})
+    resolver.submit_action(insufficient, enemy_sid, {"ability_id": _DEF_PASS})
+    resolver.resolve_turn(insufficient)
+
+    assert insufficient.turn == turn_before + 1, "The insufficient-recovery turn should resolve exactly once"
+    assert insufficient_request == 4, "Setup: 3% of 134 HP should request exactly 4 healing"
+    assert insufficient_shaman.res.hp == -6, "Insufficient healing must leave -10 HP at -6 without lower-clamping"
+    assert insufficient.combat_totals[insufficient_sid]["healing"] == insufficient_healing_before + 4, "Insufficient recovery should still credit the actual 4 HP delta"
+    assert insufficient_shaman.stats["int"] == insufficient_int_before + insufficient_int_gain, "Insufficient recovery must preserve the Intellect increase"
+    assert insufficient.phase == "ended" and insufficient.winner == enemy_sid, "A Shaman still below zero must lose only at the final winner check"
+    return True
+
+
+def scenario_ancestral_knowledge_cyclone_precedence() -> bool:
+    original_healing = resolver.apply_player_healing
+
+    def unexpected_healing(*_args, **_kwargs):
+        raise AssertionError("Cyclone-suppressed Ancestral Knowledge must not call apply_player_healing")
+
+    resolver.apply_player_healing = unexpected_healing
+    try:
+        cycloned = make_match("shaman", "warrior", seed=6612)
+        cycloned_sid, _ = cycloned.players
+        cycloned_shaman = cycloned.state[cycloned_sid]
+        cycloned_shaman.res.hp = max(1, cycloned_shaman.res.hp - 20)
+        effects.add_absorb(cycloned_shaman, 10, source_name="Test Shield", effect_id="power_word_shield")
+        effects.apply_effect_by_id(cycloned_shaman, "cyclone", overrides={"duration": 2})
+        cycloned_hp_before = cycloned_shaman.res.hp
+        cycloned_int_before = int(cycloned_shaman.stats["int"])
+        cycloned_int_gain = max(1, int(cycloned_int_before * 0.03))
+        cycloned_totals_before = dict(cycloned.combat_totals[cycloned_sid])
+
+        submit_turn(cycloned, _DEF_PASS, _DEF_PASS)
+
+        cycloned_lines = _turn_lines(cycloned, 1)
+        assert cycloned_shaman.res.hp == cycloned_hp_before, "Cyclone must suppress Ancestral Knowledge healing"
+        assert cycloned.combat_totals[cycloned_sid] == cycloned_totals_before, "Cyclone suppression must not add healing or damage totals"
+        assert cycloned_shaman.stats["int"] == cycloned_int_before + cycloned_int_gain, "Cyclone must not suppress the Intellect component"
+        assert not any("HP from Ancestral Knowledge." in line or "Ancestral Knowledge is twisted" in line for line in cycloned_lines), "Cyclone must emit neither healing-success nor Mindgames-conversion logs"
+        assert any(f"gains +{cycloned_int_gain} Intellect from Ancestral Knowledge." in line for line in cycloned_lines), "The Intellect log must remain present under Cyclone"
+
+        negative = make_match("shaman", "warrior", seed=6613)
+        negative_sid, negative_enemy_sid = negative.players
+        negative_shaman = negative.state[negative_sid]
+        negative_shaman.res.hp = -6
+        effects.add_absorb(negative_shaman, 10, source_name="Test Shield", effect_id="power_word_shield")
+        effects.apply_effect_by_id(negative_shaman, "cyclone", overrides={"duration": 2})
+        negative_int_before = int(negative_shaman.stats["int"])
+        negative_int_gain = max(1, int(negative_int_before * 0.03))
+        resolver.submit_action(negative, negative_sid, {"ability_id": _DEF_PASS})
+        resolver.submit_action(negative, negative_enemy_sid, {"ability_id": _DEF_PASS})
+        resolver.resolve_turn(negative)
+        assert negative_shaman.res.hp == -6, "Cyclone must also suppress recovery from negative HP"
+        assert negative.combat_totals[negative_sid]["healing"] == 0, "Cyclone at negative HP must not credit healing"
+        assert negative_shaman.stats["int"] == negative_int_before + negative_int_gain, "Cyclone at negative HP must preserve the Intellect increase"
+        assert negative.phase == "ended" and negative.winner == negative_enemy_sid, "A Cycloned Shaman left negative must lose at the final winner check"
+
+        combined = make_match("shaman", "warrior", seed=6614)
+        combined_sid, _ = combined.players
+        combined_shaman = combined.state[combined_sid]
+        combined_shaman.res.hp = max(1, combined_shaman.res.hp - 20)
+        effects.add_absorb(combined_shaman, 10, source_name="Test Shield", effect_id="power_word_shield")
+        effects.apply_effect_by_id(combined_shaman, "mindgames", overrides={"duration": 2})
+        effects.apply_effect_by_id(combined_shaman, "cyclone", overrides={"duration": 2})
+        combined_hp_before = combined_shaman.res.hp
+        combined_absorb_before = effects.absorb_total(combined_shaman)
+        combined_int_before = int(combined_shaman.stats["int"])
+        combined_int_gain = max(1, int(combined_int_before * 0.03))
+        combined_totals_before = dict(combined.combat_totals[combined_sid])
+
+        submit_turn(combined, _DEF_PASS, _DEF_PASS)
+
+        combined_lines = _turn_lines(combined, 1)
+        assert combined_shaman.res.hp == combined_hp_before, "Cyclone must take precedence over Mindgames without healing or self-damage"
+        assert effects.absorb_total(combined_shaman) == combined_absorb_before, "Cyclone precedence must avoid entering the self-damage pipeline"
+        assert combined.combat_totals[combined_sid] == combined_totals_before, "Cyclone plus Mindgames must credit neither damage nor healing"
+        assert combined_shaman.stats["int"] == combined_int_before + combined_int_gain, "Cyclone plus Mindgames must preserve the Intellect increase"
+        assert not any("HP from Ancestral Knowledge." in line or "Ancestral Knowledge is twisted" in line for line in combined_lines), "Cyclone plus Mindgames must emit no healing or conversion log"
+    finally:
+        resolver.apply_player_healing = original_healing
+    return True
+
+
+def scenario_ancestral_knowledge_mindgames_self_damage_pipeline() -> bool:
+    original_healing = resolver.apply_player_healing
+
+    def unexpected_healing(*_args, **_kwargs):
+        raise AssertionError("Mindgames-converted Ancestral Knowledge must not call apply_player_healing")
+
+    resolver.apply_player_healing = unexpected_healing
+    try:
+        absorbed = make_match("shaman", "warrior", seed=6615)
+        absorbed_sid, _ = absorbed.players
+        absorbed_shaman = absorbed.state[absorbed_sid]
+        absorbed_shaman.res.hp_max = 334
+        absorbed_shaman.res.hp = absorbed_shaman.res.hp_max
+        effects.add_absorb(absorbed_shaman, 4, source_name="Test Shield", effect_id="power_word_shield")
+        effects.apply_effect_by_id(absorbed_shaman, "mindgames", overrides={"duration": 2})
+        absorbed_request = int(absorbed_shaman.res.hp_max * 0.03)
+        absorbed_int_before = int(absorbed_shaman.stats["int"])
+        absorbed_int_gain = max(1, int(absorbed_int_before * 0.03))
+        absorbed_totals_before = dict(absorbed.combat_totals[absorbed_sid])
+
+        submit_turn(absorbed, _DEF_PASS, _DEF_PASS)
+
+        absorbed_lines = _turn_lines(absorbed, 1)
+        assert absorbed_request == 10, "Setup: 3% of 334 HP should request exactly 10 converted damage"
+        assert absorbed_shaman.res.hp == 328, "A 4-point absorb should leave exactly 6 actual HP damage from the requested 10"
+        assert effects.absorb_total(absorbed_shaman) == 0, "The shared pipeline must consume the absorb before applying HP damage"
+        assert absorbed.combat_totals[absorbed_sid]["damage"] == absorbed_totals_before["damage"] + 6, "Damage totals must credit actual post-absorb HP damage, not the requested 10"
+        assert absorbed.combat_totals[absorbed_sid]["healing"] == absorbed_totals_before["healing"], "Mindgames conversion must not credit healing totals"
+        assert absorbed_shaman.stats["int"] == absorbed_int_before + absorbed_int_gain, "Mindgames conversion must preserve the Intellect increase"
+        assert any(f"Ancestral Knowledge is twisted by Mindgames into {absorbed_request} self-damage." in line for line in absorbed_lines), "Mindgames conversion must log the requested pre-cap amount"
+        assert any("suffers 10 damage from Mindgames-twisted Ancestral Knowledge." in line for line in absorbed_lines), "Converted damage must use the shared damage log"
+        assert not any("HP from Ancestral Knowledge." in line or "Mindgames flips damage into" in line for line in absorbed_lines), "Converted self-damage must emit neither a healing-success log nor a second Mindgames flip"
+
+        for starting_hp, expected_hp, seed in ((0, -9, 6616), (-2, -11, 6617)):
+            downed = make_match("shaman", "warrior", seed=seed)
+            downed_sid, downed_enemy_sid = downed.players
+            downed_shaman = downed.state[downed_sid]
+            downed_shaman.res.hp_max = 334
+            downed_shaman.res.hp = starting_hp
+            effects.add_absorb(downed_shaman, 1, source_name="Test Shield", effect_id="power_word_shield")
+            effects.apply_effect_by_id(downed_shaman, "mindgames", overrides={"duration": 2})
+            downed_int_before = int(downed_shaman.stats["int"])
+            downed_int_gain = max(1, int(downed_int_before * 0.03))
+            downed_damage_before = int(downed.combat_totals[downed_sid]["damage"])
+            resolver.submit_action(downed, downed_sid, {"ability_id": _DEF_PASS})
+            resolver.submit_action(downed, downed_enemy_sid, {"ability_id": _DEF_PASS})
+            resolver.resolve_turn(downed)
+            assert downed_shaman.res.hp == expected_hp, "Mindgames conversion must resolve from zero and negative HP without the former liveness gate"
+            assert downed.combat_totals[downed_sid]["damage"] == downed_damage_before + 9, "Zero/negative-HP conversion should credit the actual post-absorb 9 damage"
+            assert downed.combat_totals[downed_sid]["healing"] == 0, "Zero/negative-HP conversion must not credit healing"
+            assert downed_shaman.stats["int"] == downed_int_before + downed_int_gain, "Zero/negative-HP conversion must preserve the Intellect increase"
+            assert downed.phase == "ended" and downed.winner == downed_enemy_sid, "Mindgames-damaged zero/negative HP remains defeated at the final winner check"
+
+        immune = make_match("shaman", "warrior", seed=6618)
+        immune_sid, _ = immune.players
+        immune_shaman = immune.state[immune_sid]
+        immune_shaman.res.hp_max = 334
+        immune_shaman.res.hp = 200
+        effects.add_absorb(immune_shaman, 4, source_name="Test Shield", effect_id="power_word_shield")
+        effects.apply_effect_by_id(immune_shaman, "mindgames", overrides={"duration": 2})
+        effects.apply_effect_by_id(immune_shaman, "cloak_of_shadows", overrides={"duration": 2})
+        immune_hp_before = immune_shaman.res.hp
+        immune_absorb_before = effects.absorb_total(immune_shaman)
+        immune_int_before = int(immune_shaman.stats["int"])
+        immune_int_gain = max(1, int(immune_int_before * 0.03))
+        immune_totals_before = dict(immune.combat_totals[immune_sid])
+        original_empty_result = resolver._empty_damage_result
+        empty_result_calls: list[dict[str, object]] = []
+
+        def spy_empty_result(*args, **kwargs):
+            empty_result_calls.append(dict(kwargs))
+            return original_empty_result(*args, **kwargs)
+
+        resolver._empty_damage_result = spy_empty_result
+        try:
+            submit_turn(immune, _DEF_PASS, _DEF_PASS)
+        finally:
+            resolver._empty_damage_result = original_empty_result
+
+        assert immune_shaman.res.hp == immune_hp_before, "Magical immunity must prevent converted Ancestral Knowledge HP damage"
+        assert effects.absorb_total(immune_shaman) == immune_absorb_before, "Immunity must stop converted damage before absorb consumption"
+        assert immune.combat_totals[immune_sid] == immune_totals_before, "Immune converted damage must credit neither damage nor healing"
+        assert immune_shaman.stats["int"] == immune_int_before + immune_int_gain, "Immunity must not suppress the Intellect increase"
+        assert any(
+            call.get("school") == "magical"
+            and call.get("subschool") == "shadow"
+            and call.get("source_kind") == resolver.DAMAGE_SOURCE_SELF
+            for call in empty_result_calls
+        ), "The immune pipeline result must retain magical Shadow self-damage metadata"
+    finally:
+        resolver.apply_player_healing = original_healing
     return True
 
 
