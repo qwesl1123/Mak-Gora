@@ -593,6 +593,11 @@ def scenario_ancestral_knowledge_mindgames_self_damage_pipeline() -> bool:
         assert effects.absorb_total(immune_shaman) == immune_absorb_before, "Immunity must stop converted damage before absorb consumption"
         assert immune.combat_totals[immune_sid] == immune_totals_before, "Immune converted damage must credit neither damage nor healing"
         assert immune_shaman.stats["int"] == immune_int_before + immune_int_gain, "Immunity must not suppress the Intellect increase"
+        immune_lines = _turn_lines(immune, 1)
+        assert not any("__DMG_" in line for line in immune_lines), "Immune conversion logs must never leak unresolved damage placeholders"
+        assert not any("suffers" in line and "Ancestral Knowledge" in line for line in immune_lines), "Immune conversion must not emit a false Ancestral Knowledge damage-result line"
+        assert not any("HP from Ancestral Knowledge." in line for line in immune_lines), "Immune conversion must not emit a healing-success log"
+        assert any("is immune to magical harm under Cloak of Shadows." in line for line in immune_lines), "The shared damage pipeline's magical-immunity log must be retained"
         assert any(
             call.get("school") == "magical"
             and call.get("subschool") == "shadow"

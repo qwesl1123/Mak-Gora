@@ -1262,7 +1262,7 @@ def resolve_end_of_turn_stage(
     rng: Any,
     turn_ctx: TurnResolutionContext,
     apply_damage: Callable[..., Dict[str, Any]],
-    absorb_suffix: Callable[[Dict[str, Any]], str],
+    absorb_suffix: Callable[[int, list[Dict[str, Any]] | None], str],
     should_miss_due_to_stealth: Callable[[PlayerState | PetState, str], bool],
     untargetable_miss_log: Callable[[str], str],
     can_evasion_force_miss: Callable[[PlayerState, str], bool],
@@ -1397,27 +1397,36 @@ def resolve_end_of_turn_stage(
             heal_value = int(ps.res.hp_max * 0.03)
             if heal_value > 0 and not has_flag(ps, "cycloned"):
                 if has_effect(ps, "mindgames"):
-                    # This is self-source damage, so resolve_dot_tick/apply_damage
-                    # cannot flip it back into healing under the same Mindgames.
+                    # This is self-source damage, so apply_damage cannot flip it
+                    # back into healing under the same Mindgames.
                     match.log.append(
                         f"{sid_token(sid)}'s Ancestral Knowledge is twisted by Mindgames into {heal_value} self-damage."
                     )
-                    damage = resolve_dot_tick(
+                    dealt_data = apply_damage(
+                        ps,
+                        ps,
+                        heal_value,
                         sid,
-                        sid,
-                        {
-                            "source_sid": sid,
-                            "incoming": heal_value,
-                            "source_kind": DAMAGE_SOURCE_SELF,
-                            "effect_id": "mindgames",
-                            "effect_name": "Mindgames-twisted Ancestral Knowledge",
-                            "school": "magical",
-                            "subschool": "shadow",
-                        },
+                        "Mindgames-twisted Ancestral Knowledge",
+                        mindgames_flip_damage=False,
+                        damage_instances=[heal_value],
+                        school="magical",
+                        subschool="shadow",
+                        allow_redirect=False,
+                        source_kind=DAMAGE_SOURCE_SELF,
                     )
-                    if damage > 0:
+                    hp_damage = int(dealt_data.get("hp_damage", 0) or 0)
+                    absorbed = int(dealt_data.get("absorbed", 0) or 0)
+                    absorbed_breakdown = list(dealt_data.get("absorbed_breakdown", []) or [])
+                    if hp_damage > 0:
                         totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
-                        totals["damage"] += int(damage)
+                        totals["damage"] += hp_damage
+                    if hp_damage + absorbed > 0:
+                        match.log.append(
+                            f"{sid_token(sid)} suffers {hp_damage + absorbed} damage from "
+                            f"Mindgames-twisted Ancestral Knowledge."
+                            f"{absorb_suffix(absorbed, absorbed_breakdown)}"
+                        )
                 else:
                     gained = apply_player_healing(ps, heal_value)
                     if gained > 0:
