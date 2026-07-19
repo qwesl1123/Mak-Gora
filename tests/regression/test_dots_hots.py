@@ -188,9 +188,11 @@ def scenario_passive_and_end_of_turn_player_healing_routes_through_shared_helper
     completes migration of the known production player-healing application
     sites. Preserved caller-owned policies: Mindgames-twisted HoT ticks convert
     to queued self-damage without any normal healing call, Ancestral Knowledge
-    keeps its living-player (hp > 0) gate, item and effect logs keep reporting
-    the requested amount rather than the actual capped gain, and pet HP stays
-    locally clamped outside the player-only helper.
+    heals through the helper with no liveness gate (its Cyclone/Mindgames and
+    zero/negative-HP rules are pinned in the dedicated Ancestral Knowledge
+    scenarios), item and effect logs keep reporting the requested amount
+    rather than the actual capped gain, and pet HP stays locally clamped
+    outside the player-only helper.
     """
     original = effects.apply_player_healing
     assert resolver.apply_player_healing is original, "resolver should share the effects.apply_player_healing primitive"
@@ -320,18 +322,22 @@ def scenario_passive_and_end_of_turn_player_healing_routes_through_shared_helper
         assert ak_shaman.stats["int"] == ak_int_before + ak_int_gain, "Ancestral Knowledge Intellect gain must be unchanged"
         assert any(f"gains +{ak_int_gain} Intellect from Ancestral Knowledge." in line for line in ak_lines), "Ancestral Knowledge Intellect log wording must be unchanged"
 
-        # Ancestral Knowledge living-player gate: a shaman at zero HP with an
-        # absorb is not revived because the caller-owned hp > 0 gate remains.
+        # Ancestral Knowledge zero-HP recovery: the former hp > 0 liveness
+        # gate is removed, so a shaman at exactly zero HP with an absorb heals
+        # through the helper before the end-of-turn winner check.
         downed = make_match("shaman", "warrior", seed=6604)
         downed_shaman_sid, _ = downed.players
         downed_shaman = downed.state[downed_shaman_sid]
         effects.add_absorb(downed_shaman, 10, source_name="Test Shield", effect_id="power_word_shield")
         downed_shaman.res.hp = 0
+        downed_request = int(downed_shaman.res.hp_max * 0.03)
+        assert downed_request > 0, "Setup: 3% of hp_max must be a positive heal request"
         calls.clear()
         submit_turn(downed, _DEF_PASS, _DEF_PASS)
-        assert not any(target is downed_shaman for target, _, _ in calls), "The hp > 0 gate must keep Ancestral Knowledge from calling the helper for a downed shaman"
-        assert downed_shaman.res.hp == 0, "A shaman at zero HP must not be revived by Ancestral Knowledge"
-        assert not any("HP from Ancestral Knowledge." in line for line in _turn_lines(downed, 1)), "No Ancestral Knowledge healing log should appear for a downed shaman"
+        assert calls == [(downed_shaman, downed_request, downed_request)], "Ancestral Knowledge must route the request through the helper even at zero HP (no hp > 0 gate)"
+        assert downed_shaman.res.hp == downed_request, "A shaman at exactly zero HP must recover through Ancestral Knowledge"
+        assert downed.phase != "ended", "A shaman healed above zero must survive the end-of-turn winner check"
+        assert any(f"restores {downed_request} HP from Ancestral Knowledge." in line for line in _turn_lines(downed, 1)), "The actual-gained Ancestral Knowledge healing log should appear for the zero-HP recovery"
 
         # Emerald Serpent Lightning Breath: exactly one player-healing call for
         # the owner requesting actual_damage // 2; the pet heals through its own

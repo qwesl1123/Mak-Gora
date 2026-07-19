@@ -1395,15 +1395,43 @@ def resolve_end_of_turn_stage(
         if absorb_total(ps) > 0:
             current_int = max(0, int(ps.stats.get("int", 0) or 0))
             heal_value = int(ps.res.hp_max * 0.03)
-            if heal_value > 0 and ps.res.hp > 0:
-                # Caller-owned liveness gate: Ancestral Knowledge must not revive
-                # a champion from zero or negative HP even though the helper
-                # itself supports healing from negative values.
-                gained = apply_player_healing(ps, heal_value)
-                if gained > 0:
-                    match.log.append(f"{sid_token(sid)} restores {gained} HP from Ancestral Knowledge.")
-                    totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
-                    totals["healing"] += int(gained)
+            # No liveness gate: a champion is not finally defeated until the
+            # end-of-turn winner check, so Ancestral Knowledge heals from zero
+            # or negative HP like every other end-of-turn healing source.
+            # Cyclone suppresses the healing portion entirely and takes
+            # precedence over Mindgames conversion; the Intellect gain below
+            # is independent and always applies.
+            if heal_value > 0 and not has_flag(ps, "cycloned"):
+                if has_effect(ps, "mindgames"):
+                    # Mindgames converts the requested pre-cap heal into
+                    # shared-pipeline self-damage. Source and target are the
+                    # same player, so apply_damage never flips it back into
+                    # healing; absorbs and immunity stay authoritative.
+                    match.log.append(
+                        f"{sid_token(sid)}'s Ancestral Knowledge is twisted by Mindgames into {heal_value} self-damage."
+                    )
+                    self_damage = resolve_dot_tick(
+                        sid,
+                        sid,
+                        {
+                            "source_sid": sid,
+                            "incoming": heal_value,
+                            "source_kind": DAMAGE_SOURCE_SELF,
+                            "effect_id": "mindgames",
+                            "effect_name": "Mindgames-twisted Ancestral Knowledge",
+                            "school": "magical",
+                            "subschool": "shadow",
+                        },
+                    )
+                    if self_damage > 0:
+                        totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
+                        totals["damage"] += int(self_damage)
+                else:
+                    gained = apply_player_healing(ps, heal_value)
+                    if gained > 0:
+                        match.log.append(f"{sid_token(sid)} restores {gained} HP from Ancestral Knowledge.")
+                        totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
+                        totals["healing"] += int(gained)
             int_gain = max(1, int(current_int * 0.03))
             ps.stats["int"] = current_int + int_gain
             match.log.append(f"{sid_token(sid)} gains +{int_gain} Intellect from Ancestral Knowledge.")
