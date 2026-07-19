@@ -3,7 +3,7 @@ import json
 import math
 from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional, Tuple, Callable, TypedDict
-from .models import MatchState, PlayerState, PlayerBuild, Resources, PetState
+from .models import MatchState, PlayerState, PlayerBuild, Resources, PetState, combat_totals_entry, new_combat_totals
 from .damage_events import PassiveDamageEvent, make_queued_damage_event
 from .damage_types import (
     DAMAGE_SOURCE_ABSORB_EXPLOSION,
@@ -122,6 +122,9 @@ class ActionResult(TypedDict, total=False):
 
     damage: int
     healing: int
+    # Player-produced requested healing lost only to an upper hp_max cap during
+    # this action; credited to the actor's "overhealing" total, never "healing".
+    overhealing: int
     log: str
     pre_logs: List[str]
     # Mixed list: plain str log lines plus QueuedDamageEvent dicts (see
@@ -163,7 +166,14 @@ class DamageApplicationResult(TypedDict, total=False):
     # Per-hit results, each {"hp_damage": int, "absorbed": int,
     # "absorbed_breakdown": list} so logs can render real per-hit values.
     instances: List[Dict[str, Any]]
+    # Nominal converted damage on a Mindgames flip. Direct-DoT application uses
+    # it as evidence the source hit resolved; do not rename or redefine it.
     mindgames_healing: int
+    # Actual HP the flip target gained (capped at hp_max). Healing/overhealing
+    # totals and flip-log wording use this, never the nominal amount.
+    mindgames_healing_gained: int
+    # SID of the player the flip healed; only set on the flip path (for logs).
+    mindgames_healing_target_sid: Optional[str]
     redirected_to: Optional[str]  # redirect pet name; only on the full path
     redirect_log: Optional[str]
     school: str
@@ -184,6 +194,7 @@ def _empty_damage_result(
         "absorbed_breakdown": [],
         "instances": [],
         "mindgames_healing": 0,
+        "mindgames_healing_gained": 0,
         "school": school,
         "subschool": subschool,
         "source_kind": source_kind,
@@ -415,9 +426,10 @@ def _resolve_actor_post_damage_reactions_stage(
 ) -> None:
     if dealt > 0 and ability.get("heal_from_dealt_damage") and actor.res:
         gained = apply_player_healing(actor, dealt)
+        totals = combat_totals_entry(combat_totals, actor_sid)
+        totals["overhealing"] += max(0, dealt - gained)
         if gained > 0:
             log.append(f"{sid_token(actor_sid)} heals {gained} HP from {ability.get('name', 'their attack')}.")
-            totals = combat_totals.setdefault(actor_sid, {"damage": 0, "healing": 0})
             totals["healing"] += gained
 
     if ability_id == "death" and target.res.hp > 0 and dealt > 0:
@@ -440,9 +452,10 @@ def _resolve_actor_post_damage_reactions_stage(
     if dealt > 0 and lifesteal > 0 and actor.res:
         heal_value = int(dealt * lifesteal)
         gained = apply_player_healing(actor, heal_value)
+        totals = combat_totals_entry(combat_totals, actor_sid)
+        totals["overhealing"] += max(0, heal_value - gained)
         if gained > 0:
             log.append(f"{sid_token(actor_sid)} drains {gained} life.")
-            totals = combat_totals.setdefault(actor_sid, {"damage": 0, "healing": 0})
             totals["healing"] += gained
 
     # Damage-based resource gains resolve here, after the primary hit AND every
@@ -582,6 +595,10 @@ def _apply_effect_entries_stage(
             overrides["duration"] = int(entry.get("duration"))
         if "source_ability_name" not in overrides:
             overrides["source_ability_name"] = ability.get("name") or effect_name(entry["id"])
+        # Record who applied the effect. Metadata-only for most effects, but
+        # load-bearing for Mindgames: the flip branch credits converted healing
+        # to the debuff's source_sid caster.
+        overrides.setdefault("source_sid", actor.sid)
         if "school" not in overrides and ability.get("school"):
             overrides["school"] = ability.get("school")
         if "subschool" not in overrides and ability.get("subschool"):
@@ -780,7 +797,7 @@ def apply_prep_build(match: MatchState) -> None:
         build.class_id, class_data = validated_class_data(build.class_id)
         prepared_builds[sid] = (build, class_data)
 
-    match.combat_totals = {sid: {"damage": 0, "healing": 0} for sid in match.players}
+    match.combat_totals = {sid: new_combat_totals() for sid in match.players}
     match.state = {}
     for sid in match.players:
         build, class_data = prepared_builds[sid]
@@ -975,7 +992,15 @@ def _handle_kill_command_special(ctx: SpecialAbilityHandlerContext) -> Dict[str,
     ctx.log_parts.append(f"Roll d4 = {heal_roll}.")
     ctx.log_parts.append(f"Heals {pet.name} for {healed} HP.")
     ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
-    return {"damage": 0, "healing": healed, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
+    # Kill Command healing is champion-produced (the ability heals the pet), so
+    # it stays regular player healing/overhealing, not pet_healing.
+    return {
+        "damage": 0,
+        "healing": healed,
+        "overhealing": max(0, heal_value - healed),
+        "log": " ".join(ctx.log_parts),
+        "ability_id": ctx.ability_id,
+    }
 
 def _handle_healthstone_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, Any]:
     heal_value = max(1, int(ctx.actor.res.hp_max * 0.25))
@@ -987,7 +1012,13 @@ def _handle_healthstone_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, 
     healed = apply_player_healing(ctx.actor, heal_value)
     ctx.log_parts.append(f"Healthstone restores {healed} HP.")
     ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
-    return {"damage": 0, "healing": healed, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
+    return {
+        "damage": 0,
+        "healing": healed,
+        "overhealing": max(0, heal_value - healed),
+        "log": " ".join(ctx.log_parts),
+        "ability_id": ctx.ability_id,
+    }
 
 
 def _handle_innervate_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, Any]:
@@ -1008,7 +1039,13 @@ def _handle_holy_light_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, A
     healed = apply_player_healing(ctx.actor, heal_value)
     ctx.log_parts.append(f"Holy Light restores {healed} HP.")
     ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
-    return {"damage": 0, "healing": healed, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
+    return {
+        "damage": 0,
+        "healing": healed,
+        "overhealing": max(0, heal_value - healed),
+        "log": " ".join(ctx.log_parts),
+        "ability_id": ctx.ability_id,
+    }
 
 
 def _handle_flash_heal_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, Any]:
@@ -1023,7 +1060,13 @@ def _handle_flash_heal_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, A
     healed = apply_player_healing(ctx.actor, heal_value)
     ctx.log_parts.append(f"Flash Heal restores {healed} HP.")
     ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
-    return {"damage": 0, "healing": healed, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
+    return {
+        "damage": 0,
+        "healing": healed,
+        "overhealing": max(0, heal_value - healed),
+        "log": " ".join(ctx.log_parts),
+        "ability_id": ctx.ability_id,
+    }
 
 
 def _handle_lay_on_hands_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, Any]:
@@ -1035,9 +1078,11 @@ def _handle_lay_on_hands_special(ctx: SpecialAbilityHandlerContext) -> Dict[str,
         ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
         return {"damage": 0, "healing": 0, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
     healed = apply_player_healing(ctx.actor, missing_hp)
-    ctx.log_parts.append("Lay on Hands restores health to full.")
+    ctx.log_parts.append(f"Lay on Hands restores {healed} HP, restoring health to full.")
     _apply_cooldown_resets_on_cast(ctx.actor, ctx.ability, ctx.log_parts, ctx.reset_cooldown)
     ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
+    # missing_hp always fits below hp_max (even from negative HP), so Lay on
+    # Hands can never overheal.
     return {"damage": 0, "healing": healed, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
 
 
@@ -1125,11 +1170,14 @@ def _handle_wild_growth_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, 
         ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
         return {"damage": 0, "healing": 0, "log": " ".join(ctx.log_parts)}
     healing_done = 0
+    overhealing = 0
     if not has_flag(ctx.actor, "cycloned"):
         healing_done = apply_player_healing(ctx.actor, heal_value)
-    ctx.log_parts.append(f"Wild Growth heals {heal_value} HP.")
+        # Cyclone suppression is not overhealing; only cap loss counts.
+        overhealing = max(0, heal_value - healing_done)
+    ctx.log_parts.append(f"Wild Growth heals {healing_done} HP.")
     ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
-    return {"damage": 0, "healing": healing_done, "log": " ".join(ctx.log_parts)}
+    return {"damage": 0, "healing": healing_done, "overhealing": overhealing, "log": " ".join(ctx.log_parts)}
 
 
 def _handle_regrowth_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, Any]:
@@ -1299,13 +1347,14 @@ def resolve_end_of_turn_stage(
             damage = resolve_dot_tick(source_sid, sid, source)
             if damage <= 0:
                 continue
-            totals = match.combat_totals.setdefault(source_sid, {"damage": 0, "healing": 0})
+            totals = combat_totals_entry(match.combat_totals, source_sid)
             totals["damage"] += damage
             lifesteal_pct = float(source.get("lifesteal_pct", 0) or 0)
             if lifesteal_pct > 0 and source_sid in match.state:
                 healer = match.state[source_sid]
                 heal_value = int(damage * lifesteal_pct)
                 gained = apply_player_healing(healer, heal_value)
+                totals["overhealing"] += max(0, heal_value - gained)
                 if gained > 0:
                     effect_id = source.get("effect_id")
                     source_name = effect_name(effect_id) if effect_id else "DoT"
@@ -1319,11 +1368,12 @@ def resolve_end_of_turn_stage(
             damage = resolve_dot_tick(source_sid, sid, source)
             if damage <= 0:
                 continue
-            totals = match.combat_totals.setdefault(source_sid, {"damage": 0, "healing": 0})
+            totals = combat_totals_entry(match.combat_totals, source_sid)
             totals["damage"] += damage
 
-        totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
+        totals = combat_totals_entry(match.combat_totals, sid)
         totals["healing"] += int(end_summary.get("healing_done", 0) or 0)
+        totals["overhealing"] += int(end_summary.get("overhealing_done", 0) or 0)
 
     # end_of_turn: pet_phase (pet upkeep dots/hots)
     for sid in sids:
@@ -1334,6 +1384,15 @@ def resolve_end_of_turn_stage(
                 continue
             pet_summary = end_of_turn_pet(pet, match.log, pet.name)
             apply_pet_resource_regen(pet)
+            # Pet HoT/regen ticks are pet-produced healing: credit the owner's
+            # pet_healing/pet_overhealing buckets exactly once, never the
+            # healed pet's owner "healing" total.
+            pet_heal_gained = int(pet_summary.get("healing_done", 0) or 0)
+            pet_heal_lost = int(pet_summary.get("overhealing_done", 0) or 0)
+            if pet_heal_gained > 0 or pet_heal_lost > 0:
+                owner_totals = combat_totals_entry(match.combat_totals, sid)
+                owner_totals["pet_healing"] += pet_heal_gained
+                owner_totals["pet_overhealing"] += pet_heal_lost
             for source in pet_summary.get("damage_sources", []):
                 source_sid = source.get("source_sid")
                 source_ps = match.state.get(source_sid)
@@ -1357,7 +1416,7 @@ def resolve_end_of_turn_stage(
                 damage = int(dealt.get("hp_damage", 0) or 0)
                 if damage > 0:
                     match.log.append(f"{pet.name} suffers {damage} damage from {source.get('effect_name') or 'DoT'}.")
-                    totals = match.combat_totals.setdefault(source_sid, {"damage": 0, "healing": 0})
+                    totals = combat_totals_entry(match.combat_totals, source_sid)
                     totals["damage"] += damage
             if pet.hp > 0:
                 next_effects = []
@@ -1419,7 +1478,7 @@ def resolve_end_of_turn_stage(
                     absorbed = int(dealt_data.get("absorbed", 0) or 0)
                     absorbed_breakdown = list(dealt_data.get("absorbed_breakdown", []) or [])
                     if hp_damage > 0:
-                        totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
+                        totals = combat_totals_entry(match.combat_totals, sid)
                         totals["damage"] += hp_damage
                     if hp_damage + absorbed > 0:
                         match.log.append(
@@ -1429,9 +1488,10 @@ def resolve_end_of_turn_stage(
                         )
                 else:
                     gained = apply_player_healing(ps, heal_value)
+                    totals = combat_totals_entry(match.combat_totals, sid)
+                    totals["overhealing"] += max(0, heal_value - gained)
                     if gained > 0:
                         match.log.append(f"{sid_token(sid)} restores {gained} HP from Ancestral Knowledge.")
-                        totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
                         totals["healing"] += int(gained)
             int_gain = max(1, int(current_int * 0.03))
             ps.stats["int"] = current_int + int_gain
@@ -2642,7 +2702,7 @@ def resolve_turn(match: MatchState) -> None:
                 if pet.hp <= 0:
                     handle_pet_defeat(enemy, pet)
             if total_damage > 0:
-                totals = match.combat_totals.setdefault(actor_sid, {"damage": 0, "healing": 0})
+                totals = combat_totals_entry(match.combat_totals, actor_sid)
                 totals["damage"] += total_damage
             set_cooldown(actor, ability_id, ability)
             log_parts.append(f"Detonates {consumed_absorb} absorb into nearby enemy pets.")
@@ -2790,6 +2850,7 @@ def resolve_turn(match: MatchState) -> None:
         if ability_id == "penance_self":
             intellect = modify_stat(actor, "int", actor.stats.get("int", 0))
             healing = 0
+            overhealing = 0
             for hit_index in range(1, 4):
                 roll_power = roll("d4", r)
                 heal_value = _apply_clarity_of_mind_bonus(base_damage(intellect, 0.4, roll_power), clarity_consumed)
@@ -2799,9 +2860,10 @@ def resolve_turn(match: MatchState) -> None:
                     continue
                 gained = apply_player_healing(actor, heal_value)
                 healing += gained
+                overhealing += max(0, heal_value - gained)
                 log_parts.append(f"Hit {hit_index}: Restores {gained} HP.")
             set_cooldown(actor, ability_id, ability)
-            return {"damage": 0, "healing": healing, "log": " ".join(log_parts), "ability_id": ability_id}
+            return {"damage": 0, "healing": healing, "overhealing": overhealing, "log": " ".join(log_parts), "ability_id": ability_id}
 
         apply_hp_sacrifice_absorb(actor, ability, log_parts)
 
@@ -2856,6 +2918,7 @@ def resolve_turn(match: MatchState) -> None:
         aoe_incoming_damage = 0
         aoe_raw_damage = 0
         total_healing = 0
+        total_overhealing = 0
         empower_multiplier = 1.0
         consume_empower = False
         empower_logged = False
@@ -3119,7 +3182,10 @@ def resolve_turn(match: MatchState) -> None:
                 if twisted_by_mindgames:
                     log_parts.append(f"{prefix}Mindgames twists healing into {heal_on_hit} self-damage.")
                 else:
-                    log_parts.append(f"{prefix}Heals {heal_on_hit} HP.")
+                    # A Mindgames twist converts the requested amount and is not
+                    # overhealing; only the cap loss on an applied heal counts.
+                    total_overhealing += max(0, heal_on_hit - healed)
+                    log_parts.append(f"{prefix}Heals {healed} HP.")
 
             total_damage += reduced
 
@@ -3155,7 +3221,7 @@ def resolve_turn(match: MatchState) -> None:
 
         # Apply non-strike-again on-hit passive effects once per ability execution.
         if ability_hit_landed:
-            bonus_damage, passive_logs, bonus_healing, passive_damage_events = trigger_on_hit_passives(
+            bonus_damage, passive_logs, bonus_healing, bonus_overhealing, passive_damage_events = trigger_on_hit_passives(
                 actor,
                 target,
                 on_hit_base_damage,
@@ -3175,12 +3241,14 @@ def resolve_turn(match: MatchState) -> None:
                 passive_bonus_damage_total += bonus_damage
             if bonus_healing > 0:
                 total_healing += bonus_healing
+            if bonus_overhealing > 0:
+                total_overhealing += bonus_overhealing
             if passive_logs:
                 extra_logs.extend(passive_logs)
             queue_passive_damage_events(passive_damage_events)
         # Strike-again passives can proc per successful damaging strike.
         for strike_damage in per_hit_damage_values:
-            strike_bonus_damage, strike_logs, _, strike_damage_events = trigger_on_hit_passives(
+            strike_bonus_damage, strike_logs, _, _, strike_damage_events = trigger_on_hit_passives(
                 actor,
                 target,
                 strike_damage,
@@ -3277,6 +3345,7 @@ def resolve_turn(match: MatchState) -> None:
             "subschool": ability_subschool,
             "source_kind": DAMAGE_SOURCE_DIRECT_ABILITY,
             "healing": total_healing,
+            "overhealing": total_overhealing,
             "log": aoe_champion_log_override or " ".join(log_parts),
             "pre_logs": pre_log_parts,
             "extra_logs": extra_logs,
@@ -3598,9 +3667,10 @@ def resolve_turn(match: MatchState) -> None:
     result2 = finalize_action(sids[1], sids[0], a2, turn_ctx.immediate_contexts[sids[1]])
 
     for sid, result in ((sids[0], result1), (sids[1], result2)):
-        totals = match.combat_totals.setdefault(sid, {"damage": 0, "healing": 0})
+        totals = combat_totals_entry(match.combat_totals, sid)
         totals["damage"] += int(result.get("damage", 0) or 0)
         totals["healing"] += int(result.get("healing", 0) or 0)
+        totals["overhealing"] += int(result.get("overhealing", 0) or 0)
 
     def absorb_suffix(absorbed: int, absorbed_breakdown: list[Dict[str, Any]] | None = None) -> str:
         if absorbed <= 0:
@@ -3646,9 +3716,14 @@ def resolve_turn(match: MatchState) -> None:
         return updated
 
     def mindgames_flip_suffix(dealt_data: Dict[str, Any]) -> str:
+        # Distinguish the nominal converted amount (mechanic resolution) from
+        # the actual HP the target gained (visible healing).
         flipped_heal = int(dealt_data.get("mindgames_healing", 0) or 0)
         if flipped_heal > 0:
-            return f" Mindgames flips damage into {flipped_heal} healing for the target."
+            gained = int(dealt_data.get("mindgames_healing_gained", 0) or 0)
+            healed_sid = dealt_data.get("mindgames_healing_target_sid")
+            healed_label = sid_token(str(healed_sid)) if healed_sid else "the target"
+            return f" Mindgames flips {flipped_heal} damage into healing; {healed_label} restores {gained} HP."
         return ""
 
     # Apply damage
@@ -3752,11 +3827,22 @@ def resolve_turn(match: MatchState) -> None:
                 )
 
         if is_player_target and mindgames_flip_damage and source.sid != target.sid:
-            # The helper's actual-gain return is intentionally ignored:
             # ``mindgames_healing`` must stay the nominal converted damage so
             # apply_direct_damage_dot() still sees the hit as resolved even
-            # when the target is at full HP and gains nothing.
-            apply_player_healing(target, incoming)
+            # when the target is at full HP and gains nothing. The actual gain
+            # drives healing/overhealing totals and the flip-log wording.
+            actual_gained = apply_player_healing(target, incoming)
+            # Credit the conversion to the player who applied Mindgames: the
+            # debuff on the damage source carries its caster's source_sid. Fall
+            # back to the healed target only if the metadata is missing (in
+            # current 1v1 play the healed target is the caster).
+            mindgames_fx = get_effect(source, "mindgames") or {}
+            caster_sid = mindgames_fx.get("source_sid")
+            if not caster_sid or caster_sid not in match.state:
+                caster_sid = target_sid
+            caster_totals = combat_totals_entry(match.combat_totals, caster_sid)
+            caster_totals["healing"] += actual_gained
+            caster_totals["overhealing"] += max(0, incoming - actual_gained)
             instance_results = [{"absorbed": 0, "hp_damage": value, "absorbed_breakdown": []} for value in instance_values]
             return {
                 "hp_damage": 0,
@@ -3764,6 +3850,8 @@ def resolve_turn(match: MatchState) -> None:
                 "absorbed_breakdown": [],
                 "instances": instance_results,
                 "mindgames_healing": incoming,
+                "mindgames_healing_gained": actual_gained,
+                "mindgames_healing_target_sid": target_sid,
                 "school": normalized_school,
                 "subschool": subschool,
                 "source_kind": source_kind,
@@ -3793,6 +3881,7 @@ def resolve_turn(match: MatchState) -> None:
             "absorbed_breakdown": total_breakdown,
             "instances": instance_results,
             "mindgames_healing": 0,
+            "mindgames_healing_gained": 0,
             "redirected_to": redirected_to,
             "redirect_log": redirect_log,
             "school": normalized_school,
@@ -3866,10 +3955,7 @@ def resolve_turn(match: MatchState) -> None:
                         match.log.append(champion_immune_log)
                     else:
                         champion_log = format_damage_log(champion_log_template, champion_dealt_data)
-                        if flipped_heal > 0:
-                            champion_log = (
-                                f"{champion_log} Mindgames flips damage into {flipped_heal} healing for the target."
-                            )
+                        champion_log = f"{champion_log}{mindgames_flip_suffix(champion_dealt_data)}"
                         match.log.append(champion_log)
                 continue
 
@@ -3951,7 +4037,7 @@ def resolve_turn(match: MatchState) -> None:
             source_kind=DAMAGE_SOURCE_ABSORB_EXPLOSION,
         )
         champion_hp_damage = int(aoe_result.get("champion", {}).get("hp_damage", 0) or 0)
-        totals = match.combat_totals.setdefault(owner_sid, {"damage": 0, "healing": 0})
+        totals = combat_totals_entry(match.combat_totals, owner_sid)
         totals["damage"] += champion_hp_damage + int(aoe_result.get("pet_total_damage", 0) or 0)
 
     def resolve_dot_tick(source_sid: str, target_sid: str, source: Dict[str, Any]) -> int:
@@ -3995,7 +4081,7 @@ def resolve_turn(match: MatchState) -> None:
     match.log.extend(result2.get("pre_logs", []))
     match.log.extend(turn_ctx.deferred_pet_pre_action_logs)
     dealt1_data = (
-        {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0}
+        {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0, "mindgames_healing_gained": 0}
         if result1.get("skip_direct_target_damage")
         else apply_damage(
             match.state[sids[0]],
@@ -4014,7 +4100,7 @@ def resolve_turn(match: MatchState) -> None:
         )
     )
     dealt2_data = (
-        {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0}
+        {"hp_damage": 0, "absorbed": 0, "absorbed_breakdown": [], "instances": [], "mindgames_healing": 0, "mindgames_healing_gained": 0}
         if result2.get("skip_direct_target_damage")
         else apply_damage(
             match.state[sids[1]],
@@ -4151,7 +4237,7 @@ def resolve_turn(match: MatchState) -> None:
             )
             dealt_amount = int(dealt_data.get("hp_damage", 0) or 0)
             if dealt_amount > 0:
-                totals = match.combat_totals.setdefault(actor_sid, {"damage": 0, "healing": 0})
+                totals = combat_totals_entry(match.combat_totals, actor_sid)
                 totals["damage"] += dealt_amount
                 total_dealt_by_actor[actor_sid] = int(total_dealt_by_actor.get(actor_sid, 0) or 0) + dealt_amount
             formatted = format_damage_log(str(entry.get("log_template") or ""), dealt_data)
@@ -4216,7 +4302,7 @@ def resolve_turn(match: MatchState) -> None:
         )
         pet_damage = int(aoe_result.get("pet_total_damage", 0) or 0)
         if pet_damage > 0:
-            totals = match.combat_totals.setdefault(actor_sid, {"damage": 0, "healing": 0})
+            totals = combat_totals_entry(match.combat_totals, actor_sid)
             totals["damage"] += pet_damage
             total_dealt_by_actor[actor_sid] = int(total_dealt_by_actor.get(actor_sid, 0) or 0) + pet_damage
         if ability.get("dot"):

@@ -495,7 +495,7 @@ def scenario_challengers_chestplate_on_hit_proc_outgoing_stance() -> bool:
         target = match.state[match.players[1]]
         attacker.stats["atk"] = 40
         attacker.effects.append(dict(lightning_passive, passive=dict(lightning_passive["passive"])))
-        bonus_damage, _, _, damage_events = effects.trigger_on_hit_passives(
+        bonus_damage, _, _, _, damage_events = effects.trigger_on_hit_passives(
             attacker,
             target,
             base_damage=10,
@@ -527,7 +527,7 @@ def scenario_challengers_chestplate_on_hit_proc_outgoing_stance() -> bool:
         target = match.state[match.players[1]]
         attacker.stats["atk"] = 40
         attacker.effects.append(dict(lightning_passive, passive=dict(lightning_passive["passive"])))
-        _, _, _, damage_events = effects.trigger_on_hit_passives(
+        _, _, _, _, damage_events = effects.trigger_on_hit_passives(
             attacker,
             target,
             base_damage=10,
@@ -566,7 +566,7 @@ def scenario_challengers_chestplate_on_hit_proc_outgoing_stance() -> bool:
         target = match.state[match.players[1]]
         attacker.stats["int"] = 40
         attacker.effects.append(dict(duplicate_passive, passive=dict(duplicate_passive["passive"])))
-        bonus_damage, _, _, damage_events = effects.trigger_on_hit_passives(
+        bonus_damage, _, _, _, damage_events = effects.trigger_on_hit_passives(
             attacker,
             target,
             base_damage=10,
@@ -597,7 +597,7 @@ def scenario_challengers_chestplate_on_hit_proc_outgoing_stance() -> bool:
         attacker = match.state[match.players[0]]
         target = match.state[match.players[1]]
         attacker.effects.append(dict(strike_passive, passive=dict(strike_passive["passive"])))
-        bonus_damage, _, _, _ = effects.trigger_on_hit_passives(
+        bonus_damage, _, _, _, _ = effects.trigger_on_hit_passives(
             attacker,
             target,
             base_damage=100,

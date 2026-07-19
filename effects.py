@@ -2074,8 +2074,13 @@ def trigger_on_hit_passives(
     target_challenger_mode: Optional[str] | object = _LIVE_CHALLENGER_MODE,
     attacker_challenger_mode: Optional[str] | object = _LIVE_CHALLENGER_MODE,
     attacker_outgoing_multiplier: Optional[float] = None,
-) -> tuple[int, List[str], int, List[Dict[str, Any]]]:
+) -> tuple[int, List[str], int, int, List[Dict[str, Any]]]:
     """Run attacker item passives that trigger on_hit.
+
+    Returns ``(bonus_damage, log_lines, bonus_healing, bonus_overhealing,
+    damage_events)``. ``bonus_healing`` is actual HP gained by heal_on_hit
+    passives; ``bonus_overhealing`` is the requested portion lost only to the
+    attacker's ``hp_max`` cap.
 
     ``attacker_outgoing_multiplier`` is the action-time outgoing snapshot from
     the resolver. When provided, freshly computed proc formulas use that scalar
@@ -2095,6 +2100,7 @@ def trigger_on_hit_passives(
     """
     bonus_damage = 0
     bonus_healing = 0
+    bonus_overhealing = 0
     log_lines: List[str] = []
     damage_events: List[Dict[str, Any]] = []
     # Attacker-side outgoing damage stance (e.g. Challenger's Might/Wrath) applies
@@ -2251,8 +2257,10 @@ def trigger_on_hit_passives(
             if heal_value > 0 and attacker.res:
                 gained = apply_player_healing(attacker, heal_value)
                 bonus_healing += gained
+                # Player-produced healing lost only to the hp_max cap.
+                bonus_overhealing += max(0, heal_value - gained)
                 log_lines.append(
-                    f"{attacker.sid[:5]} draws strength from {effect.get('source_item', 'item')}, healing {heal_value} HP."
+                    f"{attacker.sid[:5]} draws strength from {effect.get('source_item', 'item')}, healing {gained} HP."
                 )
         elif passive_type == "empower_next_offense":
             chance = float(passive.get("chance", 0) or 0)
@@ -2364,7 +2372,7 @@ def trigger_on_hit_passives(
             )
 
 
-    return bonus_damage, log_lines, bonus_healing, damage_events
+    return bonus_damage, log_lines, bonus_healing, bonus_overhealing, damage_events
 
 
 def active_resource_id(player: PlayerState) -> Optional[str]:
@@ -2633,9 +2641,14 @@ def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[dict[str, Any
     return damage_sources
 
 
-def trigger_end_of_turn_passives(ps: PlayerState, log: List[str], label: str) -> int:
-    """Run end-of-turn item passives (currently: heal_self)."""
+def trigger_end_of_turn_passives(ps: PlayerState, log: List[str], label: str) -> tuple[int, int]:
+    """Run end-of-turn item passives (currently: heal_self).
+
+    Returns ``(total_healing, total_overhealing)``: actual HP gained plus the
+    requested healing lost only to the ``hp_max`` cap.
+    """
     total_healing = 0
+    total_overhealing = 0
     for effect in ps.effects:
         if effect.get("type") != "item_passive":
             continue
@@ -2648,8 +2661,9 @@ def trigger_end_of_turn_passives(ps: PlayerState, log: List[str], label: str) ->
             if heal_value > 0:
                 gained = apply_player_healing(ps, heal_value)
                 total_healing += gained
+                total_overhealing += max(0, heal_value - gained)
                 log.append(
-                    f"{label} heals {heal_value} HP from {effect.get('source_item', 'item')}."
+                    f"{label} heals {gained} HP from {effect.get('source_item', 'item')}."
                 )
         elif passive.get("type") == "absorb_self":
             absorb_value = int(passive.get("value", 0) or 0)
@@ -2658,12 +2672,16 @@ def trigger_end_of_turn_passives(ps: PlayerState, log: List[str], label: str) ->
                 log.append(
                     f"{label} gains {absorb_value} absorb from {effect.get('source_item', 'item')}."
                 )
-    return total_healing
+    return total_healing, total_overhealing
 
 
-def trigger_end_of_turn_effects(ps: PlayerState, log: List[str], label: str) -> tuple[int, List[Dict[str, Any]]]:
-    """Run end-of-turn status effects such as regeneration from buffs."""
+def trigger_end_of_turn_effects(ps: PlayerState, log: List[str], label: str) -> tuple[int, int, List[Dict[str, Any]]]:
+    """Run end-of-turn status effects such as regeneration from buffs.
+
+    Returns ``(total_healing, total_overhealing, pending_mindgames_damage)``.
+    """
     total_healing = 0
+    total_overhealing = 0
     pending_mindgames_damage: List[Dict[str, Any]] = []
     for effect in ps.effects:
         regen = effect.get("regen", {}) or {}
@@ -2678,6 +2696,7 @@ def trigger_end_of_turn_effects(ps: PlayerState, log: List[str], label: str) -> 
         energy_gain = int(regen.get("energy", 0) or 0)
         effect_name = effect.get("name", "an effect")
         twisted_by_mindgames = hp_gain > 0 and has_effect(ps, "mindgames")
+        hp_recovered = 0
         if hp_gain > 0:
             if twisted_by_mindgames:
                 pending_mindgames_damage.append(
@@ -2697,18 +2716,20 @@ def trigger_end_of_turn_effects(ps: PlayerState, log: List[str], label: str) -> 
                         f"{label} is twisted by Mindgames and takes {hp_gain} self-damage instead of healing from {effect_name}."
                     )
             else:
-                gained = apply_player_healing(ps, hp_gain)
-                total_healing += gained
+                hp_recovered = apply_player_healing(ps, hp_gain)
+                total_healing += hp_recovered
+                total_overhealing += max(0, hp_gain - hp_recovered)
         # Route mp/energy regen through grant_player_resource so the Challenger/
         # passive gain multiplier and cap are applied in one place, and report the
-        # amount actually gained after the cap (HP stays untouched by design).
+        # amount actually gained after the cap. HP recovery logs likewise report
+        # the actual gained amount, not the requested regen value.
         mp_recovered = grant_player_resource(ps, "mp", mp_gain) if mp_gain > 0 else 0
         energy_recovered = grant_player_resource(ps, "energy", energy_gain) if energy_gain > 0 else 0
         should_log_recovery = ((hp_gain > 0 and not twisted_by_mindgames) or mp_recovered > 0 or energy_recovered > 0)
         if should_log_recovery and log is not None:
             recovered_parts: list[str] = []
             if hp_gain > 0 and not twisted_by_mindgames:
-                recovered_parts.append(f"{hp_gain} HP")
+                recovered_parts.append(f"{hp_recovered} HP")
             if mp_recovered > 0:
                 recovered_parts.append(f"{mp_recovered} Mana")
             if energy_recovered > 0:
@@ -2721,7 +2742,7 @@ def trigger_end_of_turn_effects(ps: PlayerState, log: List[str], label: str) -> 
                 else:
                     recovered_text = f"{', '.join(recovered_parts[:-1])}, and {recovered_parts[-1]}"
                 log.append(f"{label} recovers {recovered_text} from {effect_name}.")
-    return total_healing, pending_mindgames_damage
+    return total_healing, total_overhealing, pending_mindgames_damage
 
 
 def mana_regen_from_spirit(ps: PlayerState) -> int:
@@ -2732,16 +2753,16 @@ def mana_regen_from_spirit(ps: PlayerState) -> int:
 def end_of_turn(ps: PlayerState, log: List[str], label: str) -> dict[str, Any]:
     """End-of-turn pipeline: DoTs, passives, duration tick, regen."""
     if not ps.res:
-        return {"damage_sources": [], "healing_done": 0, "self_damage_sources": []}
+        return {"damage_sources": [], "healing_done": 0, "overhealing_done": 0, "self_damage_sources": []}
 
     if has_flag(ps, "cycloned"):
-        return {"damage_sources": [], "healing_done": 0, "self_damage_sources": []}
+        return {"damage_sources": [], "healing_done": 0, "overhealing_done": 0, "self_damage_sources": []}
 
     damage_sources = tick_dots(ps, log, label)
-    total_healing = 0
-    total_healing += trigger_end_of_turn_passives(ps, log, label)
-    effect_healing, self_damage_sources = trigger_end_of_turn_effects(ps, log, label)
-    total_healing += effect_healing
+    passive_healing, passive_overhealing = trigger_end_of_turn_passives(ps, log, label)
+    effect_healing, effect_overhealing, self_damage_sources = trigger_end_of_turn_effects(ps, log, label)
+    total_healing = passive_healing + effect_healing
+    total_overhealing = passive_overhealing + effect_overhealing
 
     if ps.res.hp > 0:
         # Baseline mp/energy regen routes through grant_player_resource so the
@@ -2750,12 +2771,20 @@ def end_of_turn(ps: PlayerState, log: List[str], label: str) -> dict[str, Any]:
         passive_mp_regen = DEFAULTS["mp_regen_per_turn"] + mana_regen_from_spirit(ps)
         grant_player_resource(ps, "mp", passive_mp_regen)
         grant_player_resource(ps, "energy", DEFAULTS["energy_regen_per_turn"])
-    return {"damage_sources": damage_sources, "healing_done": total_healing, "self_damage_sources": self_damage_sources}
+    return {
+        "damage_sources": damage_sources,
+        "healing_done": total_healing,
+        "overhealing_done": total_overhealing,
+        "self_damage_sources": self_damage_sources,
+    }
 
 
 def end_of_turn_pet(pet, log: List[str], label: str) -> dict[str, Any]:
+    """Pet end-of-turn DoT/HoT tick. ``healing_done`` is actual pet HP gained;
+    ``overhealing_done`` is requested regen lost only to the pet's hp_max cap."""
     damage_sources: list[dict[str, Any]] = []
     healing_done = 0
+    overhealing_done = 0
     for effect in pet.effects:
         if effect.get("category") == "dot":
             raw_damage = max(0, int(effect.get("tick_damage", effect.get("value", 0)) or 0))
@@ -2778,6 +2807,7 @@ def end_of_turn_pet(pet, log: List[str], label: str) -> dict[str, Any]:
             pet.hp = min(pet.hp + hp_gain, pet.hp_max)
             gained = pet.hp - before_hp
             healing_done += gained
+            overhealing_done += max(0, hp_gain - gained)
             if gained > 0 and log is not None:
                 log.append(f"{label} recovers {gained} HP from {effect.get('name', 'an effect')}.")
-    return {"damage_sources": damage_sources, "healing_done": healing_done}
+    return {"damage_sources": damage_sources, "healing_done": healing_done, "overhealing_done": overhealing_done}

@@ -481,8 +481,8 @@ def scenario_passive_damage_event_preserves_multihit_instances_for_formatting_an
 
     def fake_trigger_on_hit_passives(*args, include_strike_again=False, only_strike_again=False, **kwargs):
         if include_strike_again or only_strike_again:
-            return 0, [], 0, []
-        return 0, [], 0, [
+            return 0, [], 0, 0, []
+        return 0, [], 0, 0, [
             {
                 "incoming": 60,
                 "school": "magic",
@@ -509,8 +509,8 @@ def scenario_passive_damage_event_preserves_multihit_instances_for_formatting_an
 
     def fake_single_passive(*args, include_strike_again=False, only_strike_again=False, **kwargs):
         if include_strike_again or only_strike_again:
-            return 0, [], 0, []
-        return 0, [], 0, [{"incoming": 17, "log_template": "Single passive deals __DMG_0__ damage."}]
+            return 0, [], 0, 0, []
+        return 0, [], 0, 0, [{"incoming": 17, "log_template": "Single passive deals __DMG_0__ damage."}]
 
     resolver.trigger_on_hit_passives = fake_single_passive
     try:
@@ -736,8 +736,8 @@ def scenario_damage_derived_player_healing_routes_through_shared_helper() -> boo
     (fractional heal_from_damage), periodic DoT lifesteal_pct (Devouring
     Plague), and apply_damage()'s Mindgames damage-to-healing branch. Every
     heal amount derives from actual resolved HP damage, and the Mindgames
-    branch keeps reporting the nominal converted amount regardless of the
-    helper's actual-gain return. Effect/HoT regeneration (Healing Stream)
+    branch keeps the nominal converted amount for mechanic resolution while
+    reporting the actual gain. Effect/HoT regeneration (Healing Stream)
     now routes through the helper as well (full coverage in
     scenario_passive_and_end_of_turn_player_healing_routes_through_shared_helper).
     """
@@ -843,9 +843,15 @@ def scenario_damage_derived_player_healing_routes_through_shared_helper() -> boo
         assert len(calls) == 2, "The direct hit and the same-turn bleed tick should each flip through one apply_player_healing call"
         assert all(target is flip_priest for target, _, _ in calls), "Every flip should heal the damage target"
         assert all(requested > 0 and gained == 0 for _, requested, gained in calls), "Each helper call should receive the positive nominal converted amount while the full-HP target gains 0"
-        flip_lines = [line for line in _turn_lines(flip, 1) if "Mindgames flips damage into" in line]
-        logged_amounts = [int(re.search(r"Mindgames flips damage into (\d+) healing for the target\.", line).group(1)) for line in flip_lines]
-        assert logged_amounts == [requested for _, requested, _ in calls], "Flip log wording should keep reporting exactly the nominal amounts the helper received"
+        flip_lines = [line for line in _turn_lines(flip, 1) if "damage into healing" in line]
+        logged_amounts = [
+            (int(m.group(1)), int(m.group(2)))
+            for line in flip_lines
+            for m in [re.search(r"Mindgames flips (\d+) damage into healing; \w+ restores (\d+) HP\.", line)]
+            if m
+        ]
+        assert [nominal for nominal, _ in logged_amounts] == [requested for _, requested, _ in calls], "Flip log wording should keep reporting exactly the nominal amounts the helper received"
+        assert all(gained == 0 for _, gained in logged_amounts), "Flip log wording must report the actual 0 HP the full-HP target gained"
         assert flip_priest.res.hp == flip_priest.res.hp_max, "No ordinary damage may reach the flip target's HP"
         assert _has_effect(flip_priest, "dragon_roar_bleed"), "The nominal mindgames_healing packet should still let the direct-damage DoT apply"
 
@@ -1249,7 +1255,7 @@ def scenario_subschool_event_plumbing_for_dots_and_passives() -> bool:
         },
     }
     hunter.effects.append(lightning_effect)
-    _, _, _, damage_events = effects.trigger_on_hit_passives(
+    _, _, _, _, damage_events = effects.trigger_on_hit_passives(
         hunter,
         warrior,
         base_damage=10,
