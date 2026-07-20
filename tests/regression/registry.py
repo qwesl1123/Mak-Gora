@@ -214,6 +214,7 @@ from .test_effects_cc import (
 )
 from .test_ui_docs_metadata import (
     scenario_post_combat_summary_exposes_pet_healing_and_actual_damage_dpt,
+    scenario_double_ko_post_combat_summary_renders_dpt_and_fight_length,
     scenario_warlock_imp_log_coloring_mapping_present,
     scenario_hunter_proc_log_stays_at_top_of_turn,
     scenario_proc_and_has_reminders_stay_in_expected_order,
@@ -512,6 +513,7 @@ SCENARIOS = [
     scenario_spirit_end_of_turn_regen_is_silent_and_clamped,
     scenario_shaman_and_rogue_docs_and_stats,
     scenario_post_combat_summary_exposes_pet_healing_and_actual_damage_dpt,
+    scenario_double_ko_post_combat_summary_renders_dpt_and_fight_length,
     scenario_effect_panel_payload_normalization,
     scenario_proc_and_burn_duration_cleanup_and_shield_panel_cleanup,
     scenario_high_risk_shields_absorbs_regression_pack,

@@ -104,6 +104,57 @@ def scenario_post_combat_summary_exposes_pet_healing_and_actual_damage_dpt() -> 
     return True
 
 
+def scenario_double_ko_post_combat_summary_renders_dpt_and_fight_length() -> bool:
+    """A double KO still renders fight length and both DPT values.
+
+    With no winner, both viewers must still get a fully filled summary token
+    (turns + one-decimal DPT on both sides) and the structured snapshot
+    fields, on a first-turn double KO and on a multi-turn double KO whose
+    DPT is a non-trivial one-decimal fraction.
+    """
+    # First-turn double KO: mutual 1-damage Agony ticks kill both at 1 HP.
+    match = make_match("priest", "warlock", seed=9401)
+    p1_sid, p2_sid = match.players
+    match.state[p1_sid].res.hp = 1
+    match.state[p2_sid].res.hp = 1
+    effects.apply_effect_by_id(match.state[p1_sid], "agony", overrides={"duration": 1, "tick_damage": 1, "source_sid": p2_sid, "dot_mode": "fixed"})
+    effects.apply_effect_by_id(match.state[p2_sid], "agony", overrides={"duration": 1, "tick_damage": 1, "source_sid": p1_sid, "dot_mode": "fixed"})
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+    assert match.phase == "ended" and match.winner is None, "Setup: the mutual DoT turn should be a true double KO"
+    assert match.turn == 1, "A first-turn double KO leaves exactly one completed resolved turn"
+
+    for viewer_sid in (p1_sid, p2_sid):
+        view = SOCKETS.snapshot_for(match, viewer_sid)
+        assert view["completed_turns"] == 1, "Fight length must render even without a winner"
+        assert view["friendly_damage_per_turn"] == 1.0 and view["enemy_damage_per_turn"] == 1.0, "Both DPT values must render on a double KO (1 credited damage over 1 turn)"
+        summary = next(line for line in view["log"] if line.startswith("Post-Combat Summary|"))
+        for token in ("|T:1|", "|FD:1|", "|FDPT:1.0|", "|ED:1|", "|EDPT:1.0"):
+            assert token in summary, f"Double-KO summary must fill {token} for every viewer"
+        for bad_token in ("{", "}", "NaN", "undefined", "Infinity"):
+            assert bad_token not in summary, "Double-KO summary must never leak placeholders or non-numeric values"
+        assert "Double KO. No winner." in view["log"], "The double-KO outcome line should accompany the summary"
+
+    # Multi-turn double KO: 1 credited damage over 3 completed turns must
+    # render the one-decimal 0.3 DPT on both sides.
+    long_match = make_match("priest", "warlock", seed=9402)
+    long_p1_sid, long_p2_sid = long_match.players
+    submit_turn(long_match, _DEF_PASS, _DEF_PASS)
+    submit_turn(long_match, _DEF_PASS, _DEF_PASS)
+    long_match.state[long_p1_sid].res.hp = 1
+    long_match.state[long_p2_sid].res.hp = 1
+    effects.apply_effect_by_id(long_match.state[long_p1_sid], "agony", overrides={"duration": 1, "tick_damage": 1, "source_sid": long_p2_sid, "dot_mode": "fixed"})
+    effects.apply_effect_by_id(long_match.state[long_p2_sid], "agony", overrides={"duration": 1, "tick_damage": 1, "source_sid": long_p1_sid, "dot_mode": "fixed"})
+    submit_turn(long_match, _DEF_PASS, _DEF_PASS)
+    assert long_match.phase == "ended" and long_match.winner is None and long_match.turn == 3, "Setup: the third resolved turn should end in a double KO"
+
+    long_view = SOCKETS.snapshot_for(long_match, long_p1_sid)
+    assert long_view["completed_turns"] == 3, "The final double-KO turn must count toward fight length"
+    assert long_view["friendly_damage_per_turn"] == 0.3 and long_view["enemy_damage_per_turn"] == 0.3, "Multi-turn double-KO DPT must round 1/3 to one decimal place"
+    long_summary = next(line for line in long_view["log"] if line.startswith("Post-Combat Summary|"))
+    assert "|T:3|" in long_summary and "|FDPT:0.3|" in long_summary and "|EDPT:0.3" in long_summary, "The multi-turn double-KO summary must carry turns and one-decimal DPT on both sides"
+    return True
+
+
 def scenario_warlock_imp_log_coloring_mapping_present() -> bool:
     duel_html = _detect_duel_html_path().read_text(encoding="utf-8")
     assert '{ names: ["Imp"], className: "log-class-warlock" }' in duel_html, "Combat log pet styling should map Imp to warlock class color"
