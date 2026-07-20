@@ -65,6 +65,7 @@ from .test_damage_pipeline import (
     scenario_drain_life_partial_absorb_heals_only_actual_hp_damage,
     scenario_fury_of_azzinoth_heal_from_dealt_includes_strike_again_damage,
     scenario_damage_derived_player_healing_routes_through_shared_helper,
+    scenario_mindgames_converted_damage_is_not_credited_as_damage_done,
     scenario_thunderfury_lightning_uses_damage_pipeline,
     scenario_thunderfury_heal_proc_restores_expected_amount,
     scenario_azzinoth_strike_again_deals_secondary_damage,
@@ -212,6 +213,7 @@ from .test_effects_cc import (
     scenario_phase0_same_turn_protection_and_denial_timing_lock,
 )
 from .test_ui_docs_metadata import (
+    scenario_post_combat_summary_exposes_pet_healing_and_actual_damage_dpt,
     scenario_warlock_imp_log_coloring_mapping_present,
     scenario_hunter_proc_log_stays_at_top_of_turn,
     scenario_proc_and_has_reminders_stay_in_expected_order,
@@ -459,6 +461,7 @@ SCENARIOS = [
     scenario_azzinoth_strike_again_deals_secondary_damage,
     scenario_fury_of_azzinoth_heal_from_dealt_includes_strike_again_damage,
     scenario_damage_derived_player_healing_routes_through_shared_helper,
+    scenario_mindgames_converted_damage_is_not_credited_as_damage_done,
     scenario_fury_of_azzinoth_cannot_miss_and_ignores_armor,
     scenario_mitigation_physical_uses_def_plus_armor,
     scenario_mitigation_magic_uses_def_plus_magic_resist,
@@ -508,6 +511,7 @@ SCENARIOS = [
     scenario_spirit_mana_regen_formula_and_class_baselines,
     scenario_spirit_end_of_turn_regen_is_silent_and_clamped,
     scenario_shaman_and_rogue_docs_and_stats,
+    scenario_post_combat_summary_exposes_pet_healing_and_actual_damage_dpt,
     scenario_effect_panel_payload_normalization,
     scenario_proc_and_burn_duration_cleanup_and_shield_panel_cleanup,
     scenario_high_risk_shields_absorbs_regression_pack,

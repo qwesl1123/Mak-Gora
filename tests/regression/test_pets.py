@@ -1314,6 +1314,13 @@ def scenario_pet_hot_tick_credits_owner_pet_healing_bucket() -> bool:
     assert totals["pet_overhealing"] == totals_before["pet_overhealing"] + 4, "The requested regen lost to the pet's hp_max cap must land in pet_overhealing"
     assert totals["healing"] == totals_before["healing"], "Pet HoT healing must not roll into the owner's regular healing"
     assert totals["overhealing"] == totals_before["overhealing"], "Pet overhealing must stay separate from player overhealing"
+
+    # The pet bucket must reach the client-facing snapshot on both sides.
+    owner_view = SOCKETS.snapshot_for(match, hunter_sid)
+    assert owner_view["friendly_total_pet_healing"] == totals["pet_healing"], "The owner's snapshot must expose pet_healing as its own statistic"
+    assert owner_view["friendly_total_healing"] == totals["healing"], "The snapshot must not fold pet healing into regular healing"
+    enemy_view = SOCKETS.snapshot_for(match, match.players[1])
+    assert enemy_view["enemy_total_pet_healing"] == totals["pet_healing"], "The opponent's snapshot must see the owner's pet healing as Enemy pet healing"
     return True
 
 

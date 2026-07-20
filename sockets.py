@@ -102,6 +102,17 @@ def snapshot_for(match, viewer_sid):
     totals = match.combat_totals or {}
     friendly_totals = totals.get(you, {"damage": 0, "healing": 0})
     enemy_totals = totals.get(enemy, {"damage": 0, "healing": 0})
+    # DPT = actual credited damage / completed resolved turns. Snapshots are
+    # produced after the resolved-turn counter advances, so match.turn already
+    # counts the final turn; max(1, ...) keeps a first-turn kill (or a
+    # pre-combat snapshot) from dividing by zero.
+    completed_turns = max(1, int(match.turn))
+
+    def damage_per_turn(source_totals):
+        return round(int(source_totals.get("damage", 0) or 0) / completed_turns, 1)
+
+    friendly_dpt = damage_per_turn(friendly_totals)
+    enemy_dpt = damage_per_turn(enemy_totals)
 
     def class_name_for(sid):
         return _picked_class_name(match, sid, default="Unselected")
@@ -307,10 +318,15 @@ def snapshot_for(match, viewer_sid):
             formatted = formatted.replace(sid_token(sid), display_name_for(sid))
         if "{friendly_damage}" in formatted:
             formatted = formatted.format(
+                turns=completed_turns,
                 friendly_damage=friendly_totals.get("damage", 0),
                 friendly_healing=friendly_totals.get("healing", 0),
+                friendly_pet_healing=friendly_totals.get("pet_healing", 0),
+                friendly_dpt=f"{friendly_dpt:.1f}",
                 enemy_damage=enemy_totals.get("damage", 0),
                 enemy_healing=enemy_totals.get("healing", 0),
+                enemy_pet_healing=enemy_totals.get("pet_healing", 0),
+                enemy_dpt=f"{enemy_dpt:.1f}",
             )
         return apply_item_fx_markup(formatted)
 
@@ -375,8 +391,13 @@ def snapshot_for(match, viewer_sid):
         "winner": match.winner,
         "friendly_total_damage": friendly_totals.get("damage", 0),
         "friendly_total_healing": friendly_totals.get("healing", 0),
+        "friendly_total_pet_healing": friendly_totals.get("pet_healing", 0),
         "enemy_total_damage": enemy_totals.get("damage", 0),
         "enemy_total_healing": enemy_totals.get("healing", 0),
+        "enemy_total_pet_healing": enemy_totals.get("pet_healing", 0),
+        "completed_turns": completed_turns,
+        "friendly_damage_per_turn": friendly_dpt,
+        "enemy_damage_per_turn": enemy_dpt,
         "log_length": len(match.log),
         "friendly_cooldowns": friendly_cooldowns,
         "ability_meta": ability_meta,

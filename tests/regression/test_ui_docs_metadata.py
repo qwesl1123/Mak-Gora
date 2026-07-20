@@ -27,6 +27,83 @@ from .helpers import (
 )
 
 
+def scenario_post_combat_summary_exposes_pet_healing_and_actual_damage_dpt() -> bool:
+    """Ended-match snapshots expose pet healing and actual-damage DPT per viewer.
+
+    Pet healing stays a separate statistic (never folded back into regular
+    healing), DPT divides corrected actual damage by completed resolved turns,
+    a first-turn kill uses completed_turns == 1, a zero-damage player shows
+    0.0 DPT, and the tokenized summary line renders with every field filled.
+    """
+    # First-turn kill via direct resolve calls (overkill leaves negative HP,
+    # which the submit_turn harness invariants reject by design).
+    match = make_match("warrior", "priest", seed=123)
+    warrior_sid, priest_sid = match.players
+    match.state[warrior_sid].stats["acc"] = 999
+    match.state[priest_sid].stats["eva"] = 0
+    match.state[priest_sid].res.hp = 1
+    resolver.submit_action(match, warrior_sid, {"ability_id": "basic_attack"})
+    resolver.submit_action(match, priest_sid, {"ability_id": _DEF_PASS})
+    resolver.resolve_turn(match)
+    assert match.phase == "ended" and match.winner == warrior_sid, "Setup: the first turn should be lethal"
+    assert match.turn == 1, "A first-turn kill leaves exactly one completed resolved turn"
+
+    # Pin the totals so every summary field is deterministic, including pet
+    # buckets this seed's fight did not naturally produce. 41 damage over one
+    # turn gives a 41.0 DPT; the dead priest keeps zero credited damage.
+    match.combat_totals[warrior_sid] = {"damage": 41, "healing": 9, "pet_healing": 6, "overhealing": 2, "pet_overhealing": 1}
+    match.combat_totals[priest_sid] = {"damage": 0, "healing": 3, "pet_healing": 0, "overhealing": 0, "pet_overhealing": 0}
+
+    warrior_view = SOCKETS.snapshot_for(match, warrior_sid)
+    assert warrior_view["completed_turns"] == 1, "Fight length must equal completed resolved turns"
+    assert warrior_view["friendly_total_damage"] == 41, "Friendly damage must use the corrected actual-damage total"
+    assert warrior_view["friendly_total_healing"] == 9, "Friendly healing must contain only player-produced healing"
+    assert warrior_view["friendly_total_pet_healing"] == 6, "Pet healing must surface as its own snapshot statistic"
+    assert warrior_view["enemy_total_damage"] == 0 and warrior_view["enemy_total_healing"] == 3 and warrior_view["enemy_total_pet_healing"] == 0, "Enemy totals must read the opponent's buckets"
+    assert warrior_view["friendly_damage_per_turn"] == 41.0, "First-turn kill DPT equals total damage (denominator 1, no divide-by-zero)"
+    assert warrior_view["enemy_damage_per_turn"] == 0.0, "A zero-damage player must show 0.0 DPT"
+
+    priest_view = SOCKETS.snapshot_for(match, priest_sid)
+    assert priest_view["friendly_total_damage"] == 0 and priest_view["friendly_total_healing"] == 3 and priest_view["friendly_total_pet_healing"] == 0, "The second viewer's Friendly values must be their own totals"
+    assert priest_view["enemy_total_damage"] == 41 and priest_view["enemy_total_healing"] == 9 and priest_view["enemy_total_pet_healing"] == 6, "The second viewer must see the opponent's totals as Enemy, reversing pet healing correctly"
+    assert priest_view["friendly_damage_per_turn"] == 0.0 and priest_view["enemy_damage_per_turn"] == 41.0, "DPT must reverse with the viewer"
+
+    warrior_summary = next(line for line in warrior_view["log"] if line.startswith("Post-Combat Summary|"))
+    assert warrior_summary == "Post-Combat Summary|T:1|FD:41|FH:9|FPH:6|FDPT:41.0|ED:0|EH:3|EPH:0|EDPT:0.0", "The tokenized summary must carry turns, pet healing, and one-decimal DPT per viewer"
+    priest_summary = next(line for line in priest_view["log"] if line.startswith("Post-Combat Summary|"))
+    assert priest_summary == "Post-Combat Summary|T:1|FD:0|FH:3|FPH:0|FDPT:0.0|ED:41|EH:9|EPH:6|EDPT:41.0", "The second viewer's summary must reverse Friendly/Enemy"
+    for bad_token in ("{", "}", "NaN", "undefined", "Infinity"):
+        assert bad_token not in warrior_summary and bad_token not in priest_summary, "The rendered summary must never leak placeholders or non-numeric values"
+
+    # Multi-turn control: 41 damage over 3 completed turns rounds to 13.7.
+    long_match = make_match("warrior", "priest", seed=124)
+    long_warrior_sid, long_priest_sid = long_match.players
+    long_match.state[long_warrior_sid].stats["acc"] = 999
+    long_match.state[long_priest_sid].stats["eva"] = 0
+    submit_turn(long_match, _DEF_PASS, _DEF_PASS)
+    submit_turn(long_match, _DEF_PASS, _DEF_PASS)
+    long_match.state[long_priest_sid].res.hp = 1
+    resolver.submit_action(long_match, long_warrior_sid, {"ability_id": "basic_attack"})
+    resolver.submit_action(long_match, long_priest_sid, {"ability_id": _DEF_PASS})
+    resolver.resolve_turn(long_match)
+    assert long_match.phase == "ended" and long_match.turn == 3, "Setup: the third resolved turn should end the fight"
+    long_match.combat_totals[long_warrior_sid]["damage"] = 41
+    long_view = SOCKETS.snapshot_for(long_match, long_warrior_sid)
+    assert long_view["completed_turns"] == 3, "The final resolved turn must be included in the denominator"
+    assert long_view["friendly_damage_per_turn"] == 13.7, "DPT must round 41/3 to one decimal place"
+    long_summary = next(line for line in long_view["log"] if line.startswith("Post-Combat Summary|"))
+    assert "|T:3|" in long_summary and "|FDPT:13.7|" in long_summary, "The summary tokens must carry the multi-turn one-decimal DPT"
+
+    # The client parser must consume the same token contract the backend emits.
+    duel_html = _detect_duel_html_path().read_text(encoding="utf-8")
+    for parser_key in ("values.T", "values.FD", "values.FH", "values.FPH", "values.FDPT", "values.ED", "values.EH", "values.EPH", "values.EDPT"):
+        assert parser_key in duel_html, f"duel.html summary parser should read {parser_key}"
+    assert "Friendly Pet Healing" in duel_html and "Enemy Pet Healing" in duel_html, "The post-combat summary should render pet healing rows"
+    assert "Friendly DPT" in duel_html and "Enemy DPT" in duel_html, "The post-combat summary should render DPT rows"
+    assert ".toFixed(1)" in duel_html, "The UI must format DPT with exactly one decimal place"
+    return True
+
+
 def scenario_warlock_imp_log_coloring_mapping_present() -> bool:
     duel_html = _detect_duel_html_path().read_text(encoding="utf-8")
     assert '{ names: ["Imp"], className: "log-class-warlock" }' in duel_html, "Combat log pet styling should map Imp to warlock class color"

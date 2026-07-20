@@ -10,6 +10,7 @@ import re
 from harness import (
     ABILITIES,
     PET_AI,
+    SOCKETS,
     _has_effect,
     _player_states,
     _turn_lines,
@@ -402,6 +403,9 @@ def scenario_passive_and_end_of_turn_player_healing_routes_through_shared_helper
         assert int(serpent_match.combat_totals[hunter_sid]["healing"]) == totals_before["healing"], "Serpent-produced healing must not be rolled into the owner's regular healing total"
         assert int(serpent_match.combat_totals[hunter_sid]["pet_healing"]) == totals_before["pet_healing"] + 2 + breath_heal, "pet_healing must credit actual pet gain + actual owner gain exactly once"
         assert int(serpent_match.combat_totals[hunter_sid]["pet_overhealing"]) == totals_before["pet_overhealing"] + (breath_heal - 2), "The pet's cap-lost portion of the requested heal must land in pet_overhealing"
+        serpent_snapshot = SOCKETS.snapshot_for(serpent_match, hunter_sid)
+        assert serpent_snapshot["friendly_total_pet_healing"] == int(serpent_match.combat_totals[hunter_sid]["pet_healing"]), "Serpent pet healing must reach the client-facing snapshot bucket"
+        assert serpent_snapshot["friendly_total_healing"] == int(serpent_match.combat_totals[hunter_sid]["healing"]), "The snapshot's regular healing must exclude serpent-produced healing"
     finally:
         effects.apply_player_healing = original
         resolver.apply_player_healing = original

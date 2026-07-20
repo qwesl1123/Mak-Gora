@@ -14,6 +14,7 @@ from harness import (
     CLASSES,
     EFFECT_TEMPLATES,
     PetState,
+    SOCKETS,
     _detect_duel_html_path,
     _has_effect,
     _player_states,
@@ -1005,6 +1006,9 @@ def scenario_kill_command_pet_heal_counted_once_in_totals() -> bool:
         # player buckets and never lands in pet_healing.
         assert room_totals.get("pet_healing") == 0, "Kill Command healing must remain regular player healing, not pet_healing"
         assert room_totals.get("overhealing") == 0, "An uncapped Kill Command heal must not record overhealing"
+        room_view = SOCKETS.snapshot_for(room_match, room_hunter_sid)
+        assert room_view["friendly_total_healing"] == actual_healed, "Kill Command healing must reach the snapshot as regular player healing"
+        assert room_view["friendly_total_pet_healing"] == 0, "Kill Command healing must not surface in the snapshot's pet bucket"
 
         room_turn = _turn_lines(room_match, 2)
         assert any("cast Kill Command" in line and "Roll d4 = 3." in line and "Heals Frostsaber for 7 HP." in line for line in room_turn), "Kill Command heal log wording should be unchanged"

@@ -3666,9 +3666,12 @@ def resolve_turn(match: MatchState) -> None:
     result1 = finalize_action(sids[0], sids[1], a1, turn_ctx.immediate_contexts[sids[0]])
     result2 = finalize_action(sids[1], sids[0], a2, turn_ctx.immediate_contexts[sids[1]])
 
+    # Action results credit only healing/overhealing here. result["damage"] is
+    # the pre-application calculated amount (pre-absorb / pre-immunity /
+    # pre-Mindgames) and is NOT authoritative damage done; direct-action damage
+    # is credited after apply_damage() from actual hp_damage below.
     for sid, result in ((sids[0], result1), (sids[1], result2)):
         totals = combat_totals_entry(match.combat_totals, sid)
-        totals["damage"] += int(result.get("damage", 0) or 0)
         totals["healing"] += int(result.get("healing", 0) or 0)
         totals["overhealing"] += int(result.get("overhealing", 0) or 0)
 
@@ -4122,6 +4125,16 @@ def resolve_turn(match: MatchState) -> None:
     dealt2 = int(dealt2_data.get("hp_damage", 0) or 0)
     total_dealt_by_actor = {sids[0]: dealt1, sids[1]: dealt2}
 
+    # Direct-action damage totals credit actual post-application HP damage
+    # only: absorbed, immune, redirect-adjusted, and Mindgames-converted
+    # portions contribute exactly what landed (a full conversion credits 0).
+    # Queued procs, DoT ticks, AoE pet damage, pet attacks, and SoV explosions
+    # keep their own separate hp_damage-based crediting sites.
+    for sid, dealt_amount in ((sids[0], dealt1), (sids[1], dealt2)):
+        if dealt_amount > 0:
+            totals = combat_totals_entry(match.combat_totals, sid)
+            totals["damage"] += dealt_amount
+
     def combatant_label(sid: str) -> str:
         ps = match.state[sid]
         class_id = (ps.build.class_id or "").strip().lower()
@@ -4403,9 +4416,14 @@ def resolve_turn(match: MatchState) -> None:
     # Check for winners after all turn resolution (pet phase, end-of-turn, and deferred logs)
     if not both_alive:
         match.phase = "ended"
+        # Viewer-relative token template; sockets.snapshot_for() fills the
+        # placeholders per viewer (T = completed resolved turns, *PH = pet
+        # healing, *DPT = damage per turn with one decimal place).
         match.log.append(
-            "Post-Combat Summary|FD:{friendly_damage}|FH:{friendly_healing}|"
-            "ED:{enemy_damage}|EH:{enemy_healing}"
+            "Post-Combat Summary|T:{turns}|FD:{friendly_damage}|FH:{friendly_healing}|"
+            "FPH:{friendly_pet_healing}|FDPT:{friendly_dpt}|"
+            "ED:{enemy_damage}|EH:{enemy_healing}|"
+            "EPH:{enemy_pet_healing}|EDPT:{enemy_dpt}"
         )
         if p1_alive and not p2_alive:
             match.winner = sids[0]

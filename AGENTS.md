@@ -169,6 +169,16 @@ Finalized policies, pinned by regression tests:
 * Mindgames damage-to-healing tracks nominal conversion and actual gain separately. The nominal `mindgames_healing` amount keeps qualifying direct-DoT application; `mindgames_healing_gained` (actual) drives the caster's `healing`/`overhealing` credit and the flip log ("Mindgames flips N damage into healing; X restores M HP."). The conversion is credited to the player who applied Mindgames, read from the active Mindgames effect's `source_sid` (target-applied effects record the caster's SID at application time); the healed target is only a fallback when that metadata is absent.
 * Lifesteal derived from actual dealt damage still produces zero healing when Mindgames flips the damage (actual dealt HP damage is zero).
 
+## Damage totals, snapshots, and the post-combat summary
+
+`combat_totals[sid]["damage"]` represents actual HP damage dealt. It excludes damage absorbed by shields, damage prevented by immunity or pre-application mitigation, damage converted into healing by Mindgames, and any nominal or pre-application value. Attribution (which SID owns pet damage or intentionally credited self-damage) is unchanged; only actual amounts are credited.
+
+* `ActionResult["damage"]` is a pre-application mechanics value used for damage application; it is NOT authoritative combat-total credit. Direct-action damage is credited after `apply_damage()` returns, from `dealt_data["hp_damage"]`. A fully Mindgames-converted hit therefore credits the attacker zero damage while the caster's healing/overhealing credit comes from the actual/nominal conversion amounts.
+* Queued proc events, DoT ticks, pet attacks, AoE pet damage, Shield of Vengeance explosions, and Mindgames-twisted Ancestral Knowledge self-damage keep their own separate hp_damage-based crediting sites; never double-count a packet that is credited elsewhere.
+* Viewer snapshots (`sockets.snapshot_for()`) expose `friendly_total_pet_healing` / `enemy_total_pet_healing` alongside the existing damage/healing fields; the post-combat summary displays pet healing as its own statistic and never folds it back into regular healing. Overhealing buckets are tracked internally and are not yet displayed.
+* DPT (Damage Per Turn) is derived, not stored: actual credited damage divided by completed resolved turns, computed in `snapshot_for()` as `completed_turns = max(1, int(match.turn))` (snapshots are produced after the resolved-turn counter advances, so the final resolved turn is included and a first-turn kill divides by 1). DPT is viewer-relative and displayed with exactly one decimal place.
+* The tokenized post-combat log line is `Post-Combat Summary|T:{turns}|FD:..|FH:..|FPH:..|FDPT:..|ED:..|EH:..|EPH:..|EDPT:..`; the backend formatter in `sockets.py` and the parser in `duel.html` must agree exactly, and the parser guards every field so it never renders NaN/undefined/Infinity or raw placeholders.
+
 ## Damage pipeline rules
 
 Damage that can be modified, mitigated, redirected, absorbed, immuned, logged, or used for resource/healing calculations must go through the shared damage pipeline.
