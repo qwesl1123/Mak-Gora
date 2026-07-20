@@ -151,7 +151,7 @@ def test_queued_on_hit_proc_events_carry_on_hit_proc_source_kind() -> None:
             },
         }
     )
-    _, _, _, damage_events = effects.trigger_on_hit_passives(
+    _, _, _, _, damage_events = effects.trigger_on_hit_passives(
         hunter,
         warrior,
         base_damage=10,
@@ -181,7 +181,7 @@ def test_strike_again_events_carry_strike_again_source_kind() -> None:
             "passive": {"type": "strike_again", "trigger": "on_hit", "chance": 1.0, "multiplier": 0.5},
         }
     )
-    bonus_damage, _, _, damage_events = effects.trigger_on_hit_passives(
+    bonus_damage, _, _, _, damage_events = effects.trigger_on_hit_passives(
         warrior,
         hunter,
         base_damage=10,
@@ -251,7 +251,7 @@ def test_mindgames_twisted_regen_is_tagged_self_damage() -> None:
 
     effects.apply_effect_by_id(warrior, "mindgames")
     effects.apply_effect_by_id(warrior, "regrowth", overrides={"duration": 3, "regen": {"hp": 5}})
-    _, pending_self_damage = effects.trigger_end_of_turn_effects(warrior, [], "Warrior")
+    _, _, pending_self_damage = effects.trigger_end_of_turn_effects(warrior, [], "Warrior")
     assert pending_self_damage, "Mindgames should twist regen into pending self-damage sources"
     for source in pending_self_damage:
         assert source.get("source_kind") == damage_types.DAMAGE_SOURCE_SELF, (

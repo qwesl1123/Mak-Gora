@@ -3,6 +3,7 @@ from typing import Callable
 from ..content.pets import PETS
 from .damage_types import DAMAGE_SOURCE_PET
 from .dice import roll
+from .models import combat_totals_entry
 from .rules import base_damage, hit_chance
 from .effects import (
     mitigate_damage,
@@ -298,7 +299,7 @@ def _run_imp_firebolt(
     )
     remaining = int(dealt_data.get("hp_damage", 0) or 0)
     if remaining > 0:
-        totals = match.combat_totals.setdefault(owner_sid, {"damage": 0, "healing": 0})
+        totals = combat_totals_entry(match.combat_totals, owner_sid)
         totals["damage"] += remaining
 
 
@@ -362,7 +363,7 @@ def _run_shadowfiend_melee_mana(
         if restored > 0:
             match.log.append(f"Shadowfiend restores {restored} mana for {_owner_label(owner_sid)}.")
     if remaining > 0:
-        totals = match.combat_totals.setdefault(owner_sid, {"damage": 0, "healing": 0})
+        totals = combat_totals_entry(match.combat_totals, owner_sid)
         totals["damage"] += remaining
 
 
@@ -573,7 +574,7 @@ def _run_pet_attack(
     )
     remaining = int(dealt.get("hp_damage", 0) or 0)
     if remaining > 0:
-        totals = match.combat_totals.setdefault(owner_sid, {"damage": 0, "healing": 0})
+        totals = combat_totals_entry(match.combat_totals, owner_sid)
         totals["damage"] += remaining
 
 
@@ -650,9 +651,13 @@ def _run_pet_special(
             match.log.append(
                 f"{pet.name} restores {pet_gained} HP to itself and {owner_gained} HP to {_owner_label(owner_sid)}."
             )
-            totals = match.combat_totals.setdefault(owner_sid, {"damage": 0, "healing": 0})
+            totals = combat_totals_entry(match.combat_totals, owner_sid)
             totals["damage"] += remaining
-            totals["healing"] += pet_gained + owner_gained
+            # Both halves are serpent-produced healing: credit pet_healing (and
+            # cap losses to pet_overhealing) under the owner SID for routing,
+            # never the owner's regular "healing" total.
+            totals["pet_healing"] += pet_gained + owner_gained
+            totals["pet_overhealing"] += max(0, heal_value - pet_gained) + max(0, heal_value - owner_gained)
         return
 
     if special_id == "blocking_defence":

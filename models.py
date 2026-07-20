@@ -3,6 +3,31 @@ from dataclasses import dataclass, field
 from threading import RLock
 from typing import Dict, List, Optional, Any
 
+# Canonical per-combatant combat-total keys. "healing"/"overhealing" account
+# player-produced healing; "pet_healing"/"pet_overhealing" account healing
+# produced by pets/totems/summons (stored under the owner SID for routing, but
+# never rolled into the owner's regular "healing"). Overhealing is requested
+# healing lost only to an upper max-HP cap and is excluded from effective
+# healing totals.
+COMBAT_TOTAL_KEYS = ("damage", "healing", "pet_healing", "overhealing", "pet_overhealing")
+
+
+def new_combat_totals() -> Dict[str, int]:
+    return {key: 0 for key in COMBAT_TOTAL_KEYS}
+
+
+def combat_totals_entry(combat_totals: Dict[str, Dict[str, int]], sid: str) -> Dict[str, int]:
+    """Return the mutable totals dict for ``sid``, creating/backfilling keys.
+
+    Older matches (or tests that build MatchState directly) may carry totals
+    dicts without the newer keys; backfilling here lets every crediting site
+    increment any canonical key without defensive .get() chains.
+    """
+    totals = combat_totals.setdefault(sid, {})
+    for key in COMBAT_TOTAL_KEYS:
+        totals.setdefault(key, 0)
+    return totals
+
 @dataclass
 class Resources:
     hp: int

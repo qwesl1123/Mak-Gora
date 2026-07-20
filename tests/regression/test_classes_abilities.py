@@ -14,6 +14,7 @@ from harness import (
     CLASSES,
     EFFECT_TEMPLATES,
     PetState,
+    SOCKETS,
     _detect_duel_html_path,
     _has_effect,
     _player_states,
@@ -227,6 +228,59 @@ def scenario_action_time_player_healing_routes_through_shared_helper() -> bool:
     return True
 
 
+def scenario_capped_action_healing_logs_report_actual_gain() -> bool:
+    """Visible action-time healing amounts are actual HP gained, never the request.
+
+    Wild Growth and Victory Rush near hp_max log and credit only the HP that
+    fit below the cap; the capped remainder is tracked as player overhealing.
+    An uncapped Wild Growth keeps logging the same full value it restores.
+    """
+    # Wild Growth near cap: the (int+atk)*1.6 + d8 request greatly exceeds the
+    # missing 4 HP, so the log/totals show 4 and the remainder is overhealing.
+    capped = make_match("druid", "warrior", seed=9126)
+    druid_sid, _ = capped.players
+    druid = capped.state[druid_sid]
+    effects.apply_effect_by_id(druid, "tree_form", overrides={"duration": 3})
+    druid.res.hp = druid.res.hp_max - 4
+    submit_turn(capped, "wild_growth", _DEF_PASS)
+    assert druid.res.hp == druid.res.hp_max, "The capped Wild Growth should top the druid off at hp_max"
+    assert any("Wild Growth heals 4 HP." in line for line in _turn_lines(capped, 1)), "The capped Wild Growth log must report the actual 4-HP gain, not the request"
+    capped_totals = capped.combat_totals[druid_sid]
+    assert capped_totals["healing"] == 4, "Healing totals must credit only the actual capped gain"
+    assert capped_totals["overhealing"] > 0, "The request beyond the missing 4 HP must be tracked as overhealing"
+    assert capped_totals["pet_healing"] == 0 and capped_totals["pet_overhealing"] == 0, "Player healing must not leak into pet buckets"
+
+    # Uncapped Wild Growth: the logged amount equals the actual HP delta and
+    # nothing is overhealed.
+    uncapped = make_match("druid", "warrior", seed=9126)
+    druid_sid, _ = uncapped.players
+    druid = uncapped.state[druid_sid]
+    effects.apply_effect_by_id(druid, "tree_form", overrides={"duration": 3})
+    druid.res.hp = max(1, druid.res.hp - 60)
+    hp_before = druid.res.hp
+    submit_turn(uncapped, "wild_growth", _DEF_PASS)
+    heal_line = next(line for line in _turn_lines(uncapped, 1) if "Wild Growth heals" in line)
+    logged = int(re.search(r"Wild Growth heals (\d+) HP\.", heal_line).group(1))
+    assert logged == druid.res.hp - hp_before > 0, "The uncapped Wild Growth log must equal the actual (full) HP delta"
+    assert uncapped.combat_totals[druid_sid]["healing"] == logged, "Uncapped healing totals must equal the logged actual gain"
+    assert uncapped.combat_totals[druid_sid]["overhealing"] == 0, "An uncapped heal must not record overhealing"
+
+    # Victory Rush near cap: the generic on-hit heal logs the 1 HP that fit.
+    rush = make_match("warrior", "priest", seed=9128)
+    warrior_sid, rush_priest_sid = rush.players
+    warrior = rush.state[warrior_sid]
+    rush.state[rush_priest_sid].stats["agi"] = 0
+    rush.state[rush_priest_sid].stats["eva"] = 0
+    warrior.stats["acc"] = 999
+    warrior.res.hp = warrior.res.hp_max - 1
+    submit_turn(rush, "victory_rush", _DEF_PASS)
+    assert warrior.res.hp == warrior.res.hp_max, "The capped Victory Rush heal should top the warrior off"
+    assert any("Heals 1 HP." in line for line in _turn_lines(rush, 1)), "The on-hit heal log must report the actual capped 1-HP gain"
+    assert rush.combat_totals[warrior_sid]["healing"] == 1, "Victory Rush totals must credit the actual capped gain"
+    assert rush.combat_totals[warrior_sid]["overhealing"] > 0, "The capped remainder of the Victory Rush request must be overhealing"
+    return True
+
+
 def scenario_special_handler_innervate_mana_and_cooldown() -> bool:
     match = make_match("druid", "warrior", seed=9111)
     druid_sid, _ = match.players
@@ -397,7 +451,7 @@ def scenario_special_handler_lay_on_hands_parity_and_denial_order() -> bool:
     missing_hp = paladin.res.hp_max - paladin.res.hp
     submit_turn(heal_match, "lay_on_hands", _DEF_PASS)
     assert paladin.res.hp == paladin.res.hp_max, "Lay on Hands handler should still full-heal"
-    assert any("Lay on Hands restores health to full." in line for line in _turn_lines(heal_match, 1)), "Lay on Hands handler should preserve log wording"
+    assert any(f"Lay on Hands restores {missing_hp} HP, restoring health to full." in line for line in _turn_lines(heal_match, 1)), "Lay on Hands log must report the actual amount restored"
     assert paladin.cooldowns.get("lay_on_hands"), "Lay on Hands handler should preserve cooldown behavior"
     assert missing_hp > 0, "Lay on Hands parity test should start with missing health"
 
@@ -420,7 +474,7 @@ def scenario_special_handler_lay_on_hands_parity_and_denial_order() -> bool:
     assert any("tries to use Lay on Hands but is feared and cannot act." in line for line in denied_turn), "Denial should still occur before Lay on Hands handler execution"
     assert denied_paladin.res.hp == hp_before, "Denied Lay on Hands should not apply healing side effects"
     assert "lay_on_hands" not in denied_paladin.cooldowns, "Denied Lay on Hands should not consume cooldown"
-    assert not any("Lay on Hands restores health to full." in line for line in denied_turn), "Denied Lay on Hands should not produce handler heal log"
+    assert not any("Lay on Hands restores" in line for line in denied_turn), "Denied Lay on Hands should not produce handler heal log"
     return True
 
 
@@ -548,7 +602,7 @@ def scenario_mindgames_shield_of_vengeance_explosion_interactions() -> bool:
     hp_before = priest.res.hp
     submit_turn(normal_damage, "mindgames", "judgment")
     assert priest.res.hp > hp_before, "Mindgames should still flip normal Paladin damage into healing"
-    assert any("Mindgames flips damage into" in line for line in _turn_lines(normal_damage, 1)), "Normal Paladin damage path should still log Mindgames flips"
+    assert any("damage into healing" in line for line in _turn_lines(normal_damage, 1)), "Normal Paladin damage path should still log Mindgames flips"
 
     sov_mindgames = make_match("priest", "paladin", seed=9102)
     priest_sid, pal_sid = sov_mindgames.players
@@ -560,7 +614,7 @@ def scenario_mindgames_shield_of_vengeance_explosion_interactions() -> bool:
     submit_turn(sov_mindgames, "mindgames", _DEF_PASS)
     assert any("Shield of Vengeance explodes!" in line for line in _turn_lines(sov_mindgames, 1)), "Shield of Vengeance should still explode on expiry"
     assert priest.res.hp > hp_before, "Shield of Vengeance explosion should be flipped into healing under Mindgames"
-    assert any("Shield of Vengeance hits" in line and "Mindgames flips damage into" in line for line in _turn_lines(sov_mindgames, 1)), "Shield of Vengeance explosion should use Mindgames flip logging"
+    assert any("Shield of Vengeance hits" in line and "damage into healing" in line for line in _turn_lines(sov_mindgames, 1)), "Shield of Vengeance explosion should use Mindgames flip logging"
 
     sov_no_mindgames = make_match("priest", "paladin", seed=9103)
     priest_sid, pal_sid = sov_no_mindgames.players
@@ -948,6 +1002,13 @@ def scenario_kill_command_pet_heal_counted_once_in_totals() -> bool:
         room_totals = room_match.combat_totals.get(room_hunter_sid, {})
         assert room_totals.get("healing") == actual_healed, "Owner healing total should be credited exactly the actual pet healing"
         assert room_totals.get("healing") != actual_healed * 2, "Owner healing total must not be double-counted"
+        # Kill Command is champion-produced healing: it stays in the regular
+        # player buckets and never lands in pet_healing.
+        assert room_totals.get("pet_healing") == 0, "Kill Command healing must remain regular player healing, not pet_healing"
+        assert room_totals.get("overhealing") == 0, "An uncapped Kill Command heal must not record overhealing"
+        room_view = SOCKETS.snapshot_for(room_match, room_hunter_sid)
+        assert room_view["friendly_total_healing"] == actual_healed, "Kill Command healing must reach the snapshot as regular player healing"
+        assert room_view["friendly_total_pet_healing"] == 0, "Kill Command healing must not surface in the snapshot's pet bucket"
 
         room_turn = _turn_lines(room_match, 2)
         assert any("cast Kill Command" in line and "Roll d4 = 3." in line and "Heals Frostsaber for 7 HP." in line for line in room_turn), "Kill Command heal log wording should be unchanged"
@@ -974,6 +1035,9 @@ def scenario_kill_command_pet_heal_counted_once_in_totals() -> bool:
         assert cap_actual_healed == 4, "Near-cap pet should only gain the room below max (4 HP)"
         assert captured_results and captured_results[-1].get("healing") == cap_actual_healed, "Kill Command should return only the actual gained HP for a near-cap pet"
         assert cap_match.combat_totals.get(cap_hunter_sid, {}).get("healing") == cap_actual_healed, "Near-cap pet should credit only actual gained HP once"
+        assert captured_results[-1].get("overhealing") == 7 - cap_actual_healed, "The requested heal lost to the pet's hp_max cap should be reported as overhealing"
+        assert cap_match.combat_totals.get(cap_hunter_sid, {}).get("overhealing") == 7 - cap_actual_healed, "Player overhealing totals should track the capped Kill Command remainder"
+        assert cap_match.combat_totals.get(cap_hunter_sid, {}).get("pet_healing") == 0, "Capped Kill Command healing must not leak into pet_healing"
 
         # Case 3: a full-HP pet produces zero healing and zero healing-total gain.
         full_match = make_match("hunter", "warrior", seed=9105)

@@ -252,7 +252,7 @@ def test_legacy_damage_type_normalizes_school_for_triggered_damage_events() -> N
             "passive": {"type": "duplicate_offensive_spell", "trigger": "on_hit", "chance": 1.0},
         }
     )
-    _, _, _, damage_events = effects.trigger_on_hit_passives(
+    _, _, _, _, damage_events = effects.trigger_on_hit_passives(
         mage,
         warrior,
         base_damage=10,
@@ -286,7 +286,7 @@ def test_physical_runtime_payload_does_not_carry_bogus_subschool() -> None:
             "passive": {"type": "duplicate_offensive_spell", "trigger": "on_hit", "chance": 1.0},
         }
     )
-    _, _, _, damage_events = effects.trigger_on_hit_passives(
+    _, _, _, _, damage_events = effects.trigger_on_hit_passives(
         p1,
         p2,
         base_damage=12,
@@ -394,7 +394,7 @@ def test_magical_pet_and_item_damage_metadata() -> None:
             },
         }
     )
-    _, _, _, damage_events = effects.trigger_on_hit_passives(
+    _, _, _, _, damage_events = effects.trigger_on_hit_passives(
         hunter,
         warrior,
         base_damage=10,

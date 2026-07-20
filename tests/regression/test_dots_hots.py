@@ -10,6 +10,7 @@ import re
 from harness import (
     ABILITIES,
     PET_AI,
+    SOCKETS,
     _has_effect,
     _player_states,
     _turn_lines,
@@ -85,18 +86,20 @@ def scenario_mindgames_still_allows_direct_damage_dots() -> bool:
     assert priest.res.hp == priest.res.hp_max, "Setup: the flip target should start at full HP"
     submit_turn(dragon_match, "dragon_roar", "mindgames")
     assert _has_effect(dragon_match.state[dragon_priest], "dragon_roar_bleed"), "Dragon Roar bleed should apply even when Mindgames flips the same-turn direct damage"
-    assert any("Mindgames flips damage into" in line for line in dragon_match.log), "Dragon Roar scenario should still record the Mindgames flip"
+    assert any("damage into healing" in line for line in dragon_match.log), "Dragon Roar scenario should still record the Mindgames flip"
     # DamageApplicationResult["mindgames_healing"] carries the nominal converted
-    # damage, not actual HP restored. Direct-DoT application uses that nominal
-    # value as evidence the source hit resolved, which is why the bleed above
-    # applies even though the full-HP target actually gains 0 HP from the flip.
+    # damage; "mindgames_healing_gained" carries actual HP restored. Direct-DoT
+    # application uses the nominal value as evidence the source hit resolved,
+    # which is why the bleed above applies even though the full-HP target
+    # actually gains 0 HP from the flip. The flip log reports both values.
     flip_amounts = [
-        int(m.group(1))
+        (int(m.group(1)), int(m.group(2)))
         for line in dragon_match.log
-        for m in [re.search(r"Mindgames flips damage into (\d+) healing for the target\.", line)]
+        for m in [re.search(r"Mindgames flips (\d+) damage into healing; \w+ restores (\d+) HP\.", line)]
         if m
     ]
-    assert flip_amounts and all(amount > 0 for amount in flip_amounts), "Flip logs should keep reporting the positive nominal converted amount"
+    assert flip_amounts and all(nominal > 0 for nominal, _ in flip_amounts), "Flip logs should keep reporting the positive nominal converted amount"
+    assert all(gained == 0 for _, gained in flip_amounts), "Flip logs must report the actual 0 HP gained by the full-HP target, not the nominal amount"
     assert priest.res.hp == priest.res.hp_max, "A full-HP flip target gains no actual HP even though the nominal converted amount is positive"
 
     wildfire_match = make_match("hunter", "priest", seed=123)
@@ -155,10 +158,11 @@ def scenario_end_of_turn_healing_applies_before_queued_dot_damage() -> bool:
 
     assert warrior.res.hp == warrior.res.hp_max - 10, "End-of-turn item healing must apply (and cap at hp_max) before queued DoT damage lands"
     assert cap_match.combat_totals[warrior_sid]["healing"] == 1, "End-of-turn healing totals must credit the actual capped HP delta"
+    assert cap_match.combat_totals[warrior_sid]["overhealing"] == 3, "The 3 HP of the requested 4 lost to the hp_max cap must be tracked as overhealing"
     turn_lines = _turn_lines(cap_match, 1)
-    # The item heal log keeps its current requested-amount wording (4 HP) even
-    # though only 1 HP fit below hp_max; do not standardize this divergence.
-    heal_idx = next(i for i, line in enumerate(turn_lines) if "heals 4 HP from Staff of Immortality." in line)
+    # The item heal log reports the actual capped gain (1 HP), not the
+    # requested 4 HP.
+    heal_idx = next(i for i, line in enumerate(turn_lines) if "heals 1 HP from Staff of Immortality." in line)
     dot_idx = next(i for i, line in enumerate(turn_lines) if "suffers 10 damage from Burn." in line)
     assert heal_idx < dot_idx, "Item heal log should keep its position before the queued DoT application log"
 
@@ -187,9 +191,11 @@ def scenario_passive_and_end_of_turn_player_healing_routes_through_shared_helper
     Knowledge, and Emerald Serpent Lightning Breath owner healing. This
     completes migration of the known production player-healing application
     sites. Preserved caller-owned policies: Mindgames-twisted HoT ticks convert
-    to queued self-damage without any normal healing call, item and effect logs
-    keep reporting the requested amount rather than the actual capped gain, and
-    pet HP stays locally clamped outside the player-only helper.
+    to queued self-damage without any normal healing call and pet HP stays
+    locally clamped outside the player-only helper. Item and effect healing
+    logs report the actual gained amount; the requested portion lost to the
+    hp_max cap is tracked as overhealing, and serpent-produced healing is
+    credited to pet_healing rather than the owner's regular healing.
     """
     original = effects.apply_player_healing
     assert resolver.apply_player_healing is original, "resolver should share the effects.apply_player_healing primitive"
@@ -215,7 +221,7 @@ def scenario_passive_and_end_of_turn_player_healing_routes_through_shared_helper
     try:
         # Item heal_on_hit (Thunderfury) near cap: the helper receives the
         # passive's rolled request, only 1 HP fits below hp_max, bonus_healing/
-        # totals use the actual gain, and the log keeps the requested wording.
+        # totals use the actual gain, and the log reports the actual gain.
         proc = make_match("warrior", "priest", p1_items={"weapon": "thunderfury"}, seed=5)
         proc_warrior_sid, _ = proc.players
         proc_warrior = proc.state[proc_warrior_sid]
@@ -223,16 +229,19 @@ def scenario_passive_and_end_of_turn_player_healing_routes_through_shared_helper
         calls.clear()
         submit_turn(proc, "overpower", _DEF_PASS)
         heal_line = next(line for line in _turn_lines(proc, 1) if "draws strength from Thunderfury" in line)
-        requested = int(re.search(r"healing (\d+) HP\.", heal_line).group(1))
+        assert len(calls) == 1 and calls[0][0] is proc_warrior, "heal_on_hit should route the passive's rolled request through exactly one helper call"
+        requested = calls[0][1]
         assert requested > 1, "Setup: the rolled heal request must exceed the 1 missing HP to distinguish requested from actual"
-        assert calls == [(proc_warrior, requested, 1)], "heal_on_hit should route the passive's rolled request through exactly one helper call and gain only the capped 1 HP"
+        assert calls == [(proc_warrior, requested, 1)], "The near-cap proc should gain only the capped 1 HP"
+        assert "healing 1 HP." in heal_line, "The heal_on_hit log must report the actual capped gain, not the rolled request"
         assert proc_warrior.res.hp == proc_warrior.res.hp_max, "The near-cap proc should top the attacker off at hp_max"
         assert proc.combat_totals[proc_warrior_sid]["healing"] == 1, "bonus_healing/combat totals must credit the actual gain, not the request"
+        assert proc.combat_totals[proc_warrior_sid]["overhealing"] == requested - 1, "The capped remainder of the rolled request must be tracked as overhealing"
         assert proc.log == control.log, "The spied run must replay the control run byte-identically (RNG order and damage unchanged)"
 
         # End-of-turn item heal_self (Staff of Immortality) near cap: helper
-        # receives the requested 4, returns the 1 HP that fit, the log keeps the
-        # requested wording, and healing still lands before queued DoT damage.
+        # receives the requested 4, returns the 1 HP that fit, the log reports
+        # the actual gain, and healing still lands before queued DoT damage.
         item = make_match("warrior", "priest", p1_items={"weapon": "staff_of_immortality"}, seed=6504)
         item_warrior_sid, item_priest_sid = item.players
         item_warrior = item.state[item_warrior_sid]
@@ -245,10 +254,11 @@ def scenario_passive_and_end_of_turn_player_healing_routes_through_shared_helper
         assert calls == [(item_warrior, 4, 1)], "heal_self should request the item's 4 HP through the helper and gain only the capped 1 HP"
         assert item_warrior.res.hp == item_warrior.res.hp_max - 10, "The capped heal must still land before the queued 10-damage DoT"
         assert item.combat_totals[item_warrior_sid]["healing"] == 1, "end_summary healing totals must credit the actual gain"
+        assert item.combat_totals[item_warrior_sid]["overhealing"] == 3, "end_summary overhealing must track the 3 HP lost to the cap"
         item_lines = _turn_lines(item, 1)
-        heal_idx = next(i for i, line in enumerate(item_lines) if "heals 4 HP from Staff of Immortality." in line)
+        heal_idx = next(i for i, line in enumerate(item_lines) if "heals 1 HP from Staff of Immortality." in line)
         dot_idx = next(i for i, line in enumerate(item_lines) if "suffers 10 damage from Burn." in line)
-        assert heal_idx < dot_idx, "The requested-amount heal log should keep its position before the queued DoT log"
+        assert heal_idx < dot_idx, "The actual-gain heal log should keep its position before the queued DoT log"
 
         # Normal effect/HoT regeneration (Healing Stream): the tick routes its
         # regen["hp"] request through the helper; recovery log and duration
@@ -320,7 +330,8 @@ def scenario_passive_and_end_of_turn_player_healing_routes_through_shared_helper
         assert any(f"gains +{ak_int_gain} Intellect from Ancestral Knowledge." in line for line in ak_lines), "Ancestral Knowledge Intellect log wording must be unchanged"
 
         # Full HP still requests the normal heal through the helper, but credits
-        # no healing and leaves the independent Intellect component intact.
+        # no healing (the whole request becomes overhealing) and leaves the
+        # independent Intellect component intact.
         full = make_match("shaman", "warrior", seed=6604)
         full_shaman_sid, _ = full.players
         full_shaman = full.state[full_shaman_sid]
@@ -332,7 +343,9 @@ def scenario_passive_and_end_of_turn_player_healing_routes_through_shared_helper
         calls.clear()
         submit_turn(full, _DEF_PASS, _DEF_PASS)
         assert calls == [(full_shaman, full_request, 0)], "A full-HP Ancestral Knowledge trigger should still make one capped helper call"
-        assert full.combat_totals[full_shaman_sid] == full_totals_before, "Zero actual gain must not add healing totals"
+        expected_full_totals = dict(full_totals_before)
+        expected_full_totals["overhealing"] = full_totals_before["overhealing"] + full_request
+        assert full.combat_totals[full_shaman_sid] == expected_full_totals, "Zero actual gain must add only overhealing, never healing totals"
         assert not any("HP from Ancestral Knowledge." in line for line in _turn_lines(full, 1)), "Zero actual gain must not emit a healing-success log"
         assert full_shaman.stats["int"] == full_int_before + full_int_gain, "The Intellect component must still apply at full HP"
 
@@ -358,7 +371,8 @@ def scenario_passive_and_end_of_turn_player_healing_routes_through_shared_helper
         # Emerald Serpent Lightning Breath: exactly one player-healing call for
         # the owner requesting actual_damage // 2; the pet heals through its own
         # local clamp (capping at hp_max), the log reports both actual gains,
-        # and the owner's totals credit both exactly once.
+        # and both halves are pet-produced healing credited once to the owner's
+        # pet_healing bucket — never the owner's regular healing total.
         serpent_match = make_match("hunter", "warrior", seed=1)
         hunter_sid, serpent_warrior_sid = serpent_match.players
         hunter = serpent_match.state[hunter_sid]
@@ -386,7 +400,12 @@ def scenario_passive_and_end_of_turn_player_healing_routes_through_shared_helper
             for line in _turn_lines(serpent_match, 2)
         ), "Lightning Breath log must keep reporting the actual pet and owner gains"
         assert int(serpent_match.combat_totals[hunter_sid]["damage"]) == totals_before["damage"] + dealt, "Damage totals must be unchanged by the migration"
-        assert int(serpent_match.combat_totals[hunter_sid]["healing"]) == totals_before["healing"] + 2 + breath_heal, "Healing totals must credit actual pet gain + actual owner gain exactly once"
+        assert int(serpent_match.combat_totals[hunter_sid]["healing"]) == totals_before["healing"], "Serpent-produced healing must not be rolled into the owner's regular healing total"
+        assert int(serpent_match.combat_totals[hunter_sid]["pet_healing"]) == totals_before["pet_healing"] + 2 + breath_heal, "pet_healing must credit actual pet gain + actual owner gain exactly once"
+        assert int(serpent_match.combat_totals[hunter_sid]["pet_overhealing"]) == totals_before["pet_overhealing"] + (breath_heal - 2), "The pet's cap-lost portion of the requested heal must land in pet_overhealing"
+        serpent_snapshot = SOCKETS.snapshot_for(serpent_match, hunter_sid)
+        assert serpent_snapshot["friendly_total_pet_healing"] == int(serpent_match.combat_totals[hunter_sid]["pet_healing"]), "Serpent pet healing must reach the client-facing snapshot bucket"
+        assert serpent_snapshot["friendly_total_healing"] == int(serpent_match.combat_totals[hunter_sid]["healing"]), "The snapshot's regular healing must exclude serpent-produced healing"
     finally:
         effects.apply_player_healing = original
         resolver.apply_player_healing = original
@@ -541,7 +560,7 @@ def scenario_ancestral_knowledge_mindgames_self_damage_pipeline() -> bool:
         assert absorbed_shaman.stats["int"] == absorbed_int_before + absorbed_int_gain, "Mindgames conversion must preserve the Intellect increase"
         assert any(f"Ancestral Knowledge is twisted by Mindgames into {absorbed_request} self-damage." in line for line in absorbed_lines), "Mindgames conversion must log the requested pre-cap amount"
         assert any("suffers 10 damage from Mindgames-twisted Ancestral Knowledge." in line for line in absorbed_lines), "Converted damage must use the shared damage log"
-        assert not any("HP from Ancestral Knowledge." in line or "Mindgames flips damage into" in line for line in absorbed_lines), "Converted self-damage must emit neither a healing-success log nor a second Mindgames flip"
+        assert not any("HP from Ancestral Knowledge." in line or "damage into healing" in line for line in absorbed_lines), "Converted self-damage must emit neither a healing-success log nor a second Mindgames flip"
 
         for starting_hp, expected_hp, seed in ((0, -9, 6616), (-2, -11, 6617)):
             downed = make_match("shaman", "warrior", seed=seed)
@@ -606,6 +625,129 @@ def scenario_ancestral_knowledge_mindgames_self_damage_pipeline() -> bool:
         ), "The immune pipeline result must retain magical Shadow self-damage metadata"
     finally:
         resolver.apply_player_healing = original_healing
+    return True
+
+
+def scenario_regen_healing_overhealing_and_negative_hp_accounting() -> bool:
+    """HoT/regen recovery logs report actual gain; cap losses are overhealing.
+
+    Near-cap: a 12-point Healing Stream tick on a warrior missing 2 HP logs
+    "recovers 2 HP", credits 2 healing and 10 overhealing. Negative HP: the
+    same tick from -8 HP reports the complete upward 12-HP delta with zero
+    overhealing — temporary negative HP is not overhealing. Player healing
+    never leaks into the pet buckets.
+    """
+    capped = make_match("warrior", "priest", seed=6701)
+    warrior_sid, _ = capped.players
+    warrior = capped.state[warrior_sid]
+    effects.apply_effect_by_id(warrior, "healing_stream", overrides={"duration": 3, "regen": {"hp": 12}})
+    warrior.res.hp = warrior.res.hp_max - 2
+    submit_turn(capped, _DEF_PASS, _DEF_PASS)
+    assert warrior.res.hp == warrior.res.hp_max, "The capped tick should top the warrior off at hp_max"
+    capped_lines = _turn_lines(capped, 1)
+    assert any("recovers 2 HP from Healing Stream." in line for line in capped_lines), "The regen log must report the actual capped 2-HP gain"
+    assert not any("recovers 12 HP from Healing Stream." in line for line in capped_lines), "The regen log must not report the requested 12-HP amount"
+    capped_totals = capped.combat_totals[warrior_sid]
+    assert capped_totals["healing"] == 2, "Healing totals must credit the actual capped gain"
+    assert capped_totals["overhealing"] == 10, "The 10 HP of the request lost to the cap must be overhealing"
+    assert capped_totals["pet_healing"] == 0 and capped_totals["pet_overhealing"] == 0, "Player regen must not touch the pet buckets"
+
+    negative = make_match("warrior", "priest", seed=6702)
+    negative_sid, _ = negative.players
+    negative_warrior = negative.state[negative_sid]
+    effects.apply_effect_by_id(negative_warrior, "healing_stream", overrides={"duration": 3, "regen": {"hp": 12}})
+    negative_warrior.res.hp = -8
+    submit_turn(negative, _DEF_PASS, _DEF_PASS)
+    assert negative_warrior.res.hp == 4, "Healing must use the current -8 HP value directly (-8 + 12 = 4)"
+    assert negative.phase != "ended", "The recovered warrior must survive the end-of-turn winner check"
+    assert any("recovers 12 HP from Healing Stream." in line for line in _turn_lines(negative, 1)), "Negative-HP recovery must report the complete upward 12-HP delta"
+    negative_totals = negative.combat_totals[negative_sid]
+    assert negative_totals["healing"] == 12, "Negative-HP recovery credits the full actual delta"
+    assert negative_totals["overhealing"] == 0, "Temporary negative HP recovery is not overhealing"
+    return True
+
+
+def scenario_mindgames_conversion_credits_caster_actual_gain_and_overheal() -> bool:
+    """Mindgames damage-to-healing separates nominal conversion from actual gain.
+
+    The nominal converted amount still qualifies direct-DoT application, while
+    the Mindgames caster — read from the debuff's source_sid — is credited only
+    the actual gained healing, with the capped remainder recorded as the
+    caster's overhealing. Fully flipped damage still yields zero lifesteal.
+    """
+    # Application metadata: casting Mindgames records the caster's SID on the
+    # applied debuff (pinned via a spy because the 1-turn debuff expires before
+    # the resolved turn can be inspected).
+    spy_match = make_match("warrior", "priest", seed=123)
+    spy_warrior_sid, spy_priest_sid = spy_match.players
+    original_apply = resolver.apply_effect_by_id
+    applied: list[tuple[str, dict]] = []
+
+    def spying_apply(target, effect_id, *args, **kwargs):
+        applied.append((effect_id, dict(kwargs.get("overrides") or {})))
+        return original_apply(target, effect_id, *args, **kwargs)
+
+    resolver.apply_effect_by_id = spying_apply
+    try:
+        submit_turn(spy_match, _DEF_PASS, "mindgames")
+    finally:
+        resolver.apply_effect_by_id = original_apply
+    mindgames_overrides = next(overrides for effect_id, overrides in applied if effect_id == "mindgames")
+    assert mindgames_overrides.get("source_sid") == spy_priest_sid, "Applying Mindgames must record the caster's SID on the debuff"
+
+    # Normal attribution: the priest (caster and healed target) is credited the
+    # actual 3-HP gain; the rest of the nominal conversion is the priest's
+    # overhealing; the nominal amount still applies the Dragon Roar bleed.
+    match = make_match("warrior", "priest", seed=123)
+    warrior_sid, priest_sid = match.players
+    match.state[warrior_sid].res.rage = match.state[warrior_sid].res.rage_max
+    priest = match.state[priest_sid]
+    priest.res.hp = priest.res.hp_max - 3
+    submit_turn(match, "dragon_roar", "mindgames")
+    assert priest.res.hp == priest.res.hp_max, "The flip should heal the priest's 3-HP deficit and cap at hp_max"
+    assert _has_effect(priest, "dragon_roar_bleed"), "The nominal converted amount must still qualify direct-DoT application"
+    nominal_total = sum(
+        int(m.group(1))
+        for line in _turn_lines(match, 1)
+        for m in [re.search(r"Mindgames flips (\d+) damage into healing; \w+ restores \d+ HP\.", line)]
+        if m
+    )
+    assert nominal_total > 3, "Setup: the nominal conversion must exceed the 3-HP deficit"
+    priest_totals = match.combat_totals[priest_sid]
+    assert priest_totals["healing"] == 3, "The Mindgames caster is credited only the actual gained healing"
+    assert priest_totals["overhealing"] == nominal_total - 3, "The capped conversion remainder is the caster's overhealing"
+
+    # Attribution follows the debuff's source_sid, not the healed target: a
+    # Mindgames debuff recorded as the warrior's own credits the warrior even
+    # though the priest is the one healed.
+    attrib = make_match("warrior", "priest", seed=124)
+    attrib_warrior_sid, attrib_priest_sid = attrib.players
+    attrib_warrior = attrib.state[attrib_warrior_sid]
+    attrib_priest = attrib.state[attrib_priest_sid]
+    attrib_warrior.res.rage = attrib_warrior.res.rage_max
+    attrib_priest.res.hp = attrib_priest.res.hp_max - 5
+    effects.apply_effect_by_id(attrib_warrior, "mindgames", overrides={"duration": 2, "source_sid": attrib_warrior_sid})
+    submit_turn(attrib, "dragon_roar", _DEF_PASS)
+    assert attrib_priest.res.hp == attrib_priest.res.hp_max, "The flip should heal the priest's 5-HP deficit"
+    assert attrib.combat_totals[attrib_warrior_sid]["healing"] == 5, "Converted healing must credit the debuff's source_sid caster"
+    assert attrib.combat_totals[attrib_warrior_sid]["overhealing"] > 0, "The conversion overheal must follow the same source_sid attribution"
+    assert attrib.combat_totals[attrib_priest_sid]["healing"] == 0, "The healed target must not be credited when the recorded caster differs"
+
+    # Lifesteal from fully flipped damage stays zero: no actual damage means
+    # no drain heal and no healing credit for the attacker.
+    drain = make_match("warlock", "priest", seed=125)
+    warlock_sid, drain_priest_sid = drain.players
+    warlock = drain.state[warlock_sid]
+    warlock.stats["acc"] = 999
+    drain.state[drain_priest_sid].stats["eva"] = 0
+    warlock.res.hp = max(1, warlock.res.hp - 30)
+    warlock_hp_before = warlock.res.hp
+    submit_turn(drain, "drain_life", "mindgames")
+    assert any("damage into healing" in line for line in _turn_lines(drain, 1)), "Setup: the seeded Drain Life must land and flip"
+    assert not any("drains" in line and "life" in line for line in _turn_lines(drain, 1)), "Fully flipped Drain Life must produce no lifesteal log"
+    assert warlock.res.hp == warlock_hp_before, "Zero actual damage must yield zero lifesteal healing"
+    assert drain.combat_totals[warlock_sid]["healing"] == 0, "The attacker must not be credited healing for a fully flipped drain"
+    assert drain.combat_totals[drain_priest_sid]["overhealing"] > 0, "The full-HP caster's conversion must be recorded entirely as overhealing"
     return True
 
 

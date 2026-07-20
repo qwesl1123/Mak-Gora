@@ -1291,6 +1291,39 @@ def scenario_phase0_pet_legality_and_protection_contract_lock() -> bool:
     return True
 
 
+def scenario_pet_hot_tick_credits_owner_pet_healing_bucket() -> bool:
+    """Pet HoT/regen ticks are pet-produced healing: they land once in the
+    owner's pet_healing/pet_overhealing buckets and never in player healing.
+    """
+    match = make_match("hunter", "warrior", seed=9301)
+    hunter_sid, _ = match.players
+    hunter = match.state[hunter_sid]
+    submit_turn(match, "call_saber", _DEF_PASS)
+    saber = _active_pet(hunter, "frostsaber")
+    assert saber is not None, "Setup: Frostsaber should be active"
+    saber.hp = saber.hp_max - 2
+    saber.effects.append({"id": "mend_pet_test", "name": "Mend Pet", "category": "hot", "regen": {"hp": 6}, "duration": 3})
+    totals_before = dict(match.combat_totals[hunter_sid])
+
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+
+    totals = match.combat_totals[hunter_sid]
+    assert saber.hp == saber.hp_max, "The 6-HP tick should cap the pet at hp_max"
+    assert any("Frostsaber recovers 2 HP from Mend Pet." in line for line in _turn_lines(match, 2)), "The pet HoT log must report the actual gained 2 HP"
+    assert totals["pet_healing"] == totals_before["pet_healing"] + 2, "Pet HoT healing must credit pet_healing exactly once"
+    assert totals["pet_overhealing"] == totals_before["pet_overhealing"] + 4, "The requested regen lost to the pet's hp_max cap must land in pet_overhealing"
+    assert totals["healing"] == totals_before["healing"], "Pet HoT healing must not roll into the owner's regular healing"
+    assert totals["overhealing"] == totals_before["overhealing"], "Pet overhealing must stay separate from player overhealing"
+
+    # The pet bucket must reach the client-facing snapshot on both sides.
+    owner_view = SOCKETS.snapshot_for(match, hunter_sid)
+    assert owner_view["friendly_total_pet_healing"] == totals["pet_healing"], "The owner's snapshot must expose pet_healing as its own statistic"
+    assert owner_view["friendly_total_healing"] == totals["healing"], "The snapshot must not fold pet healing into regular healing"
+    enemy_view = SOCKETS.snapshot_for(match, match.players[1])
+    assert enemy_view["enemy_total_pet_healing"] == totals["pet_healing"], "The opponent's snapshot must see the owner's pet healing as Enemy pet healing"
+    return True
+
+
 def scenario_pet_attack_logs_on_miss_and_immune_consistently() -> bool:
     original_boar_chance = PETS["barrens_boar"]["special_chance"]
     original_saber_chance = PETS["frostsaber"]["special_chance"]

@@ -1107,7 +1107,7 @@ def scenario_proc_and_burn_duration_cleanup_and_shield_panel_cleanup() -> bool:
             "passive": {"type": "burn", "value": 2, "trigger": "on_hit"},
         }
     )
-    _, wand_logs, _, _ = effects.trigger_on_hit_passives(mage, warrior, base_damage=5, damage_type="magic", rng=random.Random(1))
+    _, wand_logs, _, _, _ = effects.trigger_on_hit_passives(mage, warrior, base_damage=5, damage_type="magic", rng=random.Random(1))
     assert wand_logs == [f"{mage.sid[:5]} scorches the target with Wand of Fire."], "Wand of Fire log should omit damage-per-turn suffix"
 
     burn = next((fx for fx in warrior.effects if fx.get("id") == "burn"), None)

@@ -481,8 +481,8 @@ def scenario_passive_damage_event_preserves_multihit_instances_for_formatting_an
 
     def fake_trigger_on_hit_passives(*args, include_strike_again=False, only_strike_again=False, **kwargs):
         if include_strike_again or only_strike_again:
-            return 0, [], 0, []
-        return 0, [], 0, [
+            return 0, [], 0, 0, []
+        return 0, [], 0, 0, [
             {
                 "incoming": 60,
                 "school": "magic",
@@ -509,8 +509,8 @@ def scenario_passive_damage_event_preserves_multihit_instances_for_formatting_an
 
     def fake_single_passive(*args, include_strike_again=False, only_strike_again=False, **kwargs):
         if include_strike_again or only_strike_again:
-            return 0, [], 0, []
-        return 0, [], 0, [{"incoming": 17, "log_template": "Single passive deals __DMG_0__ damage."}]
+            return 0, [], 0, 0, []
+        return 0, [], 0, 0, [{"incoming": 17, "log_template": "Single passive deals __DMG_0__ damage."}]
 
     resolver.trigger_on_hit_passives = fake_single_passive
     try:
@@ -736,8 +736,8 @@ def scenario_damage_derived_player_healing_routes_through_shared_helper() -> boo
     (fractional heal_from_damage), periodic DoT lifesteal_pct (Devouring
     Plague), and apply_damage()'s Mindgames damage-to-healing branch. Every
     heal amount derives from actual resolved HP damage, and the Mindgames
-    branch keeps reporting the nominal converted amount regardless of the
-    helper's actual-gain return. Effect/HoT regeneration (Healing Stream)
+    branch keeps the nominal converted amount for mechanic resolution while
+    reporting the actual gain. Effect/HoT regeneration (Healing Stream)
     now routes through the helper as well (full coverage in
     scenario_passive_and_end_of_turn_player_healing_routes_through_shared_helper).
     """
@@ -843,9 +843,15 @@ def scenario_damage_derived_player_healing_routes_through_shared_helper() -> boo
         assert len(calls) == 2, "The direct hit and the same-turn bleed tick should each flip through one apply_player_healing call"
         assert all(target is flip_priest for target, _, _ in calls), "Every flip should heal the damage target"
         assert all(requested > 0 and gained == 0 for _, requested, gained in calls), "Each helper call should receive the positive nominal converted amount while the full-HP target gains 0"
-        flip_lines = [line for line in _turn_lines(flip, 1) if "Mindgames flips damage into" in line]
-        logged_amounts = [int(re.search(r"Mindgames flips damage into (\d+) healing for the target\.", line).group(1)) for line in flip_lines]
-        assert logged_amounts == [requested for _, requested, _ in calls], "Flip log wording should keep reporting exactly the nominal amounts the helper received"
+        flip_lines = [line for line in _turn_lines(flip, 1) if "damage into healing" in line]
+        logged_amounts = [
+            (int(m.group(1)), int(m.group(2)))
+            for line in flip_lines
+            for m in [re.search(r"Mindgames flips (\d+) damage into healing; \w+ restores (\d+) HP\.", line)]
+            if m
+        ]
+        assert [nominal for nominal, _ in logged_amounts] == [requested for _, requested, _ in calls], "Flip log wording should keep reporting exactly the nominal amounts the helper received"
+        assert all(gained == 0 for _, gained in logged_amounts), "Flip log wording must report the actual 0 HP the full-HP target gained"
         assert flip_priest.res.hp == flip_priest.res.hp_max, "No ordinary damage may reach the flip target's HP"
         assert _has_effect(flip_priest, "dragon_roar_bleed"), "The nominal mindgames_healing packet should still let the direct-damage DoT apply"
 
@@ -864,6 +870,90 @@ def scenario_damage_derived_player_healing_routes_through_shared_helper() -> boo
     finally:
         effects.apply_player_healing = original
         resolver.apply_player_healing = original
+    return True
+
+
+def scenario_mindgames_converted_damage_is_not_credited_as_damage_done() -> bool:
+    """Damage totals credit only actual post-application HP damage.
+
+    A Mindgames-converted hit credits the attacker zero damage while the
+    caster receives actual healing plus conversion overheal; absorbed portions
+    are likewise excluded from damage done. This pins DPT correctness, not
+    only Mindgames: one converted event must never appear as both damage and
+    healing.
+    """
+    flip_pattern = r"Mindgames flips (\d+) damage into healing; \w+ restores (\d+) HP\."
+
+    # Fully converted direct hit: the mindgamed warlock's Drain Life flips into
+    # healing for the priest caster, who is missing exactly 3 HP.
+    flip = make_match("warlock", "priest", seed=125)
+    warlock_sid, priest_sid = flip.players
+    warlock = flip.state[warlock_sid]
+    priest = flip.state[priest_sid]
+    warlock.stats["acc"] = 999
+    priest.stats["eva"] = 0
+    priest.res.hp = priest.res.hp_max - 3
+    warlock_hp_before = warlock.res.hp
+    submit_turn(flip, "drain_life", "mindgames")
+    flip_line = next(line for line in _turn_lines(flip, 1) if "damage into healing" in line)
+    flip_match_obj = re.search(flip_pattern, flip_line)
+    nominal = int(flip_match_obj.group(1))
+    logged_actual = int(flip_match_obj.group(2))
+    assert nominal > 3, "Setup: the nominal conversion must exceed the 3-HP deficit"
+    assert logged_actual == 3, "The conversion log must report the actual 3-HP restoration alongside the nominal amount"
+    assert priest.res.hp == priest.res.hp_max, "The flip should heal the caster's 3-HP deficit"
+    assert flip.combat_totals[warlock_sid]["damage"] == 0, "A fully converted hit must add zero attacker damage credit"
+    assert flip.combat_totals[priest_sid]["healing"] == 3, "The caster is credited only the actual gained healing"
+    assert flip.combat_totals[priest_sid]["overhealing"] == nominal - 3, "The capped conversion remainder is the caster's overhealing"
+    assert warlock.res.hp == warlock_hp_before, "Zero actual dealt damage must yield zero lifesteal for the attacker"
+
+    # Full-HP conversion: the entire nominal amount becomes caster overhealing,
+    # the attacker still gets zero damage credit (direct hit AND the flipped
+    # same-turn bleed tick), and the nominal conversion still applies the
+    # direct-damage DoT.
+    full = make_match("warrior", "priest", seed=123)
+    warrior_sid, full_priest_sid = full.players
+    full.state[warrior_sid].res.rage = full.state[warrior_sid].res.rage_max
+    full_priest = full.state[full_priest_sid]
+    assert full_priest.res.hp == full_priest.res.hp_max, "Setup: the caster should start at full HP"
+    submit_turn(full, "dragon_roar", "mindgames")
+    nominal_total = sum(
+        int(m.group(1))
+        for line in _turn_lines(full, 1)
+        for m in [re.search(flip_pattern, line)]
+        if m
+    )
+    assert nominal_total > 0, "Setup: the seeded Dragon Roar must land and convert"
+    assert full.combat_totals[warrior_sid]["damage"] == 0, "Converted direct and bleed-tick damage must credit zero attacker damage"
+    assert full.combat_totals[full_priest_sid]["healing"] == 0, "A full-HP caster gains no actual healing"
+    assert full.combat_totals[full_priest_sid]["overhealing"] == nominal_total, "The full nominal conversion becomes caster overhealing"
+    assert _has_effect(full_priest, "dragon_roar_bleed"), "Nominal conversion must still qualify the same-turn direct DoT"
+
+    # Ordinary control: the same Drain Life without Mindgames credits exactly
+    # the actual HP loss it caused.
+    control = make_match("warlock", "priest", seed=125)
+    control_warlock_sid, control_priest_sid = control.players
+    control.state[control_warlock_sid].stats["acc"] = 999
+    control.state[control_priest_sid].stats["eva"] = 0
+    control_before = control.state[control_priest_sid].res.hp
+    submit_turn(control, "drain_life", _DEF_PASS)
+    control_loss = control_before - control.state[control_priest_sid].res.hp
+    assert control_loss > 0, "Setup: the control Drain Life must land"
+    assert control.combat_totals[control_warlock_sid]["damage"] == control_loss, "An ordinary hit credits exactly the actual HP damage dealt"
+
+    # Absorb control: a 7-point shield under the same deterministic hit leaves
+    # post-absorb HP damage, and only that lands in the damage total.
+    absorbed = make_match("warlock", "priest", seed=125)
+    absorbed_warlock_sid, absorbed_priest_sid = absorbed.players
+    absorbed.state[absorbed_warlock_sid].stats["acc"] = 999
+    absorbed.state[absorbed_priest_sid].stats["eva"] = 0
+    effects.add_absorb(absorbed.state[absorbed_priest_sid], 7, source_name="Power Word: Shield", effect_id="power_word_shield")
+    absorbed_before = absorbed.state[absorbed_priest_sid].res.hp
+    submit_turn(absorbed, "drain_life", _DEF_PASS)
+    absorbed_loss = absorbed_before - absorbed.state[absorbed_priest_sid].res.hp
+    assert absorbed_loss == control_loss - 7, "Setup: the 7-point shield should absorb exactly 7 of the deterministic hit"
+    assert absorbed.combat_totals[absorbed_warlock_sid]["damage"] == absorbed_loss, "Damage credit must be the post-absorb HP damage"
+    assert absorbed.combat_totals[absorbed_warlock_sid]["damage"] != control_loss, "Damage credit must not use the pre-absorb incoming amount"
     return True
 
 
@@ -1249,7 +1339,7 @@ def scenario_subschool_event_plumbing_for_dots_and_passives() -> bool:
         },
     }
     hunter.effects.append(lightning_effect)
-    _, _, _, damage_events = effects.trigger_on_hit_passives(
+    _, _, _, _, damage_events = effects.trigger_on_hit_passives(
         hunter,
         warrior,
         base_damage=10,
