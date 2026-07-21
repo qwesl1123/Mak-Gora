@@ -98,8 +98,13 @@ def scenario_post_combat_summary_exposes_pet_healing_and_actual_damage_dpt() -> 
     duel_html = _detect_duel_html_path().read_text(encoding="utf-8")
     for parser_key in ("values.T", "values.FD", "values.FH", "values.FPH", "values.FDPT", "values.ED", "values.EH", "values.EPH", "values.EDPT"):
         assert parser_key in duel_html, f"duel.html summary parser should read {parser_key}"
-    assert "Friendly Pet Healing" in duel_html and "Enemy Pet Healing" in duel_html, "The post-combat summary should render pet healing rows"
-    assert "Friendly DPT" in duel_html and "Enemy DPT" in duel_html, "The post-combat summary should render DPT rows"
+    # The summary now groups each side into its own vertical column: a Friendly
+    # column and an Enemy column, each carrying the full stat stack.
+    assert "log-summary-columns" in duel_html and "log-summary-col" in duel_html, "The post-combat summary should use the two-column (Friendly/Enemy) layout"
+    assert '<div class="log-summary-col-title">Friendly</div>' in duel_html, "The summary must render a Friendly column header"
+    assert '<div class="log-summary-col-title">Enemy</div>' in duel_html, "The summary must render an Enemy column header"
+    assert "Pet Healing:" in duel_html, "The post-combat summary should render pet healing rows in each column"
+    assert "DPT:" in duel_html, "The post-combat summary should render DPT rows in each column"
     assert ".toFixed(1)" in duel_html, "The UI must format DPT with exactly one decimal place"
     return True
 
