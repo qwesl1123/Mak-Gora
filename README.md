@@ -44,7 +44,7 @@ Rough overview, no need to overthink it:
 
 - [Roadmap](ROADMAP.md) — current development phase and class progress
 - [Agent and Architecture Rules](AGENTS.md) — mandatory engine and contribution contracts
-- [New Class Specification](CLASS_IMPLEMENTATION.md) — design template and completion checklist
+- [New Class Specification](CLASS_IMPLEMENTATION.md) — reusable, class-neutral design template and completion checklist (copy it per class; never fill in the template itself)
 
 ### Validating Changes
 

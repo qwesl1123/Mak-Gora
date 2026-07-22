@@ -7,7 +7,7 @@ This document tracks Mak'Gora's active development priorities and completion sta
 It is deliberately narrow in scope:
 
 - Architecture and implementation rules live in [`AGENTS.md`](AGENTS.md).
-- Detailed per-class design uses [`CLASS_IMPLEMENTATION.md`](CLASS_IMPLEMENTATION.md).
+- Detailed per-class design uses a class-specific copy based on [`CLASS_IMPLEMENTATION.md`](CLASS_IMPLEMENTATION.md) (the canonical template stays blank and reusable).
 
 This file records priorities and progress, not design details or historical audits.
 
@@ -58,7 +58,7 @@ Four classes remain. No implementation order has been chosen; priority is assign
 Allowed `Status` values:
 
 - **Planned** — not yet started.
-- **Designing** — design being completed in `CLASS_IMPLEMENTATION.md`.
+- **Designing** — a class-specific design based on `CLASS_IMPLEMENTATION.md` is being completed.
 - **Foundation** — a required reusable resource/engine foundation is in progress.
 - **In Progress** — class implementation underway.
 - **Blocked** — waiting on a decision or an unmerged dependency.
@@ -71,7 +71,7 @@ Allowed `Status` values:
 - When a class needs an unsupported shared resource or engine mechanic, the reusable foundation PR lands first.
 - The complete class PR lands second, on top of the merged foundation.
 - Balance follow-up is separated into its own PR when practical.
-- Every class must satisfy [`CLASS_IMPLEMENTATION.md`](CLASS_IMPLEMENTATION.md).
+- Every class's specification must satisfy the requirements defined by the [`CLASS_IMPLEMENTATION.md`](CLASS_IMPLEMENTATION.md) template.
 - Every merged class must update the table above.
 
 ## Deferred work

@@ -77,10 +77,16 @@ The remaining classes (Death Knight, Monk, Demon Hunter, Evoker) are added one a
 Before writing any implementation:
 
 1. Read `ROADMAP.md` for the current phase, class status, and delivery rules.
-2. Complete the relevant design in `CLASS_IMPLEMENTATION.md` (or provide an equivalent complete specification).
+2. Create a class-specific specification by copying `CLASS_IMPLEMENTATION.md` into a class-specific issue, design document, or PR plan, then complete that copy (or provide an equivalent complete specification). Never place class-specific design values into the canonical template.
 3. Inspect at least one existing class with similar mechanics to reuse established conventions.
 4. List the unresolved design questions.
 5. Do not begin implementation while any load-bearing design question remains unresolved.
+
+`CLASS_IMPLEMENTATION.md` is the canonical reusable, class-neutral template:
+
+* It must remain reusable and class-neutral — never fill it with a specific class design.
+* Editing the template itself is allowed only when improving the template's structure or requirements.
+* Completed class designs belong in a class-specific issue, design document, or PR plan.
 
 Load-bearing questions include:
 
