@@ -8,15 +8,24 @@ This repository is not a rewrite target. Treat the current engine as production 
 
 Core files:
 
-* `abilities.py`: ability data. Prefer data-driven ability definitions.
-* `effects.py`: effect templates, item passive helpers, mitigation/resource/passive helpers.
-* `resolver.py`: turn-resolution pipeline. Keep generic. Avoid per-ability hacks.
+* `classes.py`: class metadata, base stats, and resource-display configuration.
+* `abilities.py`: data-driven ability definitions.
+* `effects.py`: reusable effect templates plus passive, healing, mitigation, and resource helpers.
+* `resolver.py`: generic turn-resolution coordination (turn order, targeting, redirects, damage application, resource spending, final logs). Keep generic; avoid class- or ability-specific hacks.
+* `models.py`: match/player state and shared data structures (including combat-total shapes).
 * `items.py`: item definitions and item passive data.
-* `pet_ai.py`: pet/totem action behavior and pet resource handling.
 * `pets.py`: pet/totem definitions.
-* `tests/regression_suite.py`: deterministic gameplay regression coverage.
+* `pet_ai.py`: pet/totem action behavior and pet resource handling.
+* `sockets.py`: viewer-relative snapshot serialization and the post-combat summary line.
+* `duel.html`: frontend UI and player-facing static documentation.
+* `tests/regression/`: domain-organized deterministic regression scenarios.
+* `tests/regression/registry.py`: authoritative scenario registration and execution order (`SCENARIOS`, `run_all`, `validate_scenario_registry`).
+* `tests/architecture_guardrail_suite.py`: static guardrails (e.g. direct player-HP-write rejection).
+* `tests/source_kind_validation_suite.py`: damage source-kind metadata validation.
+* `tests/effect_tags_validation_suite.py`: effect-tag metadata validation.
 * `tests/subschool_validation_suite.py`: school/subschool metadata validation.
-* `duel.html`: frontend UI and static docs.
+
+New regression scenarios belong in the appropriate `tests/regression/` domain module and must be registered in `tests/regression/registry.py`. `tests/regression_suite.py` is now only a compatibility import shim and is not the place to add scenarios.
 
 ## Non-goals
 
@@ -48,7 +57,168 @@ When adding an item, ability, pet, effect, or passive, update all required surfa
 * frontend display/mouseover surfaces if applicable
 * deterministic regression tests
 
-If the user request does not provide enough information for a new item, ability, or mechanic, ask for the missing design details before inventing balance or behavior.
+### Design-completeness rule
+
+If the user has not supplied enough information to define a class, ability, item, pet, summon, totem, passive, resource, buff, debuff, effect, formula, cost, cooldown, duration, target mode, school, subschool, timing rule, log, or interaction unambiguously, stop and ask for the missing design decisions. Do not invent balance numbers or gameplay behavior silently.
+
+Distinguish, and treat differently:
+
+* **Design decisions** — balance numbers, formulas, resource behavior, playstyle, and any gameplay-visible choice — require user approval before implementation.
+* **Implementation details** — how to wire an already-decided design into the engine — can be derived from existing engine conventions and the contracts in this document without asking.
+
+When in doubt about whether something is a design decision or an implementation detail, ask.
+
+## Adding a New Class
+
+The remaining classes (Death Knight, Monk, Demon Hunter, Evoker) are added one at a time under the rules below. These requirements are mandatory; a class that skips any of them is not ready to merge.
+
+### Design gate
+
+Before writing any implementation:
+
+1. Read `ROADMAP.md` for the current phase, class status, and delivery rules.
+2. Complete the relevant design in `CLASS_IMPLEMENTATION.md` (or provide an equivalent complete specification).
+3. Inspect at least one existing class with similar mechanics to reuse established conventions.
+4. List the unresolved design questions.
+5. Do not begin implementation while any load-bearing design question remains unresolved.
+
+Load-bearing questions include:
+
+* base stats;
+* HP and resources;
+* initial and maximum resource values;
+* resource generation and spending;
+* every ability's formula and dice;
+* accuracy/crit behavior;
+* costs and cooldowns;
+* targets;
+* schools and subschools;
+* durations;
+* effect behavior;
+* dispel behavior;
+* tags and resolution layers;
+* pets or summons;
+* logs;
+* Mindgames behavior;
+* Cyclone behavior;
+* immunity, absorb, and redirect interactions;
+* class color and UI representation.
+
+### Resource foundation rule
+
+The current engine directly models **Mana**, **Energy**, and **Rage**.
+
+When a class requires another resource — such as Fury, Runic Power, Runes, Chi, or Essence — do **not** silently map it onto an existing resource merely because the mechanics appear similar. Instead:
+
+1. Determine whether the resource can legitimately reuse an existing canonical system.
+2. Obtain explicit user approval for any intentional reuse.
+3. Otherwise, propose a small reusable foundation PR that adds the resource properly.
+4. Add the complete class in a later PR, on top of the merged foundation.
+
+Do not replace the entire resource model with a generic dictionary unless explicitly requested.
+
+### Complete-class rule
+
+A class must not become selectable until all required surfaces are complete.
+
+A complete class requires:
+
+* class metadata and base stats;
+* resource initialization and display;
+* class color;
+* complete ability data;
+* effect templates;
+* passive/signature mechanics;
+* pet/summon data when applicable;
+* generic engine integration;
+* frontend selection/display integration;
+* player-facing documentation in `duel.html`;
+* deterministic regression coverage;
+* validator compliance.
+
+Do not merge:
+
+* empty class shells;
+* selectable classes with placeholder abilities;
+* undocumented abilities;
+* TODO balance values;
+* dead buttons;
+* incomplete resource UI;
+* unregistered effects;
+* untested signature mechanics.
+
+### Mandatory implementation surfaces
+
+For each new class, audit and update whichever of these are applicable — do not require every file to change when it is unnecessary:
+
+```
+classes.py
+abilities.py
+effects.py
+pets.py
+pet_ai.py
+models.py
+resolver.py
+sockets.py
+duel.html
+tests/regression/*
+tests/regression/registry.py
+AGENTS.md
+ROADMAP.md
+```
+
+### Architecture rules for classes
+
+* Abilities remain data-driven wherever practical.
+* Reusable mechanics become generic helpers rather than class-specific resolver branches.
+* Ability costs use the canonical cost pipeline (`adjusted_resource_costs()` / `can_pay_costs()` / `consume_costs()`).
+* Player resource gains use `grant_player_resource()`.
+* Player HP restoration uses `apply_player_healing()`.
+* Damage uses the shared damage pipeline.
+* Damage packets carry a valid source kind.
+* Magical effects and damage carry valid subschools.
+* Effects carry appropriate tags and resolution layers.
+* Logs use actual gained/dealt values where required.
+* Pet-produced healing remains separate from player-produced healing.
+* Damage totals continue to represent actual HP damage.
+* Deterministic RNG order is preserved.
+
+If a new generic hook is added for a class, add regressions proving both:
+
+1. the new class behavior;
+2. unchanged behavior for any existing mechanic sharing that hook.
+
+### Class regression matrix
+
+Require deterministic coverage for:
+
+* every ability;
+* success and failure/denial paths;
+* resource affordability and spending;
+* cooldown application and expiry;
+* buffs/debuffs and duration timing;
+* damage, healing, and absorbs;
+* immunity;
+* Mindgames where relevant;
+* Cyclone where relevant;
+* crowd-control denial;
+* dispels where relevant;
+* pets, redirects, or AoE where relevant;
+* class signature mechanics;
+* logs and player-facing documentation;
+* selection and snapshot/UI integration.
+
+Register every scenario exactly once (see `tests/regression/registry.py`).
+
+### Scope control
+
+One class per implementation series. Use separate PRs when appropriate:
+
+* a foundation PR for a reusable resource or engine mechanic;
+* a complete class PR after the foundation merges;
+* an optional balance-only PR after functional correctness is established.
+
+Do not combine unrelated cleanup, refactors, items, or other classes with a class implementation.
 
 ## Resolver/effects boundaries
 
@@ -410,14 +580,20 @@ For bug fixes, add a test that would have failed before the fix.
 
 For visual/static-doc changes, update existing string/static UI checks where practical.
 
-Run relevant tests after changes:
+The five standard validation suites are:
 
 ```bash
 python tests/run_regression.py
+python tests/run_architecture_guardrails.py
+python tests/run_source_kind_validation.py
+python tests/run_effect_tags_validation.py
 python tests/run_subschool_validation.py
 ```
 
-If only one area changed, run the targeted test first, then the full relevant suite.
+* Run targeted scenarios during development to iterate quickly.
+* Run all five suites before merging a class or any shared engine foundation.
+* Report exact pass counts.
+* Do not claim a suite passed if it was not executed.
 
 ## Guardrail expectations
 
@@ -462,6 +638,21 @@ Bad:
 # Add 1 to x.
 x += 1
 ```
+
+## Documentation maintenance
+
+The active documentation set has distinct, non-overlapping roles:
+
+* `ROADMAP.md` is the authoritative current planning document (active phase, class status, delivery rules).
+* `CLASS_IMPLEMENTATION.md` is the reusable specification template and definition-of-done checklist for a new class.
+* `AGENTS.md` is the authoritative architecture and implementation contract.
+* `README.md` is project-facing and must not contain detailed engine internals.
+* `duel.html` remains the player-facing source for ability and gameplay documentation.
+
+Keep them in sync:
+
+* When a class begins or completes, update `ROADMAP.md` in the same PR.
+* When a new reusable architecture contract is introduced, update `AGENTS.md` in the same PR.
 
 ## Change summaries
 
