@@ -19,14 +19,19 @@ from .effects import (
 )
 
 
-def _damage_after_reduction(raw: int, enemy, school: str) -> int:
+def _damage_after_reduction(
+    raw: int,
+    enemy,
+    school: str,
+    subschool: str | None = None,
+) -> int:
     normalized = "magical" if school == "magic" else school
     if normalized == "physical":
         reduced = mitigate_damage(raw, enemy, "physical")
         if is_damage_immune(enemy, "physical"):
             return 0
     else:
-        reduced = mitigate_damage(raw, enemy, "magic")
+        reduced = mitigate_damage(raw, enemy, "magic", subschool=subschool)
         if is_damage_immune(enemy, "magic"):
             return 0
     return reduced
@@ -160,7 +165,12 @@ def _resolve_pet_damage_and_log(
     if normalized_school != "physical" and (is_damage_immune(enemy, "magic") or has_effect(enemy, "cloak_of_shadows")):
         match.log.append(_pet_log(owner_sid, pet, action_text, "Immune!"))
         return {"hp_damage": 0, "absorbed": 0, "total_incoming": 0, "source_kind": DAMAGE_SOURCE_PET}
-    reduced = _damage_after_reduction(raw_damage, enemy, normalized_school)
+    reduced = _damage_after_reduction(
+        raw_damage,
+        enemy,
+        normalized_school,
+        subschool=subschool,
+    )
     dealt = apply_damage(
         owner,
         enemy,

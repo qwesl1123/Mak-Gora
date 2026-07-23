@@ -191,4 +191,19 @@ ITEMS = {
             },
         ],
     },
+    "unstable_arcanocrystal": {
+        "name": "Unstable Arcanocrystal",
+        "slot": "trinket",
+        "color": "#a335ee",
+        "mods": {
+            "atk": 3,
+            "int": 3,
+            "spirit": 3,
+            "acc": 3,
+            "crit": 3,
+            "eva": 3,
+            "def": 3,
+            "nature_resist": 3,
+        },
+    },
 }
