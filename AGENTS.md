@@ -560,6 +560,44 @@ When adding damage, DoTs, pet attacks, or proc damage, preserve school/subschool
 
 Run subschool validation when changing school/subschool behavior.
 
+## Magical subschool resistance
+
+Magical subschool resistances use one centralized mapping in
+`damage_types.py` (`SUBSCHOOL_RESISTANCE_STATS`), resolved through the
+`subschool_resistance_stat()` helper. The supported resistance stat keys are:
+
+* `arcane_resist`
+* `fire_resist`
+* `frost_resist`
+* `holy_resist`
+* `nature_resist`
+* `shadow_resist`
+
+Contract:
+
+* Effective magical mitigation is `Defense + Magic Resistance + matching
+  subschool resistance`, added **before** the existing mitigation curve; the
+  curve and the non-negative clamp are unchanged. Physical damage
+  (`Defense + Physical Reduction`) is unaffected.
+* Only the resistance matching the damage's subschool contributes. Generic
+  magical damage with no subschool, and any unknown subschool, gets no
+  specific resistance (the helper returns `None`). A missing/absent resist
+  stat behaves as zero, so characters without resistance stats mitigate
+  exactly as before.
+* `ignore_magic_resist` ignores **both** general Magic Resistance **and** the
+  matching subschool resistance. It does not ignore Defense, absorbs,
+  immunity, existing damage-reduction effects, Challenger mitigation, or any
+  other mitigation stage. Do not add per-subschool ignore flags
+  (`ignore_nature_resist`, etc.).
+* The helper performs no gameplay math — it is a pure subschool→stat lookup.
+  Mitigation reads the resolved stat through `modify_stat()`, and resistance
+  stats flow through the normal item `mods` aggregation, so future Fire/Frost/
+  Shadow/Holy/Arcane/Nature resistance items require only granting the
+  matching stat. Adding a resistance type must never require resolver changes.
+* Gameplay code must never hardcode specific item IDs or per-subschool
+  branches (`if item == ...`, `if subschool == "nature": ...`) outside this
+  centralized helper.
+
 ## Frontend and static docs
 
 When adding or changing an item, ability, pet, effect, or command, update `duel.html` if the player-facing docs or UI should expose it.

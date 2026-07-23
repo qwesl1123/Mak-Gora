@@ -74,7 +74,7 @@ def scenario_pet_totem_runtime_normalization_phase1() -> bool:
         original_roll = PET_AI.roll
         original_reduction = PET_AI._damage_after_reduction
         PET_AI.roll = lambda die, rng: 3 if die == "d4" else original_roll(die, rng)
-        PET_AI._damage_after_reduction = lambda raw, enemy, school: raw
+        PET_AI._damage_after_reduction = lambda raw, enemy, school, subschool=None: raw
         try:
             submit_turn(match, "summon_imp", _DEF_PASS)
         finally:
@@ -128,7 +128,7 @@ def scenario_pet_totem_runtime_normalization_phase2b() -> bool:
     PETS["emerald_serpent"]["special_chance"] = 0.0
     PETS["barrens_boar"]["special_chance"] = 0.0
     PET_AI.hit_chance = lambda acc, eva: 100
-    PET_AI._damage_after_reduction = lambda raw, enemy, school: raw
+    PET_AI._damage_after_reduction = lambda raw, enemy, school, subschool=None: raw
     PET_AI.roll = lambda die, rng: {"d4": 2, "d6": 4}.get(die, original_roll(die, rng))
     try:
         # Shadowfiend explicit stats + melee formula + mana restore identity.

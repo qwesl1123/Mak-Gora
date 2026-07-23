@@ -1525,6 +1525,7 @@ def resolve_damage_modification_stage(
     death_doubled: bool,
     include_target_mitigation: bool = True,
     target_challenger_mode: str | None = None,
+    ability_subschool: str | None = None,
 ) -> int:
     modified_damage = raw_damage
     if include_target_mitigation and target is not None:
@@ -1532,6 +1533,7 @@ def resolve_damage_modification_stage(
             raw_damage,
             target,
             ability_school,
+            subschool=ability_subschool,
             ignore_armor=ignore_armor,
             ignore_magic_resist=ignore_magic_resist,
             challenger_mode=target_challenger_mode,
@@ -3017,6 +3019,7 @@ def resolve_turn(match: MatchState) -> None:
                 raw_damage=raw,
                 target=None,
                 ability_school=ability_school,
+                ability_subschool=ability_subschool,
                 ignore_armor=bool(ability.get("ignore_armor") or ability.get("ignore_physical_reduction")),
                 ignore_magic_resist=bool(ability.get("ignore_magic_resist")),
                 passive_damage_multiplier=action_passive_damage_multiplier,
@@ -3031,6 +3034,7 @@ def resolve_turn(match: MatchState) -> None:
                     raw_damage=raw,
                     target=target,
                     ability_school=ability_school,
+                    ability_subschool=ability_subschool,
                     ignore_armor=bool(ability.get("ignore_armor") or ability.get("ignore_physical_reduction")),
                     ignore_magic_resist=bool(ability.get("ignore_magic_resist")),
                     passive_damage_multiplier=action_passive_damage_multiplier,
@@ -3046,6 +3050,7 @@ def resolve_turn(match: MatchState) -> None:
                     raw_for_hit,
                     target,
                     ability_school,
+                    subschool=ability_subschool,
                     ignore_armor=bool(ability.get("ignore_armor") or ability.get("ignore_physical_reduction")),
                     ignore_magic_resist=bool(ability.get("ignore_magic_resist")),
                     challenger_mode=turn_ctx.challenger_mode_by_sid.get(target_sid),
@@ -3787,6 +3792,7 @@ def resolve_turn(match: MatchState) -> None:
                         int(value or 0),
                         target,
                         normalized_school,
+                        subschool=subschool,
                         challenger_mode=turn_ctx.challenger_mode_by_sid.get(target_sid),
                     )
                     for value in damage_instances
@@ -3799,6 +3805,7 @@ def resolve_turn(match: MatchState) -> None:
                     incoming,
                     target,
                     normalized_school,
+                    subschool=subschool,
                     challenger_mode=turn_ctx.challenger_mode_by_sid.get(target_sid),
                 )
                 instance_values = [incoming] if incoming > 0 else []
@@ -3815,14 +3822,14 @@ def resolve_turn(match: MatchState) -> None:
         else:
             if damage_instances:
                 instance_values = [
-                    resolve_incoming_damage(int(value or 0), target, normalized_school)
+                    resolve_incoming_damage(int(value or 0), target, normalized_school, subschool=subschool)
                     for value in damage_instances
                     if int(value or 0) > 0
                 ]
                 instance_values = [value for value in instance_values if value > 0]
                 incoming = sum(instance_values)
             else:
-                incoming = resolve_incoming_damage(incoming, target, normalized_school)
+                incoming = resolve_incoming_damage(incoming, target, normalized_school, subschool=subschool)
                 instance_values = [incoming] if incoming > 0 else []
             if incoming <= 0 or not instance_values:
                 return _empty_damage_result(

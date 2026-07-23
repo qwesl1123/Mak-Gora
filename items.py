@@ -191,4 +191,22 @@ ITEMS = {
             },
         ],
     },
+    "unstable_arcanocrystal": {
+        "name": "Unstable Arcanocrystal",
+        "slot": "trinket",
+        "color": "#a335ee",
+        # No passive/proc/active. Nature Resistance flows through the shared
+        # stat aggregation and the generic subschool-resistance mitigation
+        # path (damage_types.SUBSCHOOL_RESISTANCE_STATS) — no item-specific hook.
+        "mods": {
+            "atk": 3,
+            "int": 3,
+            "spirit": 3,
+            "acc": 3,
+            "crit": 3,
+            "eva": 3,
+            "def": 3,
+            "nature_resist": 3,
+        },
+    },
 }

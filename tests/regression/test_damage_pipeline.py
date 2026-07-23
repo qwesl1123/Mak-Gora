@@ -1801,3 +1801,197 @@ def scenario_phase0_normal_vs_immediate_parity_ordering_lock() -> bool:
     assert any("tries to use Maul but is feared and cannot act." in line for line in normal_selection_turn), "Normal-path denial should precede selection-failure logs"
     assert not any("wasn't in Bear Form" in line for line in normal_selection_turn), "Normal-path selection-failure log should remain suppressed when denial applies"
     return True
+
+
+def scenario_nature_resistance_reduces_nature_damage() -> bool:
+    raw = 120
+    with_target = make_match("warrior", "warrior", seed=4201).state["p2_sid"]
+    without_target = make_match("warrior", "warrior", seed=4201).state["p2_sid"]
+    for target in (with_target, without_target):
+        target.stats["def"] = 10
+        target.stats["magic_resist"] = 10
+    with_target.stats["nature_resist"] = 20
+
+    resisted = effects.mitigate_damage(raw, with_target, "magic", subschool="nature")
+    unresisted = effects.mitigate_damage(raw, without_target, "magic", subschool="nature")
+
+    assert unresisted == _expected_mitigated(raw, 20), "no Nature Resistance should mitigate with DEF + Magic Resist only"
+    assert resisted == _expected_mitigated(raw, 40), "Nature Resistance should add to DEF + Magic Resist for Nature damage"
+    assert resisted < unresisted, "a target with Nature Resistance should take less Nature damage than one without"
+    return True
+
+
+def scenario_nature_resistance_no_cross_school_protection() -> bool:
+    raw = 120
+    target = make_match("warrior", "warrior", seed=4202).state["p2_sid"]
+    target.stats["def"] = 10
+    target.stats["magic_resist"] = 10
+    target.stats["physical_reduction"] = 10
+    target.stats["nature_resist"] = 30
+
+    magic_baseline = _expected_mitigated(raw, 20)      # DEF + Magic Resist, no matching resist
+    physical_baseline = _expected_mitigated(raw, 20)   # DEF + Physical Reduction
+
+    for other in ("fire", "frost", "shadow", "holy", "arcane"):
+        dmg = effects.mitigate_damage(raw, target, "magic", subschool=other)
+        assert dmg == magic_baseline, f"Nature Resistance must not reduce {other} damage"
+
+    generic = effects.mitigate_damage(raw, target, "magic", subschool=None)
+    assert generic == magic_baseline, "Nature Resistance must not reduce generic magic damage with no subschool"
+
+    physical = effects.mitigate_damage(raw, target, "physical")
+    assert physical == physical_baseline, "Nature Resistance must not reduce physical damage"
+
+    nature = effects.mitigate_damage(raw, target, "magic", subschool="nature")
+    assert nature == _expected_mitigated(raw, 50), "matching Nature damage should benefit from Nature Resistance"
+    assert nature < magic_baseline, "Nature Resistance should only reduce matching Nature damage"
+    return True
+
+
+def scenario_subschool_resistance_additive_before_curve() -> bool:
+    raw = 120
+    target = make_match("warrior", "warrior", seed=4203).state["p2_sid"]
+    target.stats["def"] = 15
+    target.stats["magic_resist"] = 12
+    target.stats["nature_resist"] = 13
+
+    effective = effects.mitigation_effective_stat(target, "magic", subschool="nature")
+    assert effective == 40, "effective stat must be DEF + Magic Resist + Nature Resistance, summed additively"
+
+    reduced = effects.mitigate_damage(raw, target, "magic", subschool="nature")
+    assert reduced == _expected_mitigated(raw, 40), "the summed stat must feed the unchanged mitigation curve exactly once"
+
+    # The curve itself is unchanged: an equal effective stat reached purely via
+    # Magic Resist mitigates identically, proving resistance is additive input
+    # to the same curve rather than a new multiplier.
+    curve_only = make_match("warrior", "warrior", seed=4203).state["p2_sid"]
+    curve_only.stats["def"] = 15
+    curve_only.stats["magic_resist"] = 25
+    assert effects.mitigate_damage(raw, curve_only, "magic") == reduced, "the mitigation curve must be preserved; only the additive stat differs"
+    return True
+
+
+def scenario_subschool_resistance_is_generic_via_fire_resist() -> bool:
+    # Temporary deterministic proof that the resistance foundation is generic:
+    # a raw fire_resist stat (NOT a real Fire Resistance item) already resists
+    # Fire damage and nothing else, with no resolver changes.
+    raw = 120
+    target = make_match("warrior", "warrior", seed=4204).state["p2_sid"]
+    target.stats["def"] = 10
+    target.stats["magic_resist"] = 10
+    target.stats["fire_resist"] = 20
+
+    fire = effects.mitigate_damage(raw, target, "magic", subschool="fire")
+    assert fire == _expected_mitigated(raw, 40), "Fire Resistance should reduce Fire damage through the generic mapping"
+
+    nature = effects.mitigate_damage(raw, target, "magic", subschool="nature")
+    assert nature == _expected_mitigated(raw, 20), "Fire Resistance must not reduce Nature damage"
+    assert fire < nature, "the generic subschool-resistance path must apply per-subschool without new gameplay code"
+    return True
+
+
+def scenario_nature_resistance_applies_across_damage_sources() -> bool:
+    # Prove the shared pipeline applies Nature Resistance to multiple source
+    # kinds: a direct Nature hit, a Nature DoT tick, and Nature pet damage.
+    def direct_hit(nature_resist: bool) -> int:
+        match = make_match("shaman", "warrior", seed=4205)
+        shaman = match.state[match.players[0]]
+        warrior = match.state[match.players[1]]
+        shaman.stats["int"] = 200  # large raw so mitigation is clearly visible
+        warrior.stats["def"] = 10
+        warrior.stats["magic_resist"] = 10
+        if nature_resist:
+            warrior.stats["nature_resist"] = 60
+        hp_before = warrior.res.hp
+        submit_turn(match, "lightning_bolt", _DEF_PASS)
+        return hp_before - warrior.res.hp
+
+    direct_baseline = direct_hit(False)
+    direct_resisted = direct_hit(True)
+    assert direct_baseline > 0, "sanity: the direct Nature hit must deal damage"
+    assert direct_resisted < direct_baseline, "Nature Resistance must reduce a direct Nature ability hit through the shared pipeline"
+
+    def dot_tick(nature_resist: bool) -> int:
+        match = make_match("warrior", "warrior", seed=4206)
+        warrior = match.state[match.players[1]]
+        warrior.stats["def"] = 10
+        warrior.stats["magic_resist"] = 10
+        if nature_resist:
+            warrior.stats["nature_resist"] = 60
+        effects.apply_effect_by_id(
+            warrior,
+            "wildfire_burn",
+            overrides={"duration": 3, "tick_damage": 120, "source_sid": "p1_sid", "school": "magical", "subschool": "nature"},
+        )
+        sources = effects.tick_dots(warrior, [], "Warrior")
+        return next(int(src.get("incoming", 0)) for src in sources if src.get("subschool") == "nature")
+
+    dot_baseline = dot_tick(False)
+    dot_resisted = dot_tick(True)
+    assert dot_baseline > 0 and dot_resisted < dot_baseline, "Nature Resistance must reduce a Nature DoT tick through the shared mitigation helper"
+
+    def pet_hit(nature_resist: bool) -> int:
+        enemy = make_match("warrior", "warrior", seed=4207).state["p2_sid"]
+        enemy.stats["def"] = 10
+        enemy.stats["magic_resist"] = 10
+        if nature_resist:
+            enemy.stats["nature_resist"] = 60
+        return PET_AI._damage_after_reduction(120, enemy, "magical", "nature")
+
+    pet_baseline = pet_hit(False)
+    pet_resisted = pet_hit(True)
+    assert pet_baseline > 0 and pet_resisted < pet_baseline, "Nature Resistance must reduce Nature pet/summon damage through the shared pet mitigation helper"
+    return True
+
+
+def scenario_ignore_magic_resist_bypasses_subschool_resistance() -> bool:
+    raw = 120
+    target = make_match("warrior", "warrior", seed=4208).state["p2_sid"]
+    target.stats["def"] = 15
+    target.stats["magic_resist"] = 12
+    target.stats["nature_resist"] = 13
+
+    normal = effects.mitigation_effective_stat(target, "magic", subschool="nature")
+    ignored = effects.mitigation_effective_stat(target, "magic", subschool="nature", ignore_magic_resist=True)
+    assert normal == 40, "normal Nature mitigation should use DEF + Magic Resist + Nature Resistance"
+    assert ignored == 15, "ignore_magic_resist must bypass BOTH Magic Resist and matching Nature Resistance, leaving only DEF"
+
+    normal_damage = effects.mitigate_damage(raw, target, "magic", subschool="nature")
+    ignored_damage = effects.mitigate_damage(raw, target, "magic", subschool="nature", ignore_magic_resist=True)
+    assert normal_damage == _expected_mitigated(raw, 40), "normal path uses the full additive stat"
+    assert ignored_damage == _expected_mitigated(raw, 15), "ignore_magic_resist keeps Defense and the mitigation curve while dropping both resist components"
+    assert ignored_damage > normal_damage, "ignoring Magic Resist and Nature Resistance should increase damage taken"
+    return True
+
+
+def scenario_subschool_resistance_compatibility_and_defaults() -> bool:
+    raw = 120
+    target = make_match("warrior", "warrior", seed=4209).state["p2_sid"]
+    target.stats["def"] = 10
+    target.stats["magic_resist"] = 10
+    target.stats["nature_resist"] = 40
+
+    generic_baseline = _expected_mitigated(raw, 20)
+
+    # Unknown subschool does not crash and gets no specific resistance.
+    unknown = effects.mitigate_damage(raw, target, "magic", subschool="chaos")
+    assert unknown == generic_baseline, "unknown subschool should resolve to generic magic mitigation without crashing"
+
+    # Missing subschool behaves as generic magic.
+    missing = effects.mitigate_damage(raw, target, "magic", subschool=None)
+    assert missing == generic_baseline, "missing subschool should behave as generic magic damage"
+
+    # A character without any resistance stat is unchanged versus before.
+    plain = make_match("warrior", "warrior", seed=4209).state["p2_sid"]
+    plain.stats["def"] = 10
+    plain.stats["magic_resist"] = 10
+    assert "nature_resist" not in plain.stats, "characters without the item must not carry resistance stats"
+    assert effects.mitigate_damage(raw, plain, "magic", subschool="nature") == generic_baseline, "absent resistance stats must default to zero and preserve existing behavior"
+
+    # The canonical helper is a pure lookup: normalization + None for unknowns.
+    from games.duel.engine.damage_types import subschool_resistance_stat
+    assert subschool_resistance_stat("nature") == "nature_resist", "helper must map nature to nature_resist"
+    assert subschool_resistance_stat(" FIRE ") == "fire_resist", "helper must normalize case/whitespace using existing conventions"
+    assert subschool_resistance_stat("chaos") is None, "unknown subschool must return None"
+    assert subschool_resistance_stat(None) is None, "missing subschool must return None"
+    return True

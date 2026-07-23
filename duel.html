@@ -2389,7 +2389,7 @@
               <strong>Equip armor:</strong><br>
               <span class="kbd">/item armor leather_armor</span>, <span class="kbd">/item armor challengers_chestplate</span><br>
               <strong>Equip trinket:</strong><br>
-              <span class="kbd">/item trinket focus_charm</span>, <span class="kbd">/item trinket rage_crystal</span><br>
+              <span class="kbd">/item trinket focus_charm</span>, <span class="kbd">/item trinket rage_crystal</span>, <span class="kbd">/item trinket unstable_arcanocrystal</span><br>
               <strong>Combat abilities (examples):</strong><br>
               <span class="kbd">basic_attack</span>, <span class="kbd">overpower</span>, <span class="kbd">fireball</span>, <span class="kbd">eviscerate</span>, <span class="kbd">blink</span>, <span class="kbd">cheap_shot</span><br>
               <br>
@@ -2661,6 +2661,15 @@
             <p><span class="stat">Passive: Deal 15% more damage while below 30% HP</span></p>
             <p><span class="stat">Passive: Gain 25% more rage from all sources</span></p>
             <p>A volatile crystal that supercharges every source of rage generation.</p>
+          </div>
+
+          <div class="doc-item">
+            <h4 class="doc-item-name" style="color: #a335ee;">Unstable Arcanocrystal</h4>
+            <p><span class="stat">Command: <span class="kbd">/item trinket unstable_arcanocrystal</span></span></p>
+            <p><span class="stat">+3 Attack</span> | <span class="stat">+3 Intellect</span> | <span class="stat">+3 Spirit</span></p>
+            <p><span class="stat">+3 Accuracy</span> | <span class="stat">+3 Crit</span> | <span class="stat">+3 Evasion</span></p>
+            <p><span class="stat">+3 Defense</span> | <span class="stat">+3 Nature Resistance</span></p>
+            <p>Nature Resistance reduces incoming Nature damage.</p>
           </div>
 
         </div>
@@ -3665,6 +3674,7 @@
         "Void Blades",
         "Crusader's Greatsword",
         "Challenger's Chestplate",
+        "Unstable Arcanocrystal",
       ];
       const orangeItems = [
         "Thunderfury, Blessed Blade of the Windseeker",
@@ -5458,6 +5468,13 @@
             { type: "passive", text: "At or below 50% active resource, deal 10% less damage and take 10% more damage, but active resource generation is 30% faster." },
           ],
           flavor: "When the fight turns, so do you—either with steel resolve or with bruising consequence.",
+        },
+        "Unstable Arcanocrystal": {
+          nameColor: "#a335ee",
+          meta: "Trinket — Epic",
+          stats: "+3 Attack  |  +3 Intellect  |  +3 Spirit  |  +3 Accuracy  |  +3 Crit  |  +3 Evasion  |  +3 Defense  |  +3 Nature Resistance",
+          lines: [],
+          flavor: "Nature Resistance reduces incoming Nature damage.",
         },
         // ── Rare (#0070dd) ───────────────────────────────────────────────────
         "Leather Armor": {

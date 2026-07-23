@@ -49,6 +49,53 @@ ALL_DAMAGE_SOURCE_KINDS: tuple[str, ...] = (
 
 _DAMAGE_SOURCE_KIND_SET = frozenset(ALL_DAMAGE_SOURCE_KINDS)
 
+# Canonical magical-subschool -> resistance-stat mapping. This is the single
+# authority the mitigation pipeline consults to add a matching subschool
+# resistance on top of general Magic Resistance. Future Fire/Frost/Shadow/
+# Holy/Arcane/Nature resistance items need only grant the matching stat key
+# below; no gameplay/resolver change is required. Keep the keys aligned with
+# the allowed magical subschools and the ``{subschool}_resist`` stat naming
+# already used by the champion mouseover payload.
+SUBSCHOOL_RESISTANCE_STATS: dict[str, str] = {
+    "arcane": "arcane_resist",
+    "fire": "fire_resist",
+    "frost": "frost_resist",
+    "holy": "holy_resist",
+    "nature": "nature_resist",
+    "shadow": "shadow_resist",
+}
+
+_SUBSCHOOL_SET = frozenset(SUBSCHOOL_RESISTANCE_STATS)
+
+
+def normalize_subschool(value: Any) -> Optional[str]:
+    """Return the canonical subschool string for ``value``, else ``None``.
+
+    Tolerates surrounding whitespace and case slop, matching the school
+    normalization conventions elsewhere in the engine. ``None``, a missing
+    subschool, and any unknown subschool all resolve to ``None`` so callers
+    can treat "no supported subschool" uniformly.
+    """
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in _SUBSCHOOL_SET:
+            return normalized
+    return None
+
+
+def subschool_resistance_stat(subschool: Any) -> Optional[str]:
+    """Return the resistance stat key for a magical subschool, or ``None``.
+
+    Pure lookup: this performs no gameplay/mitigation calculation. Missing and
+    unknown subschools return ``None`` so the mitigation pipeline adds no
+    specific resistance for them. Adding a new resistance type requires only
+    granting the matching stat via item ``mods``; this resolver never changes.
+    """
+    normalized = normalize_subschool(subschool)
+    if normalized is None:
+        return None
+    return SUBSCHOOL_RESISTANCE_STATS[normalized]
+
 
 def is_damage_source_kind(value: Any) -> bool:
     """Return True when ``value`` is exactly one of the canonical kind strings."""

@@ -888,3 +888,57 @@ def scenario_item_passive_effect_panel_labels_and_descriptions() -> bool:
     assert rage_low_entries.get("Crystalized Rage", {}).get("description") == "Gain 15% more rage from all sources", "Crystalized Rage tooltip text should match exact copy"
     assert all(" - " not in str(entry.get("name") or "") for entry in rage_panel_low["buffs_magical"] if entry.get("name") in {"Rage Crystal", "Crystalized Rage"}), "Item passive row labels must remain short labels only"
     return True
+
+
+def scenario_unstable_arcanocrystal_grants_expected_item_stats() -> bool:
+    item = resolver.ITEMS.get("unstable_arcanocrystal")
+    assert item is not None, "Unstable Arcanocrystal must be defined in items.py"
+    assert item.get("name") == "Unstable Arcanocrystal", "item display name should match"
+    assert item.get("slot") == "trinket", "Unstable Arcanocrystal should occupy the trinket slot"
+    assert item.get("color") == "#a335ee", "Unstable Arcanocrystal should use the epic color"
+
+    expected_mods = {
+        "atk": 3,
+        "int": 3,
+        "spirit": 3,
+        "acc": 3,
+        "crit": 3,
+        "eva": 3,
+        "def": 3,
+        "nature_resist": 3,
+    }
+    assert item.get("mods") == expected_mods, "Unstable Arcanocrystal must grant exactly the specified +3 stats and +3 Nature Resistance"
+
+    # No passive/proc/active and no class restriction (available to every class).
+    assert "passive" not in item, "Unstable Arcanocrystal must have no passive"
+    assert "classes" not in item, "Unstable Arcanocrystal must be available to every class"
+
+    # Equipping the trinket flows all stats through the shared stat aggregation,
+    # and the nature_resist stat is readable through the canonical stat path.
+    equipped = make_match("mage", "warrior", p1_items={"trinket": "unstable_arcanocrystal"}, seed=6201)
+    owner = equipped.state[equipped.players[0]]
+    baseline = make_match("mage", "warrior", seed=6201).state[equipped.players[0]]
+    for stat, delta in expected_mods.items():
+        assert effects.modify_stat(owner, stat, owner.stats.get(stat, 0)) == effects.modify_stat(baseline, stat, baseline.stats.get(stat, 0)) + delta, f"equipping should grant +{delta} {stat}"
+    assert owner.stats.get("nature_resist", 0) == 3, "nature_resist should be aggregated into the equipped owner's stats"
+    assert baseline.stats.get("nature_resist", 0) == 0, "absent resistance stats must default to zero for characters without the item"
+    return True
+
+
+def scenario_unstable_arcanocrystal_documented_in_duel_html() -> bool:
+    duel_html = _detect_duel_html_path().read_text(encoding="utf-8")
+
+    # Backend item id present in the frontend command surface (id parity).
+    assert "unstable_arcanocrystal" in resolver.ITEMS, "backend item id must exist"
+    assert "/item trinket unstable_arcanocrystal" in duel_html, "frontend command reference must use the backend item id"
+
+    # Player-facing documentation entry and epic color.
+    assert "Unstable Arcanocrystal" in duel_html, "item should appear in duel.html docs"
+    assert "#a335ee" in duel_html, "epic color must be present in duel.html"
+
+    # Tooltip metadata: epic color on the item name and Nature Resistance listed.
+    assert '"Unstable Arcanocrystal": {' in duel_html, "item tooltip metadata entry should exist"
+    assert "+3 Nature Resistance" in duel_html, "tooltip/docs must list +3 Nature Resistance"
+    assert "Nature Resistance reduces incoming Nature damage." in duel_html, "docs must explain Nature Resistance without claiming all magic reduction"
+    assert "reduces all magical damage" not in duel_html, "docs must not describe Nature Resistance as reducing all magical damage"
+    return True
