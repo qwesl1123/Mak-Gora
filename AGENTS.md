@@ -550,6 +550,17 @@ If `school == "physical"`, clear or ignore `subschool`.
 
 If `subschool` exists, the damage/effect should normally be magical.
 
+### Magical subschool resistance
+
+Magical subschool resistances use the centralized mapping in `damage_types.py`:
+`arcane_resist`, `fire_resist`, `frost_resist`, `holy_resist`,
+`nature_resist`, and `shadow_resist`. Only the resistance matching the
+damage subschool contributes to mitigation; generic magical damage without a
+subschool gets no specific resistance. `ignore_magic_resist` ignores both
+general Magic Resist and the matching subschool resistance, but no other
+mitigation stage. Future resistance items must reuse this mapping, and
+gameplay code must never hardcode specific item IDs.
+
 When adding damage, DoTs, pet attacks, or proc damage, preserve school/subschool metadata through:
 
 * initial ability data

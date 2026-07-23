@@ -22,10 +22,97 @@ from harness import (
     submit_turn,
 )
 
+from games.duel.content.items import ITEMS
+
 from .helpers import (
     _DEF_PASS,
     _active_pet,
 )
+
+
+def scenario_unstable_arcanocrystal_item_stats_and_docs() -> bool:
+    expected_item = {
+        "name": "Unstable Arcanocrystal",
+        "slot": "trinket",
+        "color": "#a335ee",
+        "mods": {
+            "atk": 3,
+            "int": 3,
+            "spirit": 3,
+            "acc": 3,
+            "crit": 3,
+            "eva": 3,
+            "def": 3,
+            "nature_resist": 3,
+        },
+    }
+    item = ITEMS.get("unstable_arcanocrystal")
+    assert item == expected_item, "Unstable Arcanocrystal should contain exactly the requested item data"
+    assert "classes" not in item, "Unstable Arcanocrystal should be available to every class"
+    assert "passive" not in item, "Unstable Arcanocrystal should not create a passive"
+
+    baseline = make_match("mage", "warrior", seed=7201)
+    equipped = make_match(
+        "mage",
+        "warrior",
+        p1_items={"trinket": "unstable_arcanocrystal"},
+        seed=7201,
+    )
+    baseline_owner = baseline.state[baseline.players[0]]
+    equipped_owner = equipped.state[equipped.players[0]]
+    stat_deltas = {
+        stat: equipped_owner.stats.get(stat, 0) - baseline_owner.stats.get(stat, 0)
+        for stat in set(baseline_owner.stats) | set(equipped_owner.stats)
+        if equipped_owner.stats.get(stat, 0) != baseline_owner.stats.get(stat, 0)
+    }
+    assert stat_deltas == expected_item["mods"], "Equipping should add every Arcanocrystal stat through generic item aggregation"
+    assert baseline_owner.stats.get("nature_resist", 0) == 0, "Unequipped players should retain the zero resistance default"
+    assert not any(
+        effect.get("source_item_id") == "unstable_arcanocrystal"
+        for effect in equipped_owner.effects
+    ), "A stat-only trinket should not create an item passive effect"
+
+    duel_html_text = _detect_duel_html_path().read_text(encoding="utf-8")
+    doc_block = re.search(
+        r'<div class="doc-item">\s*'
+        r'<h4 class="doc-item-name">Unstable Arcanocrystal</h4>'
+        r'(?P<body>.*?)</div>',
+        duel_html_text,
+        re.DOTALL,
+    )
+    assert doc_block is not None, "Unstable Arcanocrystal should appear in the static item documentation"
+    doc_body = doc_block.group("body")
+    assert "/item trinket unstable_arcanocrystal" in doc_body, "Frontend and backend item IDs should match"
+    for label in (
+        "+3 Attack",
+        "+3 Intellect",
+        "+3 Spirit",
+        "+3 Accuracy",
+        "+3 Crit",
+        "+3 Evasion",
+        "+3 Defense",
+        "+3 Nature Resistance",
+    ):
+        assert label in doc_body, f"Arcanocrystal documentation should include {label}"
+    explanation = "Nature Resistance reduces incoming Nature damage."
+    assert explanation in doc_body, "Arcanocrystal docs should describe Nature-only protection"
+
+    purple_items = duel_html_text.split("const purpleItems = [", 1)[1].split("];", 1)[0]
+    assert '"Unstable Arcanocrystal",' in purple_items, "Arcanocrystal should use the epic item color path"
+    tooltip = re.search(
+        r'"Unstable Arcanocrystal": \{(?P<body>.*?)\n\s*\},',
+        duel_html_text,
+        re.DOTALL,
+    )
+    assert tooltip is not None, "Equipped Arcanocrystal should have normal item tooltip data"
+    tooltip_body = tooltip.group("body")
+    assert 'nameColor: "#a335ee"' in tooltip_body and "Trinket" in tooltip_body and "Epic" in tooltip_body, \
+        "Arcanocrystal tooltip should use epic trinket metadata"
+    assert "+3 Nature Resistance" in tooltip_body and explanation in tooltip_body, \
+        "Arcanocrystal tooltip should include its resistance stat and explanation"
+    assert "type: \"passive\"" not in tooltip_body and "type: \"active\"" not in tooltip_body, \
+        "Arcanocrystal tooltip should not invent a passive or active ability"
+    return True
 
 
 def scenario_rage_crystal_increases_all_rage_gain_sources() -> bool:

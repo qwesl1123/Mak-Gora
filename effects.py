@@ -12,6 +12,8 @@ from .damage_types import (
     DAMAGE_SOURCE_ON_HIT_PROC,
     DAMAGE_SOURCE_SELF,
     DAMAGE_SOURCE_STRIKE_AGAIN,
+    SUBSCHOOL_RESISTANCE_STAT_BY_SUBSCHOOL,
+    subschool_resistance_stat,
 )
 from .dice import roll
 from .rules import base_damage as calc_base_damage, mitigate
@@ -1352,7 +1354,7 @@ def build_champion_mouseover_payload(ps: PlayerState) -> Dict[str, Any]:
     """Build a live runtime champion mouseover payload from current PlayerState."""
     stat_fields = ("atk", "int", "def", "spd", "crit", "acc", "eva", "spirit")
     mitigation_fields = ("physical_reduction", "magic_resist")
-    subschools = ("fire", "frost", "shadow", "arcane", "nature", "holy")
+    subschools = tuple(SUBSCHOOL_RESISTANCE_STAT_BY_SUBSCHOOL)
     class_base_stats = dict((CLASSES.get((ps.build.class_id if ps.build else "") or "", {}) or {}).get("base_stats", {}) or {})
     normalized_base = {stat: int(class_base_stats.get(stat, 0) or 0) for stat in stat_fields}
     normalized_base.update({stat: int(class_base_stats.get(stat, 0) or 0) for stat in mitigation_fields})
@@ -1766,6 +1768,7 @@ def mitigation_effective_stat(
     target: PlayerState,
     school: str,
     *,
+    subschool: Optional[str] = None,
     ignore_armor: bool = False,
     ignore_magic_resist: bool = False,
 ) -> int:
@@ -1774,8 +1777,16 @@ def mitigation_effective_stat(
     if normalized == "physical":
         armor = 0 if ignore_armor else modify_stat(target, "physical_reduction", target.stats.get("physical_reduction", 0))
         return max(0, defense + armor)
-    magic_resist = 0 if ignore_magic_resist else modify_stat(target, "magic_resist", target.stats.get("magic_resist", 0))
-    return max(0, defense + magic_resist)
+    if ignore_magic_resist:
+        return max(0, defense)
+    magic_resist = modify_stat(target, "magic_resist", target.stats.get("magic_resist", 0))
+    resistance_stat = subschool_resistance_stat(subschool)
+    subschool_resist = (
+        modify_stat(target, resistance_stat, target.stats.get(resistance_stat, 0))
+        if resistance_stat
+        else 0
+    )
+    return max(0, defense + magic_resist + subschool_resist)
 
 
 _LIVE_CHALLENGER_MODE = object()
@@ -1786,6 +1797,7 @@ def mitigate_damage(
     target: PlayerState,
     school: str,
     *,
+    subschool: Optional[str] = None,
     ignore_armor: bool = False,
     ignore_magic_resist: bool = False,
     challenger_mode: Optional[str] | object = _LIVE_CHALLENGER_MODE,
@@ -1793,6 +1805,7 @@ def mitigate_damage(
     effective_stat = mitigation_effective_stat(
         target,
         school,
+        subschool=subschool,
         ignore_armor=ignore_armor,
         ignore_magic_resist=ignore_magic_resist,
     )
@@ -1814,6 +1827,7 @@ def resolve_incoming_damage(
     target: PlayerState,
     school: str,
     *,
+    subschool: Optional[str] = None,
     ignore_armor: bool = False,
     ignore_magic_resist: bool = False,
     challenger_mode: Optional[str] | object = _LIVE_CHALLENGER_MODE,
@@ -1825,6 +1839,7 @@ def resolve_incoming_damage(
         raw,
         target,
         normalized,
+        subschool=subschool,
         ignore_armor=ignore_armor,
         ignore_magic_resist=ignore_magic_resist,
         challenger_mode=challenger_mode,
@@ -2169,7 +2184,13 @@ def trigger_on_hit_passives(
                 raw = int(raw * attacker_outgoing_multiplier)
             if raw <= 0:
                 continue
-            reduced = mitigate_damage(raw, target, "magic", challenger_mode=target_challenger_mode)
+            reduced = mitigate_damage(
+                raw,
+                target,
+                "magic",
+                subschool=passive.get("subschool"),
+                challenger_mode=target_challenger_mode,
+            )
             if is_damage_immune(target, "magic"):
                 reduced = 0
             if reduced > 0:
@@ -2214,7 +2235,13 @@ def trigger_on_hit_passives(
                 raw = int(raw * attacker_outgoing_multiplier)
             if raw <= 0:
                 continue
-            reduced = mitigate_damage(raw, target, "magic", challenger_mode=target_challenger_mode)
+            reduced = mitigate_damage(
+                raw,
+                target,
+                "magic",
+                subschool=passive.get("subschool"),
+                challenger_mode=target_challenger_mode,
+            )
             if is_damage_immune(target, "magic"):
                 reduced = 0
             if reduced > 0:
@@ -2329,7 +2356,13 @@ def trigger_on_hit_passives(
                 if duplicate_raw <= 0:
                     continue
 
-                duplicate_reduced = mitigate_damage(duplicate_raw, target, spell_school, challenger_mode=target_challenger_mode)
+                duplicate_reduced = mitigate_damage(
+                    duplicate_raw,
+                    target,
+                    spell_school,
+                    subschool=spell_subschool,
+                    challenger_mode=target_challenger_mode,
+                )
                 if spell_school == "physical" and is_damage_immune(target, "physical"):
                     duplicate_reduced = 0
                 if spell_school == "magical" and is_damage_immune(target, "magic"):
@@ -2621,7 +2654,12 @@ def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[dict[str, Any
         if effect_id == "agony":
             reduced = raw_damage
         else:
-            reduced = mitigate_damage(raw_damage, ps, school)
+            reduced = mitigate_damage(
+                raw_damage,
+                ps,
+                school,
+                subschool=effect.get("subschool"),
+            )
         if school == "physical" and is_damage_immune(ps, "physical"):
             reduced = 0
         if school == "magical" and is_damage_immune(ps, "magic"):

@@ -23,6 +23,11 @@ from harness import (
     submit_turn,
 )
 
+from games.duel.engine.damage_types import (
+    SUBSCHOOL_RESISTANCE_STAT_BY_SUBSCHOOL,
+    subschool_resistance_stat,
+)
+
 from .helpers import (
     _DEF_PASS,
     _add_pet,
@@ -976,6 +981,34 @@ def scenario_thunderfury_lightning_uses_damage_pipeline() -> bool:
         expected_hp_loss = max(0, incoming - absorbed)
         actual_hp_loss = before_hp - target.res.hp
         assert actual_hp_loss >= expected_hp_loss, "Lightning HP change should reflect post-absorb pipeline result"
+
+        def queued_lightning_damage(nature_resist: int) -> int:
+            proc_match = make_match(
+                "warrior",
+                "priest",
+                p1_items={"weapon": "thunderfury"},
+                seed=seed,
+            )
+            proc_target = proc_match.state[proc_match.players[1]]
+            proc_target.stats.update({
+                "def": 0,
+                "magic_resist": 0,
+                "nature_resist": nature_resist,
+            })
+            submit_turn(proc_match, "overpower", _DEF_PASS)
+            proc_line = next(
+                line
+                for line in proc_match.log
+                if "blasts the target with lightning from Thunderfury" in line
+            )
+            damage_match = re.search(r"Deals (\d+) magic damage\.", proc_line)
+            assert damage_match is not None, "Queued Thunderfury log should expose final resolved damage"
+            return int(damage_match.group(1))
+
+        baseline_proc = queued_lightning_damage(0)
+        resisted_proc = queued_lightning_damage(30)
+        assert 0 < resisted_proc < baseline_proc, \
+            "Queued Nature proc damage should retain subschool through final re-mitigation"
         return True
     raise AssertionError("Could not find deterministic Thunderfury lightning proc seed in range")
 
@@ -1089,6 +1122,186 @@ def scenario_mitigation_magic_uses_def_plus_magic_resist() -> bool:
     def_plus_mr = effects.mitigate_damage(raw, target, "magic")
     assert def_plus_mr == _expected_mitigated(raw, 40), "magic mitigation should use DEF + Magic Resist"
     assert def_plus_mr < def_only, "combined DEF + Magic Resist should mitigate more than either stat alone"
+    return True
+
+
+def scenario_subschool_resistance_mapping_and_mitigation() -> bool:
+    expected_mapping = {
+        "arcane": "arcane_resist",
+        "fire": "fire_resist",
+        "frost": "frost_resist",
+        "holy": "holy_resist",
+        "nature": "nature_resist",
+        "shadow": "shadow_resist",
+    }
+    assert SUBSCHOOL_RESISTANCE_STAT_BY_SUBSCHOOL == expected_mapping, \
+        "Magical subschool resistance should have one complete canonical mapping"
+    for subschool, stat in expected_mapping.items():
+        assert subschool_resistance_stat(f"  {subschool.upper()}  ") == stat, \
+            f"{subschool} resistance lookup should normalize case and whitespace"
+    assert subschool_resistance_stat(None) is None, "Missing subschool should not select a resistance stat"
+    assert subschool_resistance_stat("chaos") is None, "Unknown subschool should not select a resistance stat"
+
+    raw = 200
+    target = make_match("warrior", "warrior", seed=7202).state["p2_sid"]
+    target.stats.update({
+        "def": 11,
+        "magic_resist": 13,
+        "physical_reduction": 0,
+        "nature_resist": 17,
+    })
+    effective = effects.mitigation_effective_stat(
+        target,
+        "magical",
+        subschool="nature",
+    )
+    assert effective == 41, "Nature mitigation should add DEF + Magic Resist + Nature Resistance"
+    assert effects.mitigate_damage(raw, target, "magical", subschool="nature") == _expected_mitigated(raw, 41), \
+        "Matching resistance should use the existing mitigation curve after additive stat aggregation"
+
+    target.stats.update({"def": 0, "magic_resist": 0, "nature_resist": 30})
+    nature_damage = effects.mitigate_damage(raw, target, "magical", subschool="nature")
+    assert nature_damage == _expected_mitigated(raw, 30), "Nature Resistance should reduce Nature damage"
+    for subschool in ("fire", "frost", "shadow", "holy", "arcane"):
+        assert effects.mitigate_damage(raw, target, "magical", subschool=subschool) == raw, \
+            f"Nature Resistance should not reduce {subschool.title()} damage"
+    assert effects.mitigate_damage(raw, target, "physical", subschool="nature") == raw, \
+        "Nature Resistance should not reduce physical damage"
+    assert effects.mitigate_damage(raw, target, "magical") == raw, \
+        "Generic magic with no subschool should not receive specific resistance"
+    assert effects.mitigate_damage(raw, target, "magical", subschool="chaos") == raw, \
+        "Unknown subschools should safely receive no specific resistance"
+
+    target.stats.update({"nature_resist": 0, "fire_resist": 30})
+    assert effects.mitigate_damage(raw, target, "magical", subschool="fire") == _expected_mitigated(raw, 30), \
+        "The generic mapping should let Fire Resistance reduce Fire damage"
+    assert effects.mitigate_damage(raw, target, "magical", subschool="nature") == raw, \
+        "Fire Resistance should not reduce Nature damage"
+
+    target.stats.pop("fire_resist")
+    assert effects.mitigate_damage(raw, target, "magical", subschool="fire") == raw, \
+        "Characters without a matching resistance stat should preserve prior damage behavior"
+    return True
+
+
+def scenario_ignore_magic_resist_bypasses_general_and_subschool_resistance() -> bool:
+    raw = 200
+    target = make_match("warrior", "warrior", seed=7203).state["p2_sid"]
+    target.stats.update({
+        "def": 20,
+        "magic_resist": 30,
+        "nature_resist": 40,
+    })
+    target.effects.append({
+        "id": "test_remaining_damage_reduction",
+        "type": "mitigation",
+        "value": 0.25,
+    })
+
+    normal = effects.mitigate_damage(raw, target, "magical", subschool="nature")
+    ignored = effects.mitigate_damage(
+        raw,
+        target,
+        "magical",
+        subschool="nature",
+        ignore_magic_resist=True,
+    )
+    assert normal == int(_expected_mitigated(raw, 90) * 0.75), \
+        "Normal Nature mitigation should include DEF, Magic Resist, Nature Resistance, and later reductions"
+    assert ignored == int(_expected_mitigated(raw, 20) * 0.75), \
+        "ignore_magic_resist should bypass general and matching resistance while preserving DEF and later reductions"
+    assert ignored > normal, "Ignoring magical resistance components should increase incoming damage"
+
+    target.effects.append({
+        "id": "test_magic_immunity",
+        "type": "status",
+        "flags": {"immune_magic": True},
+    })
+    assert effects.resolve_incoming_damage(
+        raw,
+        target,
+        "magical",
+        subschool="nature",
+        ignore_magic_resist=True,
+    ) == 0, "ignore_magic_resist should not bypass immunity"
+    return True
+
+
+def scenario_subschool_resistance_shared_damage_sources() -> bool:
+    def action_damage(ability_id: str, nature_resist: int) -> int:
+        match = make_match("shaman", "warrior", seed=123)
+        target = match.state[match.players[1]]
+        target.stats.update({
+            "def": 0,
+            "magic_resist": 0,
+            "nature_resist": nature_resist,
+        })
+        before_hp = target.res.hp
+        submit_turn(match, ability_id, _DEF_PASS)
+        return before_hp - target.res.hp
+
+    direct_baseline = action_damage("lightning_bolt", 0)
+    direct_resisted = action_damage("lightning_bolt", 30)
+    assert 0 < direct_resisted < direct_baseline, \
+        "Direct Nature abilities should consume subschool resistance through the shared pipeline"
+
+    aoe_baseline = action_damage("chain_lightning", 0)
+    aoe_resisted = action_damage("chain_lightning", 30)
+    assert 0 < aoe_resisted < aoe_baseline, \
+        "Nature AoE should consume subschool resistance without a separate damage path"
+
+    def dot_damage(nature_resist: int) -> int:
+        match = make_match("priest", "warrior", seed=555)
+        source_sid, target_sid = match.players
+        target = match.state[target_sid]
+        target.stats.update({
+            "def": 0,
+            "magic_resist": 0,
+            "nature_resist": nature_resist,
+        })
+        effects.apply_effect_by_id(
+            target,
+            "devouring_plague",
+            overrides={
+                "duration": 2,
+                "tick_damage": 40,
+                "source_sid": source_sid,
+                "school": "magical",
+                "subschool": "nature",
+                "lifesteal_pct": 0,
+            },
+        )
+        before_hp = target.res.hp
+        submit_turn(match, _DEF_PASS, _DEF_PASS)
+        return before_hp - target.res.hp
+
+    dot_baseline = dot_damage(0)
+    dot_resisted = dot_damage(30)
+    assert dot_baseline == 40 and dot_resisted == _expected_mitigated(40, 30), \
+        "Nature DoT ticks should use their stored subschool in the shared mitigation path"
+
+    def serpent_damage(nature_resist: int) -> int:
+        match = make_match("hunter", "warrior", seed=702)
+        hunter_sid, target_sid = match.players
+        hunter = match.state[hunter_sid]
+        target = match.state[target_sid]
+        submit_turn(match, "call_serpent", _DEF_PASS)
+        target.stats.update({
+            "def": 0,
+            "magic_resist": 0,
+            "nature_resist": nature_resist,
+        })
+        hunter.pending_pet_command = "special"
+        before_hp = target.res.hp
+        submit_turn(match, _DEF_PASS, _DEF_PASS)
+        assert any("Emerald Serpent breathes lightning" in line for line in match.log), \
+            "Setup should force the existing Lightning Breath special"
+        return before_hp - target.res.hp
+
+    pet_baseline = serpent_damage(0)
+    pet_resisted = serpent_damage(30)
+    assert 0 < pet_resisted < pet_baseline, \
+        "Existing Nature pet/summon damage should use subschool resistance automatically"
     return True
 
 

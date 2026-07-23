@@ -49,6 +49,15 @@ ALL_DAMAGE_SOURCE_KINDS: tuple[str, ...] = (
 
 _DAMAGE_SOURCE_KIND_SET = frozenset(ALL_DAMAGE_SOURCE_KINDS)
 
+SUBSCHOOL_RESISTANCE_STAT_BY_SUBSCHOOL: dict[str, str] = {
+    "arcane": "arcane_resist",
+    "fire": "fire_resist",
+    "frost": "frost_resist",
+    "holy": "holy_resist",
+    "nature": "nature_resist",
+    "shadow": "shadow_resist",
+}
+
 
 def is_damage_source_kind(value: Any) -> bool:
     """Return True when ``value`` is exactly one of the canonical kind strings."""
@@ -68,3 +77,11 @@ def normalize_damage_source_kind(value: Any, default: Optional[str] = None) -> O
         if normalized in _DAMAGE_SOURCE_KIND_SET:
             return normalized
     return default
+
+
+def subschool_resistance_stat(subschool: Any) -> Optional[str]:
+    """Return the matching resistance stat for a normalized magical subschool."""
+    if not isinstance(subschool, str):
+        return None
+    normalized = subschool.strip().lower()
+    return SUBSCHOOL_RESISTANCE_STAT_BY_SUBSCHOOL.get(normalized)
