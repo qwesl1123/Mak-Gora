@@ -2389,7 +2389,7 @@
               <strong>Equip armor:</strong><br>
               <span class="kbd">/item armor leather_armor</span>, <span class="kbd">/item armor challengers_chestplate</span><br>
               <strong>Equip trinket:</strong><br>
-              <span class="kbd">/item trinket focus_charm</span>, <span class="kbd">/item trinket rage_crystal</span><br>
+              <span class="kbd">/item trinket focus_charm</span>, <span class="kbd">/item trinket rage_crystal</span>, <span class="kbd">/item trinket vial_of_shadows</span><br>
               <strong>Combat abilities (examples):</strong><br>
               <span class="kbd">basic_attack</span>, <span class="kbd">overpower</span>, <span class="kbd">fireball</span>, <span class="kbd">eviscerate</span>, <span class="kbd">blink</span>, <span class="kbd">cheap_shot</span><br>
               <br>
@@ -2675,6 +2675,12 @@
             <p><span class="stat">+3 Defense</span></p>
             <p><span class="stat">+3 Nature Resistance</span></p>
             <p>The manual says 'do not shake.' You shook it. Now it glows.</p>
+          </div>
+
+          <div class="doc-item">
+            <h4 class="doc-item-name">Vial of Shadows</h4>
+            <p><span class="stat">Command: <span class="kbd">/item trinket vial_of_shadows</span></span></p>
+            <p><span class="stat">Passive: Every 5 turns, starting on turn 5, deals Shadow damage equal to 30% of the sum of your Attack and Intellect, rounded down, plus d6, to both players and all living pets, summons, and totems, including you and your own entities.</span></p>
           </div>
 
         </div>
@@ -5480,6 +5486,15 @@
           stats: "+3 Attack  |  +3 Intellect  |  +3 Spirit  |  +3 Accuracy  |  +3 Crit  |  +3 Evasion  |  +3 Defense  |  +3 Nature Resistance",
           lines: [],
           flavor: "The manual says 'do not shake.' You shook it. Now it glows.",
+        },
+        "Vial of Shadows": {
+          nameColor: "#a335ee",
+          meta: "Trinket — Epic",
+          stats: "",
+          lines: [
+            { type: "passive", text: "Every 5 turns, starting on turn 5, deal Shadow damage equal to 30% of the sum of your Attack and Intellect, rounded down, plus d6, to both players and all living pets, summons, and totems, including you and your own entities." },
+          ],
+          flavor: "",
         },
         // ── Rare (#0070dd) ───────────────────────────────────────────────────
         "Leather Armor": {

@@ -206,4 +206,25 @@ ITEMS = {
             "nature_resist": 3,
         },
     },
+    "vial_of_shadows": {
+        "item_id": "vial_of_shadows",
+        "name": "Vial of Shadows",
+        "slot": "trinket",
+        "color": "#a335ee",
+        "mods": {},
+        "passive": {
+            "type": "periodic_global_damage",
+            "trigger": "periodic_end_of_turn",
+            "interval": 5,
+            "first_trigger_turn": 5,
+            "school": "magical",
+            "subschool": "shadow",
+            "scaling": {
+                "atk": 0.3,
+                "int": 0.3,
+            },
+            "dice": "d6",
+            "target_mode": "all_players_and_pets",
+        },
+    },
 }

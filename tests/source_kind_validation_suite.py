@@ -3,7 +3,8 @@
 Validates the canonical source-kind constants in ``damage_types.py`` and the
 metadata-only wiring of ``source_kind`` onto existing damage packets/events:
 queued on-hit proc events, strike-again events, DoT tick sources, pet damage,
-Mindgames-twisted self damage, and the Shield of Vengeance explosion.
+Mindgames-twisted self damage, periodic item damage, and the Shield of
+Vengeance explosion.
 
 These checks are deliberately metadata-focused: they assert what each packet
 is *labelled* as, never how much damage it deals.
@@ -41,6 +42,7 @@ _EXPECTED_SOURCE_KINDS = {
     "absorb_explosion_damage",
     "self_damage",
     "environmental_damage",
+    "periodic_item_damage",
 }
 
 
@@ -94,6 +96,7 @@ def test_taxonomy_constants_are_canonical() -> None:
     assert damage_types.DAMAGE_SOURCE_ABSORB_EXPLOSION == "absorb_explosion_damage"
     assert damage_types.DAMAGE_SOURCE_SELF == "self_damage"
     assert damage_types.DAMAGE_SOURCE_ENVIRONMENTAL == "environmental_damage"
+    assert damage_types.DAMAGE_SOURCE_PERIODIC_ITEM == "periodic_item_damage"
 
 
 def test_source_kind_helpers() -> None:
@@ -312,6 +315,20 @@ def test_shield_of_vengeance_explosion_marked_absorb_explosion() -> None:
     )
 
 
+def test_periodic_item_damage_path_uses_periodic_item_source_kind() -> None:
+    periodic_source = _engine_source("periodic_items.py")
+    # The handler has a multi-line signature, which the suite's simple
+    # indentation extractor intentionally does not span.
+    assert "def periodic_global_damage(" in periodic_source
+    assert "source_kind=DAMAGE_SOURCE_PERIODIC_ITEM" in periodic_source, (
+        "periodic global damage must use the periodic_item_damage source kind"
+    )
+    assert (
+        "PERIODIC_GLOBAL_DAMAGE_HANDLER: periodic_global_damage"
+        in periodic_source
+    ), "periodic global damage must be registered through PERIODIC_ITEM_HANDLERS"
+
+
 def test_resolver_wiring_uses_canonical_source_kind_markers() -> None:
     resolver_source = _engine_source("resolver.py")
     # Direct ability damage: resolve_action result dictionaries carry the kind.
@@ -354,7 +371,14 @@ def test_no_invalid_source_kind_literals_in_gameplay_files() -> None:
     constant_pattern = re.compile(r"\b(DAMAGE_SOURCE_[A-Z_]+)\b")
     valid_kinds = set(damage_types.ALL_DAMAGE_SOURCE_KINDS)
 
-    for basename in ("resolver.py", "effects.py", "pet_ai.py", "damage_types.py", "damage_events.py"):
+    for basename in (
+        "resolver.py",
+        "effects.py",
+        "pet_ai.py",
+        "periodic_items.py",
+        "damage_types.py",
+        "damage_events.py",
+    ):
         source = _engine_source(basename)
         for pattern in literal_patterns:
             for value in pattern.findall(source):
@@ -376,6 +400,7 @@ def run_all() -> list[tuple[str, bool, str]]:
         test_mindgames_twisted_regen_is_tagged_self_damage,
         test_pet_damage_path_carries_pet_damage_source_kind,
         test_shield_of_vengeance_explosion_marked_absorb_explosion,
+        test_periodic_item_damage_path_uses_periodic_item_source_kind,
         test_resolver_wiring_uses_canonical_source_kind_markers,
         test_no_invalid_source_kind_literals_in_gameplay_files,
     ]
