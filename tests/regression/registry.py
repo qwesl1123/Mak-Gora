@@ -19,6 +19,7 @@ from typing import Any, Callable, List, Tuple
 from . import (
     test_resources,
     test_items_challenger,
+    test_periodic_items,
     test_damage_pipeline,
     test_dots_hots,
     test_pets,
@@ -44,6 +45,18 @@ from .test_items_challenger import (
     scenario_challengers_chestplate_on_hit_proc_outgoing_stance,
     scenario_challengers_chestplate_wildfire_dot_outgoing_snapshot,
     scenario_item_passive_effect_panel_labels_and_descriptions,
+)
+from .test_periodic_items import (
+    scenario_periodic_item_empty_stage_is_true_noop,
+    scenario_periodic_item_stage_runs_once_per_global_turn,
+    scenario_periodic_item_schedule_boundaries_use_global_turn,
+    scenario_periodic_item_activations_snapshot_before_dispatch,
+    scenario_periodic_item_activation_order_is_deterministic,
+    scenario_periodic_item_passive_dict_and_list_support,
+    scenario_periodic_item_stage_precedes_winner_evaluation,
+    scenario_periodic_item_stage_order_between_normal_processing_and_cleanup,
+    scenario_periodic_item_invalid_metadata_and_unknown_handler_fail_clearly,
+    scenario_existing_nonperiodic_items_do_not_activate_periodic_stage,
 )
 from .test_damage_pipeline import (
     scenario_healing_resolves_from_negative_hp_before_winner_check,
@@ -294,6 +307,7 @@ from .test_classes_abilities import (
 _DOMAIN_MODULES = (
     test_resources,
     test_items_challenger,
+    test_periodic_items,
     test_damage_pipeline,
     test_dots_hots,
     test_pets,
@@ -351,6 +365,16 @@ SCENARIOS = [
     scenario_queued_proc_resource_gain_uses_actual_dealt,
     scenario_challengers_chestplate_wildfire_dot_outgoing_snapshot,
     scenario_item_passive_effect_panel_labels_and_descriptions,
+    scenario_periodic_item_empty_stage_is_true_noop,
+    scenario_periodic_item_stage_runs_once_per_global_turn,
+    scenario_periodic_item_schedule_boundaries_use_global_turn,
+    scenario_periodic_item_activations_snapshot_before_dispatch,
+    scenario_periodic_item_activation_order_is_deterministic,
+    scenario_periodic_item_passive_dict_and_list_support,
+    scenario_periodic_item_stage_precedes_winner_evaluation,
+    scenario_periodic_item_stage_order_between_normal_processing_and_cleanup,
+    scenario_periodic_item_invalid_metadata_and_unknown_handler_fail_clearly,
+    scenario_existing_nonperiodic_items_do_not_activate_periodic_stage,
     scenario_absorb_layering,
     scenario_pet_summon_data_driven,
     scenario_pet_totem_runtime_normalization_phase1,

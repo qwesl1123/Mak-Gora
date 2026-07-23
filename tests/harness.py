@@ -87,6 +87,7 @@ def _bootstrap_engine_modules() -> Dict[str, Any]:
     _load_module("games.duel.content.pets", _CONTENT_DIR / "pets.py")
     _load_module("games.duel.engine.effects", _ENGINE_DIR / "effects.py")
     _load_module("games.duel.engine.pet_ai", _ENGINE_DIR / "pet_ai.py")
+    _load_module("games.duel.engine.periodic_items", _ENGINE_DIR / "periodic_items.py")
     resolver = _load_module("games.duel.engine.resolver", _ENGINE_DIR / "resolver.py")
 
     return {

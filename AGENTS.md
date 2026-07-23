@@ -238,6 +238,14 @@ If behavior can be represented as ability/effect/item/pet data, prefer data.
 
 If a helper is reusable across multiple abilities/items/effects, put it in `effects.py` or another focused helper module instead of embedding it inside one resolver branch.
 
+## Global periodic-item stage
+
+Scheduled equipment effects use the single global `periodic_item_stage`. It runs exactly once for the active one-based global match turn, after normal end-of-turn pet/player ticks, deferred explosions, class mechanics, and their phase logs, but before duration/expiry cleanup, pet cleanup, and final alive/winner evaluation. Never run periodic equipment inside an individual player loop or create a separate stage per item.
+
+Periodic item passives use `trigger: "periodic_end_of_turn"` plus a non-empty `type`, positive integer `interval`, and positive integer `first_trigger_turn`. An activation is eligible when `current_turn >= first_trigger_turn` and `(current_turn - first_trigger_turn) % interval == 0`. The collector reads canonical equipped-item slots, supports dictionary or list passive data, snapshots all eligible activations before dispatch, and orders them by match player order, `EQUIPMENT_SLOT_ORDER`, then passive-list index.
+
+`PERIODIC_ITEM_HANDLERS` owns type-to-handler dispatch. The stage owns scheduling, collection, snapshotting, ordering, and dispatch only; handlers own formulas, RNG, targets, damage/healing, logs, and combat-total attribution. Future periodic items must use this metadata and registry: do not hardcode item IDs in the resolver or add item-specific stage branches. Missing handlers and invalid periodic schedules fail loudly. An empty stage must append nothing and consume no RNG.
+
 ## Ability empowerment contract
 
 Fixed ability-specific empowered formula variants (an effect that changes one specific ability's scaling/dice/log, e.g. empowered Mind Blast or Final Verdict) belong in `abilities.py` under the ability's `empowered_by` metadata:
