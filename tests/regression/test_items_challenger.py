@@ -94,7 +94,7 @@ def scenario_unstable_arcanocrystal_item_stats_and_docs() -> bool:
         "+3 Nature Resistance",
     ):
         assert label in doc_body, f"Arcanocrystal documentation should include {label}"
-    explanation = "Nature Resistance reduces incoming Nature damage."
+    explanation = "The manual says 'do not shake.' You shook it. Now it glows."
     assert explanation in doc_body, "Arcanocrystal docs should describe Nature-only protection"
 
     purple_items = duel_html_text.split("const purpleItems = [", 1)[1].split("];", 1)[0]
