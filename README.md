@@ -15,6 +15,8 @@ Mak'Gora is under active, ongoing development. The 1v1 PvP duel is live today, a
 - **Raids** — epic encounters — 🔒 coming soon
 - **More Modes** — 🔒 uncharted realms
 
+The current development priority is **completing the remaining playable classes on top of the stabilized combat architecture before expanding into larger PvE work.** See the [Roadmap](ROADMAP.md) for the current phase and class progress.
+
 Expect frequent balance passes, new abilities, and new modes as this keeps growing.
 
 ## ✨ Notable Features
@@ -37,6 +39,24 @@ Rough overview, no need to overthink it:
 2. Install the dependencies: `pip install flask flask-socketio eventlet`
 3. Run the app: `python app.py`
 4. Open your browser to the address it prints and start dueling
+
+## Development Documentation
+
+- [Roadmap](ROADMAP.md) — current development phase and class progress
+- [Agent and Architecture Rules](AGENTS.md) — mandatory engine and contribution contracts
+- [New Class Specification](CLASS_IMPLEMENTATION.md) — reusable, class-neutral design template and completion checklist (copy it per class; never fill in the template itself)
+
+### Validating Changes
+
+There is no hosted CI; contributors run the validation suites locally. Before merging engine or class changes, run all five:
+
+```bash
+python tests/run_regression.py
+python tests/run_architecture_guardrails.py
+python tests/run_source_kind_validation.py
+python tests/run_effect_tags_validation.py
+python tests/run_subschool_validation.py
+```
 
 ## Have Fun
 
