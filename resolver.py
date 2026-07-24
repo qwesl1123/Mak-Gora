@@ -1321,8 +1321,16 @@ def resolve_end_of_turn_stage(
     flush_pre_periodic_deferred_logs: Callable[[], None],
     resolve_dot_tick: Callable[[str, str, Dict[str, Any]], int],
     tick_cooldowns: Callable[[PlayerState], None],
-    trigger_shield_of_vengeance_explosion: Callable[[str, str], None],
+    trigger_shield_of_vengeance_explosion: Callable[[str, str], bool],
 ) -> EndOfTurnStageResult:
+    def resolve_pending_shield_of_vengeance_explosions() -> None:
+        while True:
+            first_progressed = trigger_shield_of_vengeance_explosion(sids[0], sids[1])
+            second_progressed = trigger_shield_of_vengeance_explosion(sids[1], sids[0])
+            if not (first_progressed or second_progressed):
+                break
+        flush_deferred_stealth_break_logs()
+
     # end_of_turn: pet_phase (active pet actions)
     run_pet_phase(
         match,
@@ -1434,9 +1442,7 @@ def resolve_end_of_turn_stage(
                         next_effects.append(updated)
                 pet.effects = next_effects
 
-    trigger_shield_of_vengeance_explosion(sids[0], sids[1])
-    trigger_shield_of_vengeance_explosion(sids[1], sids[0])
-    flush_deferred_stealth_break_logs()
+    resolve_pending_shield_of_vengeance_explosions()
 
     for sid in sids:
         ps = match.state[sid]
@@ -1510,12 +1516,9 @@ def resolve_end_of_turn_stage(
     if periodic_activations:
         flush_deferred_stealth_break_logs()
 
-    # Committed periodic activations finish as one ordered dispatch before any
-    # reactive absorb explosions run. The helper safely no-ops for shields that
-    # already exploded at the earlier checkpoint.
-    trigger_shield_of_vengeance_explosion(sids[0], sids[1])
-    trigger_shield_of_vengeance_explosion(sids[1], sids[0])
-    flush_deferred_stealth_break_logs()
+    # Finish the ordered periodic dispatch before resolving all chained shield
+    # reactions. Shields already committed at the earlier checkpoint no-op.
+    resolve_pending_shield_of_vengeance_explosions()
 
     # end_of_turn: duration_decrement / expiry_cleanup
     for sid in sids:
@@ -4047,20 +4050,20 @@ def resolve_turn(match: MatchState) -> None:
 
         return {"champion": champion_dealt_data, "pet_total_damage": pet_total_damage, "pet_hits": pet_hits}
 
-    def trigger_shield_of_vengeance_explosion(owner_sid: str, enemy_sid: str) -> None:
+    def trigger_shield_of_vengeance_explosion(owner_sid: str, enemy_sid: str) -> bool:
         owner = match.state[owner_sid]
         shield_fx = get_effect(owner, "shield_of_vengeance")
         if not shield_fx:
-            return
+            return False
         if shield_fx.get("exploded"):
-            return
+            return False
         if absorb_total(owner) > 0 and int(shield_fx.get("duration", 0) or 0) > 1:
-            return
+            return False
         absorbed_total = int(shield_fx.get("absorbed", 0) or 0)
         shield_fx["exploded"] = True
         remove_effect(owner, "shield_of_vengeance")
         if absorbed_total <= 0:
-            return
+            return True
         match.log.append("Shield of Vengeance explodes!")
         enemy = match.state[enemy_sid]
         skip_champion, untargetable_log = aoe_untargetable_resolution(enemy)
@@ -4086,6 +4089,7 @@ def resolve_turn(match: MatchState) -> None:
         champion_hp_damage = int(aoe_result.get("champion", {}).get("hp_damage", 0) or 0)
         totals = combat_totals_entry(match.combat_totals, owner_sid)
         totals["damage"] += champion_hp_damage + int(aoe_result.get("pet_total_damage", 0) or 0)
+        return True
 
     def resolve_dot_tick(source_sid: str, target_sid: str, source: Dict[str, Any]) -> int:
         source_ps = match.state.get(source_sid)

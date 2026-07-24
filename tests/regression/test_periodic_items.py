@@ -1837,3 +1837,115 @@ def scenario_vial_triggers_final_shield_of_vengeance_checkpoint() -> bool:
     ), "The original pre-periodic checkpoint must remain in place"
     assert not effects.has_effect(early_paladin, "shield_of_vengeance")
     return True
+
+
+def scenario_chained_shields_resolve_to_fixed_point_after_vial() -> bool:
+    match = make_match(
+        "paladin",
+        "paladin",
+        p1_items={"trinket": "vial_of_shadows"},
+        seed=9519,
+    )
+    p1_sid, p2_sid = match.players
+    p1 = match.state[p1_sid]
+    p2 = match.state[p2_sid]
+    p1.stats["atk"] = 13
+    p1.stats["int"] = 57
+
+    base_raw_damage = 22
+    p1_vial_damage = effects.resolve_incoming_damage(
+        base_raw_damage,
+        p1,
+        "magical",
+        subschool="shadow",
+    )
+    p2_vial_damage = effects.resolve_incoming_damage(
+        base_raw_damage,
+        p2,
+        "magical",
+        subschool="shadow",
+    )
+    assert p1_vial_damage == p2_vial_damage and p1_vial_damage > 5, \
+        "The chained setup requires equal positive Vial packets"
+    vial_damage = p1_vial_damage
+    p1_remaining_absorb = 5
+
+    for player, absorb_amount in (
+        (p1, vial_damage + p1_remaining_absorb),
+        (p2, vial_damage),
+    ):
+        effects.apply_effect_by_id(
+            player,
+            "shield_of_vengeance",
+            overrides={"duration": 2, "absorbed": 0},
+        )
+        effects.add_absorb(
+            player,
+            absorb_amount,
+            source_name="Shield of Vengeance",
+            effect_id="shield_of_vengeance",
+        )
+
+    # Vial fully consumes p2's shield but leaves 5 on p1. Because p1 is scanned
+    # first, p2 must explode before a second pass can commit p1's explosion.
+    p2_explosion_hp_damage = vial_damage - p1_remaining_absorb
+    p1_explosion_hp_damage = vial_damage + p1_remaining_absorb
+    p1.res.hp = p2_explosion_hp_damage
+    p2.res.hp = p1_explosion_hp_damage
+    match.turn = 4
+
+    roll_calls: list[str] = []
+    with _fixed_vial_roll(1, roll_calls):
+        submit_turn(match, _DEF_PASS, _DEF_PASS)
+
+    assert roll_calls == ["d6"]
+    assert p1.res.hp == 0 and p2.res.hp == 0
+    assert match.phase == "ended" and match.winner is None
+    assert "Double KO. No winner." in match.log
+    assert match.log.count("Shield of Vengeance explodes!") == 2, \
+        "Each chained Shield must explode exactly once"
+    for player in (p1, p2):
+        assert not effects.has_effect(player, "shield_of_vengeance")
+        assert "shield_of_vengeance" not in player.res.absorbs
+
+    assert match.combat_totals[p1_sid]["damage"] == p1_explosion_hp_damage, \
+        "p1 totals must credit actual damage from the second chained explosion"
+    assert match.combat_totals[p2_sid]["damage"] == p2_explosion_hp_damage, \
+        "p2 totals must credit actual damage from the first chained explosion"
+
+    explosion_indices = [
+        index
+        for index, line in enumerate(match.log)
+        if line == "Shield of Vengeance explodes!"
+    ]
+    p2_explosion_hit_index = next(
+        index
+        for index, line in enumerate(match.log)
+        if line.startswith(
+            f"Shield of Vengeance hits {p1_sid[:5]} for {vial_damage} damage."
+        )
+    )
+    p1_explosion_hit_index = next(
+        index
+        for index, line in enumerate(match.log)
+        if line == (
+            f"Shield of Vengeance hits {p2_sid[:5]} for "
+            f"{p1_explosion_hp_damage} damage."
+        )
+    )
+    vial_hit_indices = [
+        index
+        for index, line in enumerate(match.log)
+        if line.startswith("Vial of Shadows hits ")
+    ]
+    outcome_index = match.log.index("Double KO. No winner.")
+    assert len(explosion_indices) == 2 and len(vial_hit_indices) == 2
+    assert (
+        max(vial_hit_indices)
+        < explosion_indices[0]
+        < p2_explosion_hit_index
+        < explosion_indices[1]
+        < p1_explosion_hit_index
+        < outcome_index
+    ), "The reversed Shield dependency must complete before winner evaluation"
+    return True
