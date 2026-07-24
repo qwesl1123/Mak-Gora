@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional, Tuple, Callable, TypedDict
 from .models import MatchState, PlayerState, PlayerBuild, Resources, PetState, combat_totals_entry, new_combat_totals
 from .damage_events import PassiveDamageEvent, make_queued_damage_event
+from .periodic_items import resolve_periodic_item_stage
 from .damage_types import (
     DAMAGE_SOURCE_ABSORB_EXPLOSION,
     DAMAGE_SOURCE_DIRECT_ABILITY,
@@ -1317,10 +1318,34 @@ def resolve_end_of_turn_stage(
     single_target_miss_active: Callable[[PlayerState], bool],
     single_target_miss_log: Callable[[str], str],
     flush_deferred_stealth_break_logs: Callable[[], None],
+    flush_pre_periodic_deferred_logs: Callable[[], None],
     resolve_dot_tick: Callable[[str, str, Dict[str, Any]], int],
     tick_cooldowns: Callable[[PlayerState], None],
-    trigger_shield_of_vengeance_explosion: Callable[[str, str], None],
+    trigger_shield_of_vengeance_explosion: Callable[[str, str], bool],
 ) -> EndOfTurnStageResult:
+    def resolve_single_pass_shield_of_vengeance_explosions() -> None:
+        trigger_shield_of_vengeance_explosion(sids[0], sids[1])
+        trigger_shield_of_vengeance_explosion(sids[1], sids[0])
+        flush_deferred_stealth_break_logs()
+
+    def shield_of_vengeance_pending(owner_sid: str) -> bool:
+        owner = match.state[owner_sid]
+        shield_fx = get_effect(owner, "shield_of_vengeance")
+        if not shield_fx or shield_fx.get("exploded"):
+            return False
+        return (
+            absorb_total(owner) <= 0
+            or int(shield_fx.get("duration", 0) or 0) <= 1
+        )
+
+    def resolve_pending_shield_of_vengeance_explosions() -> None:
+        while True:
+            first_progressed = trigger_shield_of_vengeance_explosion(sids[0], sids[1])
+            second_progressed = trigger_shield_of_vengeance_explosion(sids[1], sids[0])
+            if not (first_progressed or second_progressed):
+                break
+        flush_deferred_stealth_break_logs()
+
     # end_of_turn: pet_phase (active pet actions)
     run_pet_phase(
         match,
@@ -1432,9 +1457,7 @@ def resolve_end_of_turn_stage(
                         next_effects.append(updated)
                 pet.effects = next_effects
 
-    trigger_shield_of_vengeance_explosion(sids[0], sids[1])
-    trigger_shield_of_vengeance_explosion(sids[1], sids[0])
-    flush_deferred_stealth_break_logs()
+    resolve_single_pass_shield_of_vengeance_explosions()
 
     for sid in sids:
         ps = match.state[sid]
@@ -1496,6 +1519,31 @@ def resolve_end_of_turn_stage(
             int_gain = max(1, int(current_int * 0.03))
             ps.stats["int"] = current_int + int_gain
             match.log.append(f"{sid_token(sid)} gains +{int_gain} Intellect from Ancestral Knowledge.")
+
+    # end_of_turn: periodic_item_stage
+    pending_before_periodic = {
+        sid: shield_of_vengeance_pending(sid)
+        for sid in sids
+    }
+    periodic_activations = resolve_periodic_item_stage(
+        match=match,
+        rng=rng,
+        turn_context=turn_ctx,
+        apply_damage=apply_damage,
+        before_dispatch=flush_pre_periodic_deferred_logs,
+    )
+    if periodic_activations:
+        flush_deferred_stealth_break_logs()
+
+    periodic_created_pending_shield = any(
+        not pending_before_periodic[sid]
+        and shield_of_vengeance_pending(sid)
+        for sid in sids
+    )
+    if periodic_created_pending_shield:
+        # Finish the ordered periodic dispatch before resolving every chained
+        # reaction it made pending; never run this between activations.
+        resolve_pending_shield_of_vengeance_explosions()
 
     # end_of_turn: duration_decrement / expiry_cleanup
     for sid in sids:
@@ -3745,6 +3793,13 @@ def resolve_turn(match: MatchState) -> None:
         match.log.extend(deferred_stealth_break_logs)
         deferred_stealth_break_logs.clear()
 
+    def flush_pre_periodic_deferred_logs() -> None:
+        flush_deferred_stealth_break_logs()
+        if not deferred_break_on_damage_logs:
+            return
+        match.log.extend(deferred_break_on_damage_logs)
+        deferred_break_on_damage_logs.clear()
+
     def apply_damage(
         source: PlayerState,
         target: PlayerState | PetState,
@@ -4020,20 +4075,20 @@ def resolve_turn(match: MatchState) -> None:
 
         return {"champion": champion_dealt_data, "pet_total_damage": pet_total_damage, "pet_hits": pet_hits}
 
-    def trigger_shield_of_vengeance_explosion(owner_sid: str, enemy_sid: str) -> None:
+    def trigger_shield_of_vengeance_explosion(owner_sid: str, enemy_sid: str) -> bool:
         owner = match.state[owner_sid]
         shield_fx = get_effect(owner, "shield_of_vengeance")
         if not shield_fx:
-            return
+            return False
         if shield_fx.get("exploded"):
-            return
+            return False
         if absorb_total(owner) > 0 and int(shield_fx.get("duration", 0) or 0) > 1:
-            return
+            return False
         absorbed_total = int(shield_fx.get("absorbed", 0) or 0)
         shield_fx["exploded"] = True
         remove_effect(owner, "shield_of_vengeance")
         if absorbed_total <= 0:
-            return
+            return True
         match.log.append("Shield of Vengeance explodes!")
         enemy = match.state[enemy_sid]
         skip_champion, untargetable_log = aoe_untargetable_resolution(enemy)
@@ -4059,6 +4114,7 @@ def resolve_turn(match: MatchState) -> None:
         champion_hp_damage = int(aoe_result.get("champion", {}).get("hp_damage", 0) or 0)
         totals = combat_totals_entry(match.combat_totals, owner_sid)
         totals["damage"] += champion_hp_damage + int(aoe_result.get("pet_total_damage", 0) or 0)
+        return True
 
     def resolve_dot_tick(source_sid: str, target_sid: str, source: Dict[str, Any]) -> int:
         source_ps = match.state.get(source_sid)
@@ -4382,6 +4438,7 @@ def resolve_turn(match: MatchState) -> None:
         single_target_miss_active=single_target_miss_active,
         single_target_miss_log=single_target_miss_log,
         flush_deferred_stealth_break_logs=flush_deferred_stealth_break_logs,
+        flush_pre_periodic_deferred_logs=flush_pre_periodic_deferred_logs,
         resolve_dot_tick=resolve_dot_tick,
         tick_cooldowns=tick_cooldowns,
         trigger_shield_of_vengeance_explosion=trigger_shield_of_vengeance_explosion,

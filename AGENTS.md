@@ -238,6 +238,28 @@ If behavior can be represented as ability/effect/item/pet data, prefer data.
 
 If a helper is reusable across multiple abilities/items/effects, put it in `effects.py` or another focused helper module instead of embedding it inside one resolver branch.
 
+## Global periodic-item stage
+
+Scheduled equipment effects use the single global `periodic_item_stage`. It runs exactly once for the active one-based global match turn, after normal end-of-turn pet/player ticks, deferred explosions, class mechanics, and their phase logs, but before duration/expiry cleanup, pet cleanup, and final alive/winner evaluation. Never run periodic equipment inside an individual player loop or create a separate stage per item.
+
+Periodic item passives use `trigger: "periodic_end_of_turn"` plus a non-empty `type`, positive integer `interval`, and positive integer `first_trigger_turn`. An activation is eligible when `current_turn >= first_trigger_turn` and `(current_turn - first_trigger_turn) % interval == 0`. The collector reads canonical equipped-item slots, supports dictionary or list passive data, snapshots all eligible activations before dispatch, and orders them by match player order, `EQUIPMENT_SLOT_ORDER`, then passive-list index.
+
+`PERIODIC_ITEM_HANDLERS` owns type-to-handler dispatch. The stage owns scheduling, collection, snapshotting, ordering, and dispatch only; handlers own formulas, RNG, targets, damage/healing, logs, and combat-total attribution. Future periodic items must use this metadata and registry: do not hardcode item IDs in the resolver or add item-specific stage branches. Missing handlers and invalid periodic schedules fail loudly. An empty stage must append nothing and consume no RNG.
+
+Temporary effect/HoT regeneration remains in normal player `end_of_turn`
+processing. Equipped periodic-item healing runs later in the global periodic
+item stage, after normal player/pet ticks, deferred explosions, and class
+mechanics, but before cleanup and winner evaluation. Both paths must route
+final player HP restoration through `apply_player_healing()`.
+
+Damage from the committed periodic-item dispatch may consume reactive absorbs.
+The original Shield of Vengeance checkpoint preserves its historical
+single-pass player ordering. Only a reaction newly made pending by periodic
+dispatch invokes the final fixed-point pass after the complete dispatch and
+before cleanup or winner evaluation. Non-damaging periodic activations must not
+advance unrelated Shield reactions, and reaction processing must never occur
+between individual periodic activations.
+
 ## Ability empowerment contract
 
 Fixed ability-specific empowered formula variants (an effect that changes one specific ability's scaling/dice/log, e.g. empowered Mind Blast or Final Verdict) belong in `abilities.py` under the ability's `empowered_by` metadata:
@@ -304,7 +326,7 @@ Player healing is separate from `grant_player_resource()`. The resource helper i
 
 `effects.apply_player_healing()` is the canonical final application primitive for player HP restoration. It owns only the upper `hp_max` cap, the `res.hp` mutation, and the actual-gained return value, and it must not lower-clamp transient negative HP. Mindgames conversion, formulas/dice, eligibility, timing, log wording, combat-total attribution, and pet HP application remain caller-owned. All new production player HP restoration sites must apply HP through it. Pet HP restoration remains explicit and local.
 
-All known production player HP restoration now routes through `effects.apply_player_healing()`: the action-time paths (`_apply_mindgames_aware_healing()`, Healthstone, Holy Light, Flash Heal, Lay on Hands, Wild Growth, Penance Self, and generic on-hit healing such as Victory Rush), the damage-derived paths (full `heal_from_dealt_damage` — Fury of Azzinoth; fractional `heal_from_damage` — Drain Life; periodic DoT `lifesteal_pct` — Vampiric Touch and Devouring Plague; and the final HP application inside `apply_damage()`'s Mindgames damage-to-healing branch, whose `_apply_heal_with_clamp()` compatibility wrapper has been removed), passive on-hit item healing (`heal_on_hit`, e.g. Thunderfury), end-of-turn item healing (`heal_self`, e.g. Staff of Immortality), effect/HoT regeneration (`regen["hp"]` — Regrowth, Frenzied Regeneration, Healing Stream, Ice Block, Vanish, etc.), Ancestral Knowledge, and Emerald Serpent Lightning Breath owner healing. Pet HP application is not migrated and remains locally applied (Kill Command, pet regen, and the serpent's own half of Lightning Breath keep their explicit `pet.hp` clamps). Mindgames conversion, formulas, eligibility, timing, log wording, and combat-total attribution remain caller-owned. Whenever a healing log displays a numeric healing amount, that number is the actual HP gained, never the pre-cap requested amount; the capped remainder is tracked as overhealing (see the healing accounting policy below).
+All known production player HP restoration now routes through `effects.apply_player_healing()`: the action-time paths (`_apply_mindgames_aware_healing()`, Healthstone, Holy Light, Flash Heal, Lay on Hands, Wild Growth, Penance Self, and generic on-hit healing such as Victory Rush), the damage-derived paths (full `heal_from_dealt_damage` — Fury of Azzinoth; fractional `heal_from_damage` — Drain Life; periodic DoT `lifesteal_pct` — Vampiric Touch and Devouring Plague; and the final HP application inside `apply_damage()`'s Mindgames damage-to-healing branch, whose `_apply_heal_with_clamp()` compatibility wrapper has been removed), passive on-hit item healing (`heal_on_hit`, e.g. Thunderfury), equipped periodic-item healing (`periodic_self_heal`, e.g. Staff of Immortality), effect/HoT regeneration (`regen["hp"]` — Regrowth, Frenzied Regeneration, Healing Stream, Ice Block, Vanish, etc.), Ancestral Knowledge, and Emerald Serpent Lightning Breath owner healing. Pet HP application is not migrated and remains locally applied (Kill Command, pet regen, and the serpent's own half of Lightning Breath keep their explicit `pet.hp` clamps). Mindgames conversion, formulas, eligibility, timing, log wording, and combat-total attribution remain caller-owned. Whenever a healing log displays a numeric healing amount, that number is the actual HP gained, never the pre-cap requested amount; the capped remainder is tracked as overhealing (see the healing accounting policy below).
 
 Ancestral Knowledge follows the same temporary-negative-HP semantics as other player healing: its former `hp > 0` liveness gate is removed, so it can restore a Shaman from zero or negative HP before the final winner check and insufficient healing may leave the Shaman negative. Cyclone suppresses only its healing portion and takes precedence over Mindgames, preventing both healing and converted self-damage. Otherwise, Mindgames converts the requested pre-cap healing into magical Shadow self-damage through the shared damage pipeline. The passive's Intellect increase remains independent and still occurs in the normal, full-HP, Cyclone, Mindgames, zero-HP, and negative-HP cases. Final survival is determined only by the end-of-turn winner check.
 
@@ -314,7 +336,7 @@ Current load-bearing application behavior, pinned by regression tests; do not ch
 
 * Player HP restoration caps only at `hp_max`.
 * Healing applies to the current HP value as-is. Transient negative HP must not be lower-clamped to zero before healing: healing a player at `-6` by 12 leaves them at `6`; healing by less than the deficit leaves them negative until the end-of-turn winner check.
-* Action-time healing resolves before direct damage application. Damage-derived healing (lifesteal, heal-from-dealt) uses actual dealt HP damage and resolves only after it is known. End-of-turn item/effect healing applies before that champion’s queued DoT damage and before the winner check.
+* Action-time healing resolves before direct damage application. Damage-derived healing (lifesteal, heal-from-dealt) uses actual dealt HP damage and resolves only after it is known. Temporary effect/HoT regeneration applies during normal player `end_of_turn` processing before that champion's queued DoT damage. Equipped periodic-item healing applies later, after queued DoT damage and class mechanics but before cleanup and the winner check.
 * Callers currently own formulas, dice, eligibility, timing, Mindgames decisions, log wording, and combat-total attribution. Wherever a healing source is credited to combat totals or logged with a number, the amount used is the actual HP delta, not the request.
 * Mindgames healing-to-damage converts the requested pre-clamp healing amount, not the portion that would have fit below `hp_max`.
 * `DamageApplicationResult.mindgames_healing` represents nominal converted damage, not actual HP restored. Direct-DoT application uses it as evidence that the source hit resolved; do not rename or redefine the field. Its sibling `mindgames_healing_gained` carries the actual HP the flip target gained and drives healing/overhealing totals and flip-log wording.
@@ -394,6 +416,7 @@ Common source kinds:
 * absorb explosion damage
 * self damage
 * environmental damage
+* periodic item damage
 
 Items/passives should define which source kinds they affect whenever the behavior is not obvious.
 
