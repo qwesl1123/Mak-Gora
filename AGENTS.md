@@ -402,6 +402,7 @@ Common source kinds:
 * absorb explosion damage
 * self damage
 * environmental damage
+* periodic item damage
 
 Items/passives should define which source kinds they affect whenever the behavior is not obvious.
 
