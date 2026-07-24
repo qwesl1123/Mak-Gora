@@ -9,7 +9,9 @@ from typing import Any, Callable, Dict, Mapping, Sequence
 from .damage_types import DAMAGE_SOURCE_PERIODIC_ITEM
 from .dice import roll
 from .effects import (
+    apply_player_healing,
     damage_multiplier_from_passives,
+    has_flag,
     is_damage_immune,
     modify_stat,
     outgoing_damage_multiplier,
@@ -20,6 +22,7 @@ from ..content.items import ITEMS
 
 PERIODIC_ITEM_TRIGGER = "periodic_end_of_turn"
 PERIODIC_GLOBAL_DAMAGE_HANDLER = "periodic_global_damage"
+PERIODIC_SELF_HEAL_HANDLER = "periodic_self_heal"
 
 # PlayerBuild currently supports these equipment slots. Periodic item ordering
 # must use this tuple rather than build/items dictionary insertion order.
@@ -163,6 +166,42 @@ def _periodic_absorb_suffix(damage_result: Mapping[str, Any]) -> str:
     return f" ({', '.join(parts)})"
 
 
+def periodic_self_heal(
+    activation: PeriodicItemActivation,
+    context: PeriodicItemHandlerContext,
+) -> None:
+    """Restore the equipped item's owner through the player-healing primitive."""
+
+    owner = context.match.state.get(activation.owner_sid)
+    if owner is None:
+        raise ValueError(
+            f"Periodic item owner '{activation.owner_sid}' is missing from match state"
+        )
+
+    passive = activation.passive_metadata
+    if passive.get("target_mode") != "self":
+        raise ValueError("periodic_self_heal requires target_mode='self'")
+    heal_value = passive.get("value")
+    if type(heal_value) is not int or heal_value < 1:
+        raise ValueError("periodic_self_heal requires value to be a positive integer")
+
+    # Preserve the legacy item exception: Cyclone suppresses these heals, but
+    # Mindgames and other immunity-all states do not.
+    if has_flag(owner, "cycloned"):
+        return
+
+    gained = apply_player_healing(owner, heal_value)
+    totals = combat_totals_entry(context.match.combat_totals, activation.owner_sid)
+    totals["healing"] += gained
+    totals["overhealing"] += heal_value - gained
+
+    item = ITEMS.get(activation.item_id, {})
+    item_name = str(item.get("name") or activation.item_id)
+    context.match.log.append(
+        f"{owner.sid[:5]} heals {gained} HP from {item_name}."
+    )
+
+
 def periodic_global_damage(
     activation: PeriodicItemActivation,
     context: PeriodicItemHandlerContext,
@@ -253,6 +292,7 @@ def periodic_global_damage(
 
 PERIODIC_ITEM_HANDLERS: dict[str, PeriodicItemHandler] = {
     PERIODIC_GLOBAL_DAMAGE_HANDLER: periodic_global_damage,
+    PERIODIC_SELF_HEAL_HANDLER: periodic_self_heal,
 }
 
 
