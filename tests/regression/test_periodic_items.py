@@ -1707,3 +1707,133 @@ def scenario_dual_vials_commit_and_preserve_double_ko() -> bool:
     assert match.log.index(activation_lines[1]) < match.log.index("Double KO. No winner."), \
         "Winner evaluation must occur only after the second committed activation"
     return True
+
+
+def scenario_vial_triggers_final_shield_of_vengeance_checkpoint() -> bool:
+    match = make_match(
+        "warrior",
+        "paladin",
+        p1_items={"trinket": "vial_of_shadows"},
+        seed=9517,
+    )
+    vial_sid, paladin_sid = match.players
+    vial_owner = match.state[vial_sid]
+    paladin = match.state[paladin_sid]
+    vial_owner.stats["atk"] = 13
+    vial_owner.stats["int"] = 57
+
+    base_raw_damage = 22
+    vial_self_damage = effects.resolve_incoming_damage(
+        base_raw_damage,
+        vial_owner,
+        "magical",
+        subschool="shadow",
+    )
+    vial_paladin_damage = effects.resolve_incoming_damage(
+        base_raw_damage,
+        paladin,
+        "magical",
+        subschool="shadow",
+    )
+    remaining_absorb = 5
+    absorbed_before_periodic = 15
+    explosion_damage = absorbed_before_periodic + remaining_absorb
+    assert vial_paladin_damage - remaining_absorb > 5, \
+        "The setup must deal enough post-absorb HP damage to break stealth"
+
+    effects.apply_effect_by_id(
+        paladin,
+        "shield_of_vengeance",
+        overrides={
+            "duration": 2,
+            "absorbed": absorbed_before_periodic,
+        },
+    )
+    effects.add_absorb(
+        paladin,
+        remaining_absorb,
+        source_name="Shield of Vengeance",
+        effect_id="shield_of_vengeance",
+    )
+    effects.apply_effect_by_id(paladin, "stealth", overrides={"duration": 3})
+
+    # Without the final checkpoint the Paladin would die to Vial while the
+    # Vial owner remained alive on exactly the shield's explosion damage.
+    vial_owner.res.hp = vial_self_damage + explosion_damage
+    paladin.res.hp = vial_paladin_damage - remaining_absorb
+    match.turn = 4
+
+    roll_calls: list[str] = []
+    with _fixed_vial_roll(1, roll_calls):
+        submit_turn(match, _DEF_PASS, _DEF_PASS)
+
+    assert roll_calls == ["d6"]
+    assert vial_owner.res.hp == 0 and paladin.res.hp == 0, \
+        "Post-periodic Shield damage must turn the one-sided Vial lethal into a double KO"
+    assert match.phase == "ended" and match.winner is None
+    assert "Double KO. No winner." in match.log
+    assert match.log.count("Shield of Vengeance explodes!") == 1
+    assert not effects.has_effect(paladin, "shield_of_vengeance")
+    assert "shield_of_vengeance" not in paladin.res.absorbs
+    assert match.combat_totals[vial_sid]["damage"] == (
+        vial_self_damage + vial_paladin_damage - remaining_absorb
+    ), "Vial totals must continue to use actual post-absorb HP damage"
+    assert match.combat_totals[paladin_sid]["damage"] == explosion_damage, \
+        "Shield totals must credit the actual HP damage dealt by the explosion"
+    assert any(
+        line == f"Shield of Vengeance hits {vial_sid[:5]} for {explosion_damage} damage."
+        for line in match.log
+    ), "The final checkpoint must use the existing Shield damage path"
+
+    vial_trigger_index = match.log.index(
+        f"{vial_sid[:5]} triggers Vial of Shadows."
+    )
+    vial_hit_index = next(
+        index
+        for index, line in enumerate(match.log)
+        if line.startswith(f"Vial of Shadows hits {paladin_sid[:5]}")
+    )
+    stealth_break_index = match.log.index(
+        f"{paladin_sid[:5]} stealth broken by Vial of Shadows."
+    )
+    explosion_index = match.log.index("Shield of Vengeance explodes!")
+    outcome_index = match.log.index("Double KO. No winner.")
+    assert (
+        vial_trigger_index
+        < vial_hit_index
+        < stealth_break_index
+        < explosion_index
+        < outcome_index
+    ), "Periodic logs and reactions must resolve completely before the final outcome"
+
+    already_exploded = make_match(
+        "warrior",
+        "paladin",
+        p1_items={"trinket": "vial_of_shadows"},
+        seed=9518,
+    )
+    early_vial_sid, early_paladin_sid = already_exploded.players
+    early_vial_owner = already_exploded.state[early_vial_sid]
+    early_paladin = already_exploded.state[early_paladin_sid]
+    early_vial_owner.stats["atk"] = 13
+    early_vial_owner.stats["int"] = 57
+    effects.apply_effect_by_id(
+        early_paladin,
+        "shield_of_vengeance",
+        overrides={"duration": 1, "absorbed": 10},
+    )
+    already_exploded.turn = 4
+    early_roll_calls: list[str] = []
+    with _fixed_vial_roll(1, early_roll_calls):
+        submit_turn(already_exploded, _DEF_PASS, _DEF_PASS)
+
+    assert early_roll_calls == ["d6"]
+    assert already_exploded.log.count("Shield of Vengeance explodes!") == 1, \
+        "The final checkpoint must not re-trigger a shield exploded earlier"
+    assert already_exploded.log.index("Shield of Vengeance explodes!") < (
+        already_exploded.log.index(
+            f"{early_vial_sid[:5]} triggers Vial of Shadows."
+        )
+    ), "The original pre-periodic checkpoint must remain in place"
+    assert not effects.has_effect(early_paladin, "shield_of_vengeance")
+    return True

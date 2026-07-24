@@ -252,6 +252,11 @@ item stage, after normal player/pet ticks, deferred explosions, and class
 mechanics, but before cleanup and winner evaluation. Both paths must route
 final player HP restoration through `apply_player_healing()`.
 
+Damage from the committed periodic-item dispatch may consume reactive absorbs.
+Final post-periodic reactions such as Shield of Vengeance must resolve after
+the complete dispatch and before cleanup or winner evaluation; never insert
+that reaction checkpoint between individual periodic activations.
+
 ## Ability empowerment contract
 
 Fixed ability-specific empowered formula variants (an effect that changes one specific ability's scaling/dice/log, e.g. empowered Mind Blast or Final Verdict) belong in `abilities.py` under the ability's `empowered_by` metadata:

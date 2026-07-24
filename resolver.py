@@ -1510,6 +1510,13 @@ def resolve_end_of_turn_stage(
     if periodic_activations:
         flush_deferred_stealth_break_logs()
 
+    # Committed periodic activations finish as one ordered dispatch before any
+    # reactive absorb explosions run. The helper safely no-ops for shields that
+    # already exploded at the earlier checkpoint.
+    trigger_shield_of_vengeance_explosion(sids[0], sids[1])
+    trigger_shield_of_vengeance_explosion(sids[1], sids[0])
+    flush_deferred_stealth_break_logs()
+
     # end_of_turn: duration_decrement / expiry_cleanup
     for sid in sids:
         ps = match.state[sid]
