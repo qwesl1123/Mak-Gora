@@ -24,6 +24,7 @@ from harness import (
     resolver,
     submit_turn,
 )
+from games.duel.engine import periodic_items
 
 from .helpers import (
     _DEF_PASS,
@@ -136,6 +137,7 @@ def scenario_action_time_player_healing_routes_through_shared_helper() -> bool:
     """
     original = effects.apply_player_healing
     assert resolver.apply_player_healing is original, "resolver should share the effects.apply_player_healing primitive"
+    assert periodic_items.apply_player_healing is original, "periodic_items should share the effects.apply_player_healing primitive"
     calls: list[tuple[int, int]] = []
 
     def spy(target, amount):
@@ -147,6 +149,7 @@ def scenario_action_time_player_healing_routes_through_shared_helper() -> bool:
     # actually calls in addition to the effects module attribute.
     effects.apply_player_healing = spy
     resolver.apply_player_healing = spy
+    periodic_items.apply_player_healing = spy
     try:
         # Holy Light: exactly one helper call; the near-cap actual gain feeds
         # the log and healing totals.
@@ -225,6 +228,7 @@ def scenario_action_time_player_healing_routes_through_shared_helper() -> bool:
     finally:
         effects.apply_player_healing = original
         resolver.apply_player_healing = original
+        periodic_items.apply_player_healing = original
     return True
 
 

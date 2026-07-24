@@ -2679,40 +2679,6 @@ def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[dict[str, Any
     return damage_sources
 
 
-def trigger_end_of_turn_passives(ps: PlayerState, log: List[str], label: str) -> tuple[int, int]:
-    """Run end-of-turn item passives (currently: heal_self).
-
-    Returns ``(total_healing, total_overhealing)``: actual HP gained plus the
-    requested healing lost only to the ``hp_max`` cap.
-    """
-    total_healing = 0
-    total_overhealing = 0
-    for effect in ps.effects:
-        if effect.get("type") != "item_passive":
-            continue
-        passive = effect.get("passive", {}) or {}
-        if passive.get("trigger") != "end_of_turn":
-            continue
-
-        if passive.get("type") == "heal_self":
-            heal_value = int(passive.get("value", 0) or 0)
-            if heal_value > 0:
-                gained = apply_player_healing(ps, heal_value)
-                total_healing += gained
-                total_overhealing += max(0, heal_value - gained)
-                log.append(
-                    f"{label} heals {gained} HP from {effect.get('source_item', 'item')}."
-                )
-        elif passive.get("type") == "absorb_self":
-            absorb_value = int(passive.get("value", 0) or 0)
-            if absorb_value > 0:
-                add_absorb(ps, absorb_value)
-                log.append(
-                    f"{label} gains {absorb_value} absorb from {effect.get('source_item', 'item')}."
-                )
-    return total_healing, total_overhealing
-
-
 def trigger_end_of_turn_effects(ps: PlayerState, log: List[str], label: str) -> tuple[int, int, List[Dict[str, Any]]]:
     """Run end-of-turn status effects such as regeneration from buffs.
 
@@ -2789,7 +2755,7 @@ def mana_regen_from_spirit(ps: PlayerState) -> int:
 
 
 def end_of_turn(ps: PlayerState, log: List[str], label: str) -> dict[str, Any]:
-    """End-of-turn pipeline: DoTs, passives, duration tick, regen."""
+    """End-of-turn pipeline for queued DoTs and temporary effect regeneration."""
     if not ps.res:
         return {"damage_sources": [], "healing_done": 0, "overhealing_done": 0, "self_damage_sources": []}
 
@@ -2797,10 +2763,11 @@ def end_of_turn(ps: PlayerState, log: List[str], label: str) -> dict[str, Any]:
         return {"damage_sources": [], "healing_done": 0, "overhealing_done": 0, "self_damage_sources": []}
 
     damage_sources = tick_dots(ps, log, label)
-    passive_healing, passive_overhealing = trigger_end_of_turn_passives(ps, log, label)
-    effect_healing, effect_overhealing, self_damage_sources = trigger_end_of_turn_effects(ps, log, label)
-    total_healing = passive_healing + effect_healing
-    total_overhealing = passive_overhealing + effect_overhealing
+    total_healing, total_overhealing, self_damage_sources = trigger_end_of_turn_effects(
+        ps,
+        log,
+        label,
+    )
 
     if ps.res.hp > 0:
         # Baseline mp/energy regen routes through grant_player_resource so the

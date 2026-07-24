@@ -707,12 +707,311 @@ def scenario_periodic_item_invalid_metadata_and_unknown_handler_fail_clearly() -
     return True
 
 
+def scenario_periodic_self_heal_item_metadata_and_handler_validation() -> bool:
+    expected_values = {
+        "spirit_light_sword": 3,
+        "staff_of_immortality": 4,
+    }
+    for item_id, heal_value in expected_values.items():
+        assert ITEMS[item_id]["passive"] == {
+            "type": periodic_items.PERIODIC_SELF_HEAL_HANDLER,
+            "trigger": periodic_items.PERIODIC_ITEM_TRIGGER,
+            "interval": 1,
+            "first_trigger_turn": 1,
+            "value": heal_value,
+            "target_mode": "self",
+        }, f"{item_id} must use the complete periodic self-heal schedule"
+
+    assert periodic_items.PERIODIC_SELF_HEAL_HANDLER == "periodic_self_heal"
+    assert (
+        periodic_items.PERIODIC_ITEM_HANDLERS[
+            periodic_items.PERIODIC_SELF_HEAL_HANDLER
+        ]
+        is periodic_items.periodic_self_heal
+    ), "periodic_self_heal must be registered through the shared handler registry"
+
+    match = make_match("warrior", "mage", seed=9411)
+    owner_sid = match.players[0]
+    context = periodic_items.PeriodicItemHandlerContext(
+        match=match,
+        global_turn=1,
+        rng=random.Random(9411),
+        player_sids=tuple(match.players),
+        turn_context=None,
+        apply_damage=_unused_apply_damage,
+    )
+
+    def activation(owner: str, passive: dict[str, Any]):
+        return periodic_items.PeriodicItemActivation(
+            owner_sid=owner,
+            item_slot="weapon",
+            item_id="spirit_light_sword",
+            passive_type=periodic_items.PERIODIC_SELF_HEAL_HANDLER,
+            passive_metadata=passive,
+            passive_index=0,
+        )
+
+    valid_passive = dict(ITEMS["spirit_light_sword"]["passive"])
+    try:
+        periodic_items.periodic_self_heal(
+            activation("missing-owner", valid_passive),
+            context,
+        )
+    except ValueError as exc:
+        assert "missing-owner" in str(exc), \
+            "A missing periodic item owner must fail loudly with its SID"
+    else:
+        raise AssertionError("periodic_self_heal must reject a missing owner")
+
+    invalid_passives = (
+        ({**valid_passive, "target_mode": "enemy"}, "target_mode"),
+        ({**valid_passive, "value": True}, "positive integer"),
+        ({**valid_passive, "value": 0}, "positive integer"),
+        ({**valid_passive, "value": -1}, "positive integer"),
+        ({**valid_passive, "value": 3.0}, "positive integer"),
+        ({**valid_passive, "value": "3"}, "positive integer"),
+    )
+    hp_before = match.state[owner_sid].res.hp
+    totals_before = copy.deepcopy(match.combat_totals)
+    log_before = list(match.log)
+    for passive, expected_message in invalid_passives:
+        try:
+            periodic_items.periodic_self_heal(
+                activation(owner_sid, passive),
+                context,
+            )
+        except ValueError as exc:
+            assert expected_message in str(exc), \
+                f"Invalid periodic_self_heal metadata should identify {expected_message}"
+        else:
+            raise AssertionError(
+                f"periodic_self_heal must reject invalid metadata: {passive}"
+            )
+    assert match.state[owner_sid].res.hp == hp_before
+    assert match.combat_totals == totals_before
+    assert match.log == log_before
+    return True
+
+
+def scenario_periodic_self_heal_schedule_and_rng() -> bool:
+    for index, (item_id, heal_value) in enumerate(
+        (("spirit_light_sword", 3), ("staff_of_immortality", 4))
+    ):
+        match = make_match(
+            "warrior",
+            "mage",
+            p1_items={"weapon": item_id},
+            seed=9420 + index,
+        )
+        owner_sid = match.players[0]
+        owner = match.state[owner_sid]
+        owner.res.hp -= 30
+        hp_before = owner.res.hp
+        stage_rng = random.Random(9420 + index)
+        control_rng = random.Random(9420 + index)
+        observed_turns: list[int] = []
+
+        for global_turn in range(1, 5):
+            match.turn = global_turn - 1
+            activations = periodic_items.resolve_periodic_item_stage(
+                match=match,
+                rng=stage_rng,
+                turn_context=None,
+                apply_damage=_unused_apply_damage,
+            )
+            assert len(activations) == 1
+            activation = activations[0]
+            assert activation.item_id == item_id
+            assert activation.passive_type == periodic_items.PERIODIC_SELF_HEAL_HANDLER
+            observed_turns.append(global_turn)
+
+        assert observed_turns == [1, 2, 3, 4], \
+            f"{item_id} must activate once starting on turn 1 and every turn thereafter"
+        assert owner.res.hp == hp_before + (heal_value * 4)
+        assert match.combat_totals[owner_sid]["healing"] == heal_value * 4
+        assert match.combat_totals[owner_sid]["overhealing"] == 0
+        assert stage_rng.getstate() == control_rng.getstate(), \
+            f"{item_id} periodic healing must consume no RNG"
+    return True
+
+
+def scenario_periodic_self_heal_accounting_and_exceptions() -> bool:
+    near_cap = make_match(
+        "warrior",
+        "mage",
+        p1_items={"weapon": "staff_of_immortality"},
+        seed=9430,
+    )
+    near_cap_sid = near_cap.players[0]
+    near_cap_owner = near_cap.state[near_cap_sid]
+    near_cap_owner.res.hp = near_cap_owner.res.hp_max - 1
+    periodic_items.resolve_periodic_item_stage(
+        match=near_cap,
+        rng=random.Random(9430),
+        turn_context=None,
+        apply_damage=_unused_apply_damage,
+    )
+    assert near_cap_owner.res.hp == near_cap_owner.res.hp_max
+    assert near_cap.combat_totals[near_cap_sid]["healing"] == 1
+    assert near_cap.combat_totals[near_cap_sid]["overhealing"] == 3
+    assert near_cap.log[-1] == (
+        f"{near_cap_sid[:5]} heals 1 HP from Staff of Immortality."
+    )
+
+    full = make_match(
+        "warrior",
+        "mage",
+        p1_items={"weapon": "spirit_light_sword"},
+        seed=9431,
+    )
+    full_sid = full.players[0]
+    periodic_items.resolve_periodic_item_stage(
+        match=full,
+        rng=random.Random(9431),
+        turn_context=None,
+        apply_damage=_unused_apply_damage,
+    )
+    assert full.combat_totals[full_sid]["healing"] == 0
+    assert full.combat_totals[full_sid]["overhealing"] == 3
+    assert full.log[-1] == f"{full_sid[:5]} heals 0 HP from Spirit Light Sword."
+
+    for index, starting_hp in enumerate((0, -2)):
+        rescue = make_match(
+            "warrior",
+            "mage",
+            p1_items={"weapon": "spirit_light_sword"},
+            seed=9432 + index,
+        )
+        rescue_sid = rescue.players[0]
+        rescue_owner = rescue.state[rescue_sid]
+        rescue_owner.res.hp = starting_hp
+        submit_turn(rescue, _DEF_PASS, _DEF_PASS)
+        assert rescue_owner.res.hp == starting_hp + 3
+        assert rescue.combat_totals[rescue_sid]["healing"] == 3
+        assert rescue.combat_totals[rescue_sid]["overhealing"] == 0
+        assert rescue.phase == "combat" and rescue.winner is None, \
+            "Periodic item healing must restore zero or transient negative HP before winner evaluation"
+
+    cycloned = make_match(
+        "warrior",
+        "mage",
+        p1_items={"weapon": "staff_of_immortality"},
+        seed=9434,
+    )
+    cyclone_sid = cycloned.players[0]
+    cyclone_owner = cycloned.state[cyclone_sid]
+    cyclone_owner.res.hp -= 20
+    effects.apply_effect_by_id(cyclone_owner, "cyclone", overrides={"duration": 2})
+    cyclone_hp = cyclone_owner.res.hp
+    totals_before = copy.deepcopy(cycloned.combat_totals)
+    logs_before = list(cycloned.log)
+    periodic_items.resolve_periodic_item_stage(
+        match=cycloned,
+        rng=random.Random(9434),
+        turn_context=None,
+        apply_damage=_unused_apply_damage,
+    )
+    assert cyclone_owner.res.hp == cyclone_hp
+    assert cycloned.combat_totals == totals_before
+    assert cycloned.log == logs_before, \
+        "Cyclone must suppress periodic item healing, accounting, and success logs"
+
+    mindgames = make_match(
+        "warrior",
+        "priest",
+        p1_items={"weapon": "staff_of_immortality"},
+        seed=9435,
+    )
+    mindgames_sid = mindgames.players[0]
+    mindgames_owner = mindgames.state[mindgames_sid]
+    mindgames_owner.res.hp -= 20
+    effects.apply_effect_by_id(
+        mindgames_owner,
+        "mindgames",
+        overrides={"duration": 2, "source_sid": mindgames.players[1]},
+    )
+    mindgames_hp = mindgames_owner.res.hp
+    periodic_items.resolve_periodic_item_stage(
+        match=mindgames,
+        rng=random.Random(9435),
+        turn_context=None,
+        apply_damage=_unused_apply_damage,
+    )
+    assert mindgames_owner.res.hp == mindgames_hp + 4
+    assert mindgames.combat_totals[mindgames_sid]["healing"] == 4
+    assert not any("Mindgames" in line for line in mindgames.log), \
+        "Legacy item healing must not be converted by Mindgames"
+
+    ice_block = make_match(
+        "mage",
+        "warrior",
+        p1_items={"weapon": "spirit_light_sword"},
+        seed=9436,
+    )
+    ice_block_sid = ice_block.players[0]
+    ice_block_owner = ice_block.state[ice_block_sid]
+    ice_block_owner.res.hp -= 20
+    effects.apply_effect_by_id(ice_block_owner, "ice_block", overrides={"duration": 2})
+    ice_block_hp = ice_block_owner.res.hp
+    periodic_items.resolve_periodic_item_stage(
+        match=ice_block,
+        rng=random.Random(9436),
+        turn_context=None,
+        apply_damage=_unused_apply_damage,
+    )
+    assert ice_block_owner.res.hp == ice_block_hp + 3
+    assert ice_block.combat_totals[ice_block_sid]["healing"] == 3, \
+        "Non-Cyclone immunity-all states must not suppress periodic item healing"
+    return True
+
+
+def scenario_staff_dispatches_before_vial_for_same_owner() -> bool:
+    match = make_match(
+        "warrior",
+        "mage",
+        p1_items={
+            "weapon": "staff_of_immortality",
+            "trinket": "vial_of_shadows",
+        },
+        seed=9440,
+    )
+    owner_sid = match.players[0]
+    match.state[owner_sid].res.hp -= 20
+    match.turn = 4
+    damage_calls: list[dict[str, Any]] = []
+    roll_calls: list[str] = []
+    with _fixed_vial_roll(1, roll_calls):
+        activations = periodic_items.resolve_periodic_item_stage(
+            match=match,
+            rng=random.Random(9440),
+            turn_context=None,
+            apply_damage=_capture_damage_calls(damage_calls),
+        )
+
+    assert [
+        (activation.item_slot, activation.item_id)
+        for activation in activations
+    ] == [
+        ("weapon", "staff_of_immortality"),
+        ("trinket", "vial_of_shadows"),
+    ], "Canonical weapon-before-trinket ordering must dispatch Staff before Vial"
+    staff_idx = next(
+        index
+        for index, line in enumerate(match.log)
+        if "heals 4 HP from Staff of Immortality." in line
+    )
+    vial_idx = match.log.index(f"{owner_sid[:5]} triggers Vial of Shadows.")
+    assert staff_idx < vial_idx
+    assert roll_calls == ["d6"], "The added heal must not change Vial's one-roll contract"
+    return True
+
+
 def scenario_existing_nonperiodic_items_do_not_activate_periodic_stage() -> bool:
     match = make_match(
         "warrior",
         "mage",
         p1_items={
-            "weapon": "spirit_light_sword",
+            "weapon": "steel_long_sword",
             "armor": "challengers_chestplate",
             "trinket": "focus_charm",
         },
@@ -728,7 +1027,7 @@ def scenario_existing_nonperiodic_items_do_not_activate_periodic_stage() -> bool
         current_turn=5,
     )
     assert activations == (), \
-        "Existing end_of_turn, on_hit, on_damage, and triggerless item passives must not enter the periodic snapshot"
+        "Existing on_hit, on_damage, and triggerless item passives must not enter the periodic snapshot"
     return True
 
 

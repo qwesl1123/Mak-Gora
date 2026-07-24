@@ -26,7 +26,14 @@ ITEMS = {
         "slot": "weapon",
         "mods": {"atk": 3},
         "damage_type": "physical",
-        "passive": {"type": "heal_self", "value": 3, "trigger": "end_of_turn"},
+        "passive": {
+            "type": "periodic_self_heal",
+            "trigger": "periodic_end_of_turn",
+            "interval": 1,
+            "first_trigger_turn": 1,
+            "value": 3,
+            "target_mode": "self",
+        },
     },
     "wand_of_fire": {
         "name": "Wand of Fire",
@@ -40,7 +47,14 @@ ITEMS = {
         "slot": "weapon",
         "mods": {"int": 3},
         "damage_type": "magic",
-        "passive": {"type": "heal_self", "value": 4, "trigger": "end_of_turn"},
+        "passive": {
+            "type": "periodic_self_heal",
+            "trigger": "periodic_end_of_turn",
+            "interval": 1,
+            "first_trigger_turn": 1,
+            "value": 4,
+            "target_mode": "self",
+        },
     },
     "steel_daggers": {
         "name": "Steel Daggers",

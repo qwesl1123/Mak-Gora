@@ -19,6 +19,7 @@ from harness import (
     resolver,
     submit_turn,
 )
+from games.duel.engine import periodic_items
 
 from .helpers import (
     _DEF_PASS,
@@ -137,15 +138,11 @@ def scenario_devouring_plague_heals_for_full_tick_damage() -> bool:
     return True
 
 
-def scenario_end_of_turn_healing_applies_before_queued_dot_damage() -> bool:
-    """End-of-turn item/effect healing keeps its position in the stage order.
+def scenario_periodic_item_healing_applies_after_queued_dot_damage() -> bool:
+    """Periodic item healing follows queued DoTs while temporary HoTs do not."""
 
-    Healing mutates HP before the same champion's queued DoT damage is applied,
-    and both resolve before the winner check.
-    """
-    # Near-cap: the item heal caps at hp_max first, then the queued DoT damage
-    # applies to the capped value. Applying the DoT first would end the turn at
-    # hp_max - 7 instead of hp_max - 10.
+    # Near-cap: queued Burn damage lands first, so all four points of Staff
+    # healing fit afterward instead of three being lost to the original cap.
     cap_match = make_match("warrior", "priest", p1_items={"weapon": "staff_of_immortality"}, seed=6504)
     warrior_sid, priest_sid = cap_match.players
     warrior = cap_match.state[warrior_sid]
@@ -156,18 +153,18 @@ def scenario_end_of_turn_healing_applies_before_queued_dot_damage() -> bool:
 
     submit_turn(cap_match, _DEF_PASS, _DEF_PASS)
 
-    assert warrior.res.hp == warrior.res.hp_max - 10, "End-of-turn item healing must apply (and cap at hp_max) before queued DoT damage lands"
-    assert cap_match.combat_totals[warrior_sid]["healing"] == 1, "End-of-turn healing totals must credit the actual capped HP delta"
-    assert cap_match.combat_totals[warrior_sid]["overhealing"] == 3, "The 3 HP of the requested 4 lost to the hp_max cap must be tracked as overhealing"
+    assert warrior.res.hp == warrior.res.hp_max - 7, \
+        "Burn must reduce hp_max - 1 by 10 before Staff restores 4"
+    assert cap_match.combat_totals[warrior_sid]["healing"] == 4
+    assert cap_match.combat_totals[warrior_sid]["overhealing"] == 0
     turn_lines = _turn_lines(cap_match, 1)
-    # The item heal log reports the actual capped gain (1 HP), not the
-    # requested 4 HP.
-    heal_idx = next(i for i, line in enumerate(turn_lines) if "heals 1 HP from Staff of Immortality." in line)
+    heal_idx = next(i for i, line in enumerate(turn_lines) if "heals 4 HP from Staff of Immortality." in line)
     dot_idx = next(i for i, line in enumerate(turn_lines) if "suffers 10 damage from Burn." in line)
-    assert heal_idx < dot_idx, "Item heal log should keep its position before the queued DoT application log"
+    assert dot_idx < heal_idx, \
+        "Queued DoT logs must precede equipped periodic-item healing logs"
 
-    # Rescue: a champion whose queued DoT alone would be lethal survives
-    # because same-stage healing applies first and the winner check runs last.
+    # Rescue: Burn temporarily takes the owner negative, then Staff restores
+    # the owner before final alive/winner evaluation.
     rescue_match = make_match("warrior", "priest", p1_items={"weapon": "staff_of_immortality"}, seed=6505)
     warrior_sid, priest_sid = rescue_match.players
     warrior = rescue_match.state[warrior_sid]
@@ -178,15 +175,59 @@ def scenario_end_of_turn_healing_applies_before_queued_dot_damage() -> bool:
 
     submit_turn(rescue_match, _DEF_PASS, _DEF_PASS)
 
-    assert warrior.res.hp == 2 + 4 - 3, "End-of-turn healing then queued DoT damage should leave the champion at exactly 3 HP"
-    assert rescue_match.phase != "ended", "A champion healed above the queued DoT total must survive the end-of-turn winner check"
+    assert warrior.res.hp == 3, "Burn 3 from 2 HP followed by Staff 4 must leave 3 HP"
+    rescue_lines = _turn_lines(rescue_match, 1)
+    rescue_dot_idx = next(i for i, line in enumerate(rescue_lines) if "suffers 3 damage from Burn." in line)
+    rescue_heal_idx = next(i for i, line in enumerate(rescue_lines) if "heals 4 HP from Staff of Immortality." in line)
+    assert rescue_dot_idx < rescue_heal_idx
+    assert rescue_match.phase == "combat" and rescue_match.winner is None, \
+        "Winner evaluation must observe the owner after periodic healing"
+
+    # Temporary effect/HoT regeneration remains in normal end_of_turn
+    # processing and therefore still heals before queued DoT application.
+    hot_match = make_match("warrior", "priest", seed=6506)
+    hot_warrior_sid, hot_priest_sid = hot_match.players
+    hot_warrior = hot_match.state[hot_warrior_sid]
+    hot_warrior.stats["def"] = 0
+    hot_warrior.stats["magic_resist"] = 0
+    hot_warrior.res.hp = hot_warrior.res.hp_max - 1
+    hot_warrior.effects.append(
+        {
+            "id": "test_temporary_hot",
+            "name": "Synthetic Temporary HoT",
+            "duration": 2,
+            "regen": {"hp": 4},
+        }
+    )
+    effects.apply_effect_by_id(
+        hot_warrior,
+        "burn",
+        overrides={
+            "duration": 2,
+            "tick_damage": 10,
+            "source_sid": hot_priest_sid,
+        },
+    )
+    submit_turn(hot_match, _DEF_PASS, _DEF_PASS)
+    assert hot_warrior.res.hp == hot_warrior.res.hp_max - 10
+    hot_lines = _turn_lines(hot_match, 1)
+    hot_idx = next(
+        i
+        for i, line in enumerate(hot_lines)
+        if "recovers 1 HP from Synthetic Temporary HoT." in line
+    )
+    hot_dot_idx = next(i for i, line in enumerate(hot_lines) if "suffers 10 damage from Burn." in line)
+    assert hot_idx < hot_dot_idx, \
+        "Temporary HoT regeneration must retain its normal pre-DoT ordering"
+    assert hot_match.combat_totals[hot_warrior_sid]["healing"] == 1
+    assert hot_match.combat_totals[hot_warrior_sid]["overhealing"] == 3
     return True
 
 
 def scenario_passive_and_end_of_turn_player_healing_routes_through_shared_helper() -> bool:
     """Passive and end-of-turn player healing applies HP through effects.apply_player_healing().
 
-    Migrated paths: item heal_on_hit (Thunderfury), end-of-turn item heal_self
+    Migrated paths: item heal_on_hit (Thunderfury), periodic item healing
     (Staff of Immortality), effect/HoT regeneration (Healing Stream), Ancestral
     Knowledge, and Emerald Serpent Lightning Breath owner healing. This
     completes migration of the known production player-healing application
@@ -200,6 +241,7 @@ def scenario_passive_and_end_of_turn_player_healing_routes_through_shared_helper
     original = effects.apply_player_healing
     assert resolver.apply_player_healing is original, "resolver should share the effects.apply_player_healing primitive"
     assert PET_AI.apply_player_healing is original, "pet_ai should share the effects.apply_player_healing primitive"
+    assert periodic_items.apply_player_healing is original, "periodic_items should share the effects.apply_player_healing primitive"
     calls: list[tuple[object, int, int]] = []
 
     def spy(target, amount):
@@ -218,6 +260,7 @@ def scenario_passive_and_end_of_turn_player_healing_routes_through_shared_helper
     effects.apply_player_healing = spy
     resolver.apply_player_healing = spy
     PET_AI.apply_player_healing = spy
+    periodic_items.apply_player_healing = spy
     try:
         # Item heal_on_hit (Thunderfury) near cap: the helper receives the
         # passive's rolled request, only 1 HP fits below hp_max, bonus_healing/
@@ -239,9 +282,8 @@ def scenario_passive_and_end_of_turn_player_healing_routes_through_shared_helper
         assert proc.combat_totals[proc_warrior_sid]["overhealing"] == requested - 1, "The capped remainder of the rolled request must be tracked as overhealing"
         assert proc.log == control.log, "The spied run must replay the control run byte-identically (RNG order and damage unchanged)"
 
-        # End-of-turn item heal_self (Staff of Immortality) near cap: helper
-        # receives the requested 4, returns the 1 HP that fit, the log reports
-        # the actual gain, and healing still lands before queued DoT damage.
+        # Periodic Staff healing receives the requested 4 after queued Burn
+        # damage, so the full amount fits and is credited through the helper.
         item = make_match("warrior", "priest", p1_items={"weapon": "staff_of_immortality"}, seed=6504)
         item_warrior_sid, item_priest_sid = item.players
         item_warrior = item.state[item_warrior_sid]
@@ -251,14 +293,14 @@ def scenario_passive_and_end_of_turn_player_healing_routes_through_shared_helper
         effects.apply_effect_by_id(item_warrior, "burn", overrides={"duration": 2, "tick_damage": 10, "source_sid": item_priest_sid})
         calls.clear()
         submit_turn(item, _DEF_PASS, _DEF_PASS)
-        assert calls == [(item_warrior, 4, 1)], "heal_self should request the item's 4 HP through the helper and gain only the capped 1 HP"
-        assert item_warrior.res.hp == item_warrior.res.hp_max - 10, "The capped heal must still land before the queued 10-damage DoT"
-        assert item.combat_totals[item_warrior_sid]["healing"] == 1, "end_summary healing totals must credit the actual gain"
-        assert item.combat_totals[item_warrior_sid]["overhealing"] == 3, "end_summary overhealing must track the 3 HP lost to the cap"
+        assert calls == [(item_warrior, 4, 4)], "periodic_self_heal should request and gain the full 4 HP after Burn"
+        assert item_warrior.res.hp == item_warrior.res.hp_max - 7
+        assert item.combat_totals[item_warrior_sid]["healing"] == 4
+        assert item.combat_totals[item_warrior_sid]["overhealing"] == 0
         item_lines = _turn_lines(item, 1)
-        heal_idx = next(i for i, line in enumerate(item_lines) if "heals 1 HP from Staff of Immortality." in line)
+        heal_idx = next(i for i, line in enumerate(item_lines) if "heals 4 HP from Staff of Immortality." in line)
         dot_idx = next(i for i, line in enumerate(item_lines) if "suffers 10 damage from Burn." in line)
-        assert heal_idx < dot_idx, "The actual-gain heal log should keep its position before the queued DoT log"
+        assert dot_idx < heal_idx, "The periodic-item heal must run after the queued DoT"
 
         # Normal effect/HoT regeneration (Healing Stream): the tick routes its
         # regen["hp"] request through the helper; recovery log and duration
@@ -410,6 +452,7 @@ def scenario_passive_and_end_of_turn_player_healing_routes_through_shared_helper
         effects.apply_player_healing = original
         resolver.apply_player_healing = original
         PET_AI.apply_player_healing = original
+        periodic_items.apply_player_healing = original
     return True
 
 
