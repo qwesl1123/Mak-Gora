@@ -1949,3 +1949,104 @@ def scenario_chained_shields_resolve_to_fixed_point_after_vial() -> bool:
         < outcome_index
     ), "The reversed Shield dependency must complete before winner evaluation"
     return True
+
+
+def _make_legacy_shield_dependency_match(
+    *,
+    seed: int,
+    p1_items: dict[str, str] | None = None,
+) -> tuple[Any, str, str, Any, Any]:
+    match = make_match(
+        "paladin",
+        "paladin",
+        p1_items=p1_items or {},
+        seed=seed,
+    )
+    p1_sid, p2_sid = match.players
+    p1 = match.state[p1_sid]
+    p2 = match.state[p2_sid]
+
+    effects.apply_effect_by_id(
+        p1,
+        "shield_of_vengeance",
+        overrides={"duration": 2, "absorbed": 0},
+    )
+    effects.add_absorb(
+        p1,
+        5,
+        source_name="Shield of Vengeance",
+        effect_id="shield_of_vengeance",
+    )
+    effects.apply_effect_by_id(
+        p2,
+        "shield_of_vengeance",
+        overrides={"duration": 1, "absorbed": 10},
+    )
+    return match, p1_sid, p2_sid, p1, p2
+
+
+def scenario_legacy_shield_checkpoint_remains_single_pass() -> bool:
+    match, p1_sid, p2_sid, p1, p2 = _make_legacy_shield_dependency_match(
+        seed=9520,
+    )
+    p1_starting_hp = p1.res.hp
+    p2_starting_hp = p2.res.hp
+
+    first_turn_start = len(match.log)
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+    first_turn_lines = match.log[first_turn_start:]
+
+    assert first_turn_lines.count("Shield of Vengeance explodes!") == 1, \
+        "The original checkpoint must scan each Shield only once"
+    assert effects.has_effect(p1, "shield_of_vengeance")
+    assert effects.absorb_total(p1) == 0
+    p1_shield = effects.get_effect(p1, "shield_of_vengeance")
+    assert p1_shield and p1_shield.get("duration") == 1, \
+        "p1's newly pending Shield must survive cleanup for the next checkpoint"
+    assert not effects.has_effect(p2, "shield_of_vengeance")
+    assert p1.res.hp == p1_starting_hp - 5
+    assert p2.res.hp == p2_starting_hp
+    assert match.combat_totals[p2_sid]["damage"] == 5
+    assert match.combat_totals[p1_sid]["damage"] == 0
+    assert match.phase == "combat" and match.winner is None
+
+    second_turn_start = len(match.log)
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+    second_turn_lines = match.log[second_turn_start:]
+
+    assert second_turn_lines.count("Shield of Vengeance explodes!") == 1, \
+        "The pending p1 Shield must explode at the next legacy checkpoint"
+    assert match.log.count("Shield of Vengeance explodes!") == 2
+    assert not effects.has_effect(p1, "shield_of_vengeance")
+    assert p2.res.hp == p2_starting_hp - 5
+    assert match.combat_totals[p1_sid]["damage"] == 5
+    return True
+
+
+def scenario_periodic_self_heal_does_not_advance_pending_shield() -> bool:
+    match, p1_sid, p2_sid, p1, p2 = _make_legacy_shield_dependency_match(
+        seed=9521,
+        p1_items={"weapon": "spirit_light_sword"},
+    )
+    p1_starting_hp = p1.res.hp
+
+    turn_start = len(match.log)
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+    turn_lines = match.log[turn_start:]
+
+    assert turn_lines.count("Shield of Vengeance explodes!") == 1, \
+        "A healing-only periodic activation must not trigger the pending p1 Shield"
+    assert f"{p1_sid[:5]} heals 3 HP from Spirit Light Sword." in turn_lines, \
+        "The regression must exercise a real non-damaging periodic activation"
+    assert effects.has_effect(p1, "shield_of_vengeance")
+    assert effects.absorb_total(p1) == 0
+    p1_shield = effects.get_effect(p1, "shield_of_vengeance")
+    assert p1_shield and p1_shield.get("duration") == 1
+    assert not effects.has_effect(p2, "shield_of_vengeance")
+    assert p1.res.hp == p1_starting_hp - 2, \
+        "p1 should take 5 actual damage, then receive the 3-point periodic heal"
+    assert match.combat_totals[p2_sid]["damage"] == 5
+    assert match.combat_totals[p1_sid]["healing"] == 3
+    assert match.combat_totals[p1_sid]["damage"] == 0
+    assert match.phase == "combat" and match.winner is None
+    return True

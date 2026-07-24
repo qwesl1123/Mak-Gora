@@ -1323,6 +1323,21 @@ def resolve_end_of_turn_stage(
     tick_cooldowns: Callable[[PlayerState], None],
     trigger_shield_of_vengeance_explosion: Callable[[str, str], bool],
 ) -> EndOfTurnStageResult:
+    def resolve_single_pass_shield_of_vengeance_explosions() -> None:
+        trigger_shield_of_vengeance_explosion(sids[0], sids[1])
+        trigger_shield_of_vengeance_explosion(sids[1], sids[0])
+        flush_deferred_stealth_break_logs()
+
+    def shield_of_vengeance_pending(owner_sid: str) -> bool:
+        owner = match.state[owner_sid]
+        shield_fx = get_effect(owner, "shield_of_vengeance")
+        if not shield_fx or shield_fx.get("exploded"):
+            return False
+        return (
+            absorb_total(owner) <= 0
+            or int(shield_fx.get("duration", 0) or 0) <= 1
+        )
+
     def resolve_pending_shield_of_vengeance_explosions() -> None:
         while True:
             first_progressed = trigger_shield_of_vengeance_explosion(sids[0], sids[1])
@@ -1442,7 +1457,7 @@ def resolve_end_of_turn_stage(
                         next_effects.append(updated)
                 pet.effects = next_effects
 
-    resolve_pending_shield_of_vengeance_explosions()
+    resolve_single_pass_shield_of_vengeance_explosions()
 
     for sid in sids:
         ps = match.state[sid]
@@ -1506,6 +1521,10 @@ def resolve_end_of_turn_stage(
             match.log.append(f"{sid_token(sid)} gains +{int_gain} Intellect from Ancestral Knowledge.")
 
     # end_of_turn: periodic_item_stage
+    pending_before_periodic = {
+        sid: shield_of_vengeance_pending(sid)
+        for sid in sids
+    }
     periodic_activations = resolve_periodic_item_stage(
         match=match,
         rng=rng,
@@ -1516,9 +1535,15 @@ def resolve_end_of_turn_stage(
     if periodic_activations:
         flush_deferred_stealth_break_logs()
 
-    # Finish the ordered periodic dispatch before resolving all chained shield
-    # reactions. Shields already committed at the earlier checkpoint no-op.
-    resolve_pending_shield_of_vengeance_explosions()
+    periodic_created_pending_shield = any(
+        not pending_before_periodic[sid]
+        and shield_of_vengeance_pending(sid)
+        for sid in sids
+    )
+    if periodic_created_pending_shield:
+        # Finish the ordered periodic dispatch before resolving every chained
+        # reaction it made pending; never run this between activations.
+        resolve_pending_shield_of_vengeance_explosions()
 
     # end_of_turn: duration_decrement / expiry_cleanup
     for sid in sids:

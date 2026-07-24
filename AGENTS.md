@@ -253,10 +253,12 @@ mechanics, but before cleanup and winner evaluation. Both paths must route
 final player HP restoration through `apply_player_healing()`.
 
 Damage from the committed periodic-item dispatch may consume reactive absorbs.
-Final post-periodic reactions such as Shield of Vengeance must resolve to a
-fixed point after the complete dispatch and before cleanup or winner
-evaluation; never insert that reaction checkpoint between individual periodic
-activations.
+The original Shield of Vengeance checkpoint preserves its historical
+single-pass player ordering. Only a reaction newly made pending by periodic
+dispatch invokes the final fixed-point pass after the complete dispatch and
+before cleanup or winner evaluation. Non-damaging periodic activations must not
+advance unrelated Shield reactions, and reaction processing must never occur
+between individual periodic activations.
 
 ## Ability empowerment contract
 

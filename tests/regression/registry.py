@@ -71,6 +71,8 @@ from .test_periodic_items import (
     scenario_dual_vials_commit_and_preserve_double_ko,
     scenario_vial_triggers_final_shield_of_vengeance_checkpoint,
     scenario_chained_shields_resolve_to_fixed_point_after_vial,
+    scenario_legacy_shield_checkpoint_remains_single_pass,
+    scenario_periodic_self_heal_does_not_advance_pending_shield,
 )
 from .test_damage_pipeline import (
     scenario_healing_resolves_from_negative_hp_before_winner_check,
@@ -403,6 +405,8 @@ SCENARIOS = [
     scenario_dual_vials_commit_and_preserve_double_ko,
     scenario_vial_triggers_final_shield_of_vengeance_checkpoint,
     scenario_chained_shields_resolve_to_fixed_point_after_vial,
+    scenario_legacy_shield_checkpoint_remains_single_pass,
+    scenario_periodic_self_heal_does_not_advance_pending_shield,
     scenario_absorb_layering,
     scenario_pet_summon_data_driven,
     scenario_pet_totem_runtime_normalization_phase1,
