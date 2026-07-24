@@ -8,7 +8,12 @@ from typing import Any, Callable, Dict, Mapping, Sequence
 
 from .damage_types import DAMAGE_SOURCE_PERIODIC_ITEM
 from .dice import roll
-from .effects import is_damage_immune, modify_stat
+from .effects import (
+    damage_multiplier_from_passives,
+    is_damage_immune,
+    modify_stat,
+    outgoing_damage_multiplier,
+)
 from .models import MatchState, PetState, PlayerState, combat_totals_entry
 from ..content.items import ITEMS
 
@@ -78,23 +83,64 @@ def _periodic_global_damage_formula(
     if not isinstance(scaling, Mapping) or not scaling:
         raise ValueError("periodic_global_damage requires non-empty scaling metadata")
 
-    scaled_damage = 0.0
-    for stat, multiplier in scaling.items():
+    scaling_stats = scaling.get("stats")
+    if not isinstance(scaling_stats, (list, tuple)) or not scaling_stats:
+        raise ValueError("periodic_global_damage requires grouped scaling stats")
+    normalized_stats: list[str] = []
+    for stat in scaling_stats:
         if stat not in {"atk", "int"}:
             raise ValueError(
                 f"periodic_global_damage does not support scaling stat '{stat}'"
             )
-        if isinstance(multiplier, bool) or not isinstance(multiplier, (int, float)):
-            raise ValueError(
-                f"periodic_global_damage scaling for '{stat}' must be numeric"
-            )
-        current_value = modify_stat(owner, stat, owner.stats.get(stat, 0))
-        scaled_damage += current_value * float(multiplier)
+        normalized_stats.append(stat)
+    if len(normalized_stats) != len(set(normalized_stats)):
+        raise ValueError("periodic_global_damage scaling stats must be unique")
+
+    multiplier = scaling.get("multiplier")
+    if isinstance(multiplier, bool) or not isinstance(multiplier, (int, float)):
+        raise ValueError("periodic_global_damage scaling multiplier must be numeric")
+    if scaling.get("rounding") != "floor":
+        raise ValueError("periodic_global_damage requires floor rounding")
+
+    current_stat_total = sum(
+        modify_stat(owner, stat, owner.stats.get(stat, 0))
+        for stat in normalized_stats
+    )
+    scaled_damage = int(current_stat_total * float(multiplier))
 
     dice = passive.get("dice")
     if not isinstance(dice, str) or not dice.strip():
         raise ValueError("periodic_global_damage requires dice metadata")
-    return int(scaled_damage) + roll(dice.strip(), context.rng)
+    return scaled_damage + roll(dice.strip(), context.rng)
+
+
+def _periodic_outgoing_damage(
+    owner: PlayerState,
+    base_raw_damage: int,
+    context: PeriodicItemHandlerContext,
+) -> int:
+    challenger_mode_by_sid = getattr(
+        context.turn_context,
+        "challenger_mode_by_sid",
+        None,
+    )
+    if isinstance(challenger_mode_by_sid, Mapping):
+        passive_multiplier = damage_multiplier_from_passives(
+            owner,
+            challenger_mode=challenger_mode_by_sid.get(owner.sid),
+        )
+    else:
+        passive_multiplier = damage_multiplier_from_passives(owner)
+    effect_multiplier = outgoing_damage_multiplier(owner)
+
+    # Match the canonical damage-modification ordering: passive first, then
+    # effect-owned outgoing multipliers, with integer rounding at each stage.
+    outgoing_damage = base_raw_damage
+    if passive_multiplier != 1.0:
+        outgoing_damage = int(outgoing_damage * passive_multiplier)
+    if effect_multiplier != 1.0:
+        outgoing_damage = int(outgoing_damage * effect_multiplier)
+    return outgoing_damage
 
 
 def _periodic_target_log_label(owner_sid: str, target: PlayerState | PetState) -> str:
@@ -150,7 +196,14 @@ def periodic_global_damage(
     # Target eligibility is fixed before the first packet of this activation.
     # A later committed activation creates its own fresh snapshot.
     target_snapshot = _periodic_global_targets(context)
-    raw_damage = _periodic_global_damage_formula(owner, passive, context)
+    base_raw_damage = _periodic_global_damage_formula(owner, passive, context)
+    # Snapshot owner-side multipliers once. Self-damage and target reactions
+    # from this pulse must not change later packets in the same activation.
+    outgoing_raw_damage = _periodic_outgoing_damage(
+        owner,
+        base_raw_damage,
+        context,
+    )
     context.match.log.append(f"{owner.sid[:5]} triggers {item_name}.")
 
     total_hp_damage = 0
@@ -162,11 +215,11 @@ def periodic_global_damage(
         target_damage = context.apply_damage(
             owner,
             target,
-            raw_damage,
+            outgoing_raw_damage,
             target.sid if is_player_target else target.name,
             item_name,
             mindgames_flip_damage=False,
-            damage_instances=[raw_damage],
+            damage_instances=[outgoing_raw_damage],
             school=school,
             subschool=subschool,
             allow_redirect=False,

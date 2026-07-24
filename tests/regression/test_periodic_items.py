@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import copy
 import random
+import re
 
 from contextlib import contextmanager
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Callable, Iterator
 
 from harness import (
@@ -746,7 +748,11 @@ def scenario_vial_of_shadows_item_data_docs_and_ui() -> bool:
         "first_trigger_turn": 5,
         "school": "magical",
         "subschool": "shadow",
-        "scaling": {"atk": 0.3, "int": 0.3},
+        "scaling": {
+            "stats": ["atk", "int"],
+            "multiplier": 0.3,
+            "rounding": "floor",
+        },
         "dice": "d6",
         "target_mode": "all_players_and_pets",
     }, "Vial production metadata must remain the complete data-driven mechanic"
@@ -788,6 +794,15 @@ def scenario_vial_of_shadows_item_data_docs_and_ui() -> bool:
     assert "Attack + 30% Intellect" not in duel_html
     assert "(Attack + Intellect) + 0.3" not in duel_html
     assert '"Vial of Shadows": {' in duel_html and 'meta: "Trinket — Epic"' in duel_html
+    purple_items_match = re.search(
+        r"const purpleItems = \[(.*?)\];",
+        duel_html,
+        flags=re.DOTALL,
+    )
+    assert purple_items_match is not None, "duel.html must retain the purpleItems array"
+    purple_items_block = purple_items_match.group(1)
+    assert purple_items_block.count('"Vial of Shadows"') == 1, \
+        "Vial of Shadows must appear exactly once inside purpleItems"
     return True
 
 
@@ -837,8 +852,8 @@ def scenario_vial_of_shadows_formula_live_stats_and_target_snapshot() -> bool:
     owner_sid, enemy_sid = match.players
     owner = match.state[owner_sid]
     enemy = match.state[enemy_sid]
-    owner.stats["atk"] = 11
-    owner.stats["int"] = 10
+    owner.stats["atk"] = 13
+    owner.stats["int"] = 57
     enemy.res.hp = -3
 
     _add_periodic_test_entity(owner, "b_entity", name="Imp")
@@ -849,7 +864,7 @@ def scenario_vial_of_shadows_formula_live_stats_and_target_snapshot() -> bool:
     captured: list[dict[str, Any]] = []
     roll_calls: list[str] = []
     match.turn = 4
-    with _fixed_vial_roll(4, roll_calls):
+    with _fixed_vial_roll(1, roll_calls):
         activations = periodic_items.resolve_periodic_item_stage(
             match=match,
             rng=random.Random(9503),
@@ -860,8 +875,8 @@ def scenario_vial_of_shadows_formula_live_stats_and_target_snapshot() -> bool:
     assert len(activations) == 1
     assert roll_calls == ["d6"], \
         "One activation with multiple targets must roll only one d6"
-    assert all(call["incoming"] == 10 for call in captured), \
-        "Vial raw damage must be int((11 + 10) * 0.3) + 4 == 10 for every target"
+    assert all(call["incoming"] == 22 for call in captured), \
+        "Vial base damage must be int((13 + 57) * 0.3) + 1 == 22 for every target"
     target_order = [
         call["target"].sid
         if hasattr(call["target"], "res")
@@ -887,7 +902,7 @@ def scenario_vial_of_shadows_formula_live_stats_and_target_snapshot() -> bool:
         assert kwargs.get("school") == "magical"
         assert kwargs.get("subschool") == "shadow"
         assert kwargs.get("source_kind") == damage_types.DAMAGE_SOURCE_PERIODIC_ITEM
-        assert kwargs.get("damage_instances") == [10]
+        assert kwargs.get("damage_instances") == [22]
         is_player = hasattr(call["target"], "res")
         assert kwargs.get("resolve_player_mitigation") is is_player
         assert kwargs.get("resolve_non_player_mitigation") is (not is_player)
@@ -899,7 +914,7 @@ def scenario_vial_of_shadows_formula_live_stats_and_target_snapshot() -> bool:
     ]
     assert "(a_entity)" in target_logs[1] and "(b_entity)" in target_logs[2], \
         "Same-name entity logs must include stable IDs"
-    assert match.combat_totals[owner_sid]["damage"] == 50, \
+    assert match.combat_totals[owner_sid]["damage"] == 110, \
         "Captured actual HP damage must be credited once to the Vial owner"
 
     live_match = make_match(
@@ -932,6 +947,142 @@ def scenario_vial_of_shadows_formula_live_stats_and_target_snapshot() -> bool:
     assert live_roll_calls == ["d6"]
     assert all(call["incoming"] == 13 for call in live_captured), \
         "Vial must use live modified Attack: int((20 + 10) * 0.3) + 4 == 13"
+    return True
+
+
+def scenario_vial_of_shadows_outgoing_modifier_snapshot() -> bool:
+    base_raw_damage = 22
+
+    def run_case(
+        *,
+        seed: int,
+        snapshot_mode: str | None,
+        include_challenger: bool,
+        include_avenging_wrath: bool,
+        live_mode: str | None = None,
+        mutate_after_first_packet: bool = False,
+    ) -> tuple[int, float, float, list[dict[str, Any]]]:
+        p1_items = {"trinket": "vial_of_shadows"}
+        if include_challenger:
+            p1_items["armor"] = "challengers_chestplate"
+        match = make_match(
+            "warrior",
+            "mage",
+            p1_items=p1_items,
+            seed=seed,
+        )
+        owner_sid = match.players[0]
+        owner = match.state[owner_sid]
+        owner.stats["atk"] = 13
+        owner.stats["int"] = 57
+        if include_challenger:
+            current_mode = live_mode if live_mode is not None else snapshot_mode
+            owner.res.rage = owner.res.rage_max if current_mode == "might" else 0
+        if include_avenging_wrath:
+            effects.apply_effect_by_id(
+                owner,
+                "avenging_wrath",
+                overrides={"duration": 4},
+            )
+
+        passive_multiplier = effects.damage_multiplier_from_passives(
+            owner,
+            challenger_mode=snapshot_mode,
+        )
+        effect_multiplier = effects.outgoing_damage_multiplier(owner)
+        expected_outgoing = base_raw_damage
+        if passive_multiplier != 1.0:
+            expected_outgoing = int(expected_outgoing * passive_multiplier)
+        if effect_multiplier != 1.0:
+            expected_outgoing = int(expected_outgoing * effect_multiplier)
+
+        captured: list[dict[str, Any]] = []
+        capture_damage = _capture_damage_calls(captured)
+
+        def capture_and_mutate(*args: Any, **kwargs: Any) -> dict[str, Any]:
+            result = capture_damage(*args, **kwargs)
+            if mutate_after_first_packet and len(captured) == 1:
+                owner.res.rage = 0
+                effects.remove_effect(owner, "avenging_wrath")
+            return result
+
+        match.turn = 4
+        roll_calls: list[str] = []
+        turn_context = SimpleNamespace(
+            challenger_mode_by_sid={owner_sid: snapshot_mode},
+        )
+        with _fixed_vial_roll(1, roll_calls):
+            periodic_items.resolve_periodic_item_stage(
+                match=match,
+                rng=random.Random(seed),
+                turn_context=turn_context,
+                apply_damage=capture_and_mutate,
+            )
+
+        assert roll_calls == ["d6"]
+        assert len(captured) == 2, "The baseline outgoing test must hit both players"
+        assert all(call["incoming"] == expected_outgoing for call in captured)
+        assert all(
+            call["kwargs"].get("damage_instances") == [expected_outgoing]
+            for call in captured
+        ), "damage_instances must carry the outgoing-adjusted raw packet"
+        return expected_outgoing, passive_multiplier, effect_multiplier, captured
+
+    might_damage, might_passive, might_effect, _ = run_case(
+        seed=9512,
+        snapshot_mode="might",
+        include_challenger=True,
+        include_avenging_wrath=False,
+    )
+    assert might_effect == 1.0
+    assert might_damage == int(base_raw_damage * might_passive) == 24, \
+        "Challenger Might must raise the Vial pre-mitigation packet to 24"
+
+    wrath_damage, wrath_passive, wrath_effect, _ = run_case(
+        seed=9513,
+        snapshot_mode="wrath",
+        include_challenger=True,
+        include_avenging_wrath=False,
+    )
+    assert wrath_effect == 1.0
+    assert wrath_damage == int(base_raw_damage * wrath_passive) == 19
+    assert wrath_damage < base_raw_damage, \
+        "Challenger Wrath must lower the Vial pre-mitigation packet"
+
+    avenging_damage, avenging_passive, avenging_effect, _ = run_case(
+        seed=9514,
+        snapshot_mode=None,
+        include_challenger=False,
+        include_avenging_wrath=True,
+    )
+    assert avenging_passive == 1.0
+    assert avenging_damage == int(base_raw_damage * avenging_effect) == 26, \
+        "Avenging Wrath must raise the Vial pre-mitigation packet to 26"
+
+    combined_damage, combined_passive, combined_effect, combined_calls = run_case(
+        seed=9515,
+        snapshot_mode="might",
+        include_challenger=True,
+        include_avenging_wrath=True,
+        mutate_after_first_packet=True,
+    )
+    expected_combined = int(
+        int(base_raw_damage * combined_passive) * combined_effect
+    )
+    assert combined_damage == expected_combined == 28, \
+        "Passive then effect multiplier ordering must produce 28 exactly once"
+    assert [call["incoming"] for call in combined_calls] == [28, 28], \
+        "Owner-state changes after the first packet must not change later packets"
+
+    snapshot_damage, snapshot_passive, _, _ = run_case(
+        seed=9516,
+        snapshot_mode="might",
+        include_challenger=True,
+        include_avenging_wrath=False,
+        live_mode="wrath",
+    )
+    assert snapshot_damage == int(base_raw_damage * snapshot_passive) == 24, \
+        "The turn-context Might snapshot must take precedence over live Wrath state"
     return True
 
 

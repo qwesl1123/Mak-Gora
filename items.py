@@ -220,8 +220,9 @@ ITEMS = {
             "school": "magical",
             "subschool": "shadow",
             "scaling": {
-                "atk": 0.3,
-                "int": 0.3,
+                "stats": ["atk", "int"],
+                "multiplier": 0.3,
+                "rounding": "floor",
             },
             "dice": "d6",
             "target_mode": "all_players_and_pets",
