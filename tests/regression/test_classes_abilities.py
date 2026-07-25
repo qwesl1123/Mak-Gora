@@ -696,6 +696,208 @@ def scenario_shield_of_vengeance_duration_counts_current_turn() -> bool:
     return True
 
 
+def _zero_magical_mitigation(*players: Any) -> None:
+    for ps in players:
+        ps.stats["def"] = 0
+        ps.stats["magic_resist"] = 0
+
+
+def _apply_shield_of_vengeance(
+    ps: Any, *, duration: int, absorbed: int, remaining_absorb: int
+) -> None:
+    """Apply a Shield of Vengeance for cascade tests.
+
+    ``absorbed`` is the accumulated total that becomes the explosion payload;
+    ``remaining_absorb`` is the still-intact absorb layer. A shield with no
+    remaining absorb is "ready" (``absorb_total`` == 0), so the checkpoint
+    explodes it; a shield with remaining absorb and ``duration`` > 1 is not yet
+    eligible.
+    """
+    effects.apply_effect_by_id(
+        ps,
+        "shield_of_vengeance",
+        overrides={"duration": duration, "absorbed": absorbed},
+    )
+    if remaining_absorb > 0:
+        effects.add_absorb(
+            ps,
+            remaining_absorb,
+            source_name="Shield of Vengeance",
+            effect_id="shield_of_vengeance",
+        )
+
+
+def _sov_explosion_indices(match: Any) -> list[int]:
+    return [i for i, line in enumerate(match.log) if line == "Shield of Vengeance explodes!"]
+
+
+def _sov_hits_on(match: Any, target_sid: str) -> list[int]:
+    prefix = f"Shield of Vengeance hits {target_sid[:5]}"
+    return [i for i, line in enumerate(match.log) if line.startswith(prefix)]
+
+
+def scenario_shield_of_vengeance_ordinary_cascade_p1_first() -> bool:
+    # A. Ordinary (non-periodic) cascade where P1 begins ready. P1's explosion
+    # consumes P2's remaining absorb, so P2 immediately explodes in the SAME
+    # turn -- the intended same-turn cascade, not a deferred fixed point.
+    match = make_match("paladin", "warrior", seed=8801)
+    p1_sid, p2_sid = match.players
+    p1, p2 = match.state[p1_sid], match.state[p2_sid]
+    _zero_magical_mitigation(p1, p2)
+    _apply_shield_of_vengeance(p1, duration=1, absorbed=10, remaining_absorb=0)
+    _apply_shield_of_vengeance(p2, duration=2, absorbed=12, remaining_absorb=6)
+
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+
+    assert match.log.count("Shield of Vengeance explodes!") == 2, \
+        "Both shields must explode in the same turn"
+    explosions = _sov_explosion_indices(match)
+    p1_hits_p2 = _sov_hits_on(match, p2_sid)
+    p2_hits_p1 = _sov_hits_on(match, p1_sid)
+    assert len(p1_hits_p2) == 1 and len(p2_hits_p1) == 1
+    # P1 explosion, P1 hit on P2, P2 explosion, P2 hit on P1.
+    assert explosions[0] < p1_hits_p2[0] < explosions[1] < p2_hits_p1[0], \
+        "Log order must be P1 explosion, P1 hit on P2, P2 explosion, P2 hit on P1"
+    assert not _has_effect(p1, "shield_of_vengeance"), "P1 shield must be removed after exploding"
+    assert not _has_effect(p2, "shield_of_vengeance"), "P2 shield must be removed after exploding"
+    return True
+
+
+def scenario_shield_of_vengeance_ordinary_mirror_cascade_p2_first() -> bool:
+    # B. Critical mirror case: the checkpoint starts by checking P1 (P1 -> P2
+    # order), P1 is NOT ready, then P2 explodes and consumes P1's remaining
+    # absorb. P1 must be IMMEDIATELY rechecked and explode in the same turn even
+    # though it was checked before P2. The old one-pass P1-then-P2 scan left P1
+    # waiting for a later turn.
+    match = make_match("paladin", "warrior", seed=8802)
+    p1_sid, p2_sid = match.players
+    p1, p2 = match.state[p1_sid], match.state[p2_sid]
+    _zero_magical_mitigation(p1, p2)
+    _apply_shield_of_vengeance(p1, duration=2, absorbed=15, remaining_absorb=5)
+    _apply_shield_of_vengeance(p2, duration=1, absorbed=20, remaining_absorb=0)
+
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+
+    assert match.log.count("Shield of Vengeance explodes!") == 2, \
+        "The mirror cascade must explode both shields in the same turn"
+    explosions = _sov_explosion_indices(match)
+    p2_hits_p1 = _sov_hits_on(match, p1_sid)
+    p1_hits_p2 = _sov_hits_on(match, p2_sid)
+    assert len(p2_hits_p1) == 1 and len(p1_hits_p2) == 1
+    # P2 explosion, P2 hit on P1, P1 explosion, P1 hit on P2.
+    assert explosions[0] < p2_hits_p1[0] < explosions[1] < p1_hits_p2[0], \
+        "Log order must be P2 explosion, P2 hit on P1, P1 explosion, P1 hit on P2"
+    assert not _has_effect(p1, "shield_of_vengeance"), "P1 shield must be removed after exploding"
+    assert not _has_effect(p2, "shield_of_vengeance"), "P2 shield must be removed after exploding"
+    return True
+
+
+def scenario_shield_of_vengeance_no_post_periodic_scan_without_activations() -> bool:
+    # D. A non-periodic turn: the pre-periodic checkpoint must resolve the ENTIRE
+    # cascade by itself, and because there is no committed periodic activation
+    # the post-periodic checkpoint is gated off -- so each shield explodes
+    # exactly once with no duplicate second scan. This guards the
+    # ``if periodic_activations:`` boundary: ordinary cascades never depend on it.
+    match = make_match("paladin", "warrior", seed=8803)
+    p1_sid, p2_sid = match.players
+    p1, p2 = match.state[p1_sid], match.state[p2_sid]
+    _zero_magical_mitigation(p1, p2)
+    _apply_shield_of_vengeance(p1, duration=1, absorbed=9, remaining_absorb=0)
+    _apply_shield_of_vengeance(p2, duration=2, absorbed=11, remaining_absorb=4)
+
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+
+    assert match.log.count("Shield of Vengeance explodes!") == 2, \
+        "Each shield must explode exactly once; no duplicate post-periodic scan"
+    assert len(_sov_hits_on(match, p1_sid)) == 1, "P2's hit on P1 must appear exactly once"
+    assert len(_sov_hits_on(match, p2_sid)) == 1, "P1's hit on P2 must appear exactly once"
+    assert not _has_effect(p1, "shield_of_vengeance"), "P1 shield must be removed after exploding"
+    assert not _has_effect(p2, "shield_of_vengeance"), "P2 shield must be removed after exploding"
+    return True
+
+
+def scenario_shield_of_vengeance_fully_absorbed_explosion_continues_chain() -> bool:
+    # E. P1's explosion is fully absorbed by P2 (P2 takes ZERO HP), but that
+    # packet consumes P2's final Shield of Vengeance absorb, so P2 becomes
+    # eligible and immediately explodes. This pins the trigger's boolean contract
+    # to "explosion fired", not "positive HP damage dealt": if the contract keyed
+    # on HP damage, P1's zero-damage explosion would stop the chain and P2 would
+    # never explode.
+    match = make_match("paladin", "warrior", seed=8804)
+    p1_sid, p2_sid = match.players
+    p1, p2 = match.state[p1_sid], match.state[p2_sid]
+    _zero_magical_mitigation(p1, p2)
+    _apply_shield_of_vengeance(p1, duration=1, absorbed=6, remaining_absorb=0)
+    _apply_shield_of_vengeance(p2, duration=2, absorbed=10, remaining_absorb=6)
+    p2_hp_before = p2.res.hp
+
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+
+    assert match.log.count("Shield of Vengeance explodes!") == 2, \
+        "P2 must still explode even though P1's explosion dealt it zero HP damage"
+    assert p2.res.hp == p2_hp_before, \
+        "P1's explosion must be fully absorbed by P2 (zero HP damage)"
+    assert len(_sov_hits_on(match, p1_sid)) == 1, \
+        "P2's follow-up explosion must hit P1, proving the chain continued past a zero-damage link"
+    assert not _has_effect(p1, "shield_of_vengeance"), "P1 shield must be removed after exploding"
+    assert not _has_effect(p2, "shield_of_vengeance"), "P2 shield must be removed after exploding"
+    return True
+
+
+def scenario_shield_of_vengeance_cascade_exactly_once_and_terminates() -> bool:
+    # F. Termination + exactly-once contract for a full cascade. Each shield
+    # instance is resolved before its explosion damage applies, so the causal
+    # chain is naturally finite (no iteration cap): every explosion and hit line
+    # appears exactly once and both shields are removed. Reaching the assertions
+    # at all proves the resolver terminated.
+    match = make_match("paladin", "warrior", seed=8805)
+    p1_sid, p2_sid = match.players
+    p1, p2 = match.state[p1_sid], match.state[p2_sid]
+    _zero_magical_mitigation(p1, p2)
+    _apply_shield_of_vengeance(p1, duration=2, absorbed=14, remaining_absorb=5)
+    _apply_shield_of_vengeance(p2, duration=1, absorbed=18, remaining_absorb=0)
+
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+
+    assert match.log.count("Shield of Vengeance explodes!") == 2, \
+        "A cascade must produce exactly two Shield of Vengeance explosions"
+    assert len(_sov_hits_on(match, p1_sid)) == 1, "Each SoV hit line must appear exactly once"
+    assert len(_sov_hits_on(match, p2_sid)) == 1, "Each SoV hit line must appear exactly once"
+    assert not _has_effect(p1, "shield_of_vengeance"), "Both original SoV effects must be removed"
+    assert not _has_effect(p2, "shield_of_vengeance"), "Both original SoV effects must be removed"
+    return True
+
+
+def scenario_shield_of_vengeance_lethal_cascade_precedes_winner() -> bool:
+    # G. Lethal cascade: the final link of the chain (P1's explosion) kills P2.
+    # The complete Shield of Vengeance chain and its damage logs must resolve
+    # before the winner result is finalized.
+    match = make_match("paladin", "warrior", seed=8806)
+    p1_sid, p2_sid = match.players
+    p1, p2 = match.state[p1_sid], match.state[p2_sid]
+    _zero_magical_mitigation(p1, p2)
+    _apply_shield_of_vengeance(p1, duration=2, absorbed=15, remaining_absorb=5)
+    _apply_shield_of_vengeance(p2, duration=1, absorbed=20, remaining_absorb=0)
+    p1.res.hp = 60
+    p2.res.hp = 20  # dies exactly to P1's 20-damage explosion (the last chain link)
+
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+
+    assert match.log.count("Shield of Vengeance explodes!") == 2, \
+        "The lethal cascade must still explode both shields"
+    assert p2.res.hp == 0 and p1.res.hp > 0, "P1 must survive and P2 must die from the cascade"
+    winner_line = f"{p1_sid[:5]} wins the duel."
+    assert winner_line in match.log, "P1 must win after the lethal cascade"
+    winner_idx = match.log.index(winner_line)
+    last_explosion_idx = _sov_explosion_indices(match)[-1]
+    last_hit_idx = max(
+        i for i, line in enumerate(match.log) if line.startswith("Shield of Vengeance hits ")
+    )
+    assert last_explosion_idx < winner_idx and last_hit_idx < winner_idx, \
+        "The full SoV chain and its damage logs must precede the winner result"
+    return True
+
+
 def scenario_hunter_multi_shot_aoe() -> bool:
     match = make_match("hunter", "warlock", seed=123)
     hunter_sid, warlock_sid = match.players
