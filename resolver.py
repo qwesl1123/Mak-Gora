@@ -3776,11 +3776,13 @@ def resolve_turn(match: MatchState) -> None:
 
     def flush_deferred_damage_reaction_logs() -> None:
         # Canonical "drain every deferred damage-reaction queue" flush for the
-        # periodic-stage boundaries (before dispatch and after the post-periodic
-        # reaction checkpoint). Any new deferred damage-reaction queue must be
-        # flushed here so handler-owned logs never leak past duration/pet
-        # cleanup. Order matches apply_damage's queueing: stealth break, then
-        # break-on-damage.
+        # periodic-stage boundaries. On a turn with periodic activations it is
+        # called three times -- before dispatch, immediately after dispatch, and
+        # again after the post-periodic reaction checkpoint, whose Shield of
+        # Vengeance explosion can queue its own reactions. Any new deferred
+        # damage-reaction queue must be flushed here so handler-owned logs never
+        # leak past duration/pet cleanup. Order matches apply_damage's queueing:
+        # stealth break, then break-on-damage.
         flush_deferred_stealth_break_logs()
         if not deferred_break_on_damage_logs:
             return

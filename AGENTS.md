@@ -259,10 +259,14 @@ that reaction checkpoint between individual periodic activations.
 
 Every deferred damage-reaction log (stealth break, break-on-damage, and any
 future reaction queue) produced during or after the periodic dispatch must be
-flushed through the single periodic-boundary helper at both the pre-dispatch
-and post-dispatch checkpoints, so handler-owned reaction logs stay ahead of
-duration/expiry cleanup, pet cleanup, and winner evaluation. Do not add a
-periodic-boundary flush that drains only one reaction queue.
+flushed through the single periodic-boundary helper. On a turn with periodic
+activations that helper runs three times -- before dispatch, immediately after
+dispatch, and again after the post-periodic reaction checkpoint -- because the
+post-periodic Shield of Vengeance explosion can itself queue break-on-damage
+and stealth-break reactions that must surface before duration/expiry cleanup,
+pet cleanup, and winner evaluation. Turns with no periodic activation keep the
+legacy timing: break-on-damage stays deferred to the final end-of-turn flush.
+Do not add a periodic-boundary flush that drains only one reaction queue.
 
 ## Ability empowerment contract
 
