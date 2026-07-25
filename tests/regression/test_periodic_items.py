@@ -1837,3 +1837,148 @@ def scenario_vial_triggers_final_shield_of_vengeance_checkpoint() -> bool:
     ), "The original pre-periodic checkpoint must remain in place"
     assert not effects.has_effect(early_paladin, "shield_of_vengeance")
     return True
+
+
+def scenario_vial_break_on_damage_reaction_precedes_cleanup() -> bool:
+    match = make_match(
+        "warrior",
+        "mage",
+        p1_items={"trinket": "vial_of_shadows"},
+        seed=9519,
+    )
+    owner_sid, enemy_sid = match.players
+    owner = match.state[owner_sid]
+    owner.stats["atk"] = 13
+    owner.stats["int"] = 57
+
+    # The owner takes its own Vial packet, so Fear must break from that periodic
+    # damage rather than from any earlier end-of-turn tick.
+    effects.apply_effect_by_id(owner, "feared", overrides={"duration": 2})
+
+    # A pet already at zero HP survives until the final pet_cleanup, giving a
+    # cleanup "dies." log to order the reaction log against.
+    owner.pets["dying_summon"] = PetState(
+        id="dying_summon",
+        template_id="imp",
+        name="Expiring Summon",
+        owner_sid=owner_sid,
+        hp=0,
+        hp_max=10,
+    )
+
+    match.turn = 4
+    roll_calls: list[str] = []
+    with _fixed_vial_roll(1, roll_calls):
+        submit_turn(match, _DEF_PASS, _DEF_PASS)
+
+    assert roll_calls == ["d6"], "Vial must roll exactly one d6 on its scheduled turn"
+    assert not effects.has_effect(owner, "feared"), \
+        "The owner's periodic Vial packet must break Fear on damage"
+
+    vial_owner_hit_idx = next(
+        index
+        for index, line in enumerate(match.log)
+        if line.startswith(f"Vial of Shadows hits {owner_sid[:5]}")
+    )
+    break_on_damage_idx = next(
+        index
+        for index, line in enumerate(match.log)
+        if "breaks on damage." in line and owner_sid[:5] in line
+    )
+    pet_dies_idx = match.log.index("Expiring Summon dies.")
+
+    assert vial_owner_hit_idx < break_on_damage_idx < pet_dies_idx, \
+        "A periodic break-on-damage reaction must log with the periodic dispatch, before pet cleanup"
+    return True
+
+
+def scenario_post_periodic_shield_reaction_precedes_cleanup() -> bool:
+    handler_type = "test_post_periodic_shield_pulse"
+    item_id = "test_post_periodic_shield_trinket"
+
+    def consume_owner_shield(activation, context) -> None:
+        # Deal exactly 5 unmitigated damage to the trinket owner so the packet
+        # consumes the owner's final Shield of Vengeance absorb (owner takes 0
+        # HP) without touching the enemy -- so this packet cannot itself break
+        # the enemy's Fear. The Fear break can therefore only come from the
+        # post-periodic Shield of Vengeance explosion.
+        owner = context.match.state[activation.owner_sid]
+        context.apply_damage(
+            owner,
+            owner,
+            5,
+            owner.sid,
+            "Synthetic Shield Pulse",
+            damage_instances=[5],
+            school="magical",
+            subschool="shadow",
+            allow_redirect=False,
+            resolve_player_mitigation=False,
+            source_kind=damage_types.DAMAGE_SOURCE_PERIODIC_ITEM,
+        )
+
+    item_definitions = {
+        item_id: _synthetic_item(
+            "Synthetic Post-Periodic Shield Trinket",
+            "trinket",
+            _periodic_passive(handler_type),
+        )
+    }
+    with _temporary_periodic_content(item_definitions, {handler_type: consume_owner_shield}):
+        match = make_match(
+            "paladin",
+            "mage",
+            p1_items={"trinket": item_id},
+            seed=9520,
+        )
+        p1_sid, p2_sid = match.players
+        p1 = match.state[p1_sid]
+        p2 = match.state[p2_sid]
+
+        # P1 holds a Shield of Vengeance with previously-absorbed damage and
+        # exactly 5 absorb remaining. With absorb remaining and duration > 1 the
+        # original pre-periodic checkpoint must see it and do nothing.
+        effects.apply_effect_by_id(
+            p1,
+            "shield_of_vengeance",
+            overrides={"duration": 2, "absorbed": 30},
+        )
+        effects.add_absorb(
+            p1,
+            5,
+            source_name="Shield of Vengeance",
+            effect_id="shield_of_vengeance",
+        )
+
+        # P2 is feared; only the post-periodic explosion damage can break it.
+        effects.apply_effect_by_id(p2, "feared", overrides={"duration": 2})
+
+        # A pet already at zero HP is skipped by the AoE explosion and survives
+        # until the final pet_cleanup, giving a cleanup "dies." log to order
+        # the reaction log against.
+        p2.pets["dying_summon"] = PetState(
+            id="dying_summon",
+            template_id="imp",
+            name="Expiring Summon",
+            owner_sid=p2_sid,
+            hp=0,
+            hp_max=10,
+        )
+
+        submit_turn(match, _DEF_PASS, _DEF_PASS)
+
+    fear_break_line = f"Fear on {p2_sid[:5]} breaks on damage."
+    assert match.log.count("Shield of Vengeance explodes!") == 1, \
+        "Only the post-periodic checkpoint should explode the shield; the pre-periodic checkpoint must not fire"
+    assert not effects.has_effect(p2, "feared"), \
+        "The post-periodic Shield of Vengeance explosion must break the enemy's Fear"
+    assert fear_break_line in match.log, \
+        "The Shield explosion break-on-damage reaction must be logged"
+
+    explosion_idx = match.log.index("Shield of Vengeance explodes!")
+    fear_break_idx = match.log.index(fear_break_line)
+    pet_dies_idx = match.log.index("Expiring Summon dies.")
+
+    assert explosion_idx < fear_break_idx < pet_dies_idx, \
+        "The post-periodic explosion's break-on-damage log must flush after the explosion and before pet cleanup"
+    return True

@@ -257,6 +257,17 @@ Final post-periodic reactions such as Shield of Vengeance must resolve after
 the complete dispatch and before cleanup or winner evaluation; never insert
 that reaction checkpoint between individual periodic activations.
 
+Every deferred damage-reaction log (stealth break, break-on-damage, and any
+future reaction queue) produced during or after the periodic dispatch must be
+flushed through the single periodic-boundary helper. On a turn with periodic
+activations that helper runs three times -- before dispatch, immediately after
+dispatch, and again after the post-periodic reaction checkpoint -- because the
+post-periodic Shield of Vengeance explosion can itself queue break-on-damage
+and stealth-break reactions that must surface before duration/expiry cleanup,
+pet cleanup, and winner evaluation. Turns with no periodic activation keep the
+legacy timing: break-on-damage stays deferred to the final end-of-turn flush.
+Do not add a periodic-boundary flush that drains only one reaction queue.
+
 ## Ability empowerment contract
 
 Fixed ability-specific empowered formula variants (an effect that changes one specific ability's scaling/dice/log, e.g. empowered Mind Blast or Final Verdict) belong in `abilities.py` under the ability's `empowered_by` metadata:
