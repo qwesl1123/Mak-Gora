@@ -253,9 +253,12 @@ mechanics, but before cleanup and winner evaluation. Both paths must route
 final player HP restoration through `apply_player_healing()`.
 
 Damage from the committed periodic-item dispatch may consume reactive absorbs.
-Final post-periodic reactions such as Shield of Vengeance must resolve after
-the complete dispatch and before cleanup or winner evaluation; never insert
-that reaction checkpoint between individual periodic activations.
+The post-periodic Shield of Vengeance causal chain (see "Shield of Vengeance
+end-of-turn cascade" below) therefore runs only when the periodic batch actually
+produced activations, after the complete dispatch and before cleanup or winner
+evaluation; never insert that reaction checkpoint between individual periodic
+activations. This gate is not a substitute for ordinary cascading: the earlier
+pre-periodic checkpoint already resolves ordinary cascades completely.
 
 Every deferred damage-reaction log (stealth break, break-on-damage, and any
 future reaction queue) produced during or after the periodic dispatch must be
@@ -267,6 +270,49 @@ and stealth-break reactions that must surface before duration/expiry cleanup,
 pet cleanup, and winner evaluation. Turns with no periodic activation keep the
 legacy timing: break-on-damage stays deferred to the final end-of-turn flush.
 Do not add a periodic-boundary flush that drains only one reaction queue.
+
+## Shield of Vengeance end-of-turn cascade
+
+Shield of Vengeance is resolved through an explicit causal chain, not a blind
+one-pass scan of both players. Every checkpoint begins in deterministic player
+order, P1 then P2. Whenever one player's Shield of Vengeance actually explodes,
+the opponent's Shield of Vengeance is immediately rechecked, because the
+exploding shield's absorbed damage may have consumed the opponent's absorb and
+made it eligible. If that opponent now explodes it immediately rechecks the
+first player, and this alternation continues until the causal chain ends (a
+checked side has no eligible explosion). The entire chain resolves in the same
+turn.
+
+`trigger_shield_of_vengeance_explosion(owner, enemy)` returns `True` only when an
+actual explosion event fires and `False` otherwise (no shield, the shield is not
+ready, or a ready shield had nothing absorbed to explode). "Fired" means the
+explosion event happened, not that it dealt positive HP damage: a fully absorbed
+packet still returns `True`, because that absorbed damage can consume the
+opponent's shield and form the next link. The owner's shield instance is removed
+(resolved) before its explosion damage is applied, so a shield can explode at
+most once and the chain is naturally finite -- no iteration cap. The chain helper
+simply loops `while trigger(owner, enemy): swap owner/enemy`, and the
+deterministic checkpoint is expressed as `resolve_chain(P1, P2)` then
+`resolve_chain(P2, P1)`.
+
+There are two checkpoints. The pre-periodic checkpoint runs the chain in P1->P2
+order and resolves ordinary cascades completely, in the same turn, regardless of
+whether any periodic item activates. Same-turn ordinary cascades -- P2 explodes,
+consumes P1's remaining absorb, and P1 immediately explodes in that same turn --
+are intentional gameplay behavior, not an accidental fixed-point regression, and
+must not be deferred to a later turn merely because P1 was checked before P2. The
+post-periodic checkpoint exists only to resolve shields changed by the committed
+periodic-item stage; it runs the same chain but only when `periodic_activations`
+is non-empty, and it is never a substitute for the pre-periodic cascade.
+
+The whole periodic batch finishes before any post-periodic explosion starts:
+complete periodic activation dispatch, flush reactions produced by periodic
+handlers, resolve the complete Shield of Vengeance causal chain, flush reactions
+produced by the chain, then duration cleanup, pet cleanup, and winner evaluation.
+Cleanup and winner evaluation occur only after the chain and its deferred
+reaction-log flushes. Explosion and damage logs are emitted in actual execution
+order -- each explosion and its hit line as the chain runs -- never collected and
+logged afterward.
 
 ## Ability empowerment contract
 

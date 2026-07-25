@@ -1982,3 +1982,113 @@ def scenario_post_periodic_shield_reaction_precedes_cleanup() -> bool:
     assert explosion_idx < fear_break_idx < pet_dies_idx, \
         "The post-periodic explosion's break-on-damage log must flush after the explosion and before pet cleanup"
     return True
+
+
+def scenario_shield_of_vengeance_post_periodic_reverse_order_cascade() -> bool:
+    # C. A committed periodic packet fully consumes P2's Shield of Vengeance
+    # absorb while leaving P1's shield partially intact. At the post-periodic
+    # checkpoint P2 explodes first; its explosion consumes P1's remaining absorb,
+    # so P1 must be IMMEDIATELY rechecked and explode in the same turn. The old
+    # one-pass post-periodic scan (P1-then-P2) only explodes P2, so this scenario
+    # fails against it.
+    handler_type = "test_post_periodic_reverse_cascade_pulse"
+    item_id = "test_post_periodic_reverse_cascade_trinket"
+
+    def consume_enemy_shield(activation, context) -> None:
+        # Deal exactly 5 unmitigated damage to the trinket owner's ENEMY so the
+        # packet fully consumes the enemy's remaining Shield of Vengeance absorb
+        # (enemy takes 0 HP) and leaves the owner's shield untouched. The enemy
+        # becomes eligible only via this periodic packet; the owner becomes
+        # eligible later, when the enemy's post-periodic explosion consumes the
+        # owner's remaining absorb.
+        match = context.match
+        owner_sid = activation.owner_sid
+        enemy_sid = next(sid for sid in match.players if sid != owner_sid)
+        enemy = match.state[enemy_sid]
+        match.log.append("Synthetic Reverse Cascade Pulse strikes the enemy.")
+        context.apply_damage(
+            enemy,
+            enemy,
+            5,
+            enemy_sid,
+            "Synthetic Reverse Cascade Pulse",
+            damage_instances=[5],
+            school="magical",
+            subschool="shadow",
+            allow_redirect=False,
+            resolve_player_mitigation=False,
+            source_kind=damage_types.DAMAGE_SOURCE_PERIODIC_ITEM,
+        )
+
+    item_definitions = {
+        item_id: _synthetic_item(
+            "Synthetic Post-Periodic Reverse Cascade Trinket",
+            "trinket",
+            _periodic_passive(handler_type),
+        )
+    }
+    with _temporary_periodic_content(item_definitions, {handler_type: consume_enemy_shield}):
+        match = make_match(
+            "paladin",
+            "mage",
+            p1_items={"trinket": item_id},
+            seed=9521,
+        )
+        p1_sid, p2_sid = match.players
+        p1 = match.state[p1_sid]
+        p2 = match.state[p2_sid]
+        p1.stats.update({"def": 0, "magic_resist": 0})
+        p2.stats.update({"def": 0, "magic_resist": 0})
+
+        # Both shields have absorb remaining and duration > 1, so neither is
+        # eligible at the pre-periodic checkpoint. P1 stays partially intact
+        # through the periodic packet; only P2's shield is fully consumed.
+        effects.apply_effect_by_id(
+            p1, "shield_of_vengeance", overrides={"duration": 2, "absorbed": 25}
+        )
+        effects.add_absorb(
+            p1, 8, source_name="Shield of Vengeance", effect_id="shield_of_vengeance"
+        )
+        effects.apply_effect_by_id(
+            p2, "shield_of_vengeance", overrides={"duration": 2, "absorbed": 20}
+        )
+        effects.add_absorb(
+            p2, 5, source_name="Shield of Vengeance", effect_id="shield_of_vengeance"
+        )
+
+        # A pet already at zero HP is skipped by the AoE explosion and survives
+        # until the final pet_cleanup, anchoring "cleanup occurs afterward".
+        p2.pets["dying_summon"] = PetState(
+            id="dying_summon",
+            template_id="imp",
+            name="Expiring Summon",
+            owner_sid=p2_sid,
+            hp=0,
+            hp_max=10,
+        )
+
+        submit_turn(match, _DEF_PASS, _DEF_PASS)
+
+    assert match.log.count("Shield of Vengeance explodes!") == 2, \
+        "The reverse-order cascade must explode both shields; the one-pass scan only explodes P2"
+    assert not effects.has_effect(p1, "shield_of_vengeance"), "P1 shield must be removed after exploding"
+    assert not effects.has_effect(p2, "shield_of_vengeance"), "P2 shield must be removed after exploding"
+
+    pulse_idx = match.log.index("Synthetic Reverse Cascade Pulse strikes the enemy.")
+    explosions = [i for i, line in enumerate(match.log) if line == "Shield of Vengeance explodes!"]
+    p2_hits_p1 = next(
+        i for i, line in enumerate(match.log)
+        if line.startswith(f"Shield of Vengeance hits {p1_sid[:5]}")
+    )
+    p1_hits_p2 = next(
+        i for i, line in enumerate(match.log)
+        if line.startswith(f"Shield of Vengeance hits {p2_sid[:5]}")
+    )
+    pet_dies_idx = match.log.index("Expiring Summon dies.")
+
+    # Periodic handler logs finish first, then P2 explodes and hits P1, then P1
+    # explodes and hits P2, and only afterwards does cleanup (and, by
+    # construction, the later winner evaluation) run.
+    assert pulse_idx < explosions[0] < p2_hits_p1 < explosions[1] < p1_hits_p2 < pet_dies_idx, \
+        "The full reverse-order chain must resolve in causal order before cleanup"
+    return True
