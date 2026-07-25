@@ -70,6 +70,7 @@ from .test_periodic_items import (
     scenario_vial_of_shadows_combat_totals_all_entities,
     scenario_dual_vials_commit_and_preserve_double_ko,
     scenario_vial_triggers_final_shield_of_vengeance_checkpoint,
+    scenario_vial_break_on_damage_reaction_precedes_cleanup,
 )
 from .test_damage_pipeline import (
     scenario_healing_resolves_from_negative_hp_before_winner_check,
@@ -401,6 +402,7 @@ SCENARIOS = [
     scenario_vial_of_shadows_combat_totals_all_entities,
     scenario_dual_vials_commit_and_preserve_double_ko,
     scenario_vial_triggers_final_shield_of_vengeance_checkpoint,
+    scenario_vial_break_on_damage_reaction_precedes_cleanup,
     scenario_absorb_layering,
     scenario_pet_summon_data_driven,
     scenario_pet_totem_runtime_normalization_phase1,

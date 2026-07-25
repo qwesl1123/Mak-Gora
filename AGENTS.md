@@ -257,6 +257,13 @@ Final post-periodic reactions such as Shield of Vengeance must resolve after
 the complete dispatch and before cleanup or winner evaluation; never insert
 that reaction checkpoint between individual periodic activations.
 
+Every deferred damage-reaction log (stealth break, break-on-damage, and any
+future reaction queue) produced during or after the periodic dispatch must be
+flushed through the single periodic-boundary helper at both the pre-dispatch
+and post-dispatch checkpoints, so handler-owned reaction logs stay ahead of
+duration/expiry cleanup, pet cleanup, and winner evaluation. Do not add a
+periodic-boundary flush that drains only one reaction queue.
+
 ## Ability empowerment contract
 
 Fixed ability-specific empowered formula variants (an effect that changes one specific ability's scaling/dice/log, e.g. empowered Mind Blast or Final Verdict) belong in `abilities.py` under the ability's `empowered_by` metadata:

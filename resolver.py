@@ -1318,7 +1318,7 @@ def resolve_end_of_turn_stage(
     single_target_miss_active: Callable[[PlayerState], bool],
     single_target_miss_log: Callable[[str], str],
     flush_deferred_stealth_break_logs: Callable[[], None],
-    flush_pre_periodic_deferred_logs: Callable[[], None],
+    flush_deferred_damage_reaction_logs: Callable[[], None],
     resolve_dot_tick: Callable[[str, str, Dict[str, Any]], int],
     tick_cooldowns: Callable[[PlayerState], None],
     trigger_shield_of_vengeance_explosion: Callable[[str, str], None],
@@ -1505,17 +1505,26 @@ def resolve_end_of_turn_stage(
         rng=rng,
         turn_context=turn_ctx,
         apply_damage=apply_damage,
-        before_dispatch=flush_pre_periodic_deferred_logs,
+        before_dispatch=flush_deferred_damage_reaction_logs,
     )
     if periodic_activations:
-        flush_deferred_stealth_break_logs()
+        # Handler-owned periodic reactions (stealth break, break-on-damage, ...)
+        # must surface with the periodic logs, ahead of the post-periodic
+        # reaction checkpoint and the cleanup below.
+        flush_deferred_damage_reaction_logs()
 
     # Committed periodic activations finish as one ordered dispatch before any
     # reactive absorb explosions run. The helper safely no-ops for shields that
     # already exploded at the earlier checkpoint.
     trigger_shield_of_vengeance_explosion(sids[0], sids[1])
     trigger_shield_of_vengeance_explosion(sids[1], sids[0])
-    flush_deferred_stealth_break_logs()
+    if periodic_activations:
+        # The post-periodic explosion can itself trigger deferred reactions;
+        # flush every queue so nothing leaks past duration/pet cleanup. Legacy
+        # non-periodic turns keep break-on-damage deferred to the final flush.
+        flush_deferred_damage_reaction_logs()
+    else:
+        flush_deferred_stealth_break_logs()
 
     # end_of_turn: duration_decrement / expiry_cleanup
     for sid in sids:
@@ -3765,7 +3774,13 @@ def resolve_turn(match: MatchState) -> None:
         match.log.extend(deferred_stealth_break_logs)
         deferred_stealth_break_logs.clear()
 
-    def flush_pre_periodic_deferred_logs() -> None:
+    def flush_deferred_damage_reaction_logs() -> None:
+        # Canonical "drain every deferred damage-reaction queue" flush for the
+        # periodic-stage boundaries (before dispatch and after the post-periodic
+        # reaction checkpoint). Any new deferred damage-reaction queue must be
+        # flushed here so handler-owned logs never leak past duration/pet
+        # cleanup. Order matches apply_damage's queueing: stealth break, then
+        # break-on-damage.
         flush_deferred_stealth_break_logs()
         if not deferred_break_on_damage_logs:
             return
@@ -4409,7 +4424,7 @@ def resolve_turn(match: MatchState) -> None:
         single_target_miss_active=single_target_miss_active,
         single_target_miss_log=single_target_miss_log,
         flush_deferred_stealth_break_logs=flush_deferred_stealth_break_logs,
-        flush_pre_periodic_deferred_logs=flush_pre_periodic_deferred_logs,
+        flush_deferred_damage_reaction_logs=flush_deferred_damage_reaction_logs,
         resolve_dot_tick=resolve_dot_tick,
         tick_cooldowns=tick_cooldowns,
         trigger_shield_of_vengeance_explosion=trigger_shield_of_vengeance_explosion,

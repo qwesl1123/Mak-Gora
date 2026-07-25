@@ -1837,3 +1837,56 @@ def scenario_vial_triggers_final_shield_of_vengeance_checkpoint() -> bool:
     ), "The original pre-periodic checkpoint must remain in place"
     assert not effects.has_effect(early_paladin, "shield_of_vengeance")
     return True
+
+
+def scenario_vial_break_on_damage_reaction_precedes_cleanup() -> bool:
+    match = make_match(
+        "warrior",
+        "mage",
+        p1_items={"trinket": "vial_of_shadows"},
+        seed=9519,
+    )
+    owner_sid, enemy_sid = match.players
+    owner = match.state[owner_sid]
+    owner.stats["atk"] = 13
+    owner.stats["int"] = 57
+
+    # The owner takes its own Vial packet, so Fear must break from that periodic
+    # damage rather than from any earlier end-of-turn tick.
+    effects.apply_effect_by_id(owner, "feared", overrides={"duration": 2})
+
+    # A pet already at zero HP survives until the final pet_cleanup, giving a
+    # cleanup "dies." log to order the reaction log against.
+    owner.pets["dying_summon"] = PetState(
+        id="dying_summon",
+        template_id="imp",
+        name="Expiring Summon",
+        owner_sid=owner_sid,
+        hp=0,
+        hp_max=10,
+    )
+
+    match.turn = 4
+    roll_calls: list[str] = []
+    with _fixed_vial_roll(1, roll_calls):
+        submit_turn(match, _DEF_PASS, _DEF_PASS)
+
+    assert roll_calls == ["d6"], "Vial must roll exactly one d6 on its scheduled turn"
+    assert not effects.has_effect(owner, "feared"), \
+        "The owner's periodic Vial packet must break Fear on damage"
+
+    vial_owner_hit_idx = next(
+        index
+        for index, line in enumerate(match.log)
+        if line.startswith(f"Vial of Shadows hits {owner_sid[:5]}")
+    )
+    break_on_damage_idx = next(
+        index
+        for index, line in enumerate(match.log)
+        if "breaks on damage." in line and owner_sid[:5] in line
+    )
+    pet_dies_idx = match.log.index("Expiring Summon dies.")
+
+    assert vial_owner_hit_idx < break_on_damage_idx < pet_dies_idx, \
+        "A periodic break-on-damage reaction must log with the periodic dispatch, before pet cleanup"
+    return True
