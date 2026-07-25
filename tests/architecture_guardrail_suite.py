@@ -98,6 +98,7 @@ GAMEPLAY_FILE_BASENAMES: Tuple[str, ...] = (
     "resolver.py",
     "effects.py",
     "pet_ai.py",
+    "periodic_items.py",
     "damage_types.py",
     "damage_events.py",
 )
