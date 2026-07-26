@@ -911,7 +911,7 @@ def _ast_enclosing_function(node: ast.AST, parents: Dict[ast.AST, ast.AST]) -> s
     """Return the nearest enclosing ``def``/``async def`` name, or ``<module>``.
 
     Nested functions report their innermost enclosing function (the resolver's
-    HP writes live in nested helpers such as ``apply_self_inflicted_magical_damage``),
+    HP writes live in nested helpers such as the damage-application stage),
     which is exactly the granularity the allowlist matches on.
     """
     cur: Optional[ast.AST] = parents.get(node)
@@ -1226,16 +1226,6 @@ ALLOWED_PLAYER_HP_MUTATIONS: Tuple[Dict[str, str], ...] = (
             "the damage-application resolution stage (the player branch of the "
             "damage pipeline); it reduces HP by resolved incoming damage and must "
             "not route through apply_player_healing()."
-        ),
-    },
-    {
-        "file": "resolver.py",
-        "function": "apply_self_inflicted_magical_damage",
-        "snippet": "ps.res.hp -= remaining",
-        "reason": (
-            "Damage subtraction, not healing. Applies post-absorb self-inflicted "
-            "Mindgames magical damage to the caster's HP; a negative HP delta, so "
-            "it is out of scope for the healing helper."
         ),
     },
     {

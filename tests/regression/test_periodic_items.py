@@ -12,6 +12,7 @@ from typing import Any, Callable, Iterator
 
 from harness import (
     PetState,
+    _turn_lines,
     effects,
     make_match,
     resolver,
@@ -924,23 +925,22 @@ def scenario_periodic_self_heal_accounting_and_exceptions() -> bool:
     )
     mindgames_sid = mindgames.players[0]
     mindgames_owner = mindgames.state[mindgames_sid]
-    mindgames_owner.res.hp -= 20
     effects.apply_effect_by_id(
         mindgames_owner,
         "mindgames",
         overrides={"duration": 2, "source_sid": mindgames.players[1]},
     )
     mindgames_hp = mindgames_owner.res.hp
-    periodic_items.resolve_periodic_item_stage(
-        match=mindgames,
-        rng=random.Random(9435),
-        turn_context=None,
-        apply_damage=_unused_apply_damage,
-    )
-    assert mindgames_owner.res.hp == mindgames_hp + 4
-    assert mindgames.combat_totals[mindgames_sid]["healing"] == 4
-    assert not any("Mindgames" in line for line in mindgames.log), \
-        "Legacy item healing must not be converted by Mindgames"
+    submit_turn(mindgames, _DEF_PASS, _DEF_PASS)
+    assert mindgames_owner.res.hp == mindgames_hp - 4
+    assert mindgames.combat_totals[mindgames_sid]["healing"] == 0
+    assert mindgames.combat_totals[mindgames_sid]["overhealing"] == 0
+    assert mindgames.combat_totals[mindgames_sid]["damage"] == 0
+    assert any(
+        "Mindgames twists 4 healing from Staff of Immortality into Shadow damage" in line
+        and f"{mindgames_sid[:5]} takes 4 damage." in line
+        for line in _turn_lines(mindgames, 1)
+    ), "Player-owned periodic item healing must convert through the shared resolver"
 
     ice_block = make_match(
         "mage",

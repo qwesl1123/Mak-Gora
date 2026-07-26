@@ -1,7 +1,7 @@
 # games/duel/engine/effects.py
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from .models import PlayerState
 from ..content.balance import DEFAULTS
@@ -10,7 +10,6 @@ from .damage_events import make_passive_damage_event
 from .damage_types import (
     DAMAGE_SOURCE_DOT_TICK,
     DAMAGE_SOURCE_ON_HIT_PROC,
-    DAMAGE_SOURCE_SELF,
     DAMAGE_SOURCE_STRIKE_AGAIN,
     SUBSCHOOL_RESISTANCE_STAT_BY_SUBSCHOOL,
     subschool_resistance_stat,
@@ -2089,6 +2088,7 @@ def trigger_on_hit_passives(
     target_challenger_mode: Optional[str] | object = _LIVE_CHALLENGER_MODE,
     attacker_challenger_mode: Optional[str] | object = _LIVE_CHALLENGER_MODE,
     attacker_outgoing_multiplier: Optional[float] = None,
+    resolve_player_produced_healing: Callable[..., Mapping[str, Any]] | None = None,
 ) -> tuple[int, List[str], int, int, List[Dict[str, Any]]]:
     """Run attacker item passives that trigger on_hit.
 
@@ -2282,13 +2282,32 @@ def trigger_on_hit_passives(
                     roll_power,
                 )
             if heal_value > 0 and attacker.res:
-                gained = apply_player_healing(attacker, heal_value)
+                if resolve_player_produced_healing is None:
+                    healing_result: Mapping[str, Any] = {
+                        "healing_gained": apply_player_healing(attacker, heal_value),
+                    }
+                else:
+                    healing_result = resolve_player_produced_healing(
+                        attacker,
+                        attacker,
+                        heal_value,
+                        source_name=str(effect.get("source_item") or "item"),
+                    )
+                gained = int(healing_result.get("healing_gained", 0) or 0)
                 bonus_healing += gained
-                # Player-produced healing lost only to the hp_max cap.
-                bonus_overhealing += max(0, heal_value - gained)
-                log_lines.append(
-                    f"{attacker.sid[:5]} draws strength from {effect.get('source_item', 'item')}, healing {gained} HP."
+                bonus_overhealing += int(
+                    healing_result.get(
+                        "overhealing",
+                        max(0, heal_value - gained),
+                    )
+                    or 0
                 )
+                if healing_result.get("twisted_by_mindgames"):
+                    log_lines.append(str(healing_result.get("log") or ""))
+                else:
+                    log_lines.append(
+                        f"{attacker.sid[:5]} draws strength from {effect.get('source_item', 'item')}, healing {gained} HP."
+                    )
         elif passive_type == "empower_next_offense":
             chance = float(passive.get("chance", 0) or 0)
             effect_id = passive.get("effect_id", "crusader_empower")
@@ -2684,14 +2703,21 @@ def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[dict[str, Any
     return damage_sources
 
 
-def trigger_end_of_turn_effects(ps: PlayerState, log: List[str], label: str) -> tuple[int, int, List[Dict[str, Any]]]:
+def trigger_end_of_turn_effects(
+    ps: PlayerState,
+    log: List[str],
+    label: str,
+    *,
+    resolve_player_produced_healing: Callable[..., Mapping[str, Any]] | None = None,
+) -> tuple[int, int, List[Dict[str, Any]]]:
     """Run end-of-turn status effects such as regeneration from buffs.
 
-    Returns ``(total_healing, total_overhealing, pending_mindgames_damage)``.
+    The third return entry is retained as an empty compatibility list. Production
+    player-produced HP regen resolves immediately through the resolver callback;
+    autonomous/unclassified regen remains ordinary local healing.
     """
     total_healing = 0
     total_overhealing = 0
-    pending_mindgames_damage: List[Dict[str, Any]] = []
     for effect in ps.effects:
         regen = effect.get("regen", {}) or {}
         if not regen:
@@ -2704,26 +2730,41 @@ def trigger_end_of_turn_effects(ps: PlayerState, log: List[str], label: str) -> 
         mp_gain = int(regen.get("mp", 0) or 0)
         energy_gain = int(regen.get("energy", 0) or 0)
         effect_name = effect.get("name", "an effect")
-        twisted_by_mindgames = hp_gain > 0 and has_effect(ps, "mindgames")
+        twisted_by_mindgames = False
         hp_recovered = 0
         if hp_gain > 0:
-            if twisted_by_mindgames:
-                pending_mindgames_damage.append(
-                    {
-                        "source_sid": ps.sid,
-                        "incoming": hp_gain,
-                        "source_kind": DAMAGE_SOURCE_SELF,
-                        "effect_id": "mindgames",
-                        "effect_name": "Mindgames",
-                        "school": "magical",
-                        "subschool": "shadow",
-                        "suppress_log": True,
-                    }
+            if (
+                effect.get("healing_producer") == "player"
+                and resolve_player_produced_healing is not None
+            ):
+                producer_sid = str(effect.get("healing_producer_sid") or "")
+                if producer_sid and producer_sid != ps.sid:
+                    raise ValueError(
+                        "player-produced regen currently requires the producer "
+                        "to be the affected player"
+                    )
+                healing_result = resolve_player_produced_healing(
+                    ps,
+                    ps,
+                    hp_gain,
+                    source_name=str(
+                        effect.get("healing_source_name") or effect_name
+                    ),
+                )
+                twisted_by_mindgames = bool(
+                    healing_result.get("twisted_by_mindgames")
+                )
+                hp_recovered = int(
+                    healing_result.get("healing_gained", 0) or 0
+                )
+                total_healing += hp_recovered
+                total_overhealing += int(
+                    healing_result.get("overhealing", 0) or 0
                 )
                 if log is not None:
-                    log.append(
-                        f"{label} is twisted by Mindgames and takes {hp_gain} self-damage instead of healing from {effect_name}."
-                    )
+                    twisted_log = str(healing_result.get("log") or "")
+                    if twisted_log:
+                        log.append(twisted_log)
             else:
                 hp_recovered = apply_player_healing(ps, hp_gain)
                 total_healing += hp_recovered
@@ -2751,7 +2792,7 @@ def trigger_end_of_turn_effects(ps: PlayerState, log: List[str], label: str) -> 
                 else:
                     recovered_text = f"{', '.join(recovered_parts[:-1])}, and {recovered_parts[-1]}"
                 log.append(f"{label} recovers {recovered_text} from {effect_name}.")
-    return total_healing, total_overhealing, pending_mindgames_damage
+    return total_healing, total_overhealing, []
 
 
 def mana_regen_from_spirit(ps: PlayerState) -> int:
@@ -2759,7 +2800,13 @@ def mana_regen_from_spirit(ps: PlayerState) -> int:
     return max(0, (spirit + 3) // 5)
 
 
-def end_of_turn(ps: PlayerState, log: List[str], label: str) -> dict[str, Any]:
+def end_of_turn(
+    ps: PlayerState,
+    log: List[str],
+    label: str,
+    *,
+    resolve_player_produced_healing: Callable[..., Mapping[str, Any]] | None = None,
+) -> dict[str, Any]:
     """End-of-turn pipeline for queued DoTs and temporary effect regeneration."""
     if not ps.res:
         return {"damage_sources": [], "healing_done": 0, "overhealing_done": 0, "self_damage_sources": []}
@@ -2772,6 +2819,7 @@ def end_of_turn(ps: PlayerState, log: List[str], label: str) -> dict[str, Any]:
         ps,
         log,
         label,
+        resolve_player_produced_healing=resolve_player_produced_healing,
     )
 
     if ps.res.hp > 0:

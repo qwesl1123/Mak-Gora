@@ -198,7 +198,15 @@ ABILITIES = {
         "cooldown": 20,
         "classes": ["mage"],
         "self_effects": [
-            {"id": "iceblock", "duration": 3, "log": "encases themselves in ice."},
+            {
+                "id": "iceblock",
+                "duration": 3,
+                "overrides": {
+                    "healing_producer": "player",
+                    "healing_source_name": "Ice Block",
+                },
+                "log": "encases themselves in ice.",
+            },
             {"type": "dispel", "category": "dot", "school": "magical"},
         ],
     },
@@ -279,7 +287,11 @@ ABILITIES = {
             {
                 "id": "stealth",
                 "duration": 3,
-                "overrides": {"regen": {"hp": 15, "energy": 5}},
+                "overrides": {
+                    "regen": {"hp": 15, "energy": 5},
+                    "healing_producer": "player",
+                    "healing_source_name": "Vanish",
+                },
                 "log": "vanishes into the shadows.",
             }
         ],
@@ -1085,6 +1097,7 @@ ABILITIES = {
     },
     "mindgames": {
         "name": "Mindgames",
+        "description": "Applies a 1-turn debuff to the enemy. Damage caused by the target heals each entity it would damage, while healing caused by the target deals equal Shadow damage to each entity it would heal.",
         "display_color": "#FFFFFF",
         "cost": {"mp": 15},
         "dice": None,

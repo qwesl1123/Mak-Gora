@@ -184,6 +184,156 @@ class DamageApplicationResult(TypedDict, total=False):
     source_kind: Optional[str]  # normalized echo of the caller's source_kind
 
 
+class PlayerHealingApplicationResult(TypedDict, total=False):
+    """Typed result for one player-produced HP-healing event.
+
+    The result keeps normal healing, cap loss, and Mindgames-twisted damage
+    separate so callers never reconstruct conversion behavior from one
+    ambiguous integer.
+    """
+
+    requested_healing: int
+    healing_gained: int
+    overhealing: int
+    twisted_by_mindgames: bool
+    twisted_hp_damage: int
+    twisted_absorbed: int
+    twisted_absorbed_breakdown: List[Dict[str, Any]]
+    twisted_immune: bool
+    recipient_label: str
+    source_name: str
+    log: str
+    pet_defeated: bool
+    damage_data: DamageApplicationResult
+
+
+def _player_healing_recipient_label(recipient: PlayerState | PetState) -> str:
+    if isinstance(recipient, PlayerState):
+        return sid_token(recipient.sid)
+    return f"{sid_token(recipient.owner_sid)}'s {recipient.name} ({recipient.id})"
+
+
+def format_mindgames_twisted_healing_log(
+    result: PlayerHealingApplicationResult,
+) -> str:
+    """Return the canonical entity-aware healing-to-damage conversion log."""
+
+    requested = int(result.get("requested_healing", 0) or 0)
+    source_name = str(result.get("source_name") or "healing")
+    recipient_label = str(result.get("recipient_label") or "the target")
+    hp_damage = int(result.get("twisted_hp_damage", 0) or 0)
+    absorbed = int(result.get("twisted_absorbed", 0) or 0)
+    prefix = (
+        f"Mindgames twists {requested} healing from {source_name} into Shadow damage; "
+    )
+    if result.get("twisted_immune"):
+        return f"{prefix}{recipient_label} is immune and takes 0 damage."
+
+    line = f"{prefix}{recipient_label} takes {hp_damage} damage."
+    if absorbed <= 0:
+        return line
+
+    absorb_parts: list[str] = []
+    for entry in result.get("twisted_absorbed_breakdown", []) or []:
+        amount = int(entry.get("amount", 0) or 0)
+        if amount > 0:
+            absorb_parts.append(
+                f"{amount} absorbed by {entry.get('name') or 'Shield'}."
+            )
+    if not absorb_parts:
+        absorb_parts.append(f"{absorbed} absorbed by Shield.")
+    return f"{line} {' '.join(absorb_parts)}"
+
+
+def resolve_player_produced_healing(
+    producer: PlayerState,
+    recipient: PlayerState | PetState,
+    requested_amount: int,
+    *,
+    source_name: str,
+    apply_damage: Callable[..., DamageApplicationResult],
+    recipient_label: str | None = None,
+    source_kind: str | None = None,
+    handle_pet_defeat: Callable[[PetState], None] | None = None,
+) -> PlayerHealingApplicationResult:
+    """Resolve player-produced HP healing for a final player or pet recipient.
+
+    Normal player HP application stays in ``apply_player_healing()`` and normal
+    pet HP application stays local. When the producer has Mindgames, the full
+    requested pre-cap amount becomes terminal Shadow damage through the shared
+    damage pipeline.
+    """
+
+    requested = max(0, int(requested_amount or 0))
+    final_label = recipient_label or _player_healing_recipient_label(recipient)
+    result: PlayerHealingApplicationResult = {
+        "requested_healing": requested,
+        "healing_gained": 0,
+        "overhealing": 0,
+        "twisted_by_mindgames": False,
+        "twisted_hp_damage": 0,
+        "twisted_absorbed": 0,
+        "twisted_absorbed_breakdown": [],
+        "twisted_immune": False,
+        "recipient_label": final_label,
+        "source_name": source_name,
+        "log": "",
+        "pet_defeated": False,
+    }
+    if requested <= 0:
+        return result
+
+    if not has_effect(producer, "mindgames"):
+        if isinstance(recipient, PlayerState):
+            gained = apply_player_healing(recipient, requested)
+        else:
+            hp_before = int(recipient.hp)
+            recipient.hp = min(int(recipient.hp_max), hp_before + requested)
+            gained = max(0, int(recipient.hp) - hp_before)
+        result["healing_gained"] = gained
+        result["overhealing"] = max(0, requested - gained)
+        return result
+
+    damage_data = apply_damage(
+        producer,
+        recipient,
+        requested,
+        final_label,
+        f"Mindgames-twisted {source_name}",
+        mindgames_flip_damage=False,
+        damage_instances=[requested],
+        school="magical",
+        subschool="shadow",
+        allow_redirect=False,
+        resolve_non_player_mitigation=False,
+        resolve_player_mitigation=False,
+        source_kind=source_kind or DAMAGE_SOURCE_SELF,
+    )
+    hp_damage = int(damage_data.get("hp_damage", 0) or 0)
+    absorbed = int(damage_data.get("absorbed", 0) or 0)
+    result.update(
+        {
+            "twisted_by_mindgames": True,
+            "twisted_hp_damage": hp_damage,
+            "twisted_absorbed": absorbed,
+            "twisted_absorbed_breakdown": list(
+                damage_data.get("absorbed_breakdown", []) or []
+            ),
+            "twisted_immune": hp_damage == 0 and absorbed == 0,
+            "damage_data": damage_data,
+        }
+    )
+    if (
+        isinstance(recipient, PetState)
+        and int(recipient.hp) <= 0
+        and handle_pet_defeat is not None
+    ):
+        result["pet_defeated"] = True
+        handle_pet_defeat(recipient)
+    result["log"] = format_mindgames_twisted_healing_log(result)
+    return result
+
+
 def _empty_damage_result(
     *,
     school: str,
@@ -213,20 +363,6 @@ def _build_damage_instance_values(incoming: int, damage_instances: list[int] | N
     if not instance_values:
         instance_values = [incoming]
     return instance_values
-
-
-def _apply_mindgames_aware_healing(
-    target: PlayerState,
-    amount: int,
-    apply_self_inflicted_magical_damage: Callable[[PlayerState, int], int],
-) -> tuple[int, bool]:
-    heal_value = max(0, int(amount or 0))
-    if heal_value <= 0:
-        return 0, False
-    if has_effect(target, "mindgames"):
-        apply_self_inflicted_magical_damage(target, heal_value)
-        return 0, True
-    return apply_player_healing(target, heal_value), False
 
 
 CLARITY_OF_MIND_EFFECT_ID = "clarity_of_mind"
@@ -422,18 +558,28 @@ def _resolve_actor_post_damage_reactions_stage(
     actor: PlayerState,
     target: PlayerState,
     apply_damage: Callable[..., Dict[str, Any]],
+    resolve_player_produced_healing: Callable[..., PlayerHealingApplicationResult],
     grant_resource: Callable[[PlayerState, str, int], int],
     combat_totals: Dict[str, Dict[str, int]],
     log: list[str],
     resource_challenger_mode: str | None = None,
 ) -> None:
     if dealt > 0 and ability.get("heal_from_dealt_damage") and actor.res:
-        gained = apply_player_healing(actor, dealt)
+        source_name = str(ability.get("name") or "their attack")
+        healing_result = resolve_player_produced_healing(
+            actor,
+            actor,
+            dealt,
+            source_name=source_name,
+        )
+        gained = int(healing_result.get("healing_gained", 0) or 0)
         totals = combat_totals_entry(combat_totals, actor_sid)
-        totals["overhealing"] += max(0, dealt - gained)
-        if gained > 0:
-            log.append(f"{sid_token(actor_sid)} heals {gained} HP from {ability.get('name', 'their attack')}.")
-            totals["healing"] += gained
+        totals["healing"] += gained
+        totals["overhealing"] += int(healing_result.get("overhealing", 0) or 0)
+        if healing_result.get("twisted_by_mindgames"):
+            log.append(str(healing_result.get("log") or ""))
+        elif gained > 0:
+            log.append(f"{sid_token(actor_sid)} heals {gained} HP from {source_name}.")
 
     if ability_id == "death" and target.res.hp > 0 and dealt > 0:
         backlash = int(dealt * 1.0)
@@ -456,12 +602,21 @@ def _resolve_actor_post_damage_reactions_stage(
     lifesteal = float(ability.get("heal_from_damage", 0) or 0)
     if dealt > 0 and lifesteal > 0 and actor.res:
         heal_value = int(dealt * lifesteal)
-        gained = apply_player_healing(actor, heal_value)
+        source_name = str(ability.get("name") or "Lifesteal")
+        healing_result = resolve_player_produced_healing(
+            actor,
+            actor,
+            heal_value,
+            source_name=source_name,
+        )
+        gained = int(healing_result.get("healing_gained", 0) or 0)
         totals = combat_totals_entry(combat_totals, actor_sid)
-        totals["overhealing"] += max(0, heal_value - gained)
-        if gained > 0:
+        totals["healing"] += gained
+        totals["overhealing"] += int(healing_result.get("overhealing", 0) or 0)
+        if healing_result.get("twisted_by_mindgames"):
+            log.append(str(healing_result.get("log") or ""))
+        elif gained > 0:
             log.append(f"{sid_token(actor_sid)} drains {gained} life.")
-            totals["healing"] += gained
 
     # Damage-based resource gains resolve here, after the primary hit AND every
     # queued proc / strike-again event has actually landed, so ``dealt`` reflects
@@ -554,6 +709,8 @@ def _apply_effect_entries_stage(
         overrides = dict(entry.get("overrides", {}) or {})
         if entry.get("duration"):
             overrides["duration"] = int(entry.get("duration"))
+        if overrides.get("healing_producer") == "player":
+            overrides.setdefault("healing_producer_sid", actor.sid)
         if "source_ability_name" not in overrides:
             overrides["source_ability_name"] = ability.get("name") or effect_name(entry["id"])
         if "school" not in overrides and ability.get("school"):
@@ -946,7 +1103,7 @@ class SpecialAbilityHandlerContext:
     rng: Any
     set_cooldown: Callable[[PlayerState, str, Dict[str, Any]], None]
     reset_cooldown: Callable[[PlayerState, str], None]
-    apply_self_inflicted_magical_damage: Callable[[PlayerState, int], int]
+    resolve_player_produced_healing: Callable[..., PlayerHealingApplicationResult]
     clarity_of_mind_consumed: bool = False
 
 
@@ -991,36 +1148,50 @@ def _handle_kill_command_special(ctx: SpecialAbilityHandlerContext) -> Dict[str,
             heal_roll,
         )
     heal_value = max(0, int(heal_value))
-    before_hp = int(pet.hp)
-    pet.hp = min(int(pet.hp_max), int(pet.hp) + heal_value)
-    healed = max(0, int(pet.hp) - before_hp)
+    healing_result = ctx.resolve_player_produced_healing(
+        ctx.actor,
+        pet,
+        heal_value,
+        source_name="Kill Command",
+    )
+    healed = int(healing_result.get("healing_gained", 0) or 0)
     ctx.log_parts.append(f"Roll d4 = {heal_roll}.")
-    ctx.log_parts.append(f"Heals {pet.name} for {healed} HP.")
+    if healing_result.get("twisted_by_mindgames"):
+        ctx.log_parts.append(str(healing_result.get("log") or ""))
+        if healing_result.get("pet_defeated"):
+            ctx.extra_log_parts.append(f"{pet.name} dies.")
+    else:
+        ctx.log_parts.append(f"Heals {pet.name} for {healed} HP.")
     ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
     # Kill Command healing is champion-produced (the ability heals the pet), so
     # it stays regular player healing/overhealing, not pet_healing.
     return {
         "damage": 0,
         "healing": healed,
-        "overhealing": max(0, heal_value - healed),
+        "overhealing": int(healing_result.get("overhealing", 0) or 0),
         "log": " ".join(ctx.log_parts),
+        "extra_logs": ctx.extra_log_parts,
         "ability_id": ctx.ability_id,
     }
 
 def _handle_healthstone_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, Any]:
     heal_value = max(1, int(ctx.actor.res.hp_max * 0.25))
-    if has_effect(ctx.actor, "mindgames"):
-        ctx.apply_self_inflicted_magical_damage(ctx.actor, heal_value)
-        ctx.log_parts.append(f"Mindgames twists healing into {heal_value} self-damage.")
-        ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
-        return {"damage": 0, "healing": 0, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
-    healed = apply_player_healing(ctx.actor, heal_value)
-    ctx.log_parts.append(f"Healthstone restores {healed} HP.")
+    healing_result = ctx.resolve_player_produced_healing(
+        ctx.actor,
+        ctx.actor,
+        heal_value,
+        source_name="Healthstone",
+    )
+    healed = int(healing_result.get("healing_gained", 0) or 0)
+    if healing_result.get("twisted_by_mindgames"):
+        ctx.log_parts.append(str(healing_result.get("log") or ""))
+    else:
+        ctx.log_parts.append(f"Healthstone restores {healed} HP.")
     ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
     return {
         "damage": 0,
         "healing": healed,
-        "overhealing": max(0, heal_value - healed),
+        "overhealing": int(healing_result.get("overhealing", 0) or 0),
         "log": " ".join(ctx.log_parts),
         "ability_id": ctx.ability_id,
     }
@@ -1036,18 +1207,22 @@ def _handle_innervate_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, An
 def _handle_holy_light_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, Any]:
     intellect = modify_stat(ctx.actor, "int", ctx.actor.stats.get("int", 0))
     heal_value = int(intellect * 2.0) + int(roll("d4", ctx.rng))
-    if has_effect(ctx.actor, "mindgames"):
-        ctx.apply_self_inflicted_magical_damage(ctx.actor, heal_value)
-        ctx.log_parts.append(f"Mindgames twists healing into {heal_value} self-damage.")
-        ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
-        return {"damage": 0, "healing": 0, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
-    healed = apply_player_healing(ctx.actor, heal_value)
-    ctx.log_parts.append(f"Holy Light restores {healed} HP.")
+    healing_result = ctx.resolve_player_produced_healing(
+        ctx.actor,
+        ctx.actor,
+        heal_value,
+        source_name="Holy Light",
+    )
+    healed = int(healing_result.get("healing_gained", 0) or 0)
+    if healing_result.get("twisted_by_mindgames"):
+        ctx.log_parts.append(str(healing_result.get("log") or ""))
+    else:
+        ctx.log_parts.append(f"Holy Light restores {healed} HP.")
     ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
     return {
         "damage": 0,
         "healing": healed,
-        "overhealing": max(0, heal_value - healed),
+        "overhealing": int(healing_result.get("overhealing", 0) or 0),
         "log": " ".join(ctx.log_parts),
         "ability_id": ctx.ability_id,
     }
@@ -1057,18 +1232,22 @@ def _handle_flash_heal_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, A
     clarity_consumed = ctx.clarity_of_mind_consumed
     intellect = modify_stat(ctx.actor, "int", ctx.actor.stats.get("int", 0))
     heal_value = _apply_clarity_of_mind_bonus(int(intellect * 1.5) + int(roll("d8", ctx.rng)), clarity_consumed)
-    if has_effect(ctx.actor, "mindgames"):
-        ctx.apply_self_inflicted_magical_damage(ctx.actor, heal_value)
-        ctx.log_parts.append(f"Mindgames twists healing into {heal_value} self-damage.")
-        ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
-        return {"damage": 0, "healing": 0, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
-    healed = apply_player_healing(ctx.actor, heal_value)
-    ctx.log_parts.append(f"Flash Heal restores {healed} HP.")
+    healing_result = ctx.resolve_player_produced_healing(
+        ctx.actor,
+        ctx.actor,
+        heal_value,
+        source_name="Flash Heal",
+    )
+    healed = int(healing_result.get("healing_gained", 0) or 0)
+    if healing_result.get("twisted_by_mindgames"):
+        ctx.log_parts.append(str(healing_result.get("log") or ""))
+    else:
+        ctx.log_parts.append(f"Flash Heal restores {healed} HP.")
     ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
     return {
         "damage": 0,
         "healing": healed,
-        "overhealing": max(0, heal_value - healed),
+        "overhealing": int(healing_result.get("overhealing", 0) or 0),
         "log": " ".join(ctx.log_parts),
         "ability_id": ctx.ability_id,
     }
@@ -1076,14 +1255,17 @@ def _handle_flash_heal_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, A
 
 def _handle_lay_on_hands_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, Any]:
     missing_hp = max(0, ctx.actor.res.hp_max - ctx.actor.res.hp)
-    if has_effect(ctx.actor, "mindgames"):
-        ctx.apply_self_inflicted_magical_damage(ctx.actor, missing_hp)
-        ctx.log_parts.append(f"Mindgames twists healing into {missing_hp} self-damage.")
-        _apply_cooldown_resets_on_cast(ctx.actor, ctx.ability, ctx.log_parts, ctx.reset_cooldown)
-        ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
-        return {"damage": 0, "healing": 0, "log": " ".join(ctx.log_parts), "ability_id": ctx.ability_id}
-    healed = apply_player_healing(ctx.actor, missing_hp)
-    ctx.log_parts.append(f"Lay on Hands restores {healed} HP, restoring health to full.")
+    healing_result = ctx.resolve_player_produced_healing(
+        ctx.actor,
+        ctx.actor,
+        missing_hp,
+        source_name="Lay on Hands",
+    )
+    healed = int(healing_result.get("healing_gained", 0) or 0)
+    if healing_result.get("twisted_by_mindgames"):
+        ctx.log_parts.append(str(healing_result.get("log") or ""))
+    else:
+        ctx.log_parts.append(f"Lay on Hands restores {healed} HP, restoring health to full.")
     _apply_cooldown_resets_on_cast(ctx.actor, ctx.ability, ctx.log_parts, ctx.reset_cooldown)
     ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
     # missing_hp always fits below hp_max (even from negative HP), so Lay on
@@ -1157,7 +1339,13 @@ def _handle_frenzied_regeneration_special(ctx: SpecialAbilityHandlerContext) -> 
     apply_effect_by_id(
         ctx.actor,
         "frenzied_regeneration",
-        overrides={"duration": 4, "regen": {"hp": per_tick}},
+        overrides={
+            "duration": 4,
+            "regen": {"hp": per_tick},
+            "healing_producer": "player",
+            "healing_producer_sid": ctx.actor.sid,
+            "healing_source_name": "Frenzied Regeneration",
+        },
     )
     ctx.log_parts.append("channels Frenzied Regeneration.")
     ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
@@ -1169,18 +1357,25 @@ def _handle_wild_growth_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, 
     attack = modify_stat(ctx.actor, "atk", ctx.actor.stats.get("atk", 0))
     roll_power = roll("d8", ctx.rng)
     heal_value = int((intellect + attack) * 1.6) + int(roll_power)
-    if has_effect(ctx.actor, "mindgames"):
-        ctx.apply_self_inflicted_magical_damage(ctx.actor, heal_value)
-        ctx.log_parts.append(f"Mindgames twists healing into {heal_value} self-damage.")
-        ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
-        return {"damage": 0, "healing": 0, "log": " ".join(ctx.log_parts)}
     healing_done = 0
     overhealing = 0
     if not has_flag(ctx.actor, "cycloned"):
-        healing_done = apply_player_healing(ctx.actor, heal_value)
-        # Cyclone suppression is not overhealing; only cap loss counts.
-        overhealing = max(0, heal_value - healing_done)
-    ctx.log_parts.append(f"Wild Growth heals {healing_done} HP.")
+        healing_result = ctx.resolve_player_produced_healing(
+            ctx.actor,
+            ctx.actor,
+            heal_value,
+            source_name="Wild Growth",
+        )
+        healing_done = int(healing_result.get("healing_gained", 0) or 0)
+        overhealing = int(healing_result.get("overhealing", 0) or 0)
+        if healing_result.get("twisted_by_mindgames"):
+            ctx.log_parts.append(str(healing_result.get("log") or ""))
+        else:
+            ctx.log_parts.append(f"Wild Growth heals {healing_done} HP.")
+    else:
+        # Cyclone suppresses the healing event entirely, so there is no
+        # conversion and no overhealing.
+        ctx.log_parts.append("Wild Growth heals 0 HP.")
     ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
     return {"damage": 0, "healing": healing_done, "overhealing": overhealing, "log": " ".join(ctx.log_parts)}
 
@@ -1194,7 +1389,13 @@ def _handle_regrowth_special(ctx: SpecialAbilityHandlerContext) -> Dict[str, Any
     apply_effect_by_id(
         ctx.actor,
         "regrowth",
-        overrides={"duration": 5, "regen": {"hp": per_tick}},
+        overrides={
+            "duration": 5,
+            "regen": {"hp": per_tick},
+            "healing_producer": "player",
+            "healing_producer_sid": ctx.actor.sid,
+            "healing_source_name": "Regrowth",
+        },
     )
     ctx.log_parts.append("Healing over time for 5 turns.")
     ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
@@ -1207,7 +1408,13 @@ def _handle_healing_stream_special(ctx: SpecialAbilityHandlerContext) -> Dict[st
     apply_effect_by_id(
         ctx.actor,
         "healing_stream",
-        overrides={"duration": 6, "regen": {"hp": per_tick}},
+        overrides={
+            "duration": 6,
+            "regen": {"hp": per_tick},
+            "healing_producer": "player",
+            "healing_producer_sid": ctx.actor.sid,
+            "healing_source_name": "Healing Stream",
+        },
     )
     ctx.log_parts.append("Healing Stream flows for 6 turns.")
     ctx.set_cooldown(ctx.actor, ctx.ability_id, ctx.ability)
@@ -1315,6 +1522,7 @@ def resolve_end_of_turn_stage(
     rng: Any,
     turn_ctx: TurnResolutionContext,
     apply_damage: Callable[..., Dict[str, Any]],
+    resolve_player_produced_healing: Callable[..., PlayerHealingApplicationResult],
     absorb_suffix: Callable[[int, list[Dict[str, Any]] | None], str],
     mindgames_flip_suffix: Callable[[Mapping[str, Any]], str],
     should_miss_due_to_stealth: Callable[[PlayerState | PetState, str], bool],
@@ -1357,7 +1565,12 @@ def resolve_end_of_turn_stage(
     # end_of_turn: dot_tick / hot_tick / resource_tick
     for sid in sids:
         ps = match.state[sid]
-        end_summary = end_of_turn(ps, match.log, sid_token(sid))
+        end_summary = end_of_turn(
+            ps,
+            match.log,
+            sid_token(sid),
+            resolve_player_produced_healing=resolve_player_produced_healing,
+        )
         for source in end_summary.get("damage_sources", []):
             source_sid = source.get("source_sid")
             if not source_sid:
@@ -1371,13 +1584,23 @@ def resolve_end_of_turn_stage(
             if lifesteal_pct > 0 and source_sid in match.state:
                 healer = match.state[source_sid]
                 heal_value = int(damage * lifesteal_pct)
-                gained = apply_player_healing(healer, heal_value)
-                totals["overhealing"] += max(0, heal_value - gained)
-                if gained > 0:
-                    effect_id = source.get("effect_id")
-                    source_name = effect_name(effect_id) if effect_id else "DoT"
+                effect_id = source.get("effect_id")
+                source_name = effect_name(effect_id) if effect_id else "DoT"
+                healing_result = resolve_player_produced_healing(
+                    healer,
+                    healer,
+                    heal_value,
+                    source_name=source_name,
+                )
+                gained = int(healing_result.get("healing_gained", 0) or 0)
+                totals["healing"] += gained
+                totals["overhealing"] += int(
+                    healing_result.get("overhealing", 0) or 0
+                )
+                if healing_result.get("twisted_by_mindgames"):
+                    match.log.append(str(healing_result.get("log") or ""))
+                elif gained > 0:
                     match.log.append(f"{sid_token(source_sid)} heals {gained} HP from {source_name}.")
-                    totals["healing"] += gained
 
         for source in end_summary.get("self_damage_sources", []):
             source_sid = source.get("source_sid")
@@ -1502,41 +1725,33 @@ def resolve_end_of_turn_stage(
             current_int = max(0, int(ps.stats.get("int", 0) or 0))
             heal_value = int(ps.res.hp_max * 0.03)
             if heal_value > 0 and not has_flag(ps, "cycloned"):
-                if has_effect(ps, "mindgames"):
-                    # This is self-source damage, so apply_damage cannot flip it
-                    # back into healing under the same Mindgames.
-                    match.log.append(
-                        f"{sid_token(sid)}'s Ancestral Knowledge is twisted by Mindgames into {heal_value} self-damage."
+                healing_result = resolve_player_produced_healing(
+                    ps,
+                    ps,
+                    heal_value,
+                    source_name="Ancestral Knowledge",
+                )
+                if healing_result.get("twisted_by_mindgames"):
+                    match.log.append(str(healing_result.get("log") or ""))
+                    # Preserve the established Ancestral Knowledge self-damage
+                    # attribution regression. Other twisted player healing does
+                    # not receive ordinary outgoing damage credit.
+                    hp_damage = int(
+                        healing_result.get("twisted_hp_damage", 0) or 0
                     )
-                    dealt_data = apply_damage(
-                        ps,
-                        ps,
-                        heal_value,
-                        sid,
-                        "Mindgames-twisted Ancestral Knowledge",
-                        mindgames_flip_damage=False,
-                        damage_instances=[heal_value],
-                        school="magical",
-                        subschool="shadow",
-                        allow_redirect=False,
-                        source_kind=DAMAGE_SOURCE_SELF,
-                    )
-                    hp_damage = int(dealt_data.get("hp_damage", 0) or 0)
-                    absorbed = int(dealt_data.get("absorbed", 0) or 0)
-                    absorbed_breakdown = list(dealt_data.get("absorbed_breakdown", []) or [])
                     if hp_damage > 0:
-                        totals = combat_totals_entry(match.combat_totals, sid)
-                        totals["damage"] += hp_damage
-                    if hp_damage + absorbed > 0:
-                        match.log.append(
-                            f"{sid_token(sid)} suffers {hp_damage + absorbed} damage from "
-                            f"Mindgames-twisted Ancestral Knowledge."
-                            f"{absorb_suffix(absorbed, absorbed_breakdown)}"
-                        )
+                        combat_totals_entry(
+                            match.combat_totals,
+                            sid,
+                        )["damage"] += hp_damage
                 else:
-                    gained = apply_player_healing(ps, heal_value)
+                    gained = int(
+                        healing_result.get("healing_gained", 0) or 0
+                    )
                     totals = combat_totals_entry(match.combat_totals, sid)
-                    totals["overhealing"] += max(0, heal_value - gained)
+                    totals["overhealing"] += int(
+                        healing_result.get("overhealing", 0) or 0
+                    )
                     if gained > 0:
                         match.log.append(f"{sid_token(sid)} restores {gained} HP from Ancestral Knowledge.")
                         totals["healing"] += int(gained)
@@ -1551,6 +1766,7 @@ def resolve_end_of_turn_stage(
         turn_context=turn_ctx,
         apply_damage=apply_damage,
         mindgames_flip_suffix=mindgames_flip_suffix,
+        resolve_player_produced_healing=resolve_player_produced_healing,
         before_dispatch=flush_deferred_damage_reaction_logs,
     )
     if periodic_activations:
@@ -2094,28 +2310,6 @@ def resolve_turn(match: MatchState) -> None:
             return "Immune!"
         return None
 
-    def apply_self_inflicted_magical_damage(ps: PlayerState, incoming: int) -> int:
-        value = max(0, int(incoming or 0))
-        if value <= 0:
-            return 0
-        if is_immune_all(ps):
-            return 0
-        if has_flag(ps, "cycloned"):
-            return 0
-        if has_effect(ps, "cloak_of_shadows"):
-            return 0
-        remaining, _, _ = consume_absorbs(ps, value)
-        if remaining <= 0:
-            return 0
-        ps.res.hp -= remaining
-        was_stealthed = is_stealthed(ps)
-        break_stealth_on_damage(ps, remaining)
-        if was_stealthed and not is_stealthed(ps):
-            match.log.append(f"{sid_token(ps.sid)} stealth broken by Mindgames.")
-        if current_form_id(ps) == "bear_form":
-            grant_resource(ps, "rage", remaining)
-        return remaining
-
     def resolve_effect_application(
         actor_sid: str,
         actor: PlayerState,
@@ -2381,7 +2575,12 @@ def resolve_turn(match: MatchState) -> None:
             actor.active_pet_id = None
         del actor.pets[pet_id]
 
-    def handle_pet_defeat(owner: PlayerState, pet: PetState) -> None:
+    def handle_pet_defeat(
+        owner: PlayerState,
+        pet: PetState,
+        *,
+        emit_log: bool = True,
+    ) -> None:
         template = PETS.get(pet.template_id, {})
         if template.get("permanent_death"):
             owner.dead_hunter_pets[pet.template_id] = True
@@ -2390,7 +2589,8 @@ def resolve_turn(match: MatchState) -> None:
             owner.active_pet_id = None
         if pet.id in owner.pets:
             del owner.pets[pet.id]
-        match.log.append(f"{pet.name} dies.")
+        if emit_log:
+            match.log.append(f"{pet.name} dies.")
 
     def summon_pet_from_template(actor: PlayerState, template_id: str) -> tuple[PetState | None, bool, str | None]:
         template = PETS.get(template_id, {})
@@ -2741,7 +2941,7 @@ def resolve_turn(match: MatchState) -> None:
                 rng=r,
                 set_cooldown=set_cooldown,
                 reset_cooldown=reset_cooldown,
-                apply_self_inflicted_magical_damage=apply_self_inflicted_magical_damage,
+                resolve_player_produced_healing=resolve_current_player_produced_healing,
                 clarity_of_mind_consumed=clarity_consumed,
             )
         )
@@ -2940,14 +3140,23 @@ def resolve_turn(match: MatchState) -> None:
             for hit_index in range(1, 4):
                 roll_power = roll("d4", r)
                 heal_value = _apply_clarity_of_mind_bonus(base_damage(intellect, 0.4, roll_power), clarity_consumed)
-                if has_effect(actor, "mindgames"):
-                    apply_self_inflicted_magical_damage(actor, heal_value)
-                    log_parts.append(f"Hit {hit_index}: Mindgames turns healing into {heal_value} self-damage.")
-                    continue
-                gained = apply_player_healing(actor, heal_value)
+                healing_result = resolve_current_player_produced_healing(
+                    actor,
+                    actor,
+                    heal_value,
+                    source_name="Penance (Self)",
+                )
+                gained = int(healing_result.get("healing_gained", 0) or 0)
                 healing += gained
-                overhealing += max(0, heal_value - gained)
-                log_parts.append(f"Hit {hit_index}: Restores {gained} HP.")
+                overhealing += int(
+                    healing_result.get("overhealing", 0) or 0
+                )
+                if healing_result.get("twisted_by_mindgames"):
+                    log_parts.append(
+                        f"Hit {hit_index}: {healing_result.get('log') or ''}"
+                    )
+                else:
+                    log_parts.append(f"Hit {hit_index}: Restores {gained} HP.")
             set_cooldown(actor, ability_id, ability)
             return {"damage": 0, "healing": healing, "overhealing": overhealing, "log": " ".join(log_parts), "ability_id": ability_id}
 
@@ -3262,18 +3471,22 @@ def resolve_turn(match: MatchState) -> None:
                         roll_power,
                     )
             if reduced > 0 and heal_on_hit > 0:
-                healed, twisted_by_mindgames = _apply_mindgames_aware_healing(
+                healing_result = resolve_current_player_produced_healing(
+                    actor,
                     actor,
                     heal_on_hit,
-                    apply_self_inflicted_magical_damage,
+                    source_name=str(ability.get("name") or "ability"),
                 )
+                healed = int(healing_result.get("healing_gained", 0) or 0)
                 total_healing += healed
-                if twisted_by_mindgames:
-                    log_parts.append(f"{prefix}Mindgames twists healing into {heal_on_hit} self-damage.")
+                if healing_result.get("twisted_by_mindgames"):
+                    log_parts.append(
+                        f"{prefix}{healing_result.get('log') or ''}"
+                    )
                 else:
-                    # A Mindgames twist converts the requested amount and is not
-                    # overhealing; only the cap loss on an applied heal counts.
-                    total_overhealing += max(0, heal_on_hit - healed)
+                    total_overhealing += int(
+                        healing_result.get("overhealing", 0) or 0
+                    )
                     log_parts.append(f"{prefix}Heals {healed} HP.")
 
             total_damage += reduced
@@ -3325,6 +3538,7 @@ def resolve_turn(match: MatchState) -> None:
                 ),
                 attacker_challenger_mode=action_challenger_mode,
                 attacker_outgoing_multiplier=action_passive_damage_multiplier,
+                resolve_player_produced_healing=resolve_current_player_produced_healing,
             )
             if bonus_damage > 0:
                 passive_bonus_damage_total += bonus_damage
@@ -3353,6 +3567,7 @@ def resolve_turn(match: MatchState) -> None:
                 ),
                 attacker_challenger_mode=action_challenger_mode,
                 attacker_outgoing_multiplier=action_passive_damage_multiplier,
+                resolve_player_produced_healing=resolve_current_player_produced_healing,
             )
             if strike_bonus_damage > 0:
                 passive_bonus_damage_total += strike_bonus_damage
@@ -3751,19 +3966,6 @@ def resolve_turn(match: MatchState) -> None:
             }
         return resolve_action(actor_sid, target_sid, action)
 
-    # Resolve both actions
-    result1 = finalize_action(sids[0], sids[1], a1, turn_ctx.immediate_contexts[sids[0]])
-    result2 = finalize_action(sids[1], sids[0], a2, turn_ctx.immediate_contexts[sids[1]])
-
-    # Action results credit only healing/overhealing here. result["damage"] is
-    # the pre-application calculated amount (pre-absorb / pre-immunity /
-    # pre-Mindgames) and is NOT authoritative damage done; direct-action damage
-    # is credited after apply_damage() from actual hp_damage below.
-    for sid, result in ((sids[0], result1), (sids[1], result2)):
-        totals = combat_totals_entry(match.combat_totals, sid)
-        totals["healing"] += int(result.get("healing", 0) or 0)
-        totals["overhealing"] += int(result.get("overhealing", 0) or 0)
-
     def absorb_suffix(absorbed: int, absorbed_breakdown: list[Dict[str, Any]] | None = None) -> str:
         if absorbed <= 0:
             return ""
@@ -4022,6 +4224,57 @@ def resolve_turn(match: MatchState) -> None:
             "subschool": subschool,
             "source_kind": source_kind,
         }
+
+    def resolve_current_player_produced_healing(
+        producer: PlayerState,
+        recipient: PlayerState | PetState,
+        requested_amount: int,
+        *,
+        source_name: str,
+        recipient_label: str | None = None,
+        source_kind: str | None = None,
+    ) -> PlayerHealingApplicationResult:
+        def defeat_pet_if_needed(pet: PetState) -> None:
+            owner = match.state.get(pet.owner_sid)
+            if owner is not None:
+                handle_pet_defeat(owner, pet, emit_log=False)
+
+        return resolve_player_produced_healing(
+            producer,
+            recipient,
+            requested_amount,
+            source_name=source_name,
+            recipient_label=recipient_label,
+            source_kind=source_kind,
+            apply_damage=apply_damage,
+            handle_pet_defeat=defeat_pet_if_needed,
+        )
+
+    # Resolve both actions only after the shared damage pipeline and the
+    # player-produced-healing service exist. Action-time Mindgames twists can
+    # therefore use the same immunity, absorb, reaction, and pet-defeat path as
+    # every other damage packet.
+    result1 = finalize_action(
+        sids[0],
+        sids[1],
+        a1,
+        turn_ctx.immediate_contexts[sids[0]],
+    )
+    result2 = finalize_action(
+        sids[1],
+        sids[0],
+        a2,
+        turn_ctx.immediate_contexts[sids[1]],
+    )
+
+    # Action results credit only healing/overhealing here. result["damage"] is
+    # the pre-application calculated amount (pre-absorb / pre-immunity /
+    # pre-Mindgames) and is NOT authoritative damage done; direct-action damage
+    # is credited after apply_damage() from actual hp_damage below.
+    for sid, result in ((sids[0], result1), (sids[1], result2)):
+        totals = combat_totals_entry(match.combat_totals, sid)
+        totals["healing"] += int(result.get("healing", 0) or 0)
+        totals["overhealing"] += int(result.get("overhealing", 0) or 0)
 
     def build_aoe_enemy_target_list(target: PlayerState) -> list[tuple[str, PlayerState | PetState]]:
         targets: list[tuple[str, PlayerState | PetState]] = [("champion", target)]
@@ -4506,6 +4759,7 @@ def resolve_turn(match: MatchState) -> None:
             actor=match.state[actor_sid],
             target=match.state[target_sid],
             apply_damage=apply_damage,
+            resolve_player_produced_healing=resolve_current_player_produced_healing,
             grant_resource=grant_resource,
             combat_totals=match.combat_totals,
             log=match.log,
@@ -4518,6 +4772,7 @@ def resolve_turn(match: MatchState) -> None:
         rng=r,
         turn_ctx=turn_ctx,
         apply_damage=apply_damage,
+        resolve_player_produced_healing=resolve_current_player_produced_healing,
         absorb_suffix=absorb_suffix,
         mindgames_flip_suffix=mindgames_flip_suffix,
         should_miss_due_to_stealth=should_miss_due_to_stealth,

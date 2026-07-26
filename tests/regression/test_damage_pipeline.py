@@ -1031,6 +1031,58 @@ def scenario_thunderfury_heal_proc_restores_expected_amount() -> bool:
     raise AssertionError("Could not find deterministic Thunderfury heal proc seed in range")
 
 
+def scenario_mindgames_player_on_hit_healing_is_terminal() -> bool:
+    control = make_match(
+        "warrior",
+        "priest",
+        p1_items={"weapon": "thunderfury"},
+        seed=5,
+    )
+    warrior_sid, _ = control.players
+    warrior = control.state[warrior_sid]
+    warrior.res.hp -= 40
+    hp_before = warrior.res.hp
+    submit_turn(control, "overpower", _DEF_PASS)
+    heal_line = next(
+        line for line in _turn_lines(control, 1)
+        if "draws strength from Thunderfury" in line
+    )
+    heal_match = re.search(r"healing (\d+) HP\.", heal_line)
+    assert heal_match is not None
+    requested = int(heal_match.group(1))
+    assert warrior.res.hp - hp_before == requested
+
+    twisted = make_match(
+        "warrior",
+        "priest",
+        p1_items={"weapon": "thunderfury"},
+        seed=5,
+    )
+    twisted_sid, _ = twisted.players
+    twisted_warrior = twisted.state[twisted_sid]
+    twisted_warrior.res.hp -= 40
+    effects.apply_effect_by_id(
+        twisted_warrior,
+        "mindgames",
+        overrides={"duration": 2},
+    )
+    twisted_hp_before = twisted_warrior.res.hp
+    submit_turn(twisted, "overpower", _DEF_PASS)
+    twisted_lines = _turn_lines(twisted, 1)
+    assert twisted_warrior.res.hp == twisted_hp_before - requested
+    assert any(
+        f"Mindgames twists {requested} healing from Thunderfury, Blessed Blade of the Windseeker into Shadow damage" in line
+        and f"{twisted_sid[:5]} takes {requested} damage." in line
+        for line in twisted_lines
+    )
+    totals = twisted.combat_totals[twisted_sid]
+    assert totals["healing"] == 0 and totals["overhealing"] == 0
+    assert not any("draws strength from Thunderfury" in line for line in twisted_lines)
+    twist_line = next(line for line in twisted_lines if "Mindgames twists" in line)
+    assert "damage into healing" not in twist_line
+    return True
+
+
 def scenario_azzinoth_strike_again_deals_secondary_damage() -> bool:
     for seed in range(1, 600):
         baseline = make_match("rogue", "warrior", seed=seed)
