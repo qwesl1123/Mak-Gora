@@ -397,6 +397,12 @@ Current load-bearing application behavior, pinned by regression tests; do not ch
 * Pet HP application (`pet.hp`) remains outside this player-only helper contract.
 * Do not add a universal healing pipeline, healing modifier stack, or entity-generic healing abstraction without a concrete mechanic that needs it. Overhealing is tracked only through the combat-total counters described below, not through a per-event ledger.
 
+## Mindgames damage-to-healing contract
+
+Mindgames damage conversion is producer-aware and final-recipient entity-aware. Player-produced damage carries an explicit `mindgames_flip_damage` packet/action flag; `apply_damage()` must never infer the flip from its `source` object because autonomous pet, totem, and summon attacks may pass their owner as that object and do not inherit the owner's Mindgames state.
+
+After redirects, immunity, and mitigation resolve, every eligible champion or pet recipient converts independently before absorbs or HP damage. A converted packet restores the final entity's HP up to its own maximum, consumes no absorbs, triggers no post-damage reactions, and contributes zero actual damage. Its positive nominal `mindgames_healing` still counts as a resolved hit for attached effects even when the recipient gains zero HP at full health. AoE producers must forward the same explicit action snapshot to every champion and pet packet.
+
 ## Healing accounting policy
 
 Combat totals (`match.combat_totals`, shaped by `models.COMBAT_TOTAL_KEYS` and accessed through `models.combat_totals_entry()`) carry five counters per combatant SID:

@@ -173,7 +173,9 @@ class DamageApplicationResult(TypedDict, total=False):
     # Actual HP the flip target gained (capped at hp_max). Healing/overhealing
     # totals and flip-log wording use this, never the nominal amount.
     mindgames_healing_gained: int
-    # SID of the player the flip healed; only set on the flip path (for logs).
+    # Entity-aware visible label for the player or pet healed by the flip.
+    mindgames_healing_target_label: str
+    # SID of the player the flip healed; omitted for pet recipients.
     mindgames_healing_target_sid: Optional[str]
     redirected_to: Optional[str]  # redirect pet name; only on the full path
     redirect_log: Optional[str]
@@ -2038,8 +2040,10 @@ def resolve_turn(match: MatchState) -> None:
             pet = target_entity.pets.get(pet_id) if pet_id else None
             if pet and pet.hp > 0:
                 redirected_pet_name = pet.name
-                redirect_log = f"{pet.name} intercepts {source_ability_name} for {sid_token(target_label)}."
-                return pet, pet.name, False, redirected_pet_name, redirect_log
+                owner_label = sid_token(target_entity.sid)
+                pet_label = f"{owner_label}'s {pet.name}"
+                redirect_log = f"{pet.name} intercepts {source_ability_name} for {owner_label}."
+                return pet, pet_label, False, redirected_pet_name, redirect_log
         return target_entity, target_label, is_player_entity, redirected_pet_name, redirect_log
 
     # Resolution layer: pre_resolution_protection
@@ -3782,8 +3786,10 @@ def resolve_turn(match: MatchState) -> None:
         flipped_heal = int(dealt_data.get("mindgames_healing", 0) or 0)
         if flipped_heal > 0:
             gained = int(dealt_data.get("mindgames_healing_gained", 0) or 0)
-            healed_sid = dealt_data.get("mindgames_healing_target_sid")
-            healed_label = sid_token(str(healed_sid)) if healed_sid else "the target"
+            healed_label = str(dealt_data.get("mindgames_healing_target_label") or "")
+            if not healed_label:
+                healed_sid = dealt_data.get("mindgames_healing_target_sid")
+                healed_label = sid_token(str(healed_sid)) if healed_sid else "the target"
             return f" Mindgames flips {flipped_heal} damage into healing; {healed_label} restores {gained} HP."
         return ""
 
@@ -3914,37 +3920,51 @@ def resolve_turn(match: MatchState) -> None:
                     school=normalized_school, subschool=subschool, redirect_log=redirect_log, source_kind=source_kind
                 )
 
-        if is_player_target and mindgames_flip_damage and source.sid != target.sid:
+        is_self_target = is_player_target and source.sid == target.sid
+        if mindgames_flip_damage and not is_self_target:
             # ``mindgames_healing`` must stay the nominal converted damage so
             # apply_direct_damage_dot() still sees the hit as resolved even
             # when the target is at full HP and gains nothing. The actual gain
             # drives healing/overhealing totals and the flip-log wording.
-            actual_gained = apply_player_healing(target, incoming)
+            if is_player_target:
+                actual_gained = apply_player_healing(target, incoming)
+                healing_target_label = sid_token(target.sid)
+                fallback_caster_sid = target.sid
+            else:
+                hp_before = int(target.hp)
+                target.hp = min(int(target.hp_max), hp_before + incoming)
+                actual_gained = int(target.hp) - hp_before
+                healing_target_label = str(target_sid or f"{sid_token(target.owner_sid)}'s {target.name}")
+                fallback_caster_sid = target.owner_sid
             # Credit the conversion to the player who applied Mindgames: the
             # debuff on the damage source carries its caster's source_sid. Fall
-            # back to the healed target only if the metadata is missing (in
-            # current 1v1 play the healed target is the caster).
+            # back to the healed player or pet owner only if that metadata is
+            # missing (in current 1v1 play that combatant is the caster).
             mindgames_fx = get_effect(source, "mindgames") or {}
             caster_sid = mindgames_fx.get("source_sid")
             if not caster_sid or caster_sid not in match.state:
-                caster_sid = target_sid
+                caster_sid = fallback_caster_sid
             caster_totals = combat_totals_entry(match.combat_totals, caster_sid)
             caster_totals["healing"] += actual_gained
             caster_totals["overhealing"] += max(0, incoming - actual_gained)
             instance_results = [{"absorbed": 0, "hp_damage": value, "absorbed_breakdown": []} for value in instance_values]
-            return {
+            flip_result: DamageApplicationResult = {
                 "hp_damage": 0,
                 "absorbed": 0,
                 "absorbed_breakdown": [],
                 "instances": instance_results,
                 "mindgames_healing": incoming,
                 "mindgames_healing_gained": actual_gained,
-                "mindgames_healing_target_sid": target_sid,
+                "mindgames_healing_target_label": healing_target_label,
+                "redirected_to": redirected_to,
                 "school": normalized_school,
                 "subschool": subschool,
                 "source_kind": source_kind,
                 "redirect_log": redirect_log,
             }
+            if is_player_target:
+                flip_result["mindgames_healing_target_sid"] = target.sid
+            return flip_result
 
         instance_results, total_absorbed, total_remaining, total_breakdown = _apply_damage_application_stage(
             target,
@@ -4050,12 +4070,21 @@ def resolve_turn(match: MatchState) -> None:
             pet = target_entity
             if not pet or pet.hp <= 0:
                 continue
+            if pet.template_id == "imp":
+                imp_ordinal = imp_ordinal_by_id.get(pet.id)
+                if imp_ordinal:
+                    pet_label = f"{target_owner_name}'s {pet.name} (imp{imp_ordinal})"
+                else:
+                    pet_label = f"{target_owner_name}'s {pet.name}"
+            else:
+                pet_label = f"{target_owner_name}'s {pet.name}"
             pet_result = apply_damage(
                 actor,
                 pet,
                 incoming,
-                pet.name,
+                pet_label,
                 source_name,
+                bool(mindgames_flip_damage),
                 school=school,
                 subschool=subschool,
                 damage_instances=instances,
@@ -4064,25 +4093,20 @@ def resolve_turn(match: MatchState) -> None:
             )
             remaining = int(pet_result.get("hp_damage", 0) or 0)
             absorbed = int(pet_result.get("absorbed", 0) or 0)
+            flipped_heal = int(pet_result.get("mindgames_healing", 0) or 0)
             breakdown = pet_result.get("absorbed_breakdown", [])
-            total_incoming = remaining + absorbed
+            total_incoming = remaining + absorbed + flipped_heal
             if total_incoming > 0:
-                if pet.template_id == "imp":
-                    imp_ordinal = imp_ordinal_by_id.get(pet.id)
-                    if imp_ordinal:
-                        pet_label = f"{target_owner_name}'s {pet.name} (imp{imp_ordinal})"
-                    else:
-                        pet_label = f"{target_owner_name}'s {pet.name}"
-                else:
-                    pet_label = f"{target_owner_name}'s {pet.name}"
                 pet_log = f"{source_name} hits {pet_label} for {total_incoming} damage."
                 if absorbed > 0:
                     pet_log = f"{pet_log} {absorb_suffix(absorbed, breakdown).strip()}"
+                pet_log = f"{pet_log}{mindgames_flip_suffix(pet_result)}"
                 match.log.append(pet_log)
             if remaining > 0:
                 pet_total_damage += remaining
-                if pet.hp > 0:
-                    pet_hits.append({"pet": pet, "damage_data": pet_result})
+            resolved_hit_total = remaining + flipped_heal
+            if resolved_hit_total > 0 and pet.hp > 0:
+                pet_hits.append({"pet": pet, "damage_data": pet_result})
             if pet.hp <= 0:
                 handle_pet_defeat(target, pet)
 
@@ -4402,6 +4426,7 @@ def resolve_turn(match: MatchState) -> None:
             ability.get("name", "AoE"),
             result.get("school") or "physical",
             result.get("subschool"),
+            mindgames_flip_damage=bool(result.get("mindgames_flip_damage")),
             skip_champion=True,
             damage_instances=raw_instances if isinstance(raw_instances, list) else None,
             max_targets=ability.get("max_targets"),

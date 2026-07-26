@@ -643,6 +643,67 @@ def scenario_mindgames_shield_of_vengeance_explosion_interactions() -> bool:
     return True
 
 
+def scenario_mindgames_shield_of_vengeance_converts_each_entity() -> bool:
+    match = make_match("paladin", "priest", seed=9140)
+    paladin_sid, priest_sid = match.players
+    paladin = match.state[paladin_sid]
+    priest = match.state[priest_sid]
+    shadowfiend = PetState(
+        id="p2_shadowfiend",
+        template_id="shadowfiend",
+        name="Shadowfiend",
+        owner_sid=priest_sid,
+        hp=40,
+        hp_max=100,
+        stats={"def": 0, "magic_resist": 0},
+    )
+    priest.pets[shadowfiend.id] = shadowfiend
+    priest.res.hp = priest.res.hp_max - 30
+    effects.add_absorb(
+        priest,
+        12,
+        source_name="Power Word: Shield",
+        effect_id="power_word_shield",
+    )
+    absorb_before = effects.absorb_total(priest)
+    effects.apply_effect_by_id(
+        paladin,
+        "mindgames",
+        overrides={"duration": 2, "source_sid": priest_sid},
+    )
+    effects.apply_effect_by_id(
+        paladin,
+        "shield_of_vengeance",
+        overrides={"duration": 1, "absorbed": 18},
+    )
+    priest_hp_before = priest.res.hp
+    pet_hp_before = shadowfiend.hp
+
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+
+    turn_lines = _turn_lines(match, 1)
+    priest_gained = priest.res.hp - priest_hp_before
+    pet_gained = shadowfiend.hp - pet_hp_before
+    flip_lines = [line for line in turn_lines if "Shield of Vengeance hits" in line and "Mindgames flips" in line]
+    nominal_total = sum(
+        int(value)
+        for line in flip_lines
+        for value in re.findall(r"Mindgames flips (\d+) damage into healing", line)
+    )
+    assert priest_gained == 18 and pet_gained == 18, "SoV should independently heal the enemy champion and pet for the resolved explosion packet"
+    assert effects.absorb_total(priest) == absorb_before, "A Mindgames-converted SoV packet must not consume the champion's absorb"
+    assert match.combat_totals[paladin_sid]["damage"] == 0, "Converted SoV champion and pet packets must credit zero Paladin damage"
+    assert match.combat_totals[priest_sid]["healing"] == priest_gained + pet_gained, "The Mindgames caster should receive effective healing from both entity conversions"
+    assert match.combat_totals[priest_sid]["overhealing"] == nominal_total - priest_gained - pet_gained, "SoV conversion overhealing should use nominal minus actual gain across both recipients"
+    assert len(flip_lines) == 2 and nominal_total == 36, "SoV should emit one 18-point conversion for the champion and one for the pet"
+    assert any(f"{priest_sid[:5]}'s Shadowfiend restores 18 HP." in line for line in flip_lines), "The pet flip log should identify the Priest's Shadowfiend"
+    explosion_idx = turn_lines.index("Shield of Vengeance explodes!")
+    champion_idx = next(i for i, line in enumerate(turn_lines) if line.startswith(f"Shield of Vengeance hits {priest_sid[:5]} "))
+    pet_idx = next(i for i, line in enumerate(turn_lines) if f"{priest_sid[:5]}'s Shadowfiend" in line and "Shield of Vengeance hits" in line)
+    assert explosion_idx < champion_idx < pet_idx, "SoV entity fanout must preserve explosion, champion, then pet log ordering"
+    return True
+
+
 def scenario_mass_dispel_selective_removal() -> bool:
     match = make_match("priest", "paladin", seed=123)
     pal = match.state[match.players[1]]
@@ -924,6 +985,161 @@ def scenario_hunter_multi_shot_aoe() -> bool:
         elif "(imp3)" in line:
             observed.append("imp3")
     assert observed[:3] == ["imp1", "imp2", "imp3"], "Multi-Shot pet hit order should be deterministic"
+    return True
+
+
+def scenario_mindgames_ordinary_aoe_converts_each_entity() -> bool:
+    match = make_match("hunter", "warlock", seed=9141)
+    hunter_sid, warlock_sid = match.players
+    hunter = match.state[hunter_sid]
+    warlock = match.state[warlock_sid]
+    hunter.stats["acc"] = 999
+    warlock.stats["eva"] = 0
+    warlock.stats["def"] = 0
+    warlock.res.hp = warlock.res.hp_max - 50
+    pets = {
+        "p2_imp_1": PetState(
+            id="p2_imp_1",
+            template_id="imp",
+            name="Imp",
+            owner_sid=warlock_sid,
+            hp=20,
+            hp_max=70,
+            stats={"def": 0, "magic_resist": 0},
+        ),
+        "p2_imp_2": PetState(
+            id="p2_imp_2",
+            template_id="imp",
+            name="Imp",
+            owner_sid=warlock_sid,
+            hp=70,
+            hp_max=70,
+            stats={"def": 0, "magic_resist": 0},
+        ),
+        "p2_imp_3": PetState(
+            id="p2_imp_3",
+            template_id="imp",
+            name="Imp",
+            owner_sid=warlock_sid,
+            hp=30,
+            hp_max=70,
+            stats={"def": 0, "magic_resist": 0},
+        ),
+    }
+    warlock.pets.update(pets)
+    effects.apply_effect_by_id(pets["p2_imp_3"], "divine_shield", overrides={"duration": 2})
+    effects.add_absorb(
+        warlock,
+        9,
+        source_name="Power Word: Shield",
+        effect_id="power_word_shield",
+    )
+    absorb_before = effects.absorb_total(warlock)
+    effects.apply_effect_by_id(
+        hunter,
+        "mindgames",
+        overrides={"duration": 2, "source_sid": warlock_sid},
+    )
+    champion_hp_before = warlock.res.hp
+    pet_hp_before = {pet_id: pet.hp for pet_id, pet in pets.items()}
+
+    submit_turn(match, "multi_shot", _DEF_PASS)
+
+    turn_lines = _turn_lines(match, 1)
+    flip_lines = [line for line in turn_lines if "Mindgames flips" in line]
+    parsed_flips = [
+        (int(nominal), str(label), int(gained))
+        for line in flip_lines
+        for nominal, label, gained in re.findall(
+            r"Mindgames flips (\d+) damage into healing; (.+?) restores (\d+) HP\.",
+            line,
+        )
+    ]
+    champion_gained = warlock.res.hp - champion_hp_before
+    imp1_gained = pets["p2_imp_1"].hp - pet_hp_before["p2_imp_1"]
+    imp2_gained = pets["p2_imp_2"].hp - pet_hp_before["p2_imp_2"]
+    assert champion_gained > 0 and imp1_gained > 0, "Multi-Shot should heal the injured champion and injured pet under Mindgames"
+    assert imp2_gained == 0 and pets["p2_imp_2"].hp == pets["p2_imp_2"].hp_max, "A full-health pet should keep a positive nominal conversion but gain zero capped HP"
+    assert pets["p2_imp_3"].hp == pet_hp_before["p2_imp_3"], "An immune pet should neither take damage nor receive converted healing"
+    assert effects.absorb_total(warlock) == absorb_before, "The champion conversion should occur before and preserve absorbs"
+    assert len(parsed_flips) == 3, "Exactly the champion and two non-immune pets should resolve Mindgames conversions"
+    assert any(label == f"{warlock_sid[:5]}'s Imp (imp1)" and gained == imp1_gained for _, label, gained in parsed_flips), "The first Imp log should identify the actual numbered pet and its gain"
+    assert any(label == f"{warlock_sid[:5]}'s Imp (imp2)" and gained == 0 for _, label, gained in parsed_flips), "The full-health second Imp should retain its distinct label and report zero actual gain"
+    assert not any("(imp3)" in label for _, label, _ in parsed_flips), "The immune third Imp must not be treated as a resolved hit"
+    actual_total = champion_gained + imp1_gained + imp2_gained
+    nominal_total = sum(nominal for nominal, _, _ in parsed_flips)
+    assert match.combat_totals[hunter_sid]["damage"] == 0, "Converted champion and pet packets must add zero Hunter damage credit"
+    assert match.combat_totals[warlock_sid]["healing"] == actual_total, "The Mindgames caster should receive the sum of actual champion and pet healing"
+    assert match.combat_totals[warlock_sid]["overhealing"] == nominal_total - actual_total, "Full-health pet conversion should be credited as caster overhealing"
+
+    control = make_match("hunter", "warlock", seed=9141)
+    control_hunter_sid, control_warlock_sid = control.players
+    control_hunter = control.state[control_hunter_sid]
+    control_warlock = control.state[control_warlock_sid]
+    control_hunter.stats["acc"] = 999
+    control_warlock.stats.update({"eva": 0, "def": 0})
+    control_warlock.pets["p2_imp_1"] = PetState(
+        id="p2_imp_1",
+        template_id="imp",
+        name="Imp",
+        owner_sid=control_warlock_sid,
+        hp=70,
+        hp_max=70,
+        stats={"def": 0, "magic_resist": 0},
+    )
+    control_champion_before = control_warlock.res.hp
+    control_pet_before = control_warlock.pets["p2_imp_1"].hp
+    submit_turn(control, "multi_shot", _DEF_PASS)
+    assert control_warlock.res.hp < control_champion_before, "Normal Multi-Shot champion damage must remain unchanged without Mindgames"
+    assert control_warlock.pets["p2_imp_1"].hp < control_pet_before, "Normal Multi-Shot pet damage must remain unchanged without Mindgames"
+    assert control.combat_totals[control_hunter_sid]["damage"] > 0, "Normal AoE should still credit actual champion and pet HP damage"
+    assert not any("Mindgames flips" in line for line in _turn_lines(control, 1)), "The non-Mindgames control should emit no conversion logs"
+    return True
+
+
+def scenario_mindgames_converted_aoe_pet_hit_still_applies_dot() -> bool:
+    match = make_match("warrior", "warlock", seed=9142)
+    warrior_sid, warlock_sid = match.players
+    warrior = match.state[warrior_sid]
+    warlock = match.state[warlock_sid]
+    warrior.res.rage = warrior.res.rage_max
+    warrior.stats["atk"] = 20
+    active_imp = PetState(
+        id="p2_imp_1",
+        template_id="imp",
+        name="Imp",
+        owner_sid=warlock_sid,
+        hp=100,
+        hp_max=100,
+        stats={"def": 0, "magic_resist": 0},
+    )
+    immune_imp = PetState(
+        id="p2_imp_2",
+        template_id="imp",
+        name="Imp",
+        owner_sid=warlock_sid,
+        hp=100,
+        hp_max=100,
+        stats={"def": 0, "magic_resist": 0},
+    )
+    warlock.pets.update({active_imp.id: active_imp, immune_imp.id: immune_imp})
+    effects.apply_effect_by_id(immune_imp, "divine_shield", overrides={"duration": 2})
+    effects.apply_effect_by_id(
+        warrior,
+        "mindgames",
+        overrides={"duration": 2, "source_sid": warlock_sid},
+    )
+
+    submit_turn(match, "dragon_roar", _DEF_PASS)
+
+    active_bleed = next((fx for fx in active_imp.effects if fx.get("id") == "dragon_roar_bleed"), None)
+    immune_bleed = next((fx for fx in immune_imp.effects if fx.get("id") == "dragon_roar_bleed"), None)
+    turn_lines = _turn_lines(match, 1)
+    assert any("Dragon Roar hits" in line and "(imp1)" in line and "Mindgames flips" in line for line in turn_lines), "The direct pet packet should be logged as a numbered resolved Mindgames conversion"
+    assert active_bleed is not None, "A fully converted pet hit must remain successful for attached Dragon Roar Bleed application"
+    assert immune_bleed is None, "An immune zero-incoming pet packet must not receive the attached DoT"
+    assert any("Dragon Roar applies bleed on Warlock's Imp." in line for line in turn_lines), "The converted pet hit should keep the attached-DoT application log"
+    assert not any("(imp2)" in line and "Mindgames flips" in line for line in turn_lines), "The immune pet must not emit a conversion suffix"
     return True
 
 

@@ -342,6 +342,46 @@ def scenario_hunter_boar_redirect() -> bool:
     return True
 
 
+def scenario_mindgames_redirect_heals_final_pet_entity() -> bool:
+    match = make_match("warlock", "hunter", seed=9143)
+    warlock_sid, hunter_sid = match.players
+    warlock = match.state[warlock_sid]
+    hunter = match.state[hunter_sid]
+    submit_turn(match, _DEF_PASS, "call_boar")
+    boar = _active_pet(hunter, "barrens_boar")
+    assert boar is not None, "Setup: the Hunter should have a live Barrens Boar"
+    boar.hp = max(1, boar.hp_max - 30)
+    hunter.res.hp = hunter.res.hp_max - 20
+    warlock.stats["acc"] = 999
+    hunter.stats["eva"] = 0
+    effects.apply_effect_by_id(
+        hunter,
+        "blocking_defence",
+        overrides={"duration": 1, "redirect_to_pet_id": boar.id},
+    )
+    effects.apply_effect_by_id(
+        warlock,
+        "mindgames",
+        overrides={"duration": 2, "source_sid": hunter_sid},
+    )
+    hunter_hp_before = hunter.res.hp
+    boar_hp_before = boar.hp
+    warlock_damage_before = match.combat_totals[warlock_sid]["damage"]
+    hunter_healing_before = match.combat_totals[hunter_sid]["healing"]
+
+    submit_turn(match, "drain_life", _DEF_PASS)
+
+    turn_lines = _turn_lines(match, 2)
+    boar_gained = boar.hp - boar_hp_before
+    assert hunter.res.hp == hunter_hp_before, "Redirected damage should not heal or damage the original champion target"
+    assert boar_gained > 0, "Mindgames should heal the final redirected pet recipient"
+    assert match.combat_totals[warlock_sid]["damage"] == warlock_damage_before, "A converted redirected packet must credit zero attacker damage"
+    assert match.combat_totals[hunter_sid]["healing"] - hunter_healing_before == boar_gained, "The Mindgames caster should receive the redirected pet's actual healing credit"
+    assert any("Barrens Boar intercepts Drain Life" in line for line in turn_lines), "The existing redirect log should remain present"
+    assert any(f"{hunter_sid[:5]}'s Barrens Boar restores {boar_gained} HP." in line for line in turn_lines), "The conversion log should label the final pet entity, not store its name as a SID"
+    return True
+
+
 def scenario_hunter_boar_redirects_single_target_cc() -> bool:
     match = make_match("hunter", "rogue", seed=123)
     hunter_sid, _ = match.players
@@ -742,6 +782,39 @@ def scenario_pet_action_text_persists_on_miss() -> bool:
     submit_turn(priest_miss_match, _DEF_PASS, _DEF_PASS)
     latest_priest_turn = priest_miss_match.log[priest_miss_match.log.index("Turn 2") + 1:]
     assert any("Shadowfiend melees the target. Target evades the attack — Miss!" in line for line in latest_priest_turn), "Shadowfiend evade logs should keep its melee action text"
+    return True
+
+
+def scenario_mindgames_does_not_flip_autonomous_pet_damage() -> bool:
+    match = make_match("warlock", "priest", seed=9144)
+    warlock_sid, priest_sid = match.players
+    warlock = match.state[warlock_sid]
+    priest = match.state[priest_sid]
+    submit_turn(match, "summon_imp", _DEF_PASS)
+    imp = _active_pet(warlock, "imp")
+    assert imp is not None, "Setup: Summon Imp should create an autonomous attacker"
+    imp.stats.update({"int": 50, "acc": 999})
+    priest.stats.update({"eva": 0, "def": 0, "magic_resist": 0})
+    effects.apply_effect_by_id(
+        warlock,
+        "mindgames",
+        overrides={"duration": 2, "source_sid": priest_sid},
+    )
+    priest_hp_before = priest.res.hp
+    warlock_damage_before = match.combat_totals[warlock_sid]["damage"]
+    priest_healing_before = match.combat_totals[priest_sid]["healing"]
+    priest_overhealing_before = match.combat_totals[priest_sid]["overhealing"]
+
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+
+    turn_lines = _turn_lines(match, 2)
+    pet_damage = priest_hp_before - priest.res.hp
+    assert pet_damage > 0, "The autonomous Imp should deal normal HP damage while its owner is debuffed"
+    assert match.combat_totals[warlock_sid]["damage"] - warlock_damage_before == pet_damage, "Autonomous pet damage should retain normal owner attribution"
+    assert match.combat_totals[priest_sid]["healing"] == priest_healing_before, "Autonomous pet damage must not grant Mindgames healing to the caster"
+    assert match.combat_totals[priest_sid]["overhealing"] == priest_overhealing_before, "Autonomous pet damage must not grant Mindgames overhealing"
+    assert any("Imp casts Firebolt for" in line for line in turn_lines), "The pet should keep its ordinary damage log"
+    assert not any("Mindgames flips" in line for line in turn_lines), "apply_damage must not infer Mindgames from the owner object passed as pet source"
     return True
 
 
