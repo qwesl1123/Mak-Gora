@@ -12,6 +12,7 @@ from typing import Any, Callable, Iterator
 
 from harness import (
     PetState,
+    _turn_lines,
     effects,
     make_match,
     resolver,
@@ -88,6 +89,26 @@ def _temporary_periodic_content(
 
 def _unused_apply_damage(*args: Any, **kwargs: Any) -> dict[str, Any]:
     raise AssertionError("The synthetic stage test did not expect damage application")
+
+
+def _resolve_test_player_healing(
+    producer: Any,
+    recipient: Any,
+    requested_amount: int,
+    *,
+    source_name: str,
+    recipient_label: str | None = None,
+    source_kind: str | None = None,
+) -> dict[str, Any]:
+    return resolver.resolve_player_produced_healing(
+        producer,
+        recipient,
+        requested_amount,
+        source_name=source_name,
+        recipient_label=recipient_label,
+        source_kind=source_kind,
+        apply_damage=_unused_apply_damage,
+    )
 
 
 @contextmanager
@@ -818,6 +839,7 @@ def scenario_periodic_self_heal_schedule_and_rng() -> bool:
                 rng=stage_rng,
                 turn_context=None,
                 apply_damage=_unused_apply_damage,
+                resolve_player_produced_healing=_resolve_test_player_healing,
             )
             assert len(activations) == 1
             activation = activations[0]
@@ -850,6 +872,7 @@ def scenario_periodic_self_heal_accounting_and_exceptions() -> bool:
         rng=random.Random(9430),
         turn_context=None,
         apply_damage=_unused_apply_damage,
+        resolve_player_produced_healing=_resolve_test_player_healing,
     )
     assert near_cap_owner.res.hp == near_cap_owner.res.hp_max
     assert near_cap.combat_totals[near_cap_sid]["healing"] == 1
@@ -870,6 +893,7 @@ def scenario_periodic_self_heal_accounting_and_exceptions() -> bool:
         rng=random.Random(9431),
         turn_context=None,
         apply_damage=_unused_apply_damage,
+        resolve_player_produced_healing=_resolve_test_player_healing,
     )
     assert full.combat_totals[full_sid]["healing"] == 0
     assert full.combat_totals[full_sid]["overhealing"] == 3
@@ -910,6 +934,7 @@ def scenario_periodic_self_heal_accounting_and_exceptions() -> bool:
         rng=random.Random(9434),
         turn_context=None,
         apply_damage=_unused_apply_damage,
+        resolve_player_produced_healing=_resolve_test_player_healing,
     )
     assert cyclone_owner.res.hp == cyclone_hp
     assert cycloned.combat_totals == totals_before
@@ -924,23 +949,22 @@ def scenario_periodic_self_heal_accounting_and_exceptions() -> bool:
     )
     mindgames_sid = mindgames.players[0]
     mindgames_owner = mindgames.state[mindgames_sid]
-    mindgames_owner.res.hp -= 20
     effects.apply_effect_by_id(
         mindgames_owner,
         "mindgames",
         overrides={"duration": 2, "source_sid": mindgames.players[1]},
     )
     mindgames_hp = mindgames_owner.res.hp
-    periodic_items.resolve_periodic_item_stage(
-        match=mindgames,
-        rng=random.Random(9435),
-        turn_context=None,
-        apply_damage=_unused_apply_damage,
-    )
-    assert mindgames_owner.res.hp == mindgames_hp + 4
-    assert mindgames.combat_totals[mindgames_sid]["healing"] == 4
-    assert not any("Mindgames" in line for line in mindgames.log), \
-        "Legacy item healing must not be converted by Mindgames"
+    submit_turn(mindgames, _DEF_PASS, _DEF_PASS)
+    assert mindgames_owner.res.hp == mindgames_hp - 4
+    assert mindgames.combat_totals[mindgames_sid]["healing"] == 0
+    assert mindgames.combat_totals[mindgames_sid]["overhealing"] == 0
+    assert mindgames.combat_totals[mindgames_sid]["damage"] == 0
+    assert any(
+        "Mindgames twists 4 healing from Staff of Immortality into Shadow damage" in line
+        and f"{mindgames_sid[:5]} takes 4 damage." in line
+        for line in _turn_lines(mindgames, 1)
+    ), "Player-owned periodic item healing must convert through the shared resolver"
 
     ice_block = make_match(
         "mage",
@@ -958,6 +982,7 @@ def scenario_periodic_self_heal_accounting_and_exceptions() -> bool:
         rng=random.Random(9436),
         turn_context=None,
         apply_damage=_unused_apply_damage,
+        resolve_player_produced_healing=_resolve_test_player_healing,
     )
     assert ice_block_owner.res.hp == ice_block_hp + 3
     assert ice_block.combat_totals[ice_block_sid]["healing"] == 3, \
@@ -986,6 +1011,7 @@ def scenario_staff_dispatches_before_vial_for_same_owner() -> bool:
             rng=random.Random(9440),
             turn_context=None,
             apply_damage=_capture_damage_calls(damage_calls),
+            resolve_player_produced_healing=_resolve_test_player_healing,
         )
 
     assert [

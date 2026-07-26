@@ -9,7 +9,6 @@ from typing import Any, Callable, Dict, Mapping, Sequence
 from .damage_types import DAMAGE_SOURCE_PERIODIC_ITEM
 from .dice import roll
 from .effects import (
-    apply_player_healing,
     damage_multiplier_from_passives,
     has_effect,
     has_flag,
@@ -59,6 +58,7 @@ class PeriodicItemHandlerContext:
     mindgames_flip_suffix: Callable[[Mapping[str, Any]], str] = (
         _no_mindgames_flip_suffix
     )
+    resolve_player_produced_healing: Callable[..., Mapping[str, Any]] | None = None
 
 
 PeriodicItemHandler = Callable[
@@ -193,21 +193,37 @@ def periodic_self_heal(
     if type(heal_value) is not int or heal_value < 1:
         raise ValueError("periodic_self_heal requires value to be a positive integer")
 
-    # Preserve the legacy item exception: Cyclone suppresses these heals, but
-    # Mindgames and other immunity-all states do not.
+    # Cyclone suppresses the healing event entirely, before Mindgames can
+    # convert it.
     if has_flag(owner, "cycloned"):
         return
 
-    gained = apply_player_healing(owner, heal_value)
-    totals = combat_totals_entry(context.match.combat_totals, activation.owner_sid)
-    totals["healing"] += gained
-    totals["overhealing"] += heal_value - gained
-
     item = ITEMS.get(activation.item_id, {})
     item_name = str(item.get("name") or activation.item_id)
-    context.match.log.append(
-        f"{owner.sid[:5]} heals {gained} HP from {item_name}."
+    if context.resolve_player_produced_healing is None:
+        raise RuntimeError(
+            "player-produced healing requires "
+            "resolve_player_produced_healing"
+        )
+    healing_result = context.resolve_player_produced_healing(
+        owner,
+        owner,
+        heal_value,
+        source_name=item_name,
     )
+    gained = int(healing_result.get("healing_gained", 0) or 0)
+    totals = combat_totals_entry(context.match.combat_totals, activation.owner_sid)
+    totals["healing"] += gained
+    totals["overhealing"] += int(
+        healing_result.get("overhealing", heal_value - gained) or 0
+    )
+
+    if healing_result.get("twisted_by_mindgames"):
+        context.match.log.append(str(healing_result.get("log") or ""))
+    else:
+        context.match.log.append(
+            f"{owner.sid[:5]} heals {gained} HP from {item_name}."
+        )
 
 
 def periodic_global_damage(
@@ -455,6 +471,7 @@ def resolve_periodic_item_stage(
     mindgames_flip_suffix: Callable[[Mapping[str, Any]], str] = (
         _no_mindgames_flip_suffix
     ),
+    resolve_player_produced_healing: Callable[..., Mapping[str, Any]] | None = None,
     before_dispatch: Callable[[], None] | None = None,
 ) -> tuple[PeriodicItemActivation, ...]:
     """Snapshot and dispatch scheduled item effects once for the active turn."""
@@ -472,6 +489,7 @@ def resolve_periodic_item_stage(
         turn_context=turn_context,
         apply_damage=apply_damage,
         mindgames_flip_suffix=mindgames_flip_suffix,
+        resolve_player_produced_healing=resolve_player_produced_healing,
     )
     dispatch_periodic_item_activations(
         activations,

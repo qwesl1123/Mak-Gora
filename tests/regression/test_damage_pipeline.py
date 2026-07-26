@@ -878,6 +878,228 @@ def scenario_damage_derived_player_healing_routes_through_shared_helper() -> boo
     return True
 
 
+def scenario_mindgames_drain_life_damage_derived_healing() -> bool:
+    control = make_match("warlock", "warrior", seed=6503)
+    control_warlock_sid, control_target_sid = control.players
+    control_warlock = control.state[control_warlock_sid]
+    control_target = control.state[control_target_sid]
+    control_warlock.stats["acc"] = 999
+    control_target.stats["eva"] = 0
+    effects.add_absorb(
+        control_target,
+        5,
+        source_name="Power Word: Shield",
+        effect_id="power_word_shield",
+    )
+    control_target_before = control_target.res.hp
+    submit_turn(control, "drain_life", _DEF_PASS)
+    expected_request = control_target_before - control_target.res.hp
+    assert expected_request > 0
+
+    twisted = make_match("warlock", "warrior", seed=6503)
+    warlock_sid, target_sid = twisted.players
+    warlock = twisted.state[warlock_sid]
+    target = twisted.state[target_sid]
+    warlock.stats["acc"] = 999
+    target.stats["eva"] = 0
+    effects.add_absorb(
+        target,
+        5,
+        source_name="Power Word: Shield",
+        effect_id="power_word_shield",
+    )
+    target_before = target.res.hp
+    warlock_before = warlock.res.hp
+    calls: list[dict[str, object]] = []
+    original_resolver = resolver.resolve_player_produced_healing
+
+    def capture_and_twist(
+        producer,
+        recipient,
+        requested_amount,
+        *,
+        source_name,
+        **kwargs,
+    ):
+        calls.append(
+            {
+                "producer": producer,
+                "recipient": recipient,
+                "requested": int(requested_amount),
+                "source_name": source_name,
+            }
+        )
+        effects.apply_effect_by_id(
+            producer,
+            "mindgames",
+            overrides={"duration": 2},
+        )
+        return original_resolver(
+            producer,
+            recipient,
+            requested_amount,
+            source_name=source_name,
+            **kwargs,
+        )
+
+    resolver.resolve_player_produced_healing = capture_and_twist
+    try:
+        submit_turn(twisted, "drain_life", _DEF_PASS)
+    finally:
+        resolver.resolve_player_produced_healing = original_resolver
+
+    dealt = target_before - target.res.hp
+    assert dealt == expected_request, (
+        "The deterministic hit and partial absorb must remain unchanged"
+    )
+    assert len(calls) == 1
+    assert calls[0] == {
+        "producer": warlock,
+        "recipient": warlock,
+        "requested": dealt,
+        "source_name": "Drain Life",
+    }
+    assert warlock.res.hp == warlock_before - dealt
+    totals = twisted.combat_totals[warlock_sid]
+    assert totals["damage"] == dealt
+    assert totals["healing"] == 0
+    assert totals["overhealing"] == 0
+    assert totals["pet_healing"] == 0
+    turn_lines = _turn_lines(twisted, 1)
+    assert sum(
+        f"Mindgames twists {dealt} healing from Drain Life "
+        "into Shadow damage" in line
+        for line in turn_lines
+    ) == 1
+    assert not any("drains" in line and "life" in line for line in turn_lines)
+    assert not any(
+        "healing from Drain Life" in line and "damage into healing" in line
+        for line in turn_lines
+    )
+
+    absorbed = make_match("warlock", "warrior", seed=6503)
+    absorbed_warlock_sid, absorbed_target_sid = absorbed.players
+    absorbed_warlock = absorbed.state[absorbed_warlock_sid]
+    absorbed_target = absorbed.state[absorbed_target_sid]
+    absorbed_warlock.stats["acc"] = 999
+    absorbed_target.stats["eva"] = 0
+    effects.add_absorb(
+        absorbed_target,
+        999,
+        source_name="Power Word: Shield",
+        effect_id="power_word_shield",
+    )
+    calls.clear()
+    resolver.resolve_player_produced_healing = capture_and_twist
+    try:
+        submit_turn(absorbed, "drain_life", _DEF_PASS)
+    finally:
+        resolver.resolve_player_produced_healing = original_resolver
+    assert calls == [], "Fully absorbed damage must create no lifesteal event"
+    assert absorbed.combat_totals[absorbed_warlock_sid]["healing"] == 0
+    assert absorbed.combat_totals[absorbed_warlock_sid]["overhealing"] == 0
+    return True
+
+
+def scenario_mindgames_fury_of_azzinoth_damage_derived_healing() -> bool:
+    control = make_match(
+        "rogue",
+        "warrior",
+        p1_items={"weapon": "twin_blades_azzinoth"},
+        seed=6510,
+    )
+    control_rogue_sid, control_target_sid = control.players
+    control_target = control.state[control_target_sid]
+    control_target_before = control_target.res.hp
+    submit_turn(control, "fury_of_azzinoth", _DEF_PASS)
+    expected_dealt = control_target_before - control_target.res.hp
+    assert expected_dealt > 0
+    assert any(
+        "strikes again with Twin Blades of Azzinoth" in line
+        for line in _turn_lines(control, 1)
+    )
+
+    twisted = make_match(
+        "rogue",
+        "warrior",
+        p1_items={"weapon": "twin_blades_azzinoth"},
+        seed=6510,
+    )
+    rogue_sid, target_sid = twisted.players
+    rogue = twisted.state[rogue_sid]
+    target = twisted.state[target_sid]
+    rogue_before = rogue.res.hp
+    target_before = target.res.hp
+    calls: list[dict[str, object]] = []
+    original_resolver = resolver.resolve_player_produced_healing
+
+    def capture_and_twist(
+        producer,
+        recipient,
+        requested_amount,
+        *,
+        source_name,
+        **kwargs,
+    ):
+        calls.append(
+            {
+                "producer": producer,
+                "recipient": recipient,
+                "requested": int(requested_amount),
+                "source_name": source_name,
+            }
+        )
+        effects.apply_effect_by_id(
+            producer,
+            "mindgames",
+            overrides={"duration": 2},
+        )
+        return original_resolver(
+            producer,
+            recipient,
+            requested_amount,
+            source_name=source_name,
+            **kwargs,
+        )
+
+    resolver.resolve_player_produced_healing = capture_and_twist
+    try:
+        submit_turn(twisted, "fury_of_azzinoth", _DEF_PASS)
+    finally:
+        resolver.resolve_player_produced_healing = original_resolver
+
+    dealt = target_before - target.res.hp
+    assert dealt == expected_dealt
+    assert len(calls) == 1
+    assert calls[0] == {
+        "producer": rogue,
+        "recipient": rogue,
+        "requested": dealt,
+        "source_name": "Fury of Azzinoth",
+    }
+    assert rogue.res.hp == rogue_before - dealt
+    assert any(
+        "strikes again with Twin Blades of Azzinoth" in line
+        for line in _turn_lines(twisted, 1)
+    )
+    totals = twisted.combat_totals[rogue_sid]
+    assert totals["damage"] == dealt
+    assert totals["healing"] == 0
+    assert totals["overhealing"] == 0
+    assert totals["pet_healing"] == 0
+    assert sum(
+        f"Mindgames twists {dealt} healing from Fury of Azzinoth "
+        "into Shadow damage" in line
+        for line in _turn_lines(twisted, 1)
+    ) == 1
+    assert not any(
+        "healing from Fury of Azzinoth" in line
+        and "damage into healing" in line
+        for line in _turn_lines(twisted, 1)
+    )
+    return True
+
+
 def scenario_mindgames_converted_damage_is_not_credited_as_damage_done() -> bool:
     """Damage totals credit only actual post-application HP damage.
 
@@ -1029,6 +1251,58 @@ def scenario_thunderfury_heal_proc_restores_expected_amount() -> bool:
         assert actor.res.hp - before_hp == healed_for, "Thunderfury heal should restore exactly the passive's rolled amount"
         return True
     raise AssertionError("Could not find deterministic Thunderfury heal proc seed in range")
+
+
+def scenario_mindgames_player_on_hit_healing_is_terminal() -> bool:
+    control = make_match(
+        "warrior",
+        "priest",
+        p1_items={"weapon": "thunderfury"},
+        seed=5,
+    )
+    warrior_sid, _ = control.players
+    warrior = control.state[warrior_sid]
+    warrior.res.hp -= 40
+    hp_before = warrior.res.hp
+    submit_turn(control, "overpower", _DEF_PASS)
+    heal_line = next(
+        line for line in _turn_lines(control, 1)
+        if "draws strength from Thunderfury" in line
+    )
+    heal_match = re.search(r"healing (\d+) HP\.", heal_line)
+    assert heal_match is not None
+    requested = int(heal_match.group(1))
+    assert warrior.res.hp - hp_before == requested
+
+    twisted = make_match(
+        "warrior",
+        "priest",
+        p1_items={"weapon": "thunderfury"},
+        seed=5,
+    )
+    twisted_sid, _ = twisted.players
+    twisted_warrior = twisted.state[twisted_sid]
+    twisted_warrior.res.hp -= 40
+    effects.apply_effect_by_id(
+        twisted_warrior,
+        "mindgames",
+        overrides={"duration": 2},
+    )
+    twisted_hp_before = twisted_warrior.res.hp
+    submit_turn(twisted, "overpower", _DEF_PASS)
+    twisted_lines = _turn_lines(twisted, 1)
+    assert twisted_warrior.res.hp == twisted_hp_before - requested
+    assert any(
+        f"Mindgames twists {requested} healing from Thunderfury, Blessed Blade of the Windseeker into Shadow damage" in line
+        and f"{twisted_sid[:5]} takes {requested} damage." in line
+        for line in twisted_lines
+    )
+    totals = twisted.combat_totals[twisted_sid]
+    assert totals["healing"] == 0 and totals["overhealing"] == 0
+    assert not any("draws strength from Thunderfury" in line for line in twisted_lines)
+    twist_line = next(line for line in twisted_lines if "Mindgames twists" in line)
+    assert "damage into healing" not in twist_line
+    return True
 
 
 def scenario_azzinoth_strike_again_deals_secondary_damage() -> bool:

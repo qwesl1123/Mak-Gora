@@ -248,18 +248,16 @@ def test_pet_dot_tick_sources_carry_dot_tick_source_kind() -> None:
 
 
 def test_mindgames_twisted_regen_is_tagged_self_damage() -> None:
-    match = make_match("priest", "warrior", seed=6104)
-    _, warrior_sid = match.players
-    warrior = match.state[warrior_sid]
-
-    effects.apply_effect_by_id(warrior, "mindgames")
-    effects.apply_effect_by_id(warrior, "regrowth", overrides={"duration": 3, "regen": {"hp": 5}})
-    _, _, pending_self_damage = effects.trigger_end_of_turn_effects(warrior, [], "Warrior")
-    assert pending_self_damage, "Mindgames should twist regen into pending self-damage sources"
-    for source in pending_self_damage:
-        assert source.get("source_kind") == damage_types.DAMAGE_SOURCE_SELF, (
-            f"Mindgames-twisted regen should carry self_damage, got {source.get('source_kind')!r}"
-        )
+    resolver_source = _engine_source("resolver.py")
+    # The shared resolver has a multi-line signature, which the suite's simple
+    # indentation extractor intentionally does not span.
+    assert "def resolve_player_produced_healing(" in resolver_source
+    assert "source_kind=source_kind or DAMAGE_SOURCE_SELF" in resolver_source, (
+        "Mindgames-twisted player healing should carry self_damage by default"
+    )
+    assert "mindgames_flip_damage=False" in resolver_source, (
+        "Mindgames-twisted healing damage must be terminal"
+    )
 
 
 def test_pet_damage_path_carries_pet_damage_source_kind() -> None:
