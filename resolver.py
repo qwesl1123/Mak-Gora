@@ -2,7 +2,7 @@
 import json
 import math
 from dataclasses import dataclass, field
-from typing import Dict, Any, List, Optional, Tuple, Callable, TypedDict
+from typing import Dict, Any, List, Optional, Tuple, Callable, Mapping, TypedDict
 from .models import MatchState, PlayerState, PlayerBuild, Resources, PetState, combat_totals_entry, new_combat_totals
 from .damage_events import PassiveDamageEvent, make_queued_damage_event
 from .periodic_items import resolve_periodic_item_stage
@@ -444,6 +444,8 @@ def _resolve_actor_post_damage_reactions_stage(
                 backlash,
                 actor_sid,
                 "Shadow Word: Death backlash",
+                mindgames_flip_damage=False,
+                damage_instances=[backlash],
                 school="magical",
                 subschool="shadow",
                 allow_redirect=False,
@@ -1314,6 +1316,7 @@ def resolve_end_of_turn_stage(
     turn_ctx: TurnResolutionContext,
     apply_damage: Callable[..., Dict[str, Any]],
     absorb_suffix: Callable[[int, list[Dict[str, Any]] | None], str],
+    mindgames_flip_suffix: Callable[[Mapping[str, Any]], str],
     should_miss_due_to_stealth: Callable[[PlayerState | PetState, str], bool],
     untargetable_miss_log: Callable[[str], str],
     can_evasion_force_miss: Callable[[PlayerState, str], bool],
@@ -1413,26 +1416,49 @@ def resolve_end_of_turn_stage(
                 source_ps = match.state.get(source_sid)
                 if not source_sid or not source_ps:
                     continue
+                source_kind = normalize_damage_source_kind(
+                    source.get("source_kind"), default=DAMAGE_SOURCE_DOT_TICK
+                )
+                explicit_flip = source.get("mindgames_flip_damage")
+                if source_kind == DAMAGE_SOURCE_SELF or explicit_flip is False:
+                    pet_dot_mindgames_flip = False
+                elif explicit_flip is True:
+                    pet_dot_mindgames_flip = True
+                else:
+                    pet_dot_mindgames_flip = bool(
+                        source.get("mindgames_player_produced")
+                        and has_effect(source_ps, "mindgames")
+                    )
+                pet_target_label = (
+                    f"{sid_token(sid)}'s {pet.name} ({pet.id})"
+                )
                 dealt = apply_damage(
                     source_ps,
                     pet,
                     int(source.get("incoming", 0) or 0),
-                    pet.name,
+                    pet_target_label,
                     source.get("effect_name") or "DoT",
-                    False,
+                    pet_dot_mindgames_flip,
                     [int(source.get("incoming", 0) or 0)],
                     school=source.get("school") or "magical",
                     subschool=source.get("subschool"),
                     allow_redirect=False,
-                    source_kind=normalize_damage_source_kind(
-                        source.get("source_kind"), default=DAMAGE_SOURCE_DOT_TICK
-                    ),
+                    source_kind=source_kind,
                 )
                 damage = int(dealt.get("hp_damage", 0) or 0)
+                converted_healing = int(
+                    dealt.get("mindgames_healing", 0) or 0
+                )
                 if damage > 0:
                     match.log.append(f"{pet.name} suffers {damage} damage from {source.get('effect_name') or 'DoT'}.")
                     totals = combat_totals_entry(match.combat_totals, source_sid)
                     totals["damage"] += damage
+                elif converted_healing > 0:
+                    match.log.append(
+                        f"{pet_target_label} suffers {converted_healing} damage "
+                        f"from {source.get('effect_name') or 'DoT'}."
+                        f"{mindgames_flip_suffix(dealt)}"
+                    )
             if pet.hp > 0:
                 next_effects = []
                 for effect in pet.effects:
@@ -1524,6 +1550,7 @@ def resolve_end_of_turn_stage(
         rng=rng,
         turn_context=turn_ctx,
         apply_damage=apply_damage,
+        mindgames_flip_suffix=mindgames_flip_suffix,
         before_dispatch=flush_deferred_damage_reaction_logs,
     )
     if periodic_activations:
@@ -3350,7 +3377,7 @@ def resolve_turn(match: MatchState) -> None:
                 if gain_value > 0 and hasattr(actor.res, resource):
                     grant_resource(actor, resource, gain_value, challenger_mode=action_challenger_mode)
 
-        mindgames_flip_damage = bool(has_effect(actor, "mindgames") and total_damage > 0)
+        mindgames_flip_damage = bool(has_effect(actor, "mindgames"))
 
         if ability_id == "lightning_bolt" and total_damage > 0:
             for reset_entry in ability.get("on_hit_cooldown_resets", []) or []:
@@ -3920,8 +3947,7 @@ def resolve_turn(match: MatchState) -> None:
                     school=normalized_school, subschool=subschool, redirect_log=redirect_log, source_kind=source_kind
                 )
 
-        is_self_target = is_player_target and source.sid == target.sid
-        if mindgames_flip_damage and not is_self_target:
+        if mindgames_flip_damage:
             # ``mindgames_healing`` must stay the nominal converted damage so
             # apply_direct_damage_dot() still sees the hit as resolved even
             # when the target is at full HP and gains nothing. The actual gain
@@ -4172,22 +4198,30 @@ def resolve_turn(match: MatchState) -> None:
         if incoming <= 0:
             return 0
         dot_name = source.get("effect_name") or effect_name(source.get("effect_id") or "dot")
+        source_kind = normalize_damage_source_kind(
+            source.get("source_kind"), default=DAMAGE_SOURCE_DOT_TICK
+        )
+        explicit_flip = source.get("mindgames_flip_damage")
+        if source_kind == DAMAGE_SOURCE_SELF or explicit_flip is False:
+            dot_mindgames_flip = False
+        elif explicit_flip is True:
+            dot_mindgames_flip = True
+        else:
+            dot_mindgames_flip = bool(has_effect(source_ps, "mindgames"))
         dealt_data = apply_damage(
             source_ps,
             target_ps,
             incoming,
             target_sid,
             dot_name,
-            bool(has_effect(source_ps, "mindgames")),
+            dot_mindgames_flip,
             [incoming],
             school=source.get("school") or "magical",
             subschool=source.get("subschool"),
             allow_redirect=False,
             # Mindgames-twisted regen sources arrive pre-tagged as self_damage;
             # plain DoT sources default to dot_tick.
-            source_kind=normalize_damage_source_kind(
-                source.get("source_kind"), default=DAMAGE_SOURCE_DOT_TICK
-            ),
+            source_kind=source_kind,
         )
         formatted = format_damage_log(
             f"{sid_token(target_sid)} suffers __DMG_0__ damage from {dot_name}.",
@@ -4327,6 +4361,11 @@ def resolve_turn(match: MatchState) -> None:
             )
         if not dot_id:
             return
+        applied_dot = get_effect(target, dot_id)
+        if applied_dot is not None:
+            # Attached action DoTs are player-produced. Pet upkeep uses this
+            # marker to avoid inferring eligibility from a pet owner's state.
+            applied_dot["mindgames_player_produced"] = True
         resolved_target_label = target_label or sid_token(target_sid)
         if dot_id == "dragon_roar_bleed":
             match.log.append(f"Dragon Roar applies bleed on {resolved_target_label}.")
@@ -4480,6 +4519,7 @@ def resolve_turn(match: MatchState) -> None:
         turn_ctx=turn_ctx,
         apply_damage=apply_damage,
         absorb_suffix=absorb_suffix,
+        mindgames_flip_suffix=mindgames_flip_suffix,
         should_miss_due_to_stealth=should_miss_due_to_stealth,
         untargetable_miss_log=untargetable_miss_log,
         can_evasion_force_miss=can_evasion_force_miss,

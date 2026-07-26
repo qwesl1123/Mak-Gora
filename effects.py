@@ -2666,16 +2666,21 @@ def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[dict[str, Any
             reduced = 0
 
         source_sid = effect.get("source_sid")
-        damage_sources.append({
+        damage_source = {
             "source_sid": source_sid,
             "incoming": reduced,
-            "source_kind": DAMAGE_SOURCE_DOT_TICK,
+            "source_kind": effect.get("source_kind") or DAMAGE_SOURCE_DOT_TICK,
             "effect_id": effect.get("id"),
             "effect_name": effect.get("name", "DoT"),
             "school": school,
             "subschool": effect.get("subschool"),
             "lifesteal_pct": float(effect.get("lifesteal_pct", 0) or 0),
-        })
+        }
+        if "mindgames_flip_damage" in effect:
+            damage_source["mindgames_flip_damage"] = bool(
+                effect.get("mindgames_flip_damage")
+            )
+        damage_sources.append(damage_source)
     return damage_sources
 
 
@@ -2794,17 +2799,24 @@ def end_of_turn_pet(pet, log: List[str], label: str) -> dict[str, Any]:
         if effect.get("category") == "dot":
             raw_damage = max(0, int(effect.get("tick_damage", effect.get("value", 0)) or 0))
             if raw_damage > 0:
-                damage_sources.append(
-                    {
-                        "source_sid": effect.get("source_sid"),
-                        "incoming": raw_damage,
-                        "source_kind": DAMAGE_SOURCE_DOT_TICK,
-                        "effect_id": effect.get("id"),
-                        "effect_name": effect.get("name", "DoT"),
-                        "school": effect.get("school", "magical"),
-                        "subschool": effect.get("subschool"),
-                    }
-                )
+                damage_source = {
+                    "source_sid": effect.get("source_sid"),
+                    "incoming": raw_damage,
+                    "source_kind": (
+                        effect.get("source_kind") or DAMAGE_SOURCE_DOT_TICK
+                    ),
+                    "effect_id": effect.get("id"),
+                    "effect_name": effect.get("name", "DoT"),
+                    "school": effect.get("school", "magical"),
+                    "subschool": effect.get("subschool"),
+                }
+                if effect.get("mindgames_player_produced"):
+                    damage_source["mindgames_player_produced"] = True
+                if "mindgames_flip_damage" in effect:
+                    damage_source["mindgames_flip_damage"] = bool(
+                        effect.get("mindgames_flip_damage")
+                    )
+                damage_sources.append(damage_source)
         regen = effect.get("regen", {}) or {}
         hp_gain = max(0, int(regen.get("hp", 0) or 0))
         if hp_gain > 0 and pet.hp > 0:

@@ -401,7 +401,11 @@ Current load-bearing application behavior, pinned by regression tests; do not ch
 
 Mindgames damage conversion is producer-aware and final-recipient entity-aware. Player-produced damage carries an explicit `mindgames_flip_damage` packet/action flag; `apply_damage()` must never infer the flip from its `source` object because autonomous pet, totem, and summon attacks may pass their owner as that object and do not inherit the owner's Mindgames state.
 
-After redirects, immunity, and mitigation resolve, every eligible champion or pet recipient converts independently before absorbs or HP damage. A converted packet restores the final entity's HP up to its own maximum, consumes no absorbs, triggers no post-damage reactions, and contributes zero actual damage. Its positive nominal `mindgames_healing` still counts as a resolved hit for attached effects even when the recipient gains zero HP at full health. AoE producers must forward the same explicit action snapshot to every champion and pet packet.
+After redirects, immunity, and mitigation resolve, every eligible champion or pet recipient converts independently before absorbs or HP damage. A converted packet restores the final entity's HP up to its own maximum, consumes no absorbs, triggers no post-damage reactions, and contributes zero actual damage. Its positive nominal `mindgames_healing` still counts as a resolved hit for attached effects even when the recipient gains zero HP at full health. AoE producers must forward the same explicit action snapshot to every champion and pet packet; that snapshot is captured from the producer independently of any one recipient's immunity, untargetability, mitigation, or skipped packet.
+
+The explicit flag remains authoritative for self-target packets: an eligible player-owned periodic item packet may convert when it targets its owner. Callers that create non-flippable self-damage, especially Mindgames-twisted healing-to-damage packets, must explicitly pass `mindgames_flip_damage=False` and retain `DAMAGE_SOURCE_SELF` where applicable so the damage cannot recursively flip back into healing.
+
+Player-produced DoT ticks against champions and pets use the source player's live Mindgames state at tick time, while one periodic-item activation snapshots its owner's Mindgames state once before dispatching its deterministic all-entity target batch. Autonomous pet-, summon-, and totem-produced damage remains excluded even when the owner's `PlayerState` is passed through the damage API.
 
 ## Healing accounting policy
 
