@@ -5,11 +5,13 @@ tests/regression/registry.py, which preserves the original run order.
 """
 from __future__ import annotations
 
+import random
 import re
 
 from harness import (
     ABILITIES,
     PET_AI,
+    PetState,
     SOCKETS,
     _has_effect,
     _player_states,
@@ -139,7 +141,7 @@ def scenario_devouring_plague_heals_for_full_tick_damage() -> bool:
 
 
 def scenario_periodic_item_healing_applies_after_queued_dot_damage() -> bool:
-    """Periodic item healing follows queued DoTs while temporary HoTs do not."""
+    """Periodic item healing follows DoTs; unclassified regen remains local."""
 
     # Near-cap: queued Burn damage lands first, so all four points of Staff
     # healing fit afterward instead of three being lost to the original cap.
@@ -183,8 +185,9 @@ def scenario_periodic_item_healing_applies_after_queued_dot_damage() -> bool:
     assert rescue_match.phase == "combat" and rescue_match.winner is None, \
         "Winner evaluation must observe the owner after periodic healing"
 
-    # Temporary effect/HoT regeneration remains in normal end_of_turn
-    # processing and therefore still heals before queued DoT application.
+    # Unclassified regeneration remains local in effects.end_of_turn() and may
+    # therefore still heal before queued DoT application. Explicitly marked
+    # player-produced HoTs use the queued post-DoT boundary covered below.
     hot_match = make_match("warrior", "priest", seed=6506)
     hot_warrior_sid, hot_priest_sid = hot_match.players
     hot_warrior = hot_match.state[hot_warrior_sid]
@@ -231,9 +234,10 @@ def scenario_passive_and_end_of_turn_player_healing_routes_through_shared_helper
     (Staff of Immortality), effect/HoT regeneration (Healing Stream), Ancestral
     Knowledge, and Emerald Serpent Lightning Breath owner healing. This
     completes migration of the known production player-healing application
-    sites. Preserved caller-owned policies: Mindgames-twisted HoT ticks convert
-    to queued self-damage without any normal healing call and pet HP stays
-    locally clamped outside the player-only helper. Item and effect healing
+    sites. Preserved caller-owned policies: marked player HoT ticks queue typed
+    healing events and resolve after incoming DoTs without any premature
+    normal healing call; pet HP stays locally clamped outside the player-only
+    helper. Item and effect healing
     logs report the actual gained amount; the requested portion lost to the
     hp_max cap is tracked as overhealing, and serpent-produced healing is
     credited to pet_healing rather than the owner's regular healing.
@@ -241,7 +245,6 @@ def scenario_passive_and_end_of_turn_player_healing_routes_through_shared_helper
     original = effects.apply_player_healing
     assert resolver.apply_player_healing is original, "resolver should share the effects.apply_player_healing primitive"
     assert PET_AI.apply_player_healing is original, "pet_ai should share the effects.apply_player_healing primitive"
-    assert periodic_items.apply_player_healing is original, "periodic_items should share the effects.apply_player_healing primitive"
     calls: list[tuple[object, int, int]] = []
 
     def spy(target, amount):
@@ -260,7 +263,6 @@ def scenario_passive_and_end_of_turn_player_healing_routes_through_shared_helper
     effects.apply_player_healing = spy
     resolver.apply_player_healing = spy
     PET_AI.apply_player_healing = spy
-    periodic_items.apply_player_healing = spy
     try:
         # Item heal_on_hit (Thunderfury) near cap: the helper receives the
         # passive's rolled request, only 1 HP fits below hp_max, bonus_healing/
@@ -453,7 +455,6 @@ def scenario_passive_and_end_of_turn_player_healing_routes_through_shared_helper
         effects.apply_player_healing = original
         resolver.apply_player_healing = original
         PET_AI.apply_player_healing = original
-        periodic_items.apply_player_healing = original
     return True
 
 
@@ -522,6 +523,224 @@ def scenario_mindgames_player_hot_uses_live_tick_state() -> bool:
     return True
 
 
+def scenario_mindgames_dot_precedes_player_hot_and_lifesteal() -> bool:
+    match = make_match("shaman", "priest", seed=6609)
+    shaman_sid, priest_sid = match.players
+    shaman = match.state[shaman_sid]
+    priest = match.state[priest_sid]
+    shaman.stats["def"] = 0
+    shaman.stats["magic_resist"] = 0
+
+    effects.apply_effect_by_id(
+        shaman,
+        "mindgames",
+        overrides={"duration": 2, "source_sid": priest_sid},
+    )
+    effects.apply_effect_by_id(
+        shaman,
+        "shield_of_vengeance",
+        overrides={"duration": 2},
+    )
+    effects.add_absorb(
+        shaman,
+        5,
+        source_name="Shield of Vengeance",
+        effect_id="shield_of_vengeance",
+    )
+    effects.apply_effect_by_id(
+        shaman,
+        "devouring_plague",
+        overrides={
+            "duration": 2,
+            "tick_damage": 12,
+            "source_sid": priest_sid,
+            "lifesteal_pct": 1.0,
+        },
+    )
+    effects.apply_effect_by_id(
+        shaman,
+        "healing_stream",
+        overrides={
+            "duration": 2,
+            "regen": {"hp": 4},
+            "healing_producer": "player",
+            "healing_producer_sid": shaman_sid,
+            "healing_source_name": "Healing Stream",
+        },
+    )
+
+    calls: list[dict[str, object]] = []
+    results: list[dict[str, object]] = []
+    original_resolver = resolver.resolve_player_produced_healing
+
+    def capture_with_live_mindgames(
+        producer,
+        recipient,
+        requested_amount,
+        *,
+        source_name,
+        **kwargs,
+    ):
+        # The DoT packet has already produced actual HP damage when this
+        # callback runs. Add Mindgames at this boundary to prove the resulting
+        # lifesteal reads live state when the healing event itself resolves.
+        if source_name == "Devouring Plague":
+            effects.apply_effect_by_id(
+                producer,
+                "mindgames",
+                overrides={"duration": 2},
+            )
+        result = original_resolver(
+            producer,
+            recipient,
+            requested_amount,
+            source_name=source_name,
+            **kwargs,
+        )
+        calls.append(
+            {
+                "producer": producer,
+                "recipient": recipient,
+                "requested": int(requested_amount),
+                "source_name": source_name,
+            }
+        )
+        results.append(dict(result))
+        return result
+
+    shaman_before = shaman.res.hp
+    priest_before = priest.res.hp
+    resolver.resolve_player_produced_healing = capture_with_live_mindgames
+    try:
+        submit_turn(match, _DEF_PASS, _DEF_PASS)
+    finally:
+        resolver.resolve_player_produced_healing = original_resolver
+
+    assert calls == [
+        {
+            "producer": priest,
+            "recipient": priest,
+            "requested": 7,
+            "source_name": "Devouring Plague",
+        },
+        {
+            "producer": shaman,
+            "recipient": shaman,
+            "requested": 4,
+            "source_name": "Healing Stream",
+        },
+    ], "DoT lifesteal must resolve before the queued player HoT"
+    assert all(
+        bool(result.get("twisted_by_mindgames"))
+        and int(result.get("healing_gained", 0) or 0) == 0
+        and int(result.get("overhealing", 0) or 0) == 0
+        for result in results
+    )
+    assert shaman.res.hp == shaman_before - 11, (
+        "The 12-point DoT must consume the 5-point shield and deal 7 HP "
+        "before the 4-point twisted HoT deals its full terminal packet"
+    )
+    assert priest.res.hp == priest_before - 2, (
+        "The 7-point twisted lifesteal lands before the 5-point Shield of "
+        "Vengeance explosion is converted into healing by PR #50"
+    )
+
+    priest_totals = match.combat_totals[priest_sid]
+    shaman_totals = match.combat_totals[shaman_sid]
+    assert priest_totals["damage"] == 7, (
+        "DoT damage credit must use actual post-absorb HP damage"
+    )
+    assert priest_totals["healing"] == 5, (
+        "Only PR #50's later converted shield explosion should heal"
+    )
+    assert priest_totals["overhealing"] == 0
+    assert shaman_totals["healing"] == 0
+    assert shaman_totals["overhealing"] == 0
+    assert shaman_totals["damage"] == 0
+
+    turn_lines = _turn_lines(match, 1)
+    dot_idx = next(
+        index
+        for index, line in enumerate(turn_lines)
+        if "suffers 12 damage from Devouring Plague" in line
+        and "5 absorbed by Shield of Vengeance" in line
+    )
+    lifesteal_idx = next(
+        index
+        for index, line in enumerate(turn_lines)
+        if "Mindgames twists 7 healing from Devouring Plague" in line
+    )
+    hot_idx = next(
+        index
+        for index, line in enumerate(turn_lines)
+        if "Mindgames twists 4 healing from Healing Stream" in line
+    )
+    explosion_idx = turn_lines.index("Shield of Vengeance explodes!")
+    assert dot_idx < lifesteal_idx < hot_idx < explosion_idx
+    assert any(
+        "Shield of Vengeance hits" in line
+        and "Mindgames flips 5 damage into healing" in line
+        for line in turn_lines[explosion_idx + 1:]
+    ), "The shield must accumulate and later explode for exactly 5 absorbed damage"
+    assert not any(
+        "healing from Devouring Plague" in line
+        and "damage into healing" in line
+        for line in turn_lines
+    ), "The twisted lifesteal packet must remain terminal"
+
+    fully_absorbed = make_match("shaman", "priest", seed=6610)
+    absorbed_shaman_sid, absorbed_priest_sid = fully_absorbed.players
+    absorbed_shaman = fully_absorbed.state[absorbed_shaman_sid]
+    absorbed_priest = fully_absorbed.state[absorbed_priest_sid]
+    absorbed_shaman.stats["def"] = 0
+    absorbed_shaman.stats["magic_resist"] = 0
+    effects.add_absorb(
+        absorbed_shaman,
+        12,
+        source_name="Power Word: Shield",
+        effect_id="power_word_shield",
+    )
+    effects.apply_effect_by_id(
+        absorbed_shaman,
+        "devouring_plague",
+        overrides={
+            "duration": 2,
+            "tick_damage": 12,
+            "source_sid": absorbed_priest_sid,
+            "lifesteal_pct": 1.0,
+        },
+    )
+    absorbed_calls: list[tuple[object, int, str]] = []
+
+    def capture_fully_absorbed(
+        producer,
+        recipient,
+        requested_amount,
+        *,
+        source_name,
+        **kwargs,
+    ):
+        absorbed_calls.append((producer, int(requested_amount), source_name))
+        return original_resolver(
+            producer,
+            recipient,
+            requested_amount,
+            source_name=source_name,
+            **kwargs,
+        )
+
+    resolver.resolve_player_produced_healing = capture_fully_absorbed
+    try:
+        submit_turn(fully_absorbed, _DEF_PASS, _DEF_PASS)
+    finally:
+        resolver.resolve_player_produced_healing = original_resolver
+    assert absorbed_calls == []
+    assert fully_absorbed.combat_totals[absorbed_priest_sid]["damage"] == 0
+    assert fully_absorbed.combat_totals[absorbed_priest_sid]["healing"] == 0
+    assert fully_absorbed.combat_totals[absorbed_priest_sid]["overhealing"] == 0
+    return True
+
+
 def scenario_mindgames_excludes_autonomous_pet_healing() -> bool:
     match = make_match("hunter", "warrior", seed=1)
     hunter_sid, warrior_sid = match.players
@@ -557,6 +776,133 @@ def scenario_mindgames_excludes_autonomous_pet_healing() -> bool:
     assert totals["healing"] == totals_before["healing"]
     assert totals["pet_healing"] == totals_before["pet_healing"] + serpent_gained + hunter_gained
     assert totals["pet_overhealing"] == totals_before["pet_overhealing"] + (requested - serpent_gained)
+    return True
+
+
+def scenario_player_produced_healing_boundaries_fail_closed() -> bool:
+    error_text = (
+        "player-produced healing requires resolve_player_produced_healing"
+    )
+
+    hot_match = make_match("shaman", "warrior", seed=6615)
+    hot_sid, _ = hot_match.players
+    hot_owner = hot_match.state[hot_sid]
+    effects.apply_effect_by_id(
+        hot_owner,
+        "healing_stream",
+        overrides={
+            "duration": 2,
+            "regen": {"hp": 5},
+            "healing_producer": "player",
+            "healing_producer_sid": hot_sid,
+            "healing_source_name": "Healing Stream",
+        },
+    )
+    try:
+        effects.trigger_end_of_turn_effects(hot_owner, [], hot_sid[:5])
+    except RuntimeError as exc:
+        assert str(exc) == error_text
+    else:
+        raise AssertionError(
+            "Marked player HoTs must fail closed without the resolver"
+        )
+
+    on_hit_match = make_match("warrior", "mage", seed=6616)
+    on_hit_owner, on_hit_target = _player_states(on_hit_match)
+    on_hit_owner.effects.append(
+        {
+            "id": "test_player_heal_on_hit",
+            "type": "item_passive",
+            "source_item": "Synthetic Healing Blade",
+            "passive": {
+                "trigger": "on_hit",
+                "type": "heal_on_hit",
+                "chance": 1.0,
+                "dice": None,
+                "scaling": {"atk": 1.0},
+            },
+        }
+    )
+    try:
+        effects.trigger_on_hit_passives(
+            on_hit_owner,
+            on_hit_target,
+            base_damage=5,
+            damage_type="physical",
+            rng=random.Random(6616),
+        )
+    except RuntimeError as exc:
+        assert str(exc) == error_text
+    else:
+        raise AssertionError(
+            "Player heal_on_hit passives must fail closed without the resolver"
+        )
+
+    periodic_match = make_match(
+        "warrior",
+        "mage",
+        p1_items={"weapon": "staff_of_immortality"},
+        seed=6617,
+    )
+    periodic_match.state[periodic_match.players[0]].res.hp -= 10
+    try:
+        periodic_items.resolve_periodic_item_stage(
+            match=periodic_match,
+            rng=random.Random(6617),
+            turn_context=None,
+            apply_damage=lambda *_args, **_kwargs: {},
+        )
+    except RuntimeError as exc:
+        assert str(exc) == error_text
+    else:
+        raise AssertionError(
+            "Periodic player item healing must fail closed without the resolver"
+        )
+
+    pet = PetState(
+        id="autonomous_healer",
+        template_id="autonomous_healer",
+        name="Autonomous Healer",
+        owner_sid=hot_sid,
+        hp=4,
+        hp_max=10,
+        effects=[
+            {
+                "id": "autonomous_pet_hot",
+                "name": "Autonomous Pet HoT",
+                "duration": 2,
+                "regen": {"hp": 5},
+            }
+        ],
+    )
+    pet_log: list[str] = []
+    pet_summary = effects.end_of_turn_pet(
+        pet,
+        pet_log,
+        "Autonomous Healer",
+    )
+    assert pet.hp == 9
+    assert pet_summary["healing_done"] == 5
+    assert pet_summary["overhealing_done"] == 0
+    assert pet_log == [
+        "Autonomous Healer recovers 5 HP from Autonomous Pet HoT."
+    ]
+
+    resource_owner = make_match("rogue", "warrior", seed=6618).state[
+        "p1_sid"
+    ]
+    resource_owner.res.energy = 0
+    resource_owner.effects.append(
+        {
+            "id": "resource_only_regen",
+            "name": "Resource Only Regen",
+            "regen": {"energy": 5},
+        }
+    )
+    effects.trigger_end_of_turn_effects(resource_owner, [], "p1_si")
+    assert resource_owner.res.energy == 5, (
+        "Resource restoration must not require the player-healing resolver"
+    )
     return True
 
 

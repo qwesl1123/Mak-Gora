@@ -394,6 +394,21 @@ def test_magical_pet_and_item_damage_metadata() -> None:
             },
         }
     )
+
+    def ignore_player_healing(
+        _producer: Any,
+        _recipient: Any,
+        requested_amount: int,
+        **_kwargs: Any,
+    ) -> dict[str, int]:
+        # This validator owns only damage school metadata. Supplying the
+        # service explicitly satisfies the fail-closed player-healing boundary
+        # without mutating HP or conflating healing with this assertion.
+        return {
+            "healing_gained": 0,
+            "overhealing": int(requested_amount),
+        }
+
     _, _, _, _, damage_events = effects.trigger_on_hit_passives(
         hunter,
         warrior,
@@ -402,6 +417,7 @@ def test_magical_pet_and_item_damage_metadata() -> None:
         rng=random.Random(42),
         ability=ABILITIES["overpower"],
         include_strike_again=False,
+        resolve_player_produced_healing=ignore_player_healing,
     )
     assert any(evt.get("school") == "magical" and evt.get("subschool") == "nature" for evt in damage_events)
 

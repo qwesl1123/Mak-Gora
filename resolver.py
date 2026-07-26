@@ -62,6 +62,7 @@ from .pet_ai import run_pet_phase, cleanup_pets, prepare_pet_pre_action_effects,
 
 # Centralized mechanics (passives/DoTs/mitigation/regen) live here.
 from .effects import (
+    PlayerProducedHealingEvent,
     trigger_on_hit_passives,
     damage_multiplier_from_passives,
     grant_player_resource,
@@ -1536,6 +1537,85 @@ def resolve_end_of_turn_stage(
     tick_cooldowns: Callable[[PlayerState], None],
     trigger_shield_of_vengeance_explosion: Callable[[str, str], bool],
 ) -> EndOfTurnStageResult:
+    def append_recovery_log(
+        label: str,
+        source_name: str,
+        recovered_parts: list[str],
+    ) -> None:
+        if not recovered_parts:
+            return
+        if len(recovered_parts) == 1:
+            recovered_text = recovered_parts[0]
+        elif len(recovered_parts) == 2:
+            recovered_text = " and ".join(recovered_parts)
+        else:
+            recovered_text = (
+                f"{', '.join(recovered_parts[:-1])}, "
+                f"and {recovered_parts[-1]}"
+            )
+        match.log.append(
+            f"{label} recovers {recovered_text} from {source_name}."
+        )
+
+    def resolve_queued_player_healing_event(
+        event: PlayerProducedHealingEvent,
+    ) -> None:
+        producer_sid = str(event.get("producer_sid") or "")
+        producer = match.state.get(producer_sid)
+        if producer is None:
+            raise RuntimeError(
+                f"player-produced healing producer '{producer_sid}' "
+                "is missing from match state"
+            )
+        recipient = event.get("recipient")
+        if not isinstance(recipient, (PlayerState, PetState)):
+            raise RuntimeError(
+                "player-produced healing event requires a final recipient"
+            )
+
+        requested = int(event.get("requested_healing", 0) or 0)
+        source_name = str(event.get("source_name") or "healing")
+        healing_result = resolve_player_produced_healing(
+            producer,
+            recipient,
+            requested,
+            source_name=source_name,
+            recipient_label=event.get("recipient_label"),
+            source_kind=event.get("source_kind"),
+        )
+        gained = int(healing_result.get("healing_gained", 0) or 0)
+        totals = combat_totals_entry(match.combat_totals, producer_sid)
+        totals["healing"] += gained
+        totals["overhealing"] += int(
+            healing_result.get("overhealing", 0) or 0
+        )
+
+        resource_recoveries = (
+            event.get("already_applied_resource_recoveries", {}) or {}
+        )
+        if healing_result.get("twisted_by_mindgames"):
+            twisted_log = str(healing_result.get("log") or "")
+            if twisted_log:
+                match.log.append(twisted_log)
+            recovered_parts: list[str] = []
+        else:
+            recovered_parts = [f"{gained} HP"]
+        mp_recovered = int(resource_recoveries.get("mp", 0) or 0)
+        energy_recovered = int(resource_recoveries.get("energy", 0) or 0)
+        if mp_recovered > 0:
+            recovered_parts.append(f"{mp_recovered} Mana")
+        if energy_recovered > 0:
+            recovered_parts.append(f"{energy_recovered} Energy")
+        append_recovery_log(
+            str(
+                event.get("recipient_label")
+                or healing_result.get("recipient_label")
+                or sid_token(producer_sid)
+            ),
+            str(event.get("normal_log_source_name") or source_name),
+            recovered_parts,
+        )
+
     def resolve_shield_of_vengeance_chain(owner_sid: str, enemy_sid: str) -> None:
         # Causal chain resolver: when the owner's Shield of Vengeance actually
         # explodes, its absorbed damage may consume the enemy's own Shield of
@@ -1601,6 +1681,13 @@ def resolve_end_of_turn_stage(
                     match.log.append(str(healing_result.get("log") or ""))
                 elif gained > 0:
                     match.log.append(f"{sid_token(source_sid)} heals {gained} HP from {source_name}.")
+
+        # Marked player HoTs are collected by effects.end_of_turn() but applied
+        # here, after every incoming champion DoT packet and its damage-derived
+        # lifesteal. This preserves the established DoT -> player HoT -> pet
+        # upkeep -> Shield of Vengeance checkpoint order.
+        for healing_event in end_summary.get("player_healing_events", []):
+            resolve_queued_player_healing_event(healing_event)
 
         for source in end_summary.get("self_damage_sources", []):
             source_sid = source.get("source_sid")

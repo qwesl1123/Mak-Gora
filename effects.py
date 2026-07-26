@@ -1,9 +1,9 @@
 # games/duel/engine/effects.py
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Mapping, Optional
+from typing import Any, Callable, Dict, List, Mapping, Optional, TypedDict
 
-from .models import PlayerState
+from .models import PetState, PlayerState
 from ..content.balance import DEFAULTS
 from ..content.classes import CLASSES, class_display_name
 from .damage_events import make_passive_damage_event
@@ -16,6 +16,23 @@ from .damage_types import (
 )
 from .dice import roll
 from .rules import base_damage as calc_base_damage, mitigate
+
+
+class PlayerProducedHealingEvent(TypedDict, total=False):
+    """Queued end-of-turn HP healing explicitly produced by a player."""
+
+    producer_sid: str
+    recipient: PlayerState | PetState
+    recipient_label: str
+    requested_healing: int
+    source_name: str
+    source_kind: str
+    normal_log_source_name: str
+    # Resources are already restored locally in effects.py. These values only
+    # preserve the existing combined recovery-log wording after deferred HP
+    # healing resolves; the player-healing resolver never applies resources.
+    already_applied_resource_recoveries: Dict[str, int]
+
 
 RESOLUTION_LAYERS: Dict[str, List[str]] = {
     "pre_action_state": [
@@ -2283,16 +2300,16 @@ def trigger_on_hit_passives(
                 )
             if heal_value > 0 and attacker.res:
                 if resolve_player_produced_healing is None:
-                    healing_result: Mapping[str, Any] = {
-                        "healing_gained": apply_player_healing(attacker, heal_value),
-                    }
-                else:
-                    healing_result = resolve_player_produced_healing(
-                        attacker,
-                        attacker,
-                        heal_value,
-                        source_name=str(effect.get("source_item") or "item"),
+                    raise RuntimeError(
+                        "player-produced healing requires "
+                        "resolve_player_produced_healing"
                     )
+                healing_result = resolve_player_produced_healing(
+                    attacker,
+                    attacker,
+                    heal_value,
+                    source_name=str(effect.get("source_item") or "item"),
+                )
                 gained = int(healing_result.get("healing_gained", 0) or 0)
                 bonus_healing += gained
                 bonus_overhealing += int(
@@ -2709,15 +2726,16 @@ def trigger_end_of_turn_effects(
     label: str,
     *,
     resolve_player_produced_healing: Callable[..., Mapping[str, Any]] | None = None,
-) -> tuple[int, int, List[Dict[str, Any]]]:
+) -> tuple[int, int, List[PlayerProducedHealingEvent]]:
     """Run end-of-turn status effects such as regeneration from buffs.
 
-    The third return entry is retained as an empty compatibility list. Production
-    player-produced HP regen resolves immediately through the resolver callback;
-    autonomous/unclassified regen remains ordinary local healing.
+    Explicitly player-produced HP regen is collected as a typed event for the
+    resolver to apply after queued champion DoT packets. Autonomous/unclassified
+    regen remains ordinary local healing, and resource restoration stays local.
     """
     total_healing = 0
     total_overhealing = 0
+    player_healing_events: List[PlayerProducedHealingEvent] = []
     for effect in ps.effects:
         regen = effect.get("regen", {}) or {}
         if not regen:
@@ -2730,55 +2748,60 @@ def trigger_end_of_turn_effects(
         mp_gain = int(regen.get("mp", 0) or 0)
         energy_gain = int(regen.get("energy", 0) or 0)
         effect_name = effect.get("name", "an effect")
-        twisted_by_mindgames = False
+        player_produced_hp = (
+            hp_gain > 0 and effect.get("healing_producer") == "player"
+        )
+        producer_sid = str(effect.get("healing_producer_sid") or ps.sid)
+        if player_produced_hp:
+            if resolve_player_produced_healing is None:
+                raise RuntimeError(
+                    "player-produced healing requires "
+                    "resolve_player_produced_healing"
+                )
+            if producer_sid != ps.sid:
+                raise ValueError(
+                    "player-produced regen currently requires the producer "
+                    "to be the affected player"
+                )
+
         hp_recovered = 0
-        if hp_gain > 0:
-            if (
-                effect.get("healing_producer") == "player"
-                and resolve_player_produced_healing is not None
-            ):
-                producer_sid = str(effect.get("healing_producer_sid") or "")
-                if producer_sid and producer_sid != ps.sid:
-                    raise ValueError(
-                        "player-produced regen currently requires the producer "
-                        "to be the affected player"
-                    )
-                healing_result = resolve_player_produced_healing(
-                    ps,
-                    ps,
-                    hp_gain,
-                    source_name=str(
-                        effect.get("healing_source_name") or effect_name
-                    ),
-                )
-                twisted_by_mindgames = bool(
-                    healing_result.get("twisted_by_mindgames")
-                )
-                hp_recovered = int(
-                    healing_result.get("healing_gained", 0) or 0
-                )
-                total_healing += hp_recovered
-                total_overhealing += int(
-                    healing_result.get("overhealing", 0) or 0
-                )
-                if log is not None:
-                    twisted_log = str(healing_result.get("log") or "")
-                    if twisted_log:
-                        log.append(twisted_log)
-            else:
-                hp_recovered = apply_player_healing(ps, hp_gain)
-                total_healing += hp_recovered
-                total_overhealing += max(0, hp_gain - hp_recovered)
+        if hp_gain > 0 and not player_produced_hp:
+            hp_recovered = apply_player_healing(ps, hp_gain)
+            total_healing += hp_recovered
+            total_overhealing += max(0, hp_gain - hp_recovered)
+
         # Route mp/energy regen through grant_player_resource so the Challenger/
         # passive gain multiplier and cap are applied in one place, and report the
         # amount actually gained after the cap. HP recovery logs likewise report
         # the actual gained amount, not the requested regen value.
         mp_recovered = grant_player_resource(ps, "mp", mp_gain) if mp_gain > 0 else 0
         energy_recovered = grant_player_resource(ps, "energy", energy_gain) if energy_gain > 0 else 0
-        should_log_recovery = ((hp_gain > 0 and not twisted_by_mindgames) or mp_recovered > 0 or energy_recovered > 0)
+
+        if player_produced_hp:
+            player_healing_events.append(
+                {
+                    "producer_sid": producer_sid,
+                    "recipient": ps,
+                    "recipient_label": label,
+                    "requested_healing": hp_gain,
+                    "source_name": str(
+                        effect.get("healing_source_name") or effect_name
+                    ),
+                    "normal_log_source_name": str(effect_name),
+                    "already_applied_resource_recoveries": {
+                        "mp": mp_recovered,
+                        "energy": energy_recovered,
+                    },
+                }
+            )
+            continue
+
+        should_log_recovery = (
+            hp_gain > 0 or mp_recovered > 0 or energy_recovered > 0
+        )
         if should_log_recovery and log is not None:
             recovered_parts: list[str] = []
-            if hp_gain > 0 and not twisted_by_mindgames:
+            if hp_gain > 0:
                 recovered_parts.append(f"{hp_recovered} HP")
             if mp_recovered > 0:
                 recovered_parts.append(f"{mp_recovered} Mana")
@@ -2792,7 +2815,7 @@ def trigger_end_of_turn_effects(
                 else:
                     recovered_text = f"{', '.join(recovered_parts[:-1])}, and {recovered_parts[-1]}"
                 log.append(f"{label} recovers {recovered_text} from {effect_name}.")
-    return total_healing, total_overhealing, []
+    return total_healing, total_overhealing, player_healing_events
 
 
 def mana_regen_from_spirit(ps: PlayerState) -> int:
@@ -2809,13 +2832,25 @@ def end_of_turn(
 ) -> dict[str, Any]:
     """End-of-turn pipeline for queued DoTs and temporary effect regeneration."""
     if not ps.res:
-        return {"damage_sources": [], "healing_done": 0, "overhealing_done": 0, "self_damage_sources": []}
+        return {
+            "damage_sources": [],
+            "player_healing_events": [],
+            "healing_done": 0,
+            "overhealing_done": 0,
+            "self_damage_sources": [],
+        }
 
     if has_flag(ps, "cycloned"):
-        return {"damage_sources": [], "healing_done": 0, "overhealing_done": 0, "self_damage_sources": []}
+        return {
+            "damage_sources": [],
+            "player_healing_events": [],
+            "healing_done": 0,
+            "overhealing_done": 0,
+            "self_damage_sources": [],
+        }
 
     damage_sources = tick_dots(ps, log, label)
-    total_healing, total_overhealing, self_damage_sources = trigger_end_of_turn_effects(
+    total_healing, total_overhealing, player_healing_events = trigger_end_of_turn_effects(
         ps,
         log,
         label,
@@ -2831,9 +2866,10 @@ def end_of_turn(
         grant_player_resource(ps, "energy", DEFAULTS["energy_regen_per_turn"])
     return {
         "damage_sources": damage_sources,
+        "player_healing_events": player_healing_events,
         "healing_done": total_healing,
         "overhealing_done": total_overhealing,
-        "self_damage_sources": self_damage_sources,
+        "self_damage_sources": [],
     }
 
 

@@ -9,7 +9,6 @@ from typing import Any, Callable, Dict, Mapping, Sequence
 from .damage_types import DAMAGE_SOURCE_PERIODIC_ITEM
 from .dice import roll
 from .effects import (
-    apply_player_healing,
     damage_multiplier_from_passives,
     has_effect,
     has_flag,
@@ -202,16 +201,16 @@ def periodic_self_heal(
     item = ITEMS.get(activation.item_id, {})
     item_name = str(item.get("name") or activation.item_id)
     if context.resolve_player_produced_healing is None:
-        healing_result: Mapping[str, Any] = {
-            "healing_gained": apply_player_healing(owner, heal_value),
-        }
-    else:
-        healing_result = context.resolve_player_produced_healing(
-            owner,
-            owner,
-            heal_value,
-            source_name=item_name,
+        raise RuntimeError(
+            "player-produced healing requires "
+            "resolve_player_produced_healing"
         )
+    healing_result = context.resolve_player_produced_healing(
+        owner,
+        owner,
+        heal_value,
+        source_name=item_name,
+    )
     gained = int(healing_result.get("healing_gained", 0) or 0)
     totals = combat_totals_entry(context.match.combat_totals, activation.owner_sid)
     totals["healing"] += gained
