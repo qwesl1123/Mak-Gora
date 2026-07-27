@@ -1781,13 +1781,14 @@ _SCOURGELORD_DOC_SCENARIO = "scenario_scourgelord_item_effect_docs_and_handler_v
 
 
 def _test_source_files() -> List[Path]:
-    files = [
-        path
-        for path in sorted(_TESTS_DIR.glob("*.py"))
-        if path.name != Path(__file__).name
-    ]
-    files.extend(sorted(_GAMEPLAY_REGRESSION_DIR.glob("*.py")))
-    return files
+    """Return every module in the test tree except this guardrail suite itself.
+
+    Recursive on purpose: a regression domain organized into a subpackage must
+    not escape the canonical-path rules, and this scan must stay consistent with
+    the (also recursive) Markdown scan over ``_gameplay_regression_modules()``.
+    """
+    this_file = Path(__file__).resolve()
+    return [path for path in sorted(_TESTS_DIR.rglob("*.py")) if path != this_file]
 
 
 def _function_source(path: Path, function_name: str) -> Optional[str]:
@@ -1806,6 +1807,15 @@ def guardrail_test_path_discovery_contract() -> Tuple[bool, str]:
     scanned = _test_source_files()
     if not scanned:
         return False, "No test sources found to scan; the guardrail anchor moved."
+
+    # The path-pattern scan and the Markdown scan must cover the same tree, so a
+    # regression subpackage cannot be exempt from one but not the other.
+    uncovered = [path for path in _gameplay_regression_modules() if path not in scanned]
+    if uncovered:
+        problems.append(
+            "gameplay regression modules missing from the path-pattern scan: "
+            + ", ".join(str(path.relative_to(_TESTS_DIR)) for path in uncovered)
+        )
 
     for path in scanned:
         source = _read(path)
