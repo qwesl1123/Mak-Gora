@@ -271,6 +271,35 @@ pet cleanup, and winner evaluation. Turns with no periodic activation keep the
 legacy timing: break-on-damage stays deferred to the final end-of-turn flush.
 Do not add a periodic-boundary flush that drains only one reaction queue.
 
+### Periodic self-sacrifice empowerment
+
+`periodic_self_sacrifice_empower` is the reusable metadata-driven handler for
+scheduled item effects that pay a nonlethal current-HP cost and refresh one
+ordinary `empower_next_offense` effect. HP paid through
+`apply_player_hp_sacrifice()` is a cost, not damage: it bypasses
+`apply_damage()`, mitigation, absorbs, immunity, Mindgames, damage reactions,
+rage-from-damage, stealth/break-on-damage handling, Shield of Vengeance
+accumulation, and combat damage totals.
+
+A next-offense effect snapshots onto exactly one valid, committed,
+player-selected cast with direct damage. Every direct hit and direct AoE packet
+from that cast receives the snapshot, while attached future DoT ticks,
+strike-again packets, item/on-hit procs, autonomous entities, periodic items,
+and shield-derived explosions do not. The charge is consumed once at the
+committed direct-offense boundary even when the cast misses, is evaded, is
+immune, is fully absorbed, or deals zero HP damage. Rejected or unavailable
+selections, insufficient resources, inability to act, Pass, healing, defense,
+utility, pure control, and pure DoT casts do not consume it.
+
+Scheduled empowerment refreshes pay their HP cost again, replace the existing
+same-ID effect, and never stack charges. A failed nonlethal payment leaves an
+existing charge unchanged.
+
+Fixed-value shield-derived damage, including Astral Explosion and Shield of
+Vengeance, uses the exact committed absorb value. It ignores Attack, Intellect,
+critical strikes, ordinary outgoing attack multipliers, and next-offense
+effects, and it never consumes a next-offense charge.
+
 ## Shield of Vengeance end-of-turn cascade
 
 Shield of Vengeance is resolved through an explicit causal chain, not a blind

@@ -403,6 +403,21 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "tags": ["proc"],
         "resolution_layer": "action_selection_modifiers",
     },
+    "deaths_bargain": {
+        "type": "status",
+        "name": "Death's Bargain",
+        "duration": 999,
+        "category": "buff",
+        "school": "magical",
+        "harmful": False,
+        "dispellable": False,
+        "persists_until_consumed": True,
+        "damage_mult": 1.15,
+        "empower_log": "Death's Bargain empowers the attack!",
+        "flags": {"empower_next_offense": True},
+        "tags": ["proc"],
+        "resolution_layer": "damage_modification",
+    },
     "paladin_final_verdict_empowered": {
         "type": "status",
         "name": "Final Verdict Empowered",
@@ -1035,6 +1050,7 @@ _EFFECT_PANEL_MAGICAL_BUFF_NAMES = {
     "Arcane Surge",
     "Starfire proc",
     "Crusader's Might",
+    "Death's Bargain",
     "Flame Dance",
     "Lava Surge",
     "Healing Stream",
@@ -1170,6 +1186,7 @@ _EFFECT_PANEL_DESCRIPTION_BY_NAME: Dict[str, str] = {
     "Crystalized Rage": "Gain 15% more rage from all sources",
     "Challenger's Might": "Deal 10% more damage and take 10% less damage, but active resource costs 20% more.",
     "Challenger's Wrath": "Deal 10% less damage and take 10% more damage, but active resource generation is 30% faster.",
+    "Death's Bargain": "Your next offensive attack deals 15% more damage.",
 }
 
 _ITEM_PASSIVE_PANEL_EFFECTS_BY_ITEM_ID: Dict[str, tuple[Dict[str, Any], ...]] = {
@@ -1396,7 +1413,11 @@ def build_champion_mouseover_payload(ps: PlayerState) -> Dict[str, Any]:
 
 def is_permanent(effect: Dict[str, Any]) -> bool:
     """Effects we do not tick down with durations (until you add cleanse/removal)."""
-    return effect.get("type") == "item_passive" or effect.get("id") == "demonic_circle"
+    return (
+        effect.get("type") == "item_passive"
+        or effect.get("id") == "demonic_circle"
+        or bool(effect.get("persists_until_consumed"))
+    )
 
 
 def tick_durations(effects: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -2659,6 +2680,25 @@ def apply_player_healing(target: PlayerState, amount: int) -> int:
     before_hp = int(res.hp)
     res.hp = min(int(res.hp_max), before_hp + amount)
     return max(0, int(res.hp) - before_hp)
+
+
+def apply_player_hp_sacrifice(
+    target: PlayerState,
+    requested_cost: int,
+    *,
+    minimum_hp_remaining: int = 0,
+) -> int:
+    """Spend player HP as a non-damage cost and return the actual amount paid."""
+
+    requested = max(0, int(requested_cost))
+    minimum_remaining = max(0, int(minimum_hp_remaining))
+    current_hp = int(target.res.hp)
+    available = max(0, current_hp - minimum_remaining)
+    actual_cost = min(requested, available)
+    if actual_cost <= 0:
+        return 0
+    target.res.hp = current_hp - actual_cost
+    return actual_cost
 
 
 def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[dict[str, Any]]:

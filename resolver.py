@@ -66,6 +66,7 @@ from .effects import (
     trigger_on_hit_passives,
     damage_multiplier_from_passives,
     grant_player_resource,
+    apply_player_hp_sacrifice,
     apply_player_healing,
     challenger_resource_cost_multiplier,
     challenger_resource_stance_mode,
@@ -2465,11 +2466,11 @@ def resolve_turn(match: MatchState) -> None:
         # Uses current HP so sacrifice scales with the actor's present health pool.
         base_hp_for_sacrifice = max(0, int(actor.res.hp))
         desired_sacrifice = max(0, int(base_hp_for_sacrifice * pct))
-        max_sacrifice = max(0, int(actor.res.hp) - min_hp_leave)
-        sacrificed_hp = min(desired_sacrifice, max_sacrifice)
-
-        if sacrificed_hp > 0:
-            actor.res.hp = max(min_hp_leave, int(actor.res.hp) - sacrificed_hp)
+        sacrificed_hp = apply_player_hp_sacrifice(
+            actor,
+            desired_sacrifice,
+            minimum_hp_remaining=min_hp_leave,
+        )
 
         mult = float(absorb_from_sacrifice.get("mult", 0) or 0)
         absorb_value = max(0, int(sacrificed_hp * mult))
@@ -2953,6 +2954,28 @@ def resolve_turn(match: MatchState) -> None:
                 log_parts.append(stealth_log)
 
         has_damage = any(value for value in (dice_data, scaling, flat_damage))
+        has_direct_damage = bool(ability.get("direct_damage", has_damage))
+        next_offense_empowerment: Dict[str, Any] | None = None
+        if offensive_action and has_direct_damage:
+            next_offense_empowerment = next(
+                (
+                    effect
+                    for effect in actor.effects
+                    if (effect.get("flags") or {}).get("empower_next_offense")
+                ),
+                None,
+            )
+            if next_offense_empowerment is not None:
+                remove_effect(
+                    actor,
+                    str(next_offense_empowerment.get("id") or ""),
+                )
+                log_parts.append(
+                    str(
+                        next_offense_empowerment.get("empower_log")
+                        or "Empowered strike!"
+                    )
+                )
         consumes_onslaught = _is_rage_spending_damaging_ability(ability, has_damage)
         onslaught_stacks = 0
         if consumes_onslaught and has_effect(actor, "onslaught"):
@@ -3058,9 +3081,10 @@ def resolve_turn(match: MatchState) -> None:
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
 
             split_count = len(enemy_pets)
-            # Astral Explosion is actor-owned outgoing damage: detonate the consumed
-            # absorb pool through the actor's action-time outgoing snapshot.
-            outgoing_pool = int(consumed_absorb * action_passive_damage_multiplier)
+            # Astral Explosion is fixed shield-conversion damage. The committed
+            # pool is exactly the absorb consumed and ignores actor-owned
+            # outgoing damage modifiers.
+            outgoing_pool = consumed_absorb
             per_target = outgoing_pool // split_count
             remainder = outgoing_pool % split_count
             total_damage = 0
@@ -3326,17 +3350,13 @@ def resolve_turn(match: MatchState) -> None:
         total_healing = 0
         total_overhealing = 0
         empower_multiplier = 1.0
-        consume_empower = False
-        empower_logged = False
         outgoing_mult = outgoing_damage_multiplier(actor) * (1.0 + (0.04 * onslaught_stacks))
         if clarity_consumed and ability_id == "penance":
             outgoing_mult *= CLARITY_OF_MIND_MULTIPLIER
-        if offensive_action and has_damage:
-            for effect in actor.effects:
-                if effect.get("flags", {}).get("empower_next_offense"):
-                    empower_multiplier = float(effect.get("damage_mult", 1.0) or 1.0)
-                    consume_empower = True
-                    break
+        if next_offense_empowerment is not None:
+            empower_multiplier = float(
+                next_offense_empowerment.get("damage_mult", 1.0) or 1.0
+            )
         miss_chance = float(ITEMS.get(weapon_id, {}).get("miss_chance", 0) or 0) if weapon_id else 0.0
         accuracy = hit_chance(
             modify_stat(actor, "acc", actor.stats.get("acc", 90)),
@@ -3470,10 +3490,6 @@ def resolve_turn(match: MatchState) -> None:
             else:
                 reduced = incoming_for_hit
                 on_hit_effects_allowed = True
-                if empower_multiplier != 1.0:
-                    if not empower_logged:
-                        log_parts.append(f"{prefix}Empowered strike!")
-                        empower_logged = True
                 if death_doubled and reduced > 0:
                     log_parts.append(f"{prefix}Damage Doubled!")
                 if reduced > 0:
@@ -3727,8 +3743,6 @@ def resolve_turn(match: MatchState) -> None:
         if had_flame_dance_at_cast_start and has_effect(actor, "flame_dance") and str(ability_subschool or "").lower() == "fire" and ability_hit_landed:
             remove_effect(actor, "flame_dance")
 
-        if consume_empower and empower_multiplier != 1.0:
-            remove_effect(actor, "crusader_empower")
         if consumes_onslaught and onslaught_stacks > 0:
             remove_effect(actor, "onslaught")
 

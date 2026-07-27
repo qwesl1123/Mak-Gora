@@ -1087,10 +1087,14 @@ def scenario_proc_and_burn_duration_cleanup_and_shield_panel_cleanup() -> bool:
     assert int(effects.effect_template("paladin_final_verdict_empowered").get("duration", 0) or 0) == 5, "Final Verdict empowerment duration should be 5"
     assert int(effects.effect_template("shadowy_insight").get("duration", 0) or 0) == 5, "Shadowy Insight proc duration should be 5"
     assert int(effects.effect_template("burn").get("duration", 0) or 0) == 3, "Wand of Fire burn duration should be 3"
+    assert int(effects.effect_template("deaths_bargain").get("duration", 0) or 0) == 999, \
+        "Death's Bargain must persist until its next eligible direct offense consumes it"
 
     for effect_id, template in effects.EFFECT_TEMPLATES.items():
         tags = template.get("tags") or []
         if int(template.get("duration", 0) or 0) != 999:
+            continue
+        if effect_id == "deaths_bargain":
             continue
         if "proc" in tags or "empower" in effect_id or "empower" in str(template.get("name", "")).lower():
             raise AssertionError(f"{effect_id} should not remain at 999-turn duration")

@@ -2387,7 +2387,7 @@
               <strong>Equip weapon:</strong><br>
               <span class="kbd">/item weapon thunderfury</span>, <span class="kbd">/item weapon twin_blades_azzinoth</span>, <span class="kbd">/item weapon dragonwrath</span><br>
               <strong>Equip armor:</strong><br>
-              <span class="kbd">/item armor leather_armor</span>, <span class="kbd">/item armor challengers_chestplate</span><br>
+              <span class="kbd">/item armor leather_armor</span>, <span class="kbd">/item armor challengers_chestplate</span>, <span class="kbd">/item armor scourgelord_chestplate</span><br>
               <strong>Equip trinket:</strong><br>
               <span class="kbd">/item trinket focus_charm</span>, <span class="kbd">/item trinket rage_crystal</span>, <span class="kbd">/item trinket vial_of_shadows</span><br>
               <strong>Combat abilities (examples):</strong><br>
@@ -2638,6 +2638,14 @@
             <p><span class="stat">Passive: Above 50% active resource, deal 10% more damage and take 10% less damage, but active resource costs 20% more.</span></p>
             <p><span class="stat">Passive: At or below 50% active resource, deal 10% less damage and take 10% more damage, but active resource generation is 30% faster.</span></p>
             <p>When the fight turns, so do you—either with steel resolve or with bruising consequence.</p>
+          </div>
+
+          <div class="doc-item">
+            <h4 class="doc-item-name">Scourgelord Chestplate</h4>
+            <p><span class="stat">Command: <span class="kbd">/item armor scourgelord_chestplate</span></span></p>
+            <p><span class="stat">Armor: 6</span></p>
+            <p><span class="stat">Magic Resist: 3</span></p>
+            <p><span class="stat">Passive: Every 5 turns, devours 10% of the wearer's current HP and grants Death's Bargain. Death's Bargain: Your next offensive attack deals 15% more damage.</span></p>
           </div>
 
         </div>
@@ -3685,6 +3693,7 @@
         "Void Blades",
         "Crusader's Greatsword",
         "Challenger's Chestplate",
+        "Scourgelord Chestplate",
         "Unstable Arcanocrystal",
         "Vial of Shadows",
       ];
@@ -5480,6 +5489,15 @@
             { type: "passive", text: "At or below 50% active resource, deal 10% less damage and take 10% more damage, but active resource generation is 30% faster." },
           ],
           flavor: "When the fight turns, so do you—either with steel resolve or with bruising consequence.",
+        },
+        "Scourgelord Chestplate": {
+          nameColor: "#a335ee",
+          meta: "Armor — Epic",
+          stats: "Armor: 6  |  Magic Resist: 3",
+          lines: [
+            { type: "passive", text: "Every 5 turns, devours 10% of the wearer's current HP and grants Death's Bargain. Death's Bargain: Your next offensive attack deals 15% more damage." },
+          ],
+          flavor: "",
         },
         "Unstable Arcanocrystal": {
           nameColor: "#a335ee",

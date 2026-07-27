@@ -190,6 +190,38 @@ def _capture_damage_calls(
     return capture
 
 
+def _scourgelord_activation(
+    match: Any,
+    *,
+    owner_index: int = 0,
+    passive: dict[str, Any] | None = None,
+) -> periodic_items.PeriodicItemActivation:
+    owner_sid = match.players[owner_index]
+    return periodic_items.PeriodicItemActivation(
+        owner_sid=owner_sid,
+        item_slot="armor",
+        item_id="scourgelord_chestplate",
+        passive_type=periodic_items.PERIODIC_SELF_SACRIFICE_EMPOWER_HANDLER,
+        passive_metadata=dict(
+            passive or ITEMS["scourgelord_chestplate"]["passive"]
+        ),
+        passive_index=0,
+    )
+
+
+def _scourgelord_context(
+    match: Any,
+) -> periodic_items.PeriodicItemHandlerContext:
+    return periodic_items.PeriodicItemHandlerContext(
+        match=match,
+        global_turn=5,
+        rng=random.Random(0),
+        player_sids=tuple(match.players),
+        turn_context=SimpleNamespace(challenger_mode_by_sid={}),
+        apply_damage=_unused_apply_damage,
+    )
+
+
 def scenario_periodic_item_empty_stage_is_true_noop() -> bool:
     match = make_match("warrior", "mage", seed=9401)
     state_before = copy.deepcopy(match.state)
@@ -1029,6 +1061,430 @@ def scenario_staff_dispatches_before_vial_for_same_owner() -> bool:
     vial_idx = match.log.index(f"{owner_sid[:5]} triggers Vial of Shadows.")
     assert staff_idx < vial_idx
     assert roll_calls == ["d6"], "The added heal must not change Vial's one-roll contract"
+    return True
+
+
+def scenario_scourgelord_item_effect_docs_and_handler_validation() -> bool:
+    passive_text = (
+        "Every 5 turns, devours 10% of the wearer's current HP and grants "
+        "Death's Bargain. Death's Bargain: Your next offensive attack deals "
+        "15% more damage."
+    )
+    item = ITEMS["scourgelord_chestplate"]
+    passive = item["passive"]
+    assert item == {
+        "item_id": "scourgelord_chestplate",
+        "name": "Scourgelord Chestplate",
+        "slot": "armor",
+        "color": "#a335ee",
+        "mods": {
+            "physical_reduction": 6,
+            "magic_resist": 3,
+        },
+        "passive_text": passive_text,
+        "passive": {
+            "type": "periodic_self_sacrifice_empower",
+            "trigger": "periodic_end_of_turn",
+            "interval": 5,
+            "first_trigger_turn": 5,
+            "target_mode": "self",
+            "current_hp_cost_pct": 0.10,
+            "minimum_cost": 1,
+            "minimum_hp_remaining": 1,
+            "effect_id": "deaths_bargain",
+            "damage_multiplier": 1.15,
+        },
+    }, "Scourgelord Chestplate must expose the complete production metadata"
+    assert (
+        periodic_items.PERIODIC_SELF_SACRIFICE_EMPOWER_HANDLER
+        == "periodic_self_sacrifice_empower"
+    )
+    assert (
+        periodic_items.PERIODIC_ITEM_HANDLERS[
+            periodic_items.PERIODIC_SELF_SACRIFICE_EMPOWER_HANDLER
+        ]
+        is periodic_items.periodic_self_sacrifice_empower
+    ), "Scourgelord must use the shared periodic handler registry"
+
+    effect = effects.effect_template("deaths_bargain")
+    assert effect.get("name") == "Death's Bargain"
+    assert effect.get("type") == "status"
+    assert effect.get("duration") == 999
+    assert effect.get("category") == "buff"
+    assert effect.get("school") == "magical"
+    assert effect.get("harmful") is False
+    assert effect.get("dispellable") is False
+    assert effect.get("stackable") is not True
+    assert effect.get("persists_until_consumed") is True
+    assert effect.get("damage_mult") == 1.15
+    assert effect.get("flags") == {"empower_next_offense": True}
+    assert effect.get("tags") == ["proc"]
+    assert effect.get("resolution_layer") == "damage_modification"
+
+    match = make_match(
+        "warrior",
+        "mage",
+        p1_items={"armor": "scourgelord_chestplate"},
+        seed=9441,
+    )
+    owner = match.state[match.players[0]]
+    assert owner.stats.get("physical_reduction") == 6
+    assert owner.stats.get("magic_resist") == 3
+    initial_panel = effects.build_effect_panel_payload(owner)
+    assert not any(
+        entry.get("name") == "Death's Bargain"
+        for entries in initial_panel.values()
+        for entry in entries
+    ), "The equipped item passive must not appear as an always-active effect"
+    periodic_items.periodic_self_sacrifice_empower(
+        _scourgelord_activation(match),
+        _scourgelord_context(match),
+    )
+    panel = effects.build_effect_panel_payload(owner)
+    panel_entry = next(
+        (
+            entry
+            for entry in panel["buffs_magical"]
+            if entry.get("name") == "Death's Bargain"
+        ),
+        None,
+    )
+    assert panel_entry is not None, "Death's Bargain must appear under Magical Buffs"
+    assert (
+        panel_entry.get("description")
+        == "Your next offensive attack deals 15% more damage."
+    )
+
+    duel_html = (
+        Path(__file__).resolve().parents[2] / "duel.html"
+    ).read_text(encoding="utf-8")
+    assert "/item armor scourgelord_chestplate" in duel_html
+    assert passive_text in duel_html
+    doc_match = re.search(
+        r'<h4 class="doc-item-name">Scourgelord Chestplate</h4>'
+        r'(?P<body>.*?)</div>',
+        duel_html,
+        flags=re.DOTALL,
+    )
+    assert doc_match is not None
+    doc_body = doc_match.group("body")
+    assert "Armor: 6" in doc_body and "Magic Resist: 3" in doc_body
+    purple_items = duel_html.split("const purpleItems = [", 1)[1].split(
+        "];",
+        1,
+    )[0]
+    assert purple_items.count('"Scourgelord Chestplate"') == 1
+    tooltip = re.search(
+        r'"Scourgelord Chestplate": \{(?P<body>.*?)\n\s*\},',
+        duel_html,
+        flags=re.DOTALL,
+    )
+    assert tooltip is not None
+    tooltip_body = tooltip.group("body")
+    assert 'nameColor: "#a335ee"' in tooltip_body
+    assert "Armor" in tooltip_body and "Epic" in tooltip_body
+    assert passive_text in tooltip_body
+
+    missing_owner = periodic_items.PeriodicItemActivation(
+        owner_sid="missing_owner",
+        item_slot="armor",
+        item_id="scourgelord_chestplate",
+        passive_type=periodic_items.PERIODIC_SELF_SACRIFICE_EMPOWER_HANDLER,
+        passive_metadata=dict(passive),
+        passive_index=0,
+    )
+    try:
+        periodic_items.periodic_self_sacrifice_empower(
+            missing_owner,
+            _scourgelord_context(match),
+        )
+    except ValueError as exc:
+        assert "missing_owner" in str(exc)
+    else:
+        raise AssertionError("The handler must reject a missing owner")
+
+    invalid_cases = (
+        ({"target_mode": "enemy"}, "target_mode"),
+        ({"current_hp_cost_pct": True}, "current_hp_cost_pct"),
+        ({"current_hp_cost_pct": 0}, "current_hp_cost_pct"),
+        ({"current_hp_cost_pct": "0.1"}, "current_hp_cost_pct"),
+        ({"minimum_cost": True}, "minimum_cost"),
+        ({"minimum_cost": 0}, "minimum_cost"),
+        ({"minimum_hp_remaining": True}, "minimum_hp_remaining"),
+        ({"minimum_hp_remaining": -1}, "minimum_hp_remaining"),
+        ({"effect_id": ""}, "effect_id"),
+        ({"effect_id": "missing_effect"}, "unknown effect_id"),
+        ({"effect_id": "iceblock"}, "empower_next_offense"),
+        ({"damage_multiplier": True}, "damage_multiplier"),
+        ({"damage_multiplier": 1.0}, "damage_multiplier"),
+        ({"damage_multiplier": "1.15"}, "damage_multiplier"),
+    )
+    for overrides, expected_message in invalid_cases:
+        invalid = dict(passive)
+        invalid.update(overrides)
+        invalid_match = make_match("warrior", "mage", seed=9442)
+        hp_before = invalid_match.state[invalid_match.players[0]].res.hp
+        try:
+            periodic_items.periodic_self_sacrifice_empower(
+                _scourgelord_activation(invalid_match, passive=invalid),
+                _scourgelord_context(invalid_match),
+            )
+        except ValueError as exc:
+            assert expected_message in str(exc)
+        else:
+            raise AssertionError(
+                f"Malformed Scourgelord metadata should fail: {overrides}"
+            )
+        assert invalid_match.state[invalid_match.players[0]].res.hp == hp_before
+    return True
+
+
+def scenario_scourgelord_hp_cost_exclusions_and_refresh() -> bool:
+    expected_costs = {
+        100: 10,
+        57: 5,
+        9: 1,
+        2: 1,
+        1: 0,
+    }
+    for current_hp, expected_cost in expected_costs.items():
+        match = make_match("warrior", "mage", seed=9443 + current_hp)
+        owner_sid = match.players[0]
+        owner = match.state[owner_sid]
+        owner.res.hp = current_hp
+        periodic_items.periodic_self_sacrifice_empower(
+            _scourgelord_activation(match),
+            _scourgelord_context(match),
+        )
+        assert owner.res.hp == current_hp - expected_cost
+        if expected_cost:
+            assert effects.has_effect(owner, "deaths_bargain")
+            assert match.log[-1] == (
+                f"{owner_sid[:5]}'s Scourgelord Chestplate devours "
+                f"{expected_cost} HP and empowers their next attack!"
+            )
+        else:
+            assert not effects.has_effect(owner, "deaths_bargain")
+            assert match.log[-1] == (
+                f"{owner_sid[:5]}'s Scourgelord Chestplate cannot devour HP "
+                "and grants no empowerment."
+            )
+
+    match = make_match("warrior", "mage", seed=9544)
+    owner_sid, enemy_sid = match.players
+    owner = match.state[owner_sid]
+    owner.res.hp = 100
+    owner.res.rage = 17
+    effects.apply_effect_by_id(owner, "stealth", overrides={"duration": 3})
+    effects.apply_effect_by_id(
+        owner,
+        "ring_of_ice_freeze",
+        overrides={"duration": 2},
+    )
+    effects.apply_effect_by_id(
+        owner,
+        "mindgames",
+        overrides={"duration": 2, "source_sid": enemy_sid},
+    )
+    effects.apply_effect_by_id(
+        owner,
+        "shield_of_vengeance",
+        overrides={"duration": 2, "absorbed": 7},
+    )
+    effects.add_absorb(
+        owner,
+        30,
+        source_name="Shield of Vengeance",
+        effect_id="shield_of_vengeance",
+    )
+    totals_before = copy.deepcopy(match.combat_totals)
+    periodic_items.periodic_self_sacrifice_empower(
+        _scourgelord_activation(match),
+        _scourgelord_context(match),
+    )
+    assert owner.res.hp == 90
+    assert owner.res.rage == 17
+    assert match.combat_totals == totals_before
+    assert effects.absorb_total(owner) == 30
+    shield = effects.get_effect(owner, "shield_of_vengeance")
+    assert shield is not None and shield.get("absorbed") == 7
+    assert effects.has_effect(owner, "stealth")
+    assert effects.has_effect(owner, "ring_of_ice_freeze")
+    assert effects.has_effect(owner, "mindgames")
+    assert not any("stealth broken" in line.lower() for line in match.log)
+    assert not any("breaks free" in line.lower() for line in match.log)
+    assert not any("Mindgames flips" in line for line in match.log)
+
+    active = effects.get_effect(owner, "deaths_bargain")
+    assert active is not None
+    active["duration"] = 12
+    periodic_items.periodic_self_sacrifice_empower(
+        _scourgelord_activation(match),
+        _scourgelord_context(match),
+    )
+    bargains = [
+        effect
+        for effect in owner.effects
+        if effect.get("id") == "deaths_bargain"
+    ]
+    assert owner.res.hp == 81, "The refresh must pay 10% of the new 90 HP"
+    assert len(bargains) == 1
+    assert bargains[0].get("damage_mult") == 1.15
+    assert bargains[0].get("duration") == 999
+
+    preserved = bargains[0]
+    owner.res.hp = 1
+    periodic_items.periodic_self_sacrifice_empower(
+        _scourgelord_activation(match),
+        _scourgelord_context(match),
+    )
+    bargains = [
+        effect
+        for effect in owner.effects
+        if effect.get("id") == "deaths_bargain"
+    ]
+    assert owner.res.hp == 1
+    assert bargains == [preserved], \
+        "A failed nonlethal refresh must preserve the existing charge"
+    assert match.log[-1] == (
+        f"{owner_sid[:5]}'s Scourgelord Chestplate cannot devour HP "
+        "and grants no empowerment."
+    )
+    return True
+
+
+def scenario_scourgelord_schedule_order_and_periodic_timing() -> bool:
+    ordered = make_match(
+        "warrior",
+        "mage",
+        p1_items={
+            "weapon": "spirit_light_sword",
+            "armor": "scourgelord_chestplate",
+            "trinket": "vial_of_shadows",
+        },
+        p2_items={
+            "weapon": "staff_of_immortality",
+            "armor": "scourgelord_chestplate",
+            "trinket": "vial_of_shadows",
+        },
+        seed=9545,
+    )
+    activations = periodic_items.collect_periodic_item_activations(
+        ordered,
+        current_turn=5,
+    )
+    assert [
+        (activation.owner_sid, activation.item_slot, activation.item_id)
+        for activation in activations
+    ] == [
+        (ordered.players[0], "weapon", "spirit_light_sword"),
+        (ordered.players[0], "armor", "scourgelord_chestplate"),
+        (ordered.players[0], "trinket", "vial_of_shadows"),
+        (ordered.players[1], "weapon", "staff_of_immortality"),
+        (ordered.players[1], "armor", "scourgelord_chestplate"),
+        (ordered.players[1], "trinket", "vial_of_shadows"),
+    ], "Periodic ordering must remain player, equipment slot, passive index"
+    assert not any(
+        activation.item_id == "scourgelord_chestplate"
+        for activation in periodic_items.collect_periodic_item_activations(
+            ordered,
+            current_turn=4,
+        )
+    )
+
+    schedule = make_match(
+        "warrior",
+        "mage",
+        p1_items={"armor": "scourgelord_chestplate"},
+        seed=9546,
+    )
+    schedule_sid = schedule.players[0]
+    schedule_owner = schedule.state[schedule_sid]
+    schedule_owner.res.hp = 57
+    for global_turn in range(1, 11):
+        submit_turn(schedule, _DEF_PASS, _DEF_PASS)
+        activation_logs = [
+            line
+            for line in schedule.log
+            if "Scourgelord Chestplate devours" in line
+        ]
+        expected_count = 0 if global_turn < 5 else 1 if global_turn < 10 else 2
+        assert len(activation_logs) == expected_count
+    assert schedule_owner.res.hp == 47
+    assert [
+        line
+        for line in schedule.log
+        if "Scourgelord Chestplate devours" in line
+    ] == [
+        f"{schedule_sid[:5]}'s Scourgelord Chestplate devours 5 HP "
+        "and empowers their next attack!",
+        f"{schedule_sid[:5]}'s Scourgelord Chestplate devours 5 HP "
+        "and empowers their next attack!",
+    ]
+    assert sum(
+        effect.get("id") == "deaths_bargain"
+        for effect in schedule_owner.effects
+    ) == 1
+
+    timing = make_match(
+        "warrior",
+        "warlock",
+        p1_items={"armor": "scourgelord_chestplate"},
+        seed=9547,
+    )
+    for p1_action, p2_action in (
+        (_DEF_PASS, "summon_imp"),
+        (_DEF_PASS, _DEF_PASS),
+        (_DEF_PASS, _DEF_PASS),
+        (_DEF_PASS, _DEF_PASS),
+    ):
+        submit_turn(timing, p1_action, p2_action)
+    timing_sid, enemy_sid = timing.players
+    timing_owner = timing.state[timing_sid]
+    timing_owner.res.hp = 100
+    effects.apply_effect_by_id(
+        timing_owner,
+        "burn",
+        overrides={
+            "duration": 2,
+            "tick_damage": 12,
+            "source_sid": enemy_sid,
+        },
+    )
+    turn_start = len(timing.log)
+    submit_turn(timing, "basic_attack", "drain_life")
+    turn_lines = timing.log[turn_start:]
+    assert turn_lines[0] == "Turn 5"
+    action_indices = [
+        index
+        for index, line in enumerate(turn_lines)
+        if " uses " in line and " to cast " in line
+    ]
+    pet_index = next(
+        index
+        for index, line in enumerate(turn_lines)
+        if "'s Imp casts Firebolt" in line
+    )
+    ordinary_eot_index = next(
+        index
+        for index, line in enumerate(turn_lines)
+        if "suffers 9 damage from Burn." in line
+    )
+    scourgelord_index = next(
+        index
+        for index, line in enumerate(turn_lines)
+        if line == (
+            f"{timing_sid[:5]}'s Scourgelord Chestplate devours 7 HP "
+            "and empowers their next attack!"
+        )
+    )
+    assert len(action_indices) == 2
+    assert max(action_indices) < pet_index < ordinary_eot_index < scourgelord_index
+    hp_at_periodic_stage = timing_owner.res.hp + 7
+    assert hp_at_periodic_stage < 100
+    assert 7 == max(1, int(hp_at_periodic_stage * 0.10)), \
+        "The cost must use HP after player, pet, and ordinary end-of-turn damage"
+    assert timing.phase == "combat" and timing.winner is None
     return True
 
 

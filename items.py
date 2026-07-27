@@ -174,7 +174,34 @@ ITEMS = {
             "low_resource_gain_multiplier": 1.30,
         },
     },
-    
+    "scourgelord_chestplate": {
+        "item_id": "scourgelord_chestplate",
+        "name": "Scourgelord Chestplate",
+        "slot": "armor",
+        "color": "#a335ee",
+        "mods": {
+            "physical_reduction": 6,
+            "magic_resist": 3,
+        },
+        "passive_text": (
+            "Every 5 turns, devours 10% of the wearer's current HP and grants "
+            "Death's Bargain. Death's Bargain: Your next offensive attack deals "
+            "15% more damage."
+        ),
+        "passive": {
+            "type": "periodic_self_sacrifice_empower",
+            "trigger": "periodic_end_of_turn",
+            "interval": 5,
+            "first_trigger_turn": 5,
+            "target_mode": "self",
+            "current_hp_cost_pct": 0.10,
+            "minimum_cost": 1,
+            "minimum_hp_remaining": 1,
+            "effect_id": "deaths_bargain",
+            "damage_multiplier": 1.15,
+        },
+    },
+
     # Trinkets
     "focus_charm": {
         "name": "Focus Charm",

@@ -1229,14 +1229,14 @@ ALLOWED_PLAYER_HP_MUTATIONS: Tuple[Dict[str, str], ...] = (
         ),
     },
     {
-        "file": "resolver.py",
-        "function": "apply_hp_sacrifice_absorb",
-        "snippet": "actor.res.hp = max(min_hp_leave, int(actor.res.hp) - sacrificed_hp)",
+        "file": "effects.py",
+        "function": "apply_player_hp_sacrifice",
+        "snippet": "target.res.hp = current_hp - actual_cost",
         "reason": (
-            "HP sacrifice / explicit HP spending, not healing. Deliberately reduces "
-            "the actor's HP as a cost (converting sacrificed HP into an absorb "
-            "shield), clamped to min_hp_leave. It is a cost mechanic and must stay "
-            "local rather than routing through apply_player_healing()."
+            "CANONICAL player-HP sacrifice write. apply_player_hp_sacrifice() "
+            "reduces HP as an explicit non-damage cost, enforces the caller's "
+            "minimum-HP remainder, and returns the actual amount paid. It must "
+            "not route through apply_player_healing() or apply_damage()."
         ),
     },
 )
