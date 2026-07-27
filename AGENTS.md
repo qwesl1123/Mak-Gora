@@ -752,7 +752,13 @@ For bug fixes, add a test that would have failed before the fix.
 
 For visual/static-doc changes, update existing string/static UI checks where practical.
 
-The five standard validation suites are:
+Full source-checkout validation runs every standard suite with one command:
+
+```bash
+python tests/run_all_tests.py
+```
+
+The five standard validation suites remain individually runnable for targeted development:
 
 ```bash
 python tests/run_regression.py
@@ -762,10 +768,18 @@ python tests/run_effect_tags_validation.py
 python tests/run_subschool_validation.py
 ```
 
+* `tests/run_all_tests.py` is the preferred command before merging; the individual runners stay available while iterating on a single area.
+* The aggregate runner contains no test logic. It launches each of the five runners exactly once, each in its own subprocess, so module bootstrapping and process state stay isolated exactly as they are for a standalone run.
+* Child output streams straight to the terminal and is never captured, so the exact per-suite pass counts are still reported by the child runners themselves. Report those counts, not the aggregate summary alone.
+* Every suite runs even when an earlier one fails; the command exists to produce one complete validation report. The final summary lists each suite with `PASS`/`FAIL`.
+* A successful aggregate exit (`0`) means all five suites passed. Exit code `1` means at least one suite failed or a declared runner file is missing.
+* Because this is full source-checkout validation, architecture validation is included and therefore requires the repository documentation to be present.
 * Run targeted scenarios during development to iterate quickly.
 * Run all five suites before merging a class or any shared engine foundation.
 * Report exact pass counts.
 * Do not claim a suite passed if it was not executed.
+
+The aggregate runner is test infrastructure, not gameplay behavior, so its own coverage lives in the architecture guardrail suite (`guardrail_aggregate_runner_declaration`, `guardrail_aggregate_runner_subprocess_contract`, `guardrail_aggregate_runner_failure_semantics`) and drives it with an injected fake subprocess runner rather than launching the five real suites again.
 
 ### Test dependencies and path discovery
 

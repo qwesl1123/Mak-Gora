@@ -58,11 +58,17 @@ Design notes / limitations:
 from __future__ import annotations
 
 import ast
+import contextlib
+import io
+import os
 import re
+import sys
+import tempfile
 from pathlib import Path
-from typing import Callable, Dict, List, NamedTuple, Optional, Tuple
+from typing import Any, Callable, Dict, List, NamedTuple, Optional, Tuple
 
 import path_discovery
+import run_all_tests
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -2143,6 +2149,311 @@ def guardrail_markdown_reference_detector_self_test() -> Tuple[bool, str]:
 
 
 # =========================================================================== #
+# Aggregate test runner (tests/run_all_tests.py) contract.
+#
+# run_all_tests.py is test infrastructure, not gameplay behavior, so its
+# coverage lives here rather than in the gameplay regression registry. The
+# behavioral checks below drive run_all_tests with an injected fake subprocess
+# runner: they must never launch the five real suites, which is exactly what
+# the aggregate runner would do to itself.
+# =========================================================================== #
+
+_AGGREGATE_RUNNER_PATH = _TESTS_DIR / "run_all_tests.py"
+
+# The runner scripts the aggregate command must launch, each exactly once.
+_EXPECTED_AGGREGATE_SCRIPTS: Tuple[str, ...] = (
+    "run_regression.py",
+    "run_architecture_guardrails.py",
+    "run_source_kind_validation.py",
+    "run_effect_tags_validation.py",
+    "run_subschool_validation.py",
+)
+
+# Importing a suite's implementation into the aggregate process would defeat
+# the isolation the subprocess launch exists to provide.
+_FORBIDDEN_AGGREGATE_IMPORTS: Tuple[str, ...] = (
+    "regression_suite",
+    "architecture_guardrail_suite",
+    "source_kind_validation_suite",
+    "effect_tags_validation_suite",
+    "subschool_validation_suite",
+    "run_regression",
+    "run_architecture_guardrails",
+    "run_source_kind_validation",
+    "run_effect_tags_validation",
+    "run_subschool_validation",
+    "harness",
+)
+
+# Kwargs that would swallow or redirect a child runner's output. The aggregate
+# command exists to show the full report, so the children must stream directly.
+_OUTPUT_CAPTURING_KWARGS: Tuple[str, ...] = ("capture_output", "stdout", "stderr", "input")
+
+
+class _FakeCompletedProcess(NamedTuple):
+    """Minimal stand-in for ``subprocess.CompletedProcess``."""
+
+    args: Any
+    returncode: int
+
+
+class _RecordingRunner:
+    """Injected ``subprocess.run`` replacement that records its calls."""
+
+    def __init__(self, exit_codes: Optional[Dict[str, int]] = None) -> None:
+        self.exit_codes = dict(exit_codes or {})
+        self.calls: List[Tuple[Tuple[Any, ...], Dict[str, Any]]] = []
+
+    def __call__(self, *args: Any, **kwargs: Any) -> _FakeCompletedProcess:
+        self.calls.append((args, kwargs))
+        command = args[0] if args else kwargs.get("args", [])
+        script = Path(str(command[-1])).name if command else ""
+        return _FakeCompletedProcess(args=command, returncode=self.exit_codes.get(script, 0))
+
+    @property
+    def scripts(self) -> List[str]:
+        return [Path(str(args[0][-1])).name for args, _ in self.calls]
+
+    @property
+    def commands(self) -> List[List[str]]:
+        return [[str(part) for part in args[0]] for args, _ in self.calls]
+
+
+def _run_aggregate(
+    runner: _RecordingRunner,
+    suites: Optional[Tuple[Tuple[str, str], ...]] = None,
+    tests_dir: Optional[Path] = None,
+) -> Tuple[int, str]:
+    """Drive ``run_all_tests.run_suites`` with a fake runner; capture its output."""
+    keyword_arguments: Dict[str, Any] = {"runner": runner}
+    if tests_dir is not None:
+        keyword_arguments["tests_dir"] = tests_dir
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        exit_code = run_all_tests.run_suites(
+            run_all_tests.SUITES if suites is None else suites,
+            **keyword_arguments,
+        )
+    return exit_code, buffer.getvalue()
+
+
+def guardrail_aggregate_runner_declaration() -> Tuple[bool, str]:
+    """The aggregate runner declares the five suites once and stays cwd-free."""
+    problems: List[str] = []
+
+    if not _AGGREGATE_RUNNER_PATH.is_file():
+        return False, "tests/run_all_tests.py is missing."
+
+    declared = [script for _, script in run_all_tests.SUITES]
+    for expected in _EXPECTED_AGGREGATE_SCRIPTS:
+        occurrences = declared.count(expected)
+        if occurrences != 1:
+            problems.append(
+                f"SUITES declares {expected} {occurrences} time(s); expected exactly once."
+            )
+    for script in declared:
+        if script not in _EXPECTED_AGGREGATE_SCRIPTS:
+            problems.append(f"SUITES declares unexpected runner {script}.")
+        elif not (_TESTS_DIR / script).is_file():
+            problems.append(f"SUITES declares {script}, which does not exist in tests/.")
+
+    labels = [name for name, _ in run_all_tests.SUITES]
+    if len(set(labels)) != len(labels):
+        problems.append(f"SUITES labels are not unique: {labels}.")
+
+    if not isinstance(run_all_tests.SUITES, tuple):
+        problems.append("SUITES must be an immutable tuple declaration.")
+
+    source = _read(_AGGREGATE_RUNNER_PATH)
+    if re.search(r"shell\s*=\s*True", source):
+        problems.append("run_all_tests.py must never use shell execution (shell=True).")
+    if "sys.executable" not in source:
+        problems.append(
+            "run_all_tests.py must launch children with sys.executable, not a hardcoded 'python'."
+        )
+    if "Path(__file__).resolve()" not in source:
+        problems.append("run_all_tests.py must anchor paths on Path(__file__).resolve().")
+    for cwd_pattern in ("Path.cwd(", "os.getcwd(", "os.curdir"):
+        if cwd_pattern in source:
+            problems.append(f"run_all_tests.py must not resolve paths from {cwd_pattern}).")
+    for hardcoded in ("/home/makgora", "/home/makgora/app"):
+        if hardcoded in source:
+            problems.append(f"run_all_tests.py must not hardcode the deployment path {hardcoded}.")
+    if not re.search(r"check\s*=\s*False", source):
+        problems.append("run_all_tests.py must call subprocess.run(..., check=False).")
+
+    imported: List[str] = []
+    for node in ast.walk(ast.parse(source, filename=str(_AGGREGATE_RUNNER_PATH))):
+        if isinstance(node, ast.Import):
+            imported.extend(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+            imported.append(node.module.split(".")[0])
+    for forbidden in _FORBIDDEN_AGGREGATE_IMPORTS:
+        if forbidden in imported:
+            problems.append(
+                f"run_all_tests.py imports {forbidden}; suites must run in separate "
+                "processes, never inside the aggregate process."
+            )
+
+    if problems:
+        return False, "; ".join(problems)
+
+    return True, (
+        f"Aggregate runner declares all {len(_EXPECTED_AGGREGATE_SCRIPTS)} standard suites "
+        "exactly once, launches them via sys.executable without shell execution, imports no "
+        "suite implementation, and resolves every path from __file__."
+    )
+
+
+def guardrail_aggregate_runner_subprocess_contract() -> Tuple[bool, str]:
+    """Each suite is launched once, in tests/, with UTF-8 mode and no capture."""
+    problems: List[str] = []
+
+    runner = _RecordingRunner()
+    exit_code, output = _run_aggregate(runner)
+
+    if exit_code != 0:
+        problems.append(f"An all-passing aggregate run returned {exit_code}; expected 0.")
+    if runner.scripts != list(_EXPECTED_AGGREGATE_SCRIPTS):
+        problems.append(
+            f"Aggregate run launched {runner.scripts}; expected {list(_EXPECTED_AGGREGATE_SCRIPTS)}."
+        )
+
+    expected_cwd = str(run_all_tests.TESTS_DIR)
+    for (args, kwargs), script in zip(runner.calls, runner.scripts):
+        command = [str(part) for part in args[0]] if args else []
+        if not command or command[0] != sys.executable:
+            problems.append(f"{script} was not launched with sys.executable: {command}.")
+        if len(command) != 2 or command[-1] != str(run_all_tests.TESTS_DIR / script):
+            problems.append(f"{script} was launched with an unexpected command: {command}.")
+        if str(kwargs.get("cwd")) != expected_cwd:
+            problems.append(
+                f"{script} ran with cwd={kwargs.get('cwd')!r}; expected the tests directory "
+                f"{expected_cwd!r}."
+            )
+        if kwargs.get("check") is not False:
+            problems.append(f"{script} was not launched with check=False.")
+        if kwargs.get("shell"):
+            problems.append(f"{script} was launched with shell execution enabled.")
+        for capturing in _OUTPUT_CAPTURING_KWARGS:
+            if capturing in kwargs:
+                problems.append(f"{script} was launched with {capturing}=...; output must stream.")
+        environment = kwargs.get("env")
+        if not isinstance(environment, dict):
+            problems.append(f"{script} was launched without an explicit environment mapping.")
+        elif environment.get("PYTHONUTF8") != "1":
+            problems.append(
+                f"{script} ran with PYTHONUTF8={environment.get('PYTHONUTF8')!r}; expected '1'."
+            )
+
+    # PYTHONUTF8 is defaulted, not forced, and the rest of the environment is preserved.
+    defaulted = run_all_tests.suite_environment({"MAKGORA_MARKER": "kept"})
+    if defaulted.get("PYTHONUTF8") != "1":
+        problems.append("suite_environment() must default PYTHONUTF8 to '1'.")
+    if defaulted.get("MAKGORA_MARKER") != "kept":
+        problems.append("suite_environment() must preserve the existing environment.")
+    preserved = run_all_tests.suite_environment({"PYTHONUTF8": "0"})
+    if preserved.get("PYTHONUTF8") != "0":
+        problems.append("suite_environment() must preserve an explicit PYTHONUTF8 value.")
+
+    for name, _ in run_all_tests.SUITES:
+        if f"PASS: {name}" not in output:
+            problems.append(f"The summary did not report a passing {name} suite.")
+
+    if problems:
+        return False, "; ".join(problems)
+
+    return True, (
+        f"All {len(runner.calls)} suites launched once each via sys.executable, with the tests "
+        "directory as cwd, check=False, no shell, no output capture, and PYTHONUTF8 defaulted "
+        "to '1' while an explicit value is preserved."
+    )
+
+
+def guardrail_aggregate_runner_failure_semantics() -> Tuple[bool, str]:
+    """Failures never stop the run, and only an all-pass run exits 0."""
+    problems: List[str] = []
+
+    # A failing suite in the middle must not stop the ones behind it.
+    failing = _RecordingRunner({"run_source_kind_validation.py": 3})
+    exit_code, output = _run_aggregate(failing)
+    if failing.scripts != list(_EXPECTED_AGGREGATE_SCRIPTS):
+        problems.append(
+            f"A failing suite short-circuited the run; launched {failing.scripts}."
+        )
+    if exit_code != 1:
+        problems.append(f"A failing suite produced exit code {exit_code}; expected 1.")
+    if "FAIL: Source-kind validation" not in output:
+        problems.append("The summary did not report the failing suite.")
+    if "PASS: Subschool validation" not in output:
+        problems.append("The summary did not report suites that ran after the failure.")
+
+    # Every suite failing is still a complete report.
+    all_failing = _RecordingRunner({script: 1 for script in _EXPECTED_AGGREGATE_SCRIPTS})
+    exit_code, _ = _run_aggregate(all_failing)
+    if exit_code != 1 or len(all_failing.calls) != len(_EXPECTED_AGGREGATE_SCRIPTS):
+        problems.append(
+            f"An all-failing run launched {len(all_failing.calls)} suites and returned "
+            f"{exit_code}; expected {len(_EXPECTED_AGGREGATE_SCRIPTS)} and 1."
+        )
+
+    # A missing runner is a controlled failure, not a traceback, and the
+    # remaining suites still run.
+    with tempfile.TemporaryDirectory() as temporary:
+        empty_dir = Path(temporary)
+        present = empty_dir / "run_present.py"
+        present.write_text("", encoding="utf-8")
+        missing_runner = _RecordingRunner()
+        try:
+            exit_code, output = _run_aggregate(
+                missing_runner,
+                suites=(("Absent", "run_absent.py"), ("Present", "run_present.py")),
+                tests_dir=empty_dir,
+            )
+        except Exception as exc:  # noqa: BLE001 - a raise is itself the failure
+            problems.append(
+                f"A missing runner raised {type(exc).__name__}: {exc}; it must fail cleanly."
+            )
+        else:
+            if exit_code != 1:
+                problems.append(f"A missing runner produced exit code {exit_code}; expected 1.")
+            if missing_runner.scripts != ["run_present.py"]:
+                problems.append(
+                    f"A missing runner was still launched as a subprocess: {missing_runner.scripts}."
+                )
+            if "MISSING RUNNER" not in output or "FAIL: Absent" not in output:
+                problems.append("A missing runner must be reported clearly in the output.")
+
+    # Resolved runner paths must not depend on the parent's working directory.
+    from_repo_root = _RecordingRunner()
+    _run_aggregate(from_repo_root)
+    original_cwd = Path.cwd()
+    with tempfile.TemporaryDirectory() as temporary:
+        from_elsewhere = _RecordingRunner()
+        try:
+            os.chdir(temporary)
+            _run_aggregate(from_elsewhere)
+        finally:
+            os.chdir(original_cwd)
+    if from_elsewhere.commands != from_repo_root.commands:
+        problems.append(
+            "Runner paths changed with the parent working directory: "
+            f"{from_elsewhere.commands} != {from_repo_root.commands}."
+        )
+    if any(str(kwargs.get("cwd")) != str(run_all_tests.TESTS_DIR) for _, kwargs in from_elsewhere.calls):
+        problems.append("Child cwd changed with the parent working directory.")
+
+    if problems:
+        return False, "; ".join(problems)
+
+    return True, (
+        "Every suite runs after a failure, a failing or missing runner yields exit code 1 "
+        "without a traceback, an all-pass run yields 0, and resolved runner paths and child "
+        "cwd are unaffected by the parent's working directory."
+    )
+
+
+# =========================================================================== #
 # Runner plumbing (mirrors the other suites' run_all() contract).
 # =========================================================================== #
 
@@ -2168,6 +2479,18 @@ _GUARDRAILS: Tuple[Tuple[str, Callable[[], Tuple[bool, str]]], ...] = (
     (
         "guardrail_markdown_reference_detector_self_test",
         guardrail_markdown_reference_detector_self_test,
+    ),
+    (
+        "guardrail_aggregate_runner_declaration",
+        guardrail_aggregate_runner_declaration,
+    ),
+    (
+        "guardrail_aggregate_runner_subprocess_contract",
+        guardrail_aggregate_runner_subprocess_contract,
+    ),
+    (
+        "guardrail_aggregate_runner_failure_semantics",
+        guardrail_aggregate_runner_failure_semantics,
     ),
 )
 
