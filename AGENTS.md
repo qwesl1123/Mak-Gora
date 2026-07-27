@@ -407,6 +407,8 @@ The explicit flag remains authoritative for self-target packets: an eligible pla
 
 Player-produced DoT ticks against champions and pets use the source player's live Mindgames state at tick time, while one periodic-item activation snapshots its owner's Mindgames state once before dispatching its deterministic all-entity target batch. Autonomous pet-, summon-, and totem-produced damage remains excluded even when the owner's `PlayerState` is passed through the damage API.
 
+Player-produced special-case damage branches that return before the generic action-result path must capture the producer's Mindgames action snapshot before the branch and dispatch eligible packets through `apply_damage()`; direct HP mutation must not bypass the explicit packet contract.
+
 ## Mindgames healing-to-damage contract
 
 Mindgames healing conversion is producer-aware and final-recipient entity-aware. `resolve_player_produced_healing()` handles only HP healing explicitly classified as player-produced. It accepts the producing player and the final player or pet recipient; normal player HP restoration delegates to `apply_player_healing()`, while normal pet HP restoration keeps its local `pet.hp` cap. Resource restoration such as mana, rage, and energy is never part of this resolver.

@@ -2932,6 +2932,9 @@ def resolve_turn(match: MatchState) -> None:
             actor,
             challenger_mode=action_challenger_mode,
         )
+        # Special-case player-produced damage branches may return before the
+        # generic ActionResult path, so capture the producer state once here.
+        mindgames_flip_damage = bool(has_effect(actor, "mindgames"))
 
         consume_costs(actor, ability.get("cost", {}), challenger_mode=action_challenger_mode)
         clarity_consumed = _consume_clarity_of_mind_on_cast(actor, ability_id)
@@ -3065,13 +3068,34 @@ def resolve_turn(match: MatchState) -> None:
                 incoming = per_target + (1 if index < remainder else 0)
                 if incoming <= 0:
                     continue
-                hp_damage = min(incoming, max(0, int(pet.hp)))
-                absorbed = max(0, incoming - hp_damage)
-                pet.hp = max(0, int(pet.hp) - hp_damage)
+                pet_label = f"{sid_token(target_sid)}'s {pet.name}"
+                # Preserve legacy overkill accounting for ordinary damage while
+                # letting Mindgames convert the complete committed split packet.
+                packet_for_pipeline = (
+                    incoming
+                    if mindgames_flip_damage
+                    else min(incoming, max(0, int(pet.hp)))
+                )
+                damage_result = apply_damage(
+                    actor,
+                    pet,
+                    packet_for_pipeline,
+                    pet_label,
+                    "Astral Explosion",
+                    mindgames_flip_damage=mindgames_flip_damage,
+                    damage_instances=[packet_for_pipeline],
+                    school="magical",
+                    subschool="arcane",
+                    allow_redirect=False,
+                    resolve_non_player_mitigation=False,
+                    source_kind=DAMAGE_SOURCE_DIRECT_ABILITY,
+                )
+                hp_damage = int(damage_result.get("hp_damage", 0) or 0)
                 total_damage += hp_damage
-                total_incoming = hp_damage + absorbed
-                if total_incoming > 0:
-                    match.log.append(f"Astral Explosion hits {sid_token(target_sid)}'s {pet.name} for {total_incoming} damage.")
+                match.log.append(
+                    f"Astral Explosion hits {pet_label} for {incoming} damage."
+                    f"{mindgames_flip_suffix(damage_result)}"
+                )
                 if pet.hp <= 0:
                     handle_pet_defeat(enemy, pet)
             if total_damage > 0:
@@ -3678,8 +3702,6 @@ def resolve_turn(match: MatchState) -> None:
                 gain_value = int(gain)
                 if gain_value > 0 and hasattr(actor.res, resource):
                     grant_resource(actor, resource, gain_value, challenger_mode=action_challenger_mode)
-
-        mindgames_flip_damage = bool(has_effect(actor, "mindgames"))
 
         if ability_id == "lightning_bolt" and total_damage > 0:
             for reset_entry in ability.get("on_hit_cooldown_resets", []) or []:
