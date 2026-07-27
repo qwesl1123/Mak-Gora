@@ -751,6 +751,7 @@ ABILITIES = {
         "cooldown": 8,
         "classes": ["warlock"],
         "dot": {"id": "corruption", "duration": 8},
+        "direct_damage": False,
     },
     "unstable_affliction": {
         "name": "Unstable Affliction",
@@ -764,6 +765,7 @@ ABILITIES = {
         "cooldown": 10,
         "classes": ["warlock"],
         "dot": {"id": "unstable_affliction", "duration": 10},
+        "direct_damage": False,
     },
     "agony": {
         "name": "Agony",
@@ -1037,6 +1039,7 @@ ABILITIES = {
         "cooldown": 8,
         "classes": ["priest"],
         "dot": {"id": "vampiric_touch", "duration": 6},
+        "direct_damage": False,
     },
     "devouring_plague": {
         "name": "Devouring Plague",
@@ -1051,6 +1054,7 @@ ABILITIES = {
         "cooldown": 0,
         "classes": ["priest"],
         "dot": {"id": "devouring_plague", "duration": 7},
+        "direct_damage": False,
         "requires_effect": "shadowy_insight",
         "consume_effect": "shadowy_insight",
     },
@@ -1131,6 +1135,7 @@ ABILITIES = {
         "display_color": "#FFFFFF",
         "cost": {"mp": 25},
         "dice": {"type": "d8", "power_on": "roll"},
+        "direct_damage": False,
         "tags": ["spell", "defense"],
         "school": "magical",
         "subschool": "holy",
@@ -1540,6 +1545,7 @@ ABILITIES = {
         "display_color": "#0070DD",
         "cost": {"mp": 15},
         "dice": None,
+        "direct_damage": False,
         "tags": ["spell", "attack", "magic", "aoe"],
         "school": "magical",
         "subschool": "arcane",

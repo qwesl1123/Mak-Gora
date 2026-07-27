@@ -1160,10 +1160,9 @@ def scenario_shaman_totems_and_astral_explosion() -> bool:
     assert any(imp_hp_after.get(pid, 0) < hp for pid, hp in imp_hp_before.items()), "Astral Explosion should damage enemy pets"
     assert effects.absorb_total(shaman) == 0, "Astral Explosion should consume all absorb when valid targets exist"
 
-    # Assert on the logged incoming damage rather than HP lost: the Imp only has a
-    # few HP and is overkilled in both stances, so before/after HP would be
-    # identical and hide the Might/Wrath difference. Shaman has 100 max mana, so
-    # derive Might/Wrath mana from the pool instead of hard-coding 41/40 (both Wrath).
+    # Assert on logged incoming damage rather than HP lost: the Imp only has a
+    # few HP and is overkilled in both stances. Astral Explosion is fixed
+    # shield-conversion damage, so Challenger must not change the packet.
     def challenger_astral_pet_damage(*, shaman_mp: int) -> int:
         explosion_match = make_match("shaman", "warlock", p1_items={"armor": "challengers_chestplate"}, seed=7007)
         explosion_shaman_sid, explosion_warlock_sid = explosion_match.players
@@ -1187,7 +1186,8 @@ def scenario_shaman_totems_and_astral_explosion() -> bool:
     shaman_mp_max = make_match("shaman", "warlock", seed=7007).state["p1_sid"].res.mp_max
     astral_might_damage = challenger_astral_pet_damage(shaman_mp=shaman_mp_max // 2 + 1)
     astral_wrath_damage = challenger_astral_pet_damage(shaman_mp=shaman_mp_max // 2)
-    assert astral_might_damage > astral_wrath_damage, "Astral Explosion pet damage should use the actor's action-time Challenger outgoing snapshot"
+    assert astral_might_damage == astral_wrath_damage == 30, \
+        "Astral Explosion must use the exact consumed absorb pool in both Challenger stances"
     return True
 
 
@@ -1266,6 +1266,7 @@ def scenario_mindgames_astral_explosion_entity_packets() -> bool:
             source_name="Test Absorb",
             effect_id="test_absorb",
         )
+        effects.apply_effect_by_id(shaman, "deaths_bargain")
         pets = {
             "a_injured": PetState(
                 id="a_injured",
@@ -1328,14 +1329,16 @@ def scenario_mindgames_astral_explosion_entity_packets() -> bool:
     ]
     assert effects.absorb_total(shaman) == 0, \
         "Mindgames Astral Explosion must consume the complete absorb pool"
-    assert [int(re.search(r"for (\d+) damage", line).group(1)) for line in hit_lines] == [12, 11, 11], \
-        "Might must still multiply the 31 absorb pool once and split 34 as 12/11/11"
+    assert effects.has_effect(shaman, "deaths_bargain"), \
+        "Astral Explosion must not consume Death's Bargain"
+    assert [int(re.search(r"for (\d+) damage", line).group(1)) for line in hit_lines] == [11, 10, 10], \
+        "Astral Explosion must split the exact 31 absorb pool as 11/10/10"
     assert ["Injured Sprite" in line for line in hit_lines] == [True, False, False]
     assert ["Full Sprite" in line for line in hit_lines] == [False, True, False]
     assert ["Immune Sprite" in line for line in hit_lines] == [False, False, True], \
         "Astral Explosion target order must follow sorted snapshotted pet IDs"
-    assert pets["a_injured"].hp == pet_hp_before["a_injured"] + 12, \
-        "Mindgames must convert the complete 12-point packet, not cap it to the pet's prior 4 HP"
+    assert pets["a_injured"].hp == pet_hp_before["a_injured"] + 11, \
+        "Mindgames must convert the complete 11-point packet, not cap it to the pet's prior 4 HP"
     assert pets["b_full"].hp == pet_hp_before["b_full"], \
         "The full-health pet must gain zero HP"
     assert pets["c_immune"].hp == pet_hp_before["c_immune"], \
@@ -1346,13 +1349,13 @@ def scenario_mindgames_astral_explosion_entity_packets() -> bool:
         "Astral Explosion must remain pet-only"
     assert match.combat_totals[shaman_sid]["damage"] == 0, \
         "Converted and immune packets must credit zero Shaman damage"
-    assert match.combat_totals[priest_sid]["healing"] == 12
-    assert match.combat_totals[priest_sid]["overhealing"] == 11
+    assert match.combat_totals[priest_sid]["healing"] == 11
+    assert match.combat_totals[priest_sid]["overhealing"] == 10
     converted_lines = [line for line in hit_lines if "Mindgames flips" in line]
     assert len(converted_lines) == 2, \
         "Each non-immune packet must emit exactly one canonical conversion suffix"
-    assert "Mindgames flips 12 damage into healing; p2_si's Injured Sprite restores 12 HP." in converted_lines[0]
-    assert "Mindgames flips 11 damage into healing; p2_si's Full Sprite restores 0 HP." in converted_lines[1]
+    assert "Mindgames flips 11 damage into healing; p2_si's Injured Sprite restores 11 HP." in converted_lines[0]
+    assert "Mindgames flips 10 damage into healing; p2_si's Full Sprite restores 0 HP." in converted_lines[1]
     assert not any(
         "Immune Sprite" in line and "Mindgames flips" in line
         for line in hit_lines
@@ -1374,19 +1377,52 @@ def scenario_mindgames_astral_explosion_entity_packets() -> bool:
         if line.startswith("Astral Explosion hits ")
     ]
     assert effects.absorb_total(control_shaman) == 0
-    assert [int(re.search(r"for (\d+) damage", line).group(1)) for line in control_hits] == [12, 11, 11], \
-        "The non-Mindgames control must preserve multiplier, split, remainder, and full packet logs"
+    assert effects.has_effect(control_shaman, "deaths_bargain")
+    assert [int(re.search(r"for (\d+) damage", line).group(1)) for line in control_hits] == [11, 10, 10], \
+        "The non-Mindgames control must preserve the exact split, remainder, and full packet logs"
     assert "a_injured" not in control_priest.pets, \
-        "The 12-point packet must defeat the 4-HP pet"
+        "The 11-point packet must defeat the 4-HP pet"
     assert sum(line == "Injured Sprite dies." for line in control.log[control_log_start:]) == 1, \
         "The overkilled pet must be defeated exactly once"
-    assert control_pets["b_full"].hp == 39
+    assert control_pets["b_full"].hp == 40
     assert control_pets["c_immune"].hp == 30, \
         "An immune pet must remain unaffected while other packets resolve"
     assert control_priest.res.hp == control_champion_hp
-    assert control.combat_totals[control_shaman_sid]["damage"] == 15, \
-        "Damage credit must be 4 overkill-capped HP plus 11 normal HP, excluding immunity"
+    assert control.combat_totals[control_shaman_sid]["damage"] == 14, \
+        "Damage credit must be 4 overkill-capped HP plus 10 normal HP, excluding immunity"
     assert not any("Mindgames flips" in line for line in control.log[control_log_start:])
+
+    four_pet_match = make_match("shaman", "priest", seed=7015)
+    four_shaman_sid, four_priest_sid = four_pet_match.players
+    four_shaman = four_pet_match.state[four_shaman_sid]
+    four_priest = four_pet_match.state[four_priest_sid]
+    effects.add_absorb(
+        four_shaman,
+        30,
+        source_name="Four-Pet Test Absorb",
+        effect_id="four_pet_test_absorb",
+    )
+    for index in range(4):
+        pet_id = f"split_pet_{index}"
+        four_priest.pets[pet_id] = PetState(
+            id=pet_id,
+            template_id="test_astral_pet",
+            name=f"Split Pet {index}",
+            owner_sid=four_priest_sid,
+            hp=50,
+            hp_max=50,
+            stats={"def": 0, "magic_resist": 0},
+            entity_type="beast",
+        )
+    four_log_start = len(four_pet_match.log)
+    submit_turn(four_pet_match, "astral_explosion", _DEF_PASS)
+    four_hits = [
+        int(re.search(r"for (\d+) damage", line).group(1))
+        for line in four_pet_match.log[four_log_start:]
+        if line.startswith("Astral Explosion hits ")
+    ]
+    assert four_hits == [8, 8, 7, 7] and sum(four_hits) == 30, \
+        "Four sorted living pets must receive the exact 30 pool as 8/8/7/7"
     return True
 
 

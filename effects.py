@@ -403,6 +403,21 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "tags": ["proc"],
         "resolution_layer": "action_selection_modifiers",
     },
+    "deaths_bargain": {
+        "type": "status",
+        "name": "Death's Bargain",
+        "duration": 999,
+        "category": "buff",
+        "school": "magical",
+        "harmful": False,
+        "dispellable": False,
+        "persists_until_consumed": True,
+        "damage_mult": 1.15,
+        "empower_log": "Death's Bargain empowers the attack!",
+        "flags": {"empower_next_offense": True},
+        "tags": ["proc"],
+        "resolution_layer": "damage_modification",
+    },
     "paladin_final_verdict_empowered": {
         "type": "status",
         "name": "Final Verdict Empowered",
@@ -1035,6 +1050,7 @@ _EFFECT_PANEL_MAGICAL_BUFF_NAMES = {
     "Arcane Surge",
     "Starfire proc",
     "Crusader's Might",
+    "Death's Bargain",
     "Flame Dance",
     "Lava Surge",
     "Healing Stream",
@@ -1170,6 +1186,7 @@ _EFFECT_PANEL_DESCRIPTION_BY_NAME: Dict[str, str] = {
     "Crystalized Rage": "Gain 15% more rage from all sources",
     "Challenger's Might": "Deal 10% more damage and take 10% less damage, but active resource costs 20% more.",
     "Challenger's Wrath": "Deal 10% less damage and take 10% more damage, but active resource generation is 30% faster.",
+    "Death's Bargain": "Your next offensive attack deals 15% more damage.",
 }
 
 _ITEM_PASSIVE_PANEL_EFFECTS_BY_ITEM_ID: Dict[str, tuple[Dict[str, Any], ...]] = {
@@ -1396,7 +1413,11 @@ def build_champion_mouseover_payload(ps: PlayerState) -> Dict[str, Any]:
 
 def is_permanent(effect: Dict[str, Any]) -> bool:
     """Effects we do not tick down with durations (until you add cleanse/removal)."""
-    return effect.get("type") == "item_passive" or effect.get("id") == "demonic_circle"
+    return (
+        effect.get("type") == "item_passive"
+        or effect.get("id") == "demonic_circle"
+        or bool(effect.get("persists_until_consumed"))
+    )
 
 
 def tick_durations(effects: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -2106,6 +2127,7 @@ def trigger_on_hit_passives(
     attacker_challenger_mode: Optional[str] | object = _LIVE_CHALLENGER_MODE,
     attacker_outgoing_multiplier: Optional[float] = None,
     resolve_player_produced_healing: Callable[..., Mapping[str, Any]] | None = None,
+    secondary_proc_base_damage: Optional[int] = None,
 ) -> tuple[int, List[str], int, int, List[Dict[str, Any]]]:
     """Run attacker item passives that trigger on_hit.
 
@@ -2117,8 +2139,10 @@ def trigger_on_hit_passives(
     ``attacker_outgoing_multiplier`` is the action-time outgoing snapshot from
     the resolver. When provided, freshly computed proc formulas use that scalar
     directly rather than re-reading attacker state after the primary hit may have
-    changed HP/resources. Strike-again effects derive from already resolved hit
-    damage and intentionally do not use it.
+    changed HP/resources. ``secondary_proc_base_damage`` is the same resolved
+    parent-hit basis with generic next-offense multipliers removed. Only
+    strike-again consumes that alternate basis; the original ``base_damage``
+    remains authoritative for parent-hit eligibility and every other passive.
 
     The returned ``bonus_damage`` only accounts for passive damage that is already
     final and will not be re-mitigated later (e.g. strike-again). Passives that
@@ -2174,7 +2198,12 @@ def trigger_on_hit_passives(
             chance = float(passive.get("chance", 0) or 0)
             multiplier = float(passive.get("multiplier", 0) or 0)
             if base_damage > 0 and chance > 0 and multiplier > 0 and rng.random() <= chance:
-                extra = int(base_damage * multiplier)
+                strike_again_base = (
+                    base_damage
+                    if secondary_proc_base_damage is None
+                    else int(secondary_proc_base_damage)
+                )
+                extra = int(strike_again_base * multiplier)
                 if extra > 0:
                     bonus_damage += extra
                     damage_events.append(
@@ -2659,6 +2688,25 @@ def apply_player_healing(target: PlayerState, amount: int) -> int:
     before_hp = int(res.hp)
     res.hp = min(int(res.hp_max), before_hp + amount)
     return max(0, int(res.hp) - before_hp)
+
+
+def apply_player_hp_sacrifice(
+    target: PlayerState,
+    requested_cost: int,
+    *,
+    minimum_hp_remaining: int = 0,
+) -> int:
+    """Spend player HP as a non-damage cost and return the actual amount paid."""
+
+    requested = max(0, int(requested_cost))
+    minimum_remaining = max(0, int(minimum_hp_remaining))
+    current_hp = int(target.res.hp)
+    available = max(0, current_hp - minimum_remaining)
+    actual_cost = min(requested, available)
+    if actual_cost <= 0:
+        return 0
+    target.res.hp = current_hp - actual_cost
+    return actual_cost
 
 
 def tick_dots(ps: PlayerState, log: List[str], label: str) -> list[dict[str, Any]]:

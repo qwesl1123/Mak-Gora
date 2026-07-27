@@ -9,12 +9,16 @@ from typing import Any, Callable, Dict, Mapping, Sequence
 from .damage_types import DAMAGE_SOURCE_PERIODIC_ITEM
 from .dice import roll
 from .effects import (
+    apply_effect_by_id,
+    apply_player_hp_sacrifice,
     damage_multiplier_from_passives,
+    effect_template,
     has_effect,
     has_flag,
     is_damage_immune,
     modify_stat,
     outgoing_damage_multiplier,
+    remove_effect,
 )
 from .models import MatchState, PetState, PlayerState, combat_totals_entry
 from ..content.items import ITEMS
@@ -23,6 +27,7 @@ from ..content.items import ITEMS
 PERIODIC_ITEM_TRIGGER = "periodic_end_of_turn"
 PERIODIC_GLOBAL_DAMAGE_HANDLER = "periodic_global_damage"
 PERIODIC_SELF_HEAL_HANDLER = "periodic_self_heal"
+PERIODIC_SELF_SACRIFICE_EMPOWER_HANDLER = "periodic_self_sacrifice_empower"
 
 # PlayerBuild currently supports these equipment slots. Periodic item ordering
 # must use this tuple rather than build/items dictionary insertion order.
@@ -226,6 +231,112 @@ def periodic_self_heal(
         )
 
 
+def periodic_self_sacrifice_empower(
+    activation: PeriodicItemActivation,
+    context: PeriodicItemHandlerContext,
+) -> None:
+    """Pay a nonlethal current-HP cost and refresh one next-offense effect."""
+
+    owner = context.match.state.get(activation.owner_sid)
+    if owner is None:
+        raise ValueError(
+            f"Periodic item owner '{activation.owner_sid}' is missing from match state"
+        )
+
+    passive = activation.passive_metadata
+    if passive.get("target_mode") != "self":
+        raise ValueError(
+            "periodic_self_sacrifice_empower requires target_mode='self'"
+        )
+
+    cost_pct = passive.get("current_hp_cost_pct")
+    if (
+        isinstance(cost_pct, bool)
+        or not isinstance(cost_pct, (int, float))
+        or cost_pct <= 0
+    ):
+        raise ValueError(
+            "periodic_self_sacrifice_empower requires "
+            "current_hp_cost_pct to be numeric and greater than zero"
+        )
+
+    minimum_cost = passive.get("minimum_cost")
+    if type(minimum_cost) is not int or minimum_cost < 1:
+        raise ValueError(
+            "periodic_self_sacrifice_empower requires "
+            "minimum_cost to be a positive integer"
+        )
+
+    minimum_hp_remaining = passive.get("minimum_hp_remaining")
+    if type(minimum_hp_remaining) is not int or minimum_hp_remaining < 0:
+        raise ValueError(
+            "periodic_self_sacrifice_empower requires "
+            "minimum_hp_remaining to be a non-negative integer"
+        )
+
+    effect_id = passive.get("effect_id")
+    if not isinstance(effect_id, str) or not effect_id.strip():
+        raise ValueError(
+            "periodic_self_sacrifice_empower requires "
+            "effect_id to be a non-empty string"
+        )
+    effect_id = effect_id.strip()
+    effect = effect_template(effect_id)
+    if not effect:
+        raise ValueError(
+            "periodic_self_sacrifice_empower references "
+            f"unknown effect_id '{effect_id}'"
+        )
+    if not (effect.get("flags") or {}).get("empower_next_offense"):
+        raise ValueError(
+            "periodic_self_sacrifice_empower requires effect_id "
+            "with empower_next_offense"
+        )
+
+    damage_multiplier = passive.get("damage_multiplier")
+    if (
+        isinstance(damage_multiplier, bool)
+        or not isinstance(damage_multiplier, (int, float))
+        or damage_multiplier <= 1.0
+    ):
+        raise ValueError(
+            "periodic_self_sacrifice_empower requires "
+            "damage_multiplier to be numeric and greater than 1.0"
+        )
+
+    item = ITEMS.get(activation.item_id, {})
+    item_name = str(item.get("name") or activation.item_id)
+    current_hp = int(owner.res.hp)
+    requested_cost = max(minimum_cost, int(current_hp * float(cost_pct)))
+    actual_cost = apply_player_hp_sacrifice(
+        owner,
+        requested_cost,
+        minimum_hp_remaining=minimum_hp_remaining,
+    )
+    if actual_cost <= 0:
+        context.match.log.append(
+            f"{owner.sid[:5]}'s {item_name} cannot devour HP and grants no empowerment."
+        )
+        return
+
+    # The effect is a single non-stacking charge. A scheduled activation pays
+    # again and refreshes that charge without creating a duplicate instance.
+    remove_effect(owner, effect_id)
+    if not apply_effect_by_id(
+        owner,
+        effect_id,
+        overrides={"damage_mult": float(damage_multiplier)},
+    ):
+        raise RuntimeError(
+            "periodic_self_sacrifice_empower failed to apply "
+            f"effect_id '{effect_id}'"
+        )
+    context.match.log.append(
+        f"{owner.sid[:5]}'s {item_name} devours {actual_cost} HP "
+        "and empowers their next attack!"
+    )
+
+
 def periodic_global_damage(
     activation: PeriodicItemActivation,
     context: PeriodicItemHandlerContext,
@@ -321,6 +432,7 @@ def periodic_global_damage(
 PERIODIC_ITEM_HANDLERS: dict[str, PeriodicItemHandler] = {
     PERIODIC_GLOBAL_DAMAGE_HANDLER: periodic_global_damage,
     PERIODIC_SELF_HEAL_HANDLER: periodic_self_heal,
+    PERIODIC_SELF_SACRIFICE_EMPOWER_HANDLER: periodic_self_sacrifice_empower,
 }
 
 

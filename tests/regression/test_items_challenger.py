@@ -9,6 +9,7 @@ import random
 import re
 
 from collections import Counter
+from typing import Any
 
 from harness import (
     ABILITIES,
@@ -26,6 +27,7 @@ from games.duel.content.items import ITEMS
 
 from .helpers import (
     _DEF_PASS,
+    _add_pet,
     _active_pet,
 )
 
@@ -974,4 +976,436 @@ def scenario_item_passive_effect_panel_labels_and_descriptions() -> bool:
     assert rage_low_entries.get("Rage Crystal", {}).get("description") == "Deal 15% more damage", "Rage Crystal tooltip text should stay separate from its row label"
     assert rage_low_entries.get("Crystalized Rage", {}).get("description") == "Gain 15% more rage from all sources", "Crystalized Rage tooltip text should match exact copy"
     assert all(" - " not in str(entry.get("name") or "") for entry in rage_panel_low["buffs_magical"] if entry.get("name") in {"Rage Crystal", "Crystalized Rage"}), "Item passive row labels must remain short labels only"
+    return True
+
+
+def scenario_deaths_bargain_direct_multihit_aoe_and_dot_contract() -> bool:
+    def single_attack(*, empowered: bool) -> tuple[int, int, list[str], bool]:
+        match = make_match("warrior", "mage", seed=9550)
+        actor_sid, target_sid = match.players
+        actor = match.state[actor_sid]
+        target = match.state[target_sid]
+        actor.stats.update({"atk": 40, "acc": 999, "crit": 0})
+        target.stats.update(
+            {
+                "def": 0,
+                "eva": 0,
+                "physical_reduction": 0,
+                "damage_reduction": 0,
+            }
+        )
+        if empowered:
+            effects.apply_effect_by_id(actor, "deaths_bargain")
+        hp_before = target.res.hp
+        submit_turn(match, "basic_attack", _DEF_PASS)
+        dealt = hp_before - target.res.hp
+        return (
+            dealt,
+            match.combat_totals[actor_sid]["damage"],
+            _turn_lines(match, 1),
+            effects.has_effect(actor, "deaths_bargain"),
+        )
+
+    baseline_damage, baseline_total, baseline_log, baseline_active = single_attack(
+        empowered=False
+    )
+    empowered_damage, empowered_total, empowered_log, empowered_active = single_attack(
+        empowered=True
+    )
+    assert empowered_damage == int(baseline_damage * 1.15)
+    assert baseline_total == baseline_damage
+    assert empowered_total == empowered_damage
+    assert not baseline_active and not empowered_active
+    assert not any("Death's Bargain empowers the attack!" in line for line in baseline_log)
+    assert sum(
+        line.count("Death's Bargain empowers the attack!")
+        for line in empowered_log
+    ) == 1
+
+    def arcane_barrage_hits(*, empowered: bool) -> tuple[list[int], bool, int]:
+        match = make_match("mage", "warrior", seed=9551)
+        actor = match.state[match.players[0]]
+        target = match.state[match.players[1]]
+        actor.stats.update({"int": 40, "acc": 999, "crit": 0})
+        target.stats.update(
+            {
+                "def": 0,
+                "eva": 0,
+                "magic_resist": 0,
+                "damage_reduction": 0,
+            }
+        )
+        if empowered:
+            effects.apply_effect_by_id(actor, "deaths_bargain")
+        submit_turn(match, "arcane_barrage", _DEF_PASS)
+        log = "\n".join(_turn_lines(match, 1))
+        return (
+            [int(value) for value in re.findall(r"Deals (\d+) damage", log)],
+            effects.has_effect(actor, "deaths_bargain"),
+            log.count("Death's Bargain empowers the attack!"),
+        )
+
+    baseline_hits, _, _ = arcane_barrage_hits(empowered=False)
+    empowered_hits, multihit_active, multihit_log_count = arcane_barrage_hits(
+        empowered=True
+    )
+    assert len(baseline_hits) == len(empowered_hits) == 3
+    assert empowered_hits == [int(value * 1.15) for value in baseline_hits]
+    assert not multihit_active and multihit_log_count == 1
+
+    def cleave_damage(*, empowered: bool) -> tuple[list[int], bool]:
+        match = make_match("warrior", "warlock", seed=9552)
+        actor = match.state[match.players[0]]
+        target = match.state[match.players[1]]
+        actor.stats.update({"atk": 40, "acc": 999, "crit": 0})
+        target.stats.update(
+            {
+                "def": 0,
+                "eva": 0,
+                "physical_reduction": 0,
+                "damage_reduction": 0,
+            }
+        )
+        for pet_id in ("aoe_imp_a", "aoe_imp_b"):
+            _add_pet(target, pet_id, "imp")
+            target.pets[pet_id].hp = 200
+            target.pets[pet_id].hp_max = 200
+            target.pets[pet_id].stats.update(
+                {"def": 0, "physical_reduction": 0}
+            )
+        if empowered:
+            effects.apply_effect_by_id(actor, "deaths_bargain")
+        champion_hp = target.res.hp
+        pet_hp = {
+            pet_id: pet.hp
+            for pet_id, pet in target.pets.items()
+        }
+        submit_turn(match, "cleave", _DEF_PASS)
+        return (
+            [
+                champion_hp - target.res.hp,
+                *[
+                    pet_hp[pet_id] - target.pets[pet_id].hp
+                    for pet_id in sorted(pet_hp)
+                ],
+            ],
+            effects.has_effect(actor, "deaths_bargain"),
+        )
+
+    baseline_aoe, _ = cleave_damage(empowered=False)
+    empowered_aoe, aoe_active = cleave_damage(empowered=True)
+    assert len(baseline_aoe) == len(empowered_aoe) == 3
+    assert empowered_aoe == [int(value * 1.15) for value in baseline_aoe]
+    assert not aoe_active
+
+    def wildfire_values(*, empowered: bool) -> tuple[int, int, int, bool]:
+        match = make_match("hunter", "warrior", seed=9553)
+        actor = match.state[match.players[0]]
+        target = match.state[match.players[1]]
+        actor.stats.update({"atk": 40, "acc": 999, "crit": 0})
+        target.stats.update(
+            {
+                "def": 0,
+                "eva": 0,
+                "magic_resist": 0,
+                "damage_reduction": 0,
+            }
+        )
+        if empowered:
+            effects.apply_effect_by_id(actor, "deaths_bargain")
+        submit_turn(match, "wildfire_bomb", _DEF_PASS)
+        turn_one = "\n".join(_turn_lines(match, 1))
+        direct_match = re.search(
+            r"Wildfire Bomb\..*?Roll d8 = \d+\. Deals (\d+) damage",
+            turn_one,
+        )
+        dot = effects.get_effect(target, "wildfire_burn")
+        assert direct_match is not None and dot is not None
+        stored_tick = int(dot.get("tick_damage", 0) or 0)
+        submit_turn(match, _DEF_PASS, _DEF_PASS)
+        turn_two = "\n".join(_turn_lines(match, 2))
+        future_tick = re.search(
+            r"suffers (\d+) damage from Wildfire Burn",
+            turn_two,
+        )
+        assert future_tick is not None
+        return (
+            int(direct_match.group(1)),
+            stored_tick,
+            int(future_tick.group(1)),
+            effects.has_effect(actor, "deaths_bargain"),
+        )
+
+    baseline_direct, baseline_stored, baseline_tick, _ = wildfire_values(
+        empowered=False
+    )
+    empowered_direct, empowered_stored, empowered_tick, dot_active = wildfire_values(
+        empowered=True
+    )
+    assert empowered_direct == int(baseline_direct * 1.15)
+    assert empowered_stored == baseline_stored
+    assert empowered_tick == baseline_tick
+    assert not dot_active
+    return True
+
+
+def scenario_deaths_bargain_consumption_and_noneligible_actions() -> bool:
+    def assert_consumed(
+        match: Any,
+        actor_index: int,
+        actor_action: str,
+        target_action: str = _DEF_PASS,
+    ) -> list[str]:
+        actor = match.state[match.players[actor_index]]
+        effects.apply_effect_by_id(actor, "deaths_bargain")
+        if actor_index == 0:
+            submit_turn(match, actor_action, target_action)
+        else:
+            submit_turn(match, target_action, actor_action)
+        assert not effects.has_effect(actor, "deaths_bargain")
+        lines = _turn_lines(match, 1)
+        assert sum(
+            line.count("Death's Bargain empowers the attack!")
+            for line in lines
+        ) == 1
+        return lines
+
+    all_miss = make_match("mage", "warrior", seed=9554)
+    all_miss_actor = all_miss.state[all_miss.players[0]]
+    all_miss_actor.stats.update({"acc": 999, "crit": 0})
+    effects.apply_effect_by_id(
+        all_miss_actor,
+        "earth_shock",
+        overrides={"duration": 2},
+    )
+    miss_lines = assert_consumed(all_miss, 0, "arcane_barrage")
+    assert sum("Miss!" in line for line in miss_lines) >= 1
+
+    evaded = make_match("warrior", "rogue", seed=9555)
+    evaded_actor = evaded.state[evaded.players[0]]
+    evaded_actor.stats["acc"] = 999
+    effects.apply_effect_by_id(
+        evaded.state[evaded.players[1]],
+        "evasion",
+        overrides={"duration": 2},
+    )
+    evaded_lines = assert_consumed(evaded, 0, "basic_attack")
+    assert any("evades" in line.lower() or "miss" in line.lower() for line in evaded_lines)
+
+    immune = make_match("mage", "paladin", seed=9556)
+    effects.apply_effect_by_id(
+        immune.state[immune.players[1]],
+        "cloak_of_shadows",
+        overrides={"duration": 2},
+    )
+    immune_hp = immune.state[immune.players[1]].res.hp
+    immune_lines = assert_consumed(immune, 0, "fireball")
+    assert immune.state[immune.players[1]].res.hp == immune_hp
+    assert any("Immune" in line or "Miss!" in line for line in immune_lines)
+
+    aoe_immune = make_match("warrior", "warlock", seed=95565)
+    aoe_actor = aoe_immune.state[aoe_immune.players[0]]
+    aoe_target = aoe_immune.state[aoe_immune.players[1]]
+    aoe_actor.stats.update({"atk": 40, "acc": 999, "crit": 0})
+    _add_pet(aoe_target, "immune_champion_imp", "imp")
+    aoe_target.pets["immune_champion_imp"].hp = 100
+    aoe_target.pets["immune_champion_imp"].hp_max = 100
+    effects.apply_effect_by_id(
+        aoe_target,
+        "iceblock",
+        overrides={"duration": 2},
+    )
+    champion_hp = aoe_target.res.hp
+    pet_hp = aoe_target.pets["immune_champion_imp"].hp
+    assert_consumed(aoe_immune, 0, "cleave")
+    assert aoe_target.res.hp == champion_hp
+    assert aoe_target.pets["immune_champion_imp"].hp < pet_hp
+
+    absorbed = make_match("warrior", "mage", seed=9557)
+    absorbed_actor = absorbed.state[absorbed.players[0]]
+    absorbed_target = absorbed.state[absorbed.players[1]]
+    absorbed_actor.stats.update({"acc": 999, "crit": 0})
+    absorbed_target.stats["eva"] = 0
+    effects.add_absorb(
+        absorbed_target,
+        999,
+        source_name="Test Shield",
+        effect_id="test_shield",
+    )
+    hp_before = absorbed_target.res.hp
+    assert_consumed(absorbed, 0, "basic_attack")
+    assert absorbed_target.res.hp == hp_before
+
+    rejected = make_match("warrior", "mage", seed=9558)
+    rejected_actor = rejected.state[rejected.players[0]]
+    effects.apply_effect_by_id(rejected_actor, "deaths_bargain")
+    submit_turn(rejected, "execute", _DEF_PASS)
+    assert effects.has_effect(rejected_actor, "deaths_bargain")
+
+    unaffordable = make_match("mage", "warrior", seed=9559)
+    unaffordable_actor = unaffordable.state[unaffordable.players[0]]
+    unaffordable_actor.res.mp = 0
+    effects.apply_effect_by_id(unaffordable_actor, "deaths_bargain")
+    submit_turn(unaffordable, "fireball", _DEF_PASS)
+    assert effects.has_effect(unaffordable_actor, "deaths_bargain")
+
+    unable = make_match("warrior", "mage", seed=9560)
+    unable_actor = unable.state[unable.players[0]]
+    effects.apply_effect_by_id(
+        unable_actor,
+        "ring_of_ice_freeze",
+        overrides={"duration": 2},
+    )
+    effects.apply_effect_by_id(unable_actor, "deaths_bargain")
+    submit_turn(unable, "basic_attack", _DEF_PASS)
+    assert effects.has_effect(unable_actor, "deaths_bargain")
+
+    noneligible_cases = (
+        ("warrior", "mage", _DEF_PASS),
+        ("paladin", "warrior", "holy_light"),
+        ("warrior", "mage", "die_by_sword"),
+        ("hunter", "rogue", "flare"),
+        ("rogue", "warrior", "cheap_shot"),
+        ("warlock", "warrior", "corruption"),
+        ("hunter", "warrior", "call_saber"),
+    )
+    for index, (actor_class, target_class, ability_id) in enumerate(
+        noneligible_cases
+    ):
+        match = make_match(actor_class, target_class, seed=9561 + index)
+        actor = match.state[match.players[0]]
+        if ability_id == "holy_light":
+            actor.res.hp -= 20
+        effects.apply_effect_by_id(actor, "deaths_bargain")
+        submit_turn(match, ability_id, _DEF_PASS)
+        assert effects.has_effect(actor, "deaths_bargain"), \
+            f"{ability_id} must not consume Death's Bargain"
+        assert not any(
+            "Death's Bargain empowers the attack!" in line
+            for line in _turn_lines(match, 1)
+        )
+    return True
+
+
+def scenario_deaths_bargain_excluded_damage_sources() -> bool:
+    def vial_result(*, empowered: bool) -> tuple[tuple[int, int], bool]:
+        match = make_match(
+            "warrior",
+            "mage",
+            p1_items={"trinket": "vial_of_shadows"},
+            seed=9570,
+        )
+        actor = match.state[match.players[0]]
+        if empowered:
+            effects.apply_effect_by_id(actor, "deaths_bargain")
+        for _ in range(5):
+            submit_turn(match, _DEF_PASS, _DEF_PASS)
+        return (
+            tuple(match.state[sid].res.hp for sid in match.players),
+            effects.has_effect(actor, "deaths_bargain"),
+        )
+
+    baseline_vial, _ = vial_result(empowered=False)
+    empowered_vial, vial_active = vial_result(empowered=True)
+    assert empowered_vial == baseline_vial
+    assert vial_active, "Periodic Vial damage must not consume Death's Bargain"
+
+    def dot_result(*, empowered: bool) -> tuple[int, bool]:
+        match = make_match("warlock", "warrior", seed=9571)
+        actor_sid, target_sid = match.players
+        actor = match.state[actor_sid]
+        target = match.state[target_sid]
+        if empowered:
+            effects.apply_effect_by_id(actor, "deaths_bargain")
+        effects.apply_effect_by_id(
+            target,
+            "burn",
+            overrides={
+                "duration": 2,
+                "tick_damage": 10,
+                "source_sid": actor_sid,
+            },
+        )
+        hp_before = target.res.hp
+        submit_turn(match, _DEF_PASS, _DEF_PASS)
+        return (
+            hp_before - target.res.hp,
+            effects.has_effect(actor, "deaths_bargain"),
+        )
+
+    baseline_dot, _ = dot_result(empowered=False)
+    empowered_dot, dot_active = dot_result(empowered=True)
+    assert empowered_dot == baseline_dot
+    assert dot_active, "DoT ticks must not consume Death's Bargain"
+
+    def pet_result(*, empowered: bool) -> tuple[int, bool]:
+        match = make_match("warlock", "warrior", seed=9572)
+        actor = match.state[match.players[0]]
+        submit_turn(match, "summon_imp", _DEF_PASS)
+        if empowered:
+            effects.apply_effect_by_id(actor, "deaths_bargain")
+        log_start = len(match.log)
+        submit_turn(match, _DEF_PASS, _DEF_PASS)
+        pet_line = next(
+            line
+            for line in match.log[log_start:]
+            if "'s Imp casts Firebolt for" in line
+        )
+        return (
+            int(re.search(r"for (\d+) damage", pet_line).group(1)),
+            effects.has_effect(actor, "deaths_bargain"),
+        )
+
+    baseline_pet, _ = pet_result(empowered=False)
+    empowered_pet, pet_active = pet_result(empowered=True)
+    assert empowered_pet == baseline_pet
+    assert pet_active, "Autonomous pet damage must not consume Death's Bargain"
+
+    proc_match = make_match("mage", "warrior", seed=9573)
+    proc_actor = proc_match.state[proc_match.players[0]]
+    proc_target = proc_match.state[proc_match.players[1]]
+    proc_actor.effects.append(
+        {
+            "id": "test_item_proc",
+            "type": "item_passive",
+            "source_item": "Test Wand",
+            "passive": {
+                "type": "lightning_blast",
+                "trigger": "on_hit",
+                "chance": 1.0,
+                "scaling": {"int": 0.5},
+                "dice": "d3",
+                "school": "magical",
+                "subschool": "nature",
+            },
+        }
+    )
+    effects.apply_effect_by_id(proc_actor, "deaths_bargain")
+    _, _, _, _, proc_events = effects.trigger_on_hit_passives(
+        proc_actor,
+        proc_target,
+        base_damage=10,
+        damage_type="magical",
+        rng=random.Random(9573),
+        ability=ABILITIES["fireball"],
+    )
+    assert proc_events and int(proc_events[0].get("raw_incoming", 0) or 0) > 0
+    assert effects.has_effect(proc_actor, "deaths_bargain"), \
+        "An independently resolved item proc must not consume the charge"
+
+    shield_match = make_match("paladin", "warrior", seed=9574)
+    paladin_sid, enemy_sid = shield_match.players
+    paladin = shield_match.state[paladin_sid]
+    enemy = shield_match.state[enemy_sid]
+    effects.apply_effect_by_id(paladin, "deaths_bargain")
+    effects.apply_effect_by_id(
+        paladin,
+        "shield_of_vengeance",
+        overrides={"duration": 1, "absorbed": 20},
+    )
+    hp_before = enemy.res.hp
+    submit_turn(shield_match, _DEF_PASS, _DEF_PASS)
+    assert hp_before - enemy.res.hp == 20
+    assert effects.has_effect(paladin, "deaths_bargain"), \
+        "Shield of Vengeance must neither scale nor consume the charge"
     return True

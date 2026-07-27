@@ -38,6 +38,11 @@ Guardrails implemented here:
    uses Python's ``ast`` module to recognize assignment targets accurately and to
    distinguish player resource HP (``*.res.hp``) from pet HP (bare ``pet.hp``).
 
+7. Generic next-offense/direct-damage contract: explicit ``direct_damage``
+   metadata is strict boolean data, known ability categories classify correctly,
+   every active next-offense effect is snapshotted/consumed through the shared
+   helpers, and strike-again receives the explicit no-next-offense parent basis.
+
 Design notes / limitations:
 
 * These checks are deliberately conservative. They catch the *obvious* bad
@@ -1229,14 +1234,14 @@ ALLOWED_PLAYER_HP_MUTATIONS: Tuple[Dict[str, str], ...] = (
         ),
     },
     {
-        "file": "resolver.py",
-        "function": "apply_hp_sacrifice_absorb",
-        "snippet": "actor.res.hp = max(min_hp_leave, int(actor.res.hp) - sacrificed_hp)",
+        "file": "effects.py",
+        "function": "apply_player_hp_sacrifice",
+        "snippet": "target.res.hp = current_hp - actual_cost",
         "reason": (
-            "HP sacrifice / explicit HP spending, not healing. Deliberately reduces "
-            "the actor's HP as a cost (converting sacrificed HP into an absorb "
-            "shield), clamped to min_hp_leave. It is a cost mechanic and must stay "
-            "local rather than routing through apply_player_healing()."
+            "CANONICAL player-HP sacrifice write. apply_player_hp_sacrifice() "
+            "reduces HP as an explicit non-damage cost, enforces the caller's "
+            "minimum-HP remainder, and returns the actual amount paid. It must "
+            "not route through apply_player_healing() or apply_damage()."
         ),
     },
 )
@@ -1442,6 +1447,166 @@ def guardrail_player_hp_writes() -> Tuple[bool, str]:
     )
 
 
+def guardrail_next_offense_direct_damage_contract() -> Tuple[bool, str]:
+    """Pin strict direct-damage metadata and generic next-offense wiring."""
+
+    abilities_path = _gameplay_file("abilities.py")
+    resolver_path = _gameplay_file("resolver.py")
+    effects_path = _gameplay_file("effects.py")
+    if abilities_path is None or resolver_path is None or effects_path is None:
+        return False, "abilities.py, resolver.py, or effects.py is missing."
+
+    abilities_tree = ast.parse(_read(abilities_path), filename=str(abilities_path))
+    abilities_assignment = next(
+        (
+            node
+            for node in abilities_tree.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "ABILITIES"
+                for target in node.targets
+            )
+        ),
+        None,
+    )
+    if abilities_assignment is None:
+        return False, "abilities.py does not define a literal ABILITIES mapping."
+    try:
+        abilities = ast.literal_eval(abilities_assignment.value)
+    except (ValueError, TypeError, SyntaxError) as exc:
+        return False, f"ABILITIES must remain statically auditable: {exc}"
+    if not isinstance(abilities, dict):
+        return False, "ABILITIES is not a mapping."
+
+    invalid_explicit = sorted(
+        ability_id
+        for ability_id, ability in abilities.items()
+        if isinstance(ability, dict)
+        and "direct_damage" in ability
+        and type(ability["direct_damage"]) is not bool
+    )
+    if invalid_explicit:
+        return False, (
+            "direct_damage must be exactly bool for: "
+            + ", ".join(invalid_explicit)
+        )
+
+    def classified_direct(ability_id: str) -> bool:
+        ability = abilities.get(ability_id)
+        if not isinstance(ability, dict):
+            raise AssertionError(f"missing ability {ability_id}")
+        if "direct_damage" in ability:
+            explicit = ability["direct_damage"]
+            if type(explicit) is not bool:
+                raise AssertionError(
+                    f"{ability_id} direct_damage is not strict bool"
+                )
+            return explicit
+        return any(
+            value is not None and value != {} and value != []
+            for value in (
+                ability.get("dice"),
+                ability.get("scaling"),
+                ability.get("flat_damage"),
+            )
+        )
+
+    expected_true = (
+        "basic_attack",
+        "fireball",
+        "arcane_barrage",
+        "cleave",
+        "wildfire_bomb",
+    )
+    expected_false = (
+        "pass_turn",
+        "holy_light",
+        "flash_heal",
+        "cheap_shot",
+        "corruption",
+        "unstable_affliction",
+        "agony",
+        "vampiric_touch",
+        "devouring_plague",
+        "astral_explosion",
+    )
+    wrong_true = [ability_id for ability_id in expected_true if not classified_direct(ability_id)]
+    wrong_false = [ability_id for ability_id in expected_false if classified_direct(ability_id)]
+    if wrong_true or wrong_false:
+        return False, (
+            f"Direct-damage classification drifted; expected true={wrong_true or 'ok'}, "
+            f"expected false={wrong_false or 'ok'}."
+        )
+
+    resolver_source = _read(resolver_path)
+    required_resolver_snippets = (
+        "def ability_has_direct_damage(",
+        "if type(explicit) is not bool:",
+        "has_direct_damage = ability_has_direct_damage(ability)",
+        "snapshot_next_offense_empowerments(actor)",
+        "combined_next_offense_multiplier(",
+        "consume_next_offense_empowerments(",
+        "secondary_proc_base_damage=strike_again_base_damage",
+    )
+    missing = [
+        snippet
+        for snippet in required_resolver_snippets
+        if snippet not in resolver_source
+    ]
+    if missing:
+        return False, (
+            "Generic next-offense/direct-damage wiring is missing: "
+            + ", ".join(missing)
+        )
+    if 'bool(ability.get("direct_damage"' in resolver_source:
+        return False, (
+            "resolver.py still uses permissive truthiness for direct_damage."
+        )
+
+    resolver_tree = ast.parse(resolver_source, filename=str(resolver_path))
+    special_handlers = next(
+        (
+            node
+            for node in resolver_tree.body
+            if isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "SPECIAL_ABILITY_HANDLERS"
+            and isinstance(node.value, ast.Dict)
+        ),
+        None,
+    )
+    if special_handlers is None:
+        return False, "SPECIAL_ABILITY_HANDLERS is not statically auditable."
+    special_ids = [
+        key.value
+        for key in special_handlers.value.keys
+        if isinstance(key, ast.Constant) and isinstance(key.value, str)
+    ]
+    bypassing_specials = [
+        ability_id
+        for ability_id in special_ids
+        if classified_direct(ability_id)
+    ]
+    if bypassing_specials:
+        return False, (
+            "Current special handlers classify as direct damage but bypass the "
+            "generic direct packet multiplier path: "
+            + ", ".join(sorted(bypassing_specials))
+        )
+
+    effects_source = _read(effects_path)
+    if "secondary_proc_base_damage" not in effects_source:
+        return False, (
+            "trigger_on_hit_passives() lacks the explicit secondary-proc basis."
+        )
+
+    return True, (
+        f"Validated {len(abilities)} abilities, {len(special_ids)} special "
+        "handlers, strict direct_damage metadata, all-effect next-offense "
+        "snapshot wiring, and the strike-again no-next-offense basis."
+    )
+
+
 # =========================================================================== #
 # Runner plumbing (mirrors the other suites' run_all() contract).
 # =========================================================================== #
@@ -1453,6 +1618,10 @@ _GUARDRAILS: Tuple[Tuple[str, Callable[[], Tuple[bool, str]]], ...] = (
     ("guardrail_resource_gain_logs_use_gained", guardrail_resource_gain_logs_use_gained),
     ("guardrail_queued_damage_event_literals", guardrail_queued_damage_event_literals),
     ("guardrail_player_hp_writes", guardrail_player_hp_writes),
+    (
+        "guardrail_next_offense_direct_damage_contract",
+        guardrail_next_offense_direct_damage_contract,
+    ),
 )
 
 

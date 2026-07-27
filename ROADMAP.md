@@ -42,9 +42,12 @@ The combat architecture these classes run on is stabilized:
 - [x] Pet/totem, redirect, and AoE support
 - [x] Split deterministic regression suite plus static validators
 
-## Active phase: remaining classes
+## Recently completed: periodic-item expansion
 
-The current priority is completing the remaining playable classes on top of the stabilized combat architecture, before expanding into larger PvE work.
+- [x] Scourgelord Chestplate: periodic current-HP sacrifice and Death's Bargain
+  next-offense empowerment
+
+## Active phase: remaining classes
 
 Four classes remain. No implementation order has been chosen; priority is assigned only with explicit user approval.
 
@@ -72,6 +75,7 @@ Allowed `Status` values:
 - The complete class PR lands second, on top of the merged foundation.
 - Balance follow-up is separated into its own PR when practical.
 - Every class's specification must satisfy the requirements defined by the [`CLASS_IMPLEMENTATION.md`](CLASS_IMPLEMENTATION.md) template.
+- Every class uses exactly one primary combat resource.
 - Every merged class must update the table above.
 
 ## Deferred work
