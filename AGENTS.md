@@ -784,7 +784,7 @@ Rules:
 * Resolve repository documentation with `path_discovery.detect_repository_root()`; never derive it from the template directory (`_detect_duel_html_path().parent / "AGENTS.md"` is prohibited), and never copy documentation into `templates/`.
 * All discovery is anchored on `Path(__file__).resolve()`, never on the invocation directory. Running `python games/duel/tests/run_regression.py` from the application root and `python run_regression.py` from inside `games/duel/tests/` must resolve identically.
 
-`guardrail_test_path_discovery_contract` enforces these rules statically over the test tree.
+`guardrail_test_path_discovery_contract` enforces these rules statically over the test tree. Its Markdown check is AST-based and rejects *every* executable `.md` / `.markdown` path literal (case-insensitive, any filename or directory) inside `tests/regression/`, however the literal is consumed — `Path(...)`, `/` composition, `open()`, `.read_text()`, `.read_bytes()`, or any helper/loader call. Comments and module/class/function docstrings that merely discuss Markdown are ignored, and `guardrail_markdown_reference_detector_self_test` pins that detector's behavior with synthetic sources.
 
 ## Guardrail expectations
 

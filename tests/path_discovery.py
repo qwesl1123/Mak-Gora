@@ -50,10 +50,15 @@ def duel_html_candidates() -> Tuple[Path, ...]:
 
 
 def detect_duel_html_path() -> Path:
-    """Return the runtime ``duel.html`` template for the current layout."""
+    """Return the runtime ``duel.html`` template for the current layout.
+
+    Candidates must be readable *files*: a directory (or any other filesystem
+    entry) named ``duel.html`` is not a template and must not shadow the real
+    one further down the candidate list.
+    """
     candidates = duel_html_candidates()
     for candidate in candidates:
-        if candidate.exists():
+        if candidate.is_file():
             return candidate
     raise FileNotFoundError(
         "Unable to find duel.html; checked: "

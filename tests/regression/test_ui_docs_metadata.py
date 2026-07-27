@@ -6,6 +6,7 @@ tests/regression/registry.py, which preserves the original run order.
 from __future__ import annotations
 
 import os
+import tempfile
 from pathlib import Path
 
 import path_discovery
@@ -482,37 +483,54 @@ def scenario_test_path_discovery_is_layout_and_cwd_independent() -> bool:
     """
     detected = _detect_duel_html_path()
     assert detected.is_file() and detected.name == "duel.html", \
-        "The canonical detector must resolve an existing duel.html"
+        "The canonical detector must resolve an existing duel.html file"
     assert _detect_duel_html_path is path_discovery.detect_duel_html_path, \
         "harness must expose the shared detector, not a private copy"
 
-    candidates = path_discovery.duel_html_candidates()
-    package_root = candidates[0].parent
+    template_candidates_before = path_discovery.duel_html_candidates()
+    repository_candidates_before = path_discovery.repository_root_candidates()
+    package_root = template_candidates_before[0].parent
     flat_layout = package_root / "duel.html"
     nested_deployment = package_root.parent.parent / "templates" / "duel.html"
-    assert flat_layout in candidates, "The flat repository layout must stay supported"
-    assert nested_deployment in candidates, \
+    assert flat_layout in template_candidates_before, \
+        "The flat repository layout must stay supported"
+    assert nested_deployment in template_candidates_before, \
         "The detector must be able to represent <app root>/templates/duel.html"
-    assert detected in candidates, "Detection must return one of the declared candidates"
+    assert detected in template_candidates_before, \
+        "Detection must return one of the declared candidates"
+    assert repository_candidates_before, \
+        "Repository-root discovery must declare candidates"
+    assert all(
+        candidate.name != "templates" for candidate in repository_candidates_before
+    ), "Repository documentation must never be looked up inside the template directory"
 
     # Path resolution is derived from __file__, never from the invocation
-    # directory: re-running from the tests directory resolves identically.
+    # directory: re-running from another directory must reproduce exactly the
+    # values captured above, not merely agree with itself. Several probes are
+    # used so the check stays meaningful no matter which directory the suite was
+    # launched from -- chdir'ing to the directory we are already in would prove
+    # nothing.
     tests_dir = Path(path_discovery.__file__).resolve().parent
-    original_cwd = os.getcwd()
+    original_cwd = Path(os.getcwd()).resolve()
+    probes = [
+        directory
+        for directory in (tests_dir, tests_dir.parent, Path(tempfile.gettempdir()))
+        if directory.is_dir() and directory.resolve() != original_cwd
+    ]
+    assert probes, "No probe directory differs from the current one; the check would be vacuous"
     try:
-        os.chdir(tests_dir)
-        assert _detect_duel_html_path() == detected, \
-            "duel.html resolution must not depend on the current working directory"
-        assert path_discovery.duel_html_candidates() == candidates, \
-            "Candidate discovery must not depend on the current working directory"
-        assert path_discovery.repository_root_candidates() == \
-            path_discovery.repository_root_candidates(), \
-            "Repository-root candidates must be stable"
+        for probe in probes:
+            os.chdir(probe)
+            assert _detect_duel_html_path() == detected, \
+                f"duel.html resolution changed after chdir to {probe}"
+            assert path_discovery.duel_html_candidates() == template_candidates_before, \
+                f"Template candidates changed after chdir to {probe}"
+            assert path_discovery.repository_root_candidates() == \
+                repository_candidates_before, \
+                f"Repository-root candidates changed after chdir to {probe}"
     finally:
         os.chdir(original_cwd)
 
-    doc_candidates = path_discovery.repository_root_candidates()
-    assert doc_candidates, "Repository-root discovery must declare candidates"
-    assert all(candidate.name != "templates" for candidate in doc_candidates), \
-        "Repository documentation must never be looked up inside the template directory"
+    assert _detect_duel_html_path() == detected, \
+        "duel.html resolution must be unchanged after restoring the original cwd"
     return True

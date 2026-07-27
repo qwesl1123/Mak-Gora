@@ -1693,7 +1693,71 @@ def guardrail_next_offense_docs_and_roadmap_contract() -> Tuple[bool, str]:
 
 _TESTS_DIR = Path(__file__).resolve().parent
 _GAMEPLAY_REGRESSION_DIR = _TESTS_DIR / "regression"
-_DOC_BASENAMES: Tuple[str, ...] = ("AGENTS.md", "ROADMAP.md")
+
+# Development-documentation extensions. A gameplay regression has no legitimate
+# runtime dependency on any of them, whatever the filename or directory is.
+_MARKDOWN_SUFFIXES: Tuple[str, ...] = (".md", ".markdown")
+
+
+def _is_markdown_path_literal(value: object) -> bool:
+    """Return True when ``value`` is a string literal naming a Markdown file."""
+    if not isinstance(value, str):
+        return False
+    normalized = value.strip().replace("\\", "/").lower()
+    return normalized.endswith(_MARKDOWN_SUFFIXES)
+
+
+def _docstring_constant_ids(tree: ast.AST) -> set:
+    """Return the ids of every Constant node that is a real docstring.
+
+    Module, class, and function docstrings are documentation, not executable
+    path construction, so they are exempt from the Markdown prohibition.
+    Comments never reach the AST at all, so they need no special handling.
+    """
+    docstring_ids = set()
+    for node in ast.walk(tree):
+        if not isinstance(
+            node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+        ):
+            continue
+        body = getattr(node, "body", None)
+        if not body:
+            continue
+        first = body[0]
+        if (
+            isinstance(first, ast.Expr)
+            and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str)
+        ):
+            docstring_ids.add(id(first.value))
+    return docstring_ids
+
+
+def _markdown_path_literals(source: str, filename: str) -> List[Tuple[int, str]]:
+    """Return ``(line, literal)`` for every executable Markdown path literal.
+
+    Detection is AST-based rather than a raw-source substring scan, so it sees
+    the literal regardless of how it is consumed -- ``Path("README.md")``,
+    ``root / "docs/design.md"``, ``open(...)``, ``.read_text()``,
+    ``.read_bytes()``, a project helper such as ``_read(...)``, or any other
+    loader call -- while comments and docstrings that merely *discuss* Markdown
+    are ignored.
+    """
+    tree = ast.parse(source, filename=filename)
+    docstring_ids = _docstring_constant_ids(tree)
+    findings = {
+        (node.lineno, node.value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and id(node) not in docstring_ids
+        and _is_markdown_path_literal(node.value)
+    }
+    return sorted(findings)
+
+
+def _gameplay_regression_modules() -> List[Path]:
+    """Return every Python module in the gameplay regression package."""
+    return sorted(_GAMEPLAY_REGRESSION_DIR.rglob("*.py"))
 
 _PROHIBITED_TEST_PATH_PATTERNS: Tuple[Tuple[str, str], ...] = (
     (
@@ -1753,16 +1817,20 @@ def guardrail_test_path_discovery_contract() -> Tuple[bool, str]:
                 )
 
     # Gameplay regressions may depend only on runtime source/data/template
-    # artifacts, never on development Markdown.
-    for path in sorted(_GAMEPLAY_REGRESSION_DIR.glob("*.py")):
-        source = _read(path)
-        for basename in _DOC_BASENAMES:
-            if basename in source:
-                problems.append(
-                    f"{path.relative_to(_TESTS_DIR)}: gameplay regression module "
-                    f"references {basename}; repository-documentation assertions "
-                    "belong to the architecture suite"
-                )
+    # artifacts, never on development Markdown -- any Markdown file, not just
+    # the repository documentation this suite happens to validate.
+    for path in _gameplay_regression_modules():
+        try:
+            findings = _markdown_path_literals(_read(path), str(path))
+        except SyntaxError as exc:
+            problems.append(f"{path.relative_to(_TESTS_DIR)}: unparseable ({exc}).")
+            continue
+        for line_no, literal in findings:
+            problems.append(
+                f"{path.relative_to(_TESTS_DIR)}:{line_no}: gameplay regression "
+                f"references development Markdown {literal!r}; repository-"
+                "documentation assertions belong to the architecture suite"
+            )
 
     # The Scourgelord item/UI scenario must read the template through the
     # canonical detector.
@@ -1820,15 +1888,198 @@ def guardrail_test_path_discovery_contract() -> Tuple[bool, str]:
                 "<app root>/templates/duel.html deployment layout."
             )
 
+        # Both detectors must accept only readable files: a directory named
+        # duel.html (or AGENTS.md) must never shadow the real artifact.
+        for function_name in ("detect_duel_html_path", "detect_repository_root"):
+            function_source = _function_source(discovery_path, function_name)
+            if function_source is None:
+                problems.append(f"path_discovery.{function_name}() is missing.")
+                continue
+            if ".is_file()" not in function_source:
+                problems.append(
+                    f"path_discovery.{function_name}() must select candidates with "
+                    ".is_file(), so a non-file entry cannot shadow the real artifact."
+                )
+            if ".exists()" in function_source:
+                problems.append(
+                    f"path_discovery.{function_name}() must not accept candidates "
+                    "via .exists(); directories would pass."
+                )
+
     if problems:
         return False, "; ".join(problems)
 
     return True, (
         f"Scanned {len(scanned)} test sources for "
-        f"{len(_PROHIBITED_TEST_PATH_PATTERNS)} prohibited path patterns; "
-        "gameplay regressions read no repository documentation, the Scourgelord "
-        "docs scenario uses the canonical detector, and documentation discovery "
-        "is __file__-anchored and independent of template discovery."
+        f"{len(_PROHIBITED_TEST_PATH_PATTERNS)} prohibited path patterns and "
+        f"{len(_gameplay_regression_modules())} gameplay regression modules for "
+        f"executable {'/'.join(_MARKDOWN_SUFFIXES)} path literals; the "
+        "Scourgelord docs scenario uses the canonical detector, and "
+        "documentation discovery is __file__-anchored and independent of "
+        "template discovery."
+    )
+
+
+# =========================================================================== #
+# Guardrail 10: the Markdown-reference detector itself.
+#
+# Guardrail 9 is only as strong as _markdown_path_literals(). These focused
+# self-tests run the detector over synthetic sources so a future refactor
+# cannot silently weaken it into a no-op (or into a docstring-tripping false
+# positive). They live here, in static validation, because they must not add a
+# Markdown dependency to the gameplay suite -- no file is ever opened; the
+# synthetic sources are parsed as text.
+# =========================================================================== #
+
+_MARKDOWN_DETECTOR_MUST_DETECT: Tuple[Tuple[str, str, Tuple[str, ...]], ...] = (
+    (
+        "path_read_text",
+        'Path("README.md").read_text()\n',
+        ("README.md",),
+    ),
+    (
+        "builtin_open_markdown_extension",
+        'open("docs/design.markdown")\n',
+        ("docs/design.markdown",),
+    ),
+    (
+        "project_helper_with_composition",
+        '_read(root / "CLASS_IMPLEMENTATION.md")\n',
+        ("CLASS_IMPLEMENTATION.md",),
+    ),
+    (
+        "mixed_case_suffix",
+        'Path("MixedCase.MD")\n',
+        ("MixedCase.MD",),
+    ),
+    (
+        "directory_composition_mixed_case",
+        'load_file(Path("Docs") / "Combat.MD")\n',
+        ("Combat.MD",),
+    ),
+    (
+        "windows_separator",
+        'Path("docs\\\\architecture.md").open()\n',
+        ("docs\\architecture.md",),
+    ),
+    (
+        "read_bytes_on_composed_path",
+        '(repository_root / "SECURITY.md").read_bytes()\n',
+        ("SECURITY.md",),
+    ),
+    (
+        "inside_function_body",
+        (
+            "def scenario_example() -> bool:\n"
+            '    """Legitimate docstring."""\n'
+            '    text = _read(root / "docs/testing.markdown")\n'
+            "    return bool(text)\n"
+        ),
+        ("docs/testing.markdown",),
+    ),
+)
+
+_MARKDOWN_DETECTOR_MUST_IGNORE: Tuple[Tuple[str, str], ...] = (
+    (
+        "module_docstring",
+        '"""README.md is development documentation."""\n',
+    ),
+    (
+        "function_docstring",
+        (
+            "def scenario_example() -> bool:\n"
+            '    """Gameplay regressions must not read README.md."""\n'
+            "    return True\n"
+        ),
+    ),
+    (
+        "class_docstring",
+        (
+            "class Example:\n"
+            '    """See docs/architecture.md for background."""\n'
+        ),
+    ),
+    (
+        "comment_only",
+        "# docs/design.md must not be loaded here\nvalue = 1\n",
+    ),
+    (
+        "ordinary_string",
+        'value = "ordinary gameplay text"\n',
+    ),
+    (
+        "runtime_template_artifact",
+        'duel_html = _detect_duel_html_path().read_text(encoding="utf-8")\n',
+    ),
+    (
+        "non_string_constants",
+        "value = 5\nother = None\n",
+    ),
+)
+
+
+def guardrail_markdown_reference_detector_self_test() -> Tuple[bool, str]:
+    """Prove the Markdown-reference detector detects and ignores correctly."""
+    problems: List[str] = []
+
+    for name, source, expected in _MARKDOWN_DETECTOR_MUST_DETECT:
+        try:
+            found = _markdown_path_literals(source, f"<detect:{name}>")
+        except SyntaxError as exc:
+            problems.append(f"must-detect case {name!r} is unparseable: {exc}")
+            continue
+        literals = tuple(literal for _, literal in found)
+        if literals != expected:
+            problems.append(
+                f"must-detect case {name!r} expected {expected} but the detector "
+                f"reported {literals}"
+            )
+            continue
+        if any(line_no < 1 for line_no, _ in found):
+            problems.append(f"must-detect case {name!r} reported a bad line number")
+
+    for name, source in _MARKDOWN_DETECTOR_MUST_IGNORE:
+        try:
+            found = _markdown_path_literals(source, f"<ignore:{name}>")
+        except SyntaxError as exc:
+            problems.append(f"must-ignore case {name!r} is unparseable: {exc}")
+            continue
+        if found:
+            problems.append(
+                f"must-ignore case {name!r} produced false positives: "
+                f"{tuple(literal for _, literal in found)}"
+            )
+
+    # The literal predicate itself: extensions are matched case-insensitively
+    # and only at the end of the path, and non-strings are never paths.
+    predicate_cases: Tuple[Tuple[object, bool], ...] = (
+        ("README.md", True),
+        ("readme.MARKDOWN", True),
+        ("  docs/design.md  ", True),
+        ("docs\\notes.Md", True),
+        ("duel.html", False),
+        ("md", False),
+        ("design.md.py", False),
+        ("markdown", False),
+        (5, False),
+        (None, False),
+        (b"README.md", False),
+    )
+    for value, expected_flag in predicate_cases:
+        if _is_markdown_path_literal(value) is not expected_flag:
+            problems.append(
+                f"_is_markdown_path_literal({value!r}) should be {expected_flag}"
+            )
+
+    if problems:
+        return False, "; ".join(problems)
+
+    return True, (
+        f"Markdown-reference detector validated on "
+        f"{len(_MARKDOWN_DETECTOR_MUST_DETECT)} must-detect sources, "
+        f"{len(_MARKDOWN_DETECTOR_MUST_IGNORE)} must-ignore sources "
+        "(docstrings/comments/ordinary strings), and "
+        f"{len(predicate_cases)} literal-predicate cases."
     )
 
 
@@ -1854,6 +2105,10 @@ _GUARDRAILS: Tuple[Tuple[str, Callable[[], Tuple[bool, str]]], ...] = (
     (
         "guardrail_test_path_discovery_contract",
         guardrail_test_path_discovery_contract,
+    ),
+    (
+        "guardrail_markdown_reference_detector_self_test",
+        guardrail_markdown_reference_detector_self_test,
     ),
 )
 
