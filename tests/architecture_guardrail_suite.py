@@ -1914,7 +1914,15 @@ def guardrail_test_path_discovery_contract() -> Tuple[bool, str]:
             (
                 "nested games/duel deployment",
                 nested_root,
-                (Path("/synthetic/app"),),
+                (nested_root, Path("/synthetic/app")),
+            ),
+            # A flat checkout cloned into a games/duel-shaped path must still
+            # offer its own root first, so artifacts decide the layout rather
+            # than directory names.
+            (
+                "flat checkout in a games/duel-shaped path",
+                Path("/home/dev/games/duel"),
+                (Path("/home/dev/games/duel"), Path("/home/dev")),
             ),
         )
         for label, package_root, expected in scoping_cases:

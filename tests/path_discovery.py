@@ -71,24 +71,28 @@ _NESTED_PACKAGE_PARENT = "games"
 
 
 def repository_root_candidates_for(package_root: Path) -> Tuple[Path, ...]:
-    """Return the repository root that ``package_root``'s layout allows.
+    """Return the repository roots ``package_root``'s layout allows, best first.
 
-    Exactly one root is legal per documented layout, so an unrelated ancestor
-    that happens to carry documentation can never be selected:
+    * The package root always comes first. A flat checkout *is* its repository
+      root, and that stays true wherever it is cloned -- including a directory
+      that happens to be called ``games/duel``. Real artifacts (the
+      documentation actually being there) therefore decide the layout;
+      directory names never override them.
+    * The application root two levels up is offered only for a package that
+      looks like a nested deployment, and only as a fallback. The intermediate
+      ``games/`` directory is never a candidate, and nothing higher is either.
 
-    * flat checkout -> the package root itself;
-    * nested deployment (``.../games/duel``) -> the application root two levels
-      up, never the intermediate ``games/`` directory.
-
-    Walking further up would let the architecture guardrail silently validate a
-    different checkout, which is exactly the fail-loud contract it must keep.
+    The list is deliberately short: walking further up would let the
+    architecture guardrail silently validate an unrelated checkout, which is
+    exactly the fail-loud contract it must keep.
     """
+    candidates = [package_root]
     if (
         package_root.name == _NESTED_PACKAGE_NAME
         and package_root.parent.name == _NESTED_PACKAGE_PARENT
     ):
-        return (package_root.parent.parent,)
-    return (package_root,)
+        candidates.append(package_root.parent.parent)
+    return tuple(candidates)
 
 
 def repository_root_candidates() -> Tuple[Path, ...]:
@@ -99,11 +103,13 @@ def repository_root_candidates() -> Tuple[Path, ...]:
 def detect_repository_root() -> Path:
     """Return the repository root that holds ``AGENTS.md`` and ``ROADMAP.md``.
 
-    Raises ``FileNotFoundError`` when the documentation is absent from the root
-    the layout designates, which is the correct outcome for architecture
-    validation: it is only defined for a full source checkout, and validating
-    some other checkout found further up the tree would be worse than failing.
-    Gameplay regressions must never call this helper.
+    Candidates are tried in order, so a checkout that carries its own
+    documentation always wins over the nested-deployment fallback. Raises
+    ``FileNotFoundError`` when none of the layout's roots has the documentation,
+    which is the correct outcome for architecture validation: it is only defined
+    for a full source checkout, and validating some other checkout found further
+    up the tree would be worse than failing. Gameplay regressions must never
+    call this helper.
     """
     candidates = repository_root_candidates()
     for candidate in candidates:
