@@ -2198,9 +2198,14 @@ class _FakeCompletedProcess(NamedTuple):
 
 
 class _RecordingRunner:
-    """Injected ``subprocess.run`` replacement that records its calls."""
+    """Injected ``subprocess.run`` replacement that records its calls.
 
-    def __init__(self, exit_codes: Optional[Dict[str, int]] = None) -> None:
+    ``exit_codes`` maps a runner script name to the exit code the fake child
+    returns. A mapped *exception instance* is raised instead, which is how the
+    launch-failure and Ctrl+C paths are exercised without a real subprocess.
+    """
+
+    def __init__(self, exit_codes: Optional[Dict[str, Any]] = None) -> None:
         self.exit_codes = dict(exit_codes or {})
         self.calls: List[Tuple[Tuple[Any, ...], Dict[str, Any]]] = []
 
@@ -2208,7 +2213,10 @@ class _RecordingRunner:
         self.calls.append((args, kwargs))
         command = args[0] if args else kwargs.get("args", [])
         script = Path(str(command[-1])).name if command else ""
-        return _FakeCompletedProcess(args=command, returncode=self.exit_codes.get(script, 0))
+        outcome = self.exit_codes.get(script, 0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return _FakeCompletedProcess(args=command, returncode=outcome)
 
     @property
     def scripts(self) -> List[str]:
@@ -2281,6 +2289,17 @@ def guardrail_aggregate_runner_declaration() -> Tuple[bool, str]:
             problems.append(f"run_all_tests.py must not hardcode the deployment path {hardcoded}.")
     if not re.search(r"check\s*=\s*False", source):
         problems.append("run_all_tests.py must call subprocess.run(..., check=False).")
+    if not re.search(r"except\s+OSError", source):
+        problems.append(
+            "run_all_tests.py must catch OSError around the launch so a child the OS refuses "
+            "to start is a failed suite, not an aborted run."
+        )
+    for swallowing in (r"except\s+KeyboardInterrupt", r"except\s+BaseException", r"except\s*:"):
+        if re.search(swallowing, source):
+            problems.append(
+                "run_all_tests.py must let KeyboardInterrupt propagate; it must not catch "
+                f"{swallowing!r}."
+            )
 
     imported: List[str] = []
     for node in ast.walk(ast.parse(source, filename=str(_AGGREGATE_RUNNER_PATH))):
@@ -2424,6 +2443,38 @@ def guardrail_aggregate_runner_failure_semantics() -> Tuple[bool, str]:
             if "MISSING RUNNER" not in output or "FAIL: Absent" not in output:
                 problems.append("A missing runner must be reported clearly in the output.")
 
+    # A child the OS refuses to start is a failed suite, not an aborted run.
+    unlaunchable = _RecordingRunner(
+        {"run_regression.py": OSError("Resource temporarily unavailable")}
+    )
+    try:
+        exit_code, output = _run_aggregate(unlaunchable)
+    except OSError as exc:
+        problems.append(
+            f"A subprocess launch error escaped run_suites ({exc}); it must be recorded "
+            "as a suite failure so the remaining suites still run."
+        )
+    else:
+        if unlaunchable.scripts != list(_EXPECTED_AGGREGATE_SCRIPTS):
+            problems.append(
+                f"A launch error short-circuited the run; launched {unlaunchable.scripts}."
+            )
+        if exit_code != 1:
+            problems.append(f"A launch error produced exit code {exit_code}; expected 1.")
+        if "LAUNCH FAILED" not in output or "FAIL: Regression" not in output:
+            problems.append("A launch error must be reported clearly in the output.")
+        if "TEST SUMMARY" not in output:
+            problems.append("A launch error must not suppress the final summary.")
+
+    # Ctrl+C is not a suite failure: it must stop the aggregate run.
+    interrupted = _RecordingRunner({"run_regression.py": KeyboardInterrupt()})
+    try:
+        _run_aggregate(interrupted)
+    except KeyboardInterrupt:
+        pass
+    else:
+        problems.append("KeyboardInterrupt was swallowed; Ctrl+C must stop the aggregate run.")
+
     # Resolved runner paths must not depend on the parent's working directory.
     from_repo_root = _RecordingRunner()
     _run_aggregate(from_repo_root)
@@ -2447,9 +2498,10 @@ def guardrail_aggregate_runner_failure_semantics() -> Tuple[bool, str]:
         return False, "; ".join(problems)
 
     return True, (
-        "Every suite runs after a failure, a failing or missing runner yields exit code 1 "
-        "without a traceback, an all-pass run yields 0, and resolved runner paths and child "
-        "cwd are unaffected by the parent's working directory."
+        "Every suite runs after a failure, a failing, missing, or unlaunchable runner yields "
+        "exit code 1 with a summary and no traceback, KeyboardInterrupt still propagates, an "
+        "all-pass run yields 0, and resolved runner paths and child cwd are unaffected by the "
+        "parent's working directory."
     )
 
 

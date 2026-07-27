@@ -23,12 +23,15 @@ Design rules this module keeps:
 * Child output is never captured or suppressed; it streams straight to the
   terminal.
 * Every suite runs even when an earlier one fails: the point of this command
-  is one complete validation report, not a fail-fast gate.
+  is one complete validation report, not a fail-fast gate. That includes
+  suite-level launch problems -- a missing runner script, or a child the OS
+  refuses to start -- which are recorded as failures rather than aborting the
+  run.
 * ``KeyboardInterrupt`` is deliberately not caught, so Ctrl+C stops the
   aggregate run the way it stops any other Python program.
 
-Exit code is ``0`` only when all suites pass, and ``1`` when any suite fails
-or a declared runner script is missing.
+Exit code is ``0`` only when all suites pass, and ``1`` when any suite fails,
+is missing, or cannot be started.
 """
 
 from __future__ import annotations
@@ -59,6 +62,11 @@ SUITES: Tuple[Tuple[str, str], ...] = (
 # runner is a failure of the aggregate run, not a crash.
 MISSING_RUNNER_EXIT_CODE = 1
 
+# Exit code recorded when the OS refuses to start a child at all (process-limit
+# exhaustion, a vanished interpreter, ...). Like a missing runner, that is a
+# failed suite, not a reason to abandon the remaining ones.
+LAUNCH_ERROR_EXIT_CODE = 1
+
 SEPARATOR = "=" * 72
 
 
@@ -87,21 +95,29 @@ def run_suite(
 ) -> int:
     """Run one suite runner in its own process and return its exit code.
 
-    Returns :data:`MISSING_RUNNER_EXIT_CODE` without raising when the runner
-    script does not exist, so a broken declaration is reported as an ordinary
-    suite failure instead of an unhandled traceback.
+    Never raises for a suite-level problem: a missing runner script yields
+    :data:`MISSING_RUNNER_EXIT_CODE` and a child the OS refuses to start yields
+    :data:`LAUNCH_ERROR_EXIT_CODE`, so both are reported as ordinary suite
+    failures that leave the remaining suites (and the final summary) intact
+    instead of aborting the run with a traceback. ``KeyboardInterrupt`` is not
+    an ``OSError`` and still propagates.
     """
     script_path = tests_dir / script_name
     if not script_path.is_file():
         _emit(f"MISSING RUNNER: {script_path} does not exist.")
         return MISSING_RUNNER_EXIT_CODE
 
-    completed = runner(
-        [sys.executable, str(script_path)],
-        cwd=str(tests_dir),
-        env=suite_environment(),
-        check=False,
-    )
+    try:
+        completed = runner(
+            [sys.executable, str(script_path)],
+            cwd=str(tests_dir),
+            env=suite_environment(),
+            check=False,
+        )
+    except OSError as exc:
+        _emit(f"LAUNCH FAILED: {script_path} could not be started ({type(exc).__name__}: {exc}).")
+        return LAUNCH_ERROR_EXIT_CODE
+
     return int(completed.returncode)
 
 
