@@ -66,27 +66,44 @@ def detect_duel_html_path() -> Path:
     )
 
 
-def repository_root_candidates() -> Tuple[Path, ...]:
-    """Return every supported repository-root location, in priority order.
+_NESTED_PACKAGE_NAME = "duel"
+_NESTED_PACKAGE_PARENT = "games"
 
-    Resolved from this file only: the flat checkout root is the package root
-    itself, while the nested deployment walks up ``games/duel`` to the
-    application root that holds the checked-out documentation.
+
+def repository_root_candidates_for(package_root: Path) -> Tuple[Path, ...]:
+    """Return the repository root that ``package_root``'s layout allows.
+
+    Exactly one root is legal per documented layout, so an unrelated ancestor
+    that happens to carry documentation can never be selected:
+
+    * flat checkout -> the package root itself;
+    * nested deployment (``.../games/duel``) -> the application root two levels
+      up, never the intermediate ``games/`` directory.
+
+    Walking further up would let the architecture guardrail silently validate a
+    different checkout, which is exactly the fail-loud contract it must keep.
     """
-    return (
-        _PACKAGE_ROOT,
-        _PACKAGE_ROOT.parent,
-        _PACKAGE_ROOT.parent.parent,
-        _PACKAGE_ROOT.parent.parent.parent,
-    )
+    if (
+        package_root.name == _NESTED_PACKAGE_NAME
+        and package_root.parent.name == _NESTED_PACKAGE_PARENT
+    ):
+        return (package_root.parent.parent,)
+    return (package_root,)
+
+
+def repository_root_candidates() -> Tuple[Path, ...]:
+    """Return the repository-root candidates for the current layout."""
+    return repository_root_candidates_for(_PACKAGE_ROOT)
 
 
 def detect_repository_root() -> Path:
     """Return the repository root that holds ``AGENTS.md`` and ``ROADMAP.md``.
 
-    Raises ``FileNotFoundError`` when the documentation is absent, which is the
-    correct outcome for architecture validation: it is only defined for a full
-    source checkout. Gameplay regressions must never call this helper.
+    Raises ``FileNotFoundError`` when the documentation is absent from the root
+    the layout designates, which is the correct outcome for architecture
+    validation: it is only defined for a full source checkout, and validating
+    some other checkout found further up the tree would be worse than failing.
+    Gameplay regressions must never call this helper.
     """
     candidates = repository_root_candidates()
     for candidate in candidates:
@@ -94,5 +111,6 @@ def detect_repository_root() -> Path:
             return candidate
     raise FileNotFoundError(
         "Unable to find repository root containing AGENTS.md and ROADMAP.md; "
-        f"checked: {', '.join(str(path) for path in candidates)}"
+        f"checked: {', '.join(str(path) for path in candidates)} "
+        f"(layout anchored on {_PACKAGE_ROOT})"
     )

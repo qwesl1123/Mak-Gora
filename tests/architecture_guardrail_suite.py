@@ -1875,7 +1875,11 @@ def guardrail_test_path_discovery_contract() -> Tuple[bool, str]:
                 problems.append(
                     f"path_discovery.py must not resolve paths from {cwd_pattern})."
                 )
-        for function_name in ("repository_root_candidates", "detect_repository_root"):
+        for function_name in (
+            "repository_root_candidates",
+            "repository_root_candidates_for",
+            "detect_repository_root",
+        ):
             function_source = _function_source(discovery_path, function_name)
             if function_source is None:
                 problems.append(f"path_discovery.{function_name}() is missing.")
@@ -1897,6 +1901,43 @@ def guardrail_test_path_discovery_contract() -> Tuple[bool, str]:
                 "duel_html_candidates() no longer supports the nested "
                 "<app root>/templates/duel.html deployment layout."
             )
+
+        # Documentation discovery must stay scoped to the layout the package
+        # root implies. Walking blindly up the tree would let the guardrail
+        # validate an unrelated checkout that happens to carry documentation,
+        # instead of failing loudly. Synthetic roots keep this honest without
+        # depending on where this checkout happens to live.
+        flat_root = Path("/synthetic/repo")
+        nested_root = Path("/synthetic/app/games/duel")
+        scoping_cases: Tuple[Tuple[str, Path, Tuple[Path, ...]], ...] = (
+            ("flat checkout", flat_root, (flat_root,)),
+            (
+                "nested games/duel deployment",
+                nested_root,
+                (Path("/synthetic/app"),),
+            ),
+        )
+        for label, package_root, expected in scoping_cases:
+            actual = path_discovery.repository_root_candidates_for(package_root)
+            if actual != expected:
+                problems.append(
+                    f"repository_root_candidates_for() on a {label} returned "
+                    f"{tuple(str(path) for path in actual)}, expected "
+                    f"{tuple(str(path) for path in expected)}"
+                )
+
+        forbidden_roots = (
+            Path("/synthetic/app/games"),
+            Path("/synthetic"),
+            Path("/"),
+        )
+        nested_candidates = path_discovery.repository_root_candidates_for(nested_root)
+        for forbidden in forbidden_roots:
+            if forbidden in nested_candidates:
+                problems.append(
+                    "repository_root_candidates_for() must never offer "
+                    f"{forbidden} as a repository root for the nested layout."
+                )
 
         # Both detectors must accept only readable files: a directory named
         # duel.html (or AGENTS.md) must never shadow the real artifact.
