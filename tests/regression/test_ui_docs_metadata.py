@@ -5,6 +5,11 @@ tests/regression/registry.py, which preserves the original run order.
 """
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
+import path_discovery
+
 from harness import (
     ABILITIES,
     CLASSES,
@@ -458,4 +463,56 @@ def scenario_high_risk_snapshot_payload_stability_pack() -> bool:
     effects.consume_absorbs(target, 3)
     after_consume_snapshot = SOCKETS.snapshot_for(match, p1_sid)
     assert not any(entry.get("name") == "Ice Barrier" for entry in after_consume_snapshot["you_effect_panel"]["buffs_magical"]), "Consumed shield should be removed from snapshot panel payload"
+    return True
+
+
+def scenario_test_path_discovery_is_layout_and_cwd_independent() -> bool:
+    """Canonical path discovery covers both layouts and ignores the cwd.
+
+    Gameplay regressions may only depend on runtime artifacts, so they resolve
+    duel.html through the shared detector instead of a hardcoded relative path.
+    The detector must be able to express the deployed nested location
+    (``<app root>/templates/duel.html``) as well as the flat repository one, and
+    resolution must be anchored to ``__file__`` so running the suite from the
+    repository root and from inside ``games/duel/tests/`` behaves identically.
+    Repository-documentation discovery is a separate, template-independent
+    lookup that belongs to the architecture suite, so this scenario only checks
+    that its candidates are never template directories -- it never requires the
+    documents to exist.
+    """
+    detected = _detect_duel_html_path()
+    assert detected.is_file() and detected.name == "duel.html", \
+        "The canonical detector must resolve an existing duel.html"
+    assert _detect_duel_html_path is path_discovery.detect_duel_html_path, \
+        "harness must expose the shared detector, not a private copy"
+
+    candidates = path_discovery.duel_html_candidates()
+    package_root = candidates[0].parent
+    flat_layout = package_root / "duel.html"
+    nested_deployment = package_root.parent.parent / "templates" / "duel.html"
+    assert flat_layout in candidates, "The flat repository layout must stay supported"
+    assert nested_deployment in candidates, \
+        "The detector must be able to represent <app root>/templates/duel.html"
+    assert detected in candidates, "Detection must return one of the declared candidates"
+
+    # Path resolution is derived from __file__, never from the invocation
+    # directory: re-running from the tests directory resolves identically.
+    tests_dir = Path(path_discovery.__file__).resolve().parent
+    original_cwd = os.getcwd()
+    try:
+        os.chdir(tests_dir)
+        assert _detect_duel_html_path() == detected, \
+            "duel.html resolution must not depend on the current working directory"
+        assert path_discovery.duel_html_candidates() == candidates, \
+            "Candidate discovery must not depend on the current working directory"
+        assert path_discovery.repository_root_candidates() == \
+            path_discovery.repository_root_candidates(), \
+            "Repository-root candidates must be stable"
+    finally:
+        os.chdir(original_cwd)
+
+    doc_candidates = path_discovery.repository_root_candidates()
+    assert doc_candidates, "Repository-root discovery must declare candidates"
+    assert all(candidate.name != "templates" for candidate in doc_candidates), \
+        "Repository documentation must never be looked up inside the template directory"
     return True
