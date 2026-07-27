@@ -48,7 +48,13 @@ Rough overview, no need to overthink it:
 
 ### Validating Changes
 
-There is no hosted CI; contributors run the validation suites locally. Before merging engine or class changes, run all five:
+There is no hosted CI; contributors run the validation suites locally. Before merging engine or class changes, run the full validation command:
+
+```bash
+python tests/run_all_tests.py
+```
+
+It runs each of the five standard suites once, in its own subprocess, keeps going after a failure, prints a final per-suite summary, and exits `0` only when all five pass. The individual runners remain available for targeted development:
 
 ```bash
 python tests/run_regression.py
