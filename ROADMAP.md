@@ -42,17 +42,12 @@ The combat architecture these classes run on is stabilized:
 - [x] Pet/totem, redirect, and AoE support
 - [x] Split deterministic regression suite plus static validators
 
-## Active phase: periodic-item expansion
+## Recently completed: periodic-item expansion
 
-The current priority is a short periodic-item expansion on top of the stabilized
-combat architecture. Scourgelord Chestplate is the current milestone. After this
-item lands, development returns to the remaining playable classes before larger
-PvE work.
-
-- [ ] Scourgelord Chestplate: periodic current-HP sacrifice and Death's Bargain
+- [x] Scourgelord Chestplate: periodic current-HP sacrifice and Death's Bargain
   next-offense empowerment
 
-## Next phase: remaining classes
+## Active phase: remaining classes
 
 Four classes remain. No implementation order has been chosen; priority is assigned only with explicit user approval.
 

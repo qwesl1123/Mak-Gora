@@ -2127,6 +2127,7 @@ def trigger_on_hit_passives(
     attacker_challenger_mode: Optional[str] | object = _LIVE_CHALLENGER_MODE,
     attacker_outgoing_multiplier: Optional[float] = None,
     resolve_player_produced_healing: Callable[..., Mapping[str, Any]] | None = None,
+    secondary_proc_base_damage: Optional[int] = None,
 ) -> tuple[int, List[str], int, int, List[Dict[str, Any]]]:
     """Run attacker item passives that trigger on_hit.
 
@@ -2138,8 +2139,10 @@ def trigger_on_hit_passives(
     ``attacker_outgoing_multiplier`` is the action-time outgoing snapshot from
     the resolver. When provided, freshly computed proc formulas use that scalar
     directly rather than re-reading attacker state after the primary hit may have
-    changed HP/resources. Strike-again effects derive from already resolved hit
-    damage and intentionally do not use it.
+    changed HP/resources. ``secondary_proc_base_damage`` is the same resolved
+    parent-hit basis with generic next-offense multipliers removed. Only
+    strike-again consumes that alternate basis; the original ``base_damage``
+    remains authoritative for parent-hit eligibility and every other passive.
 
     The returned ``bonus_damage`` only accounts for passive damage that is already
     final and will not be re-mitigated later (e.g. strike-again). Passives that
@@ -2195,7 +2198,12 @@ def trigger_on_hit_passives(
             chance = float(passive.get("chance", 0) or 0)
             multiplier = float(passive.get("multiplier", 0) or 0)
             if base_damage > 0 and chance > 0 and multiplier > 0 and rng.random() <= chance:
-                extra = int(base_damage * multiplier)
+                strike_again_base = (
+                    base_damage
+                    if secondary_proc_base_damage is None
+                    else int(secondary_proc_base_damage)
+                )
+                extra = int(strike_again_base * multiplier)
                 if extra > 0:
                     bonus_damage += extra
                     damage_events.append(

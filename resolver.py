@@ -40,6 +40,25 @@ def normalize_player_action(action: Dict[str, Any]) -> Dict[str, Any]:
     return normalized
 
 
+def ability_has_direct_damage(ability: Mapping[str, Any]) -> bool:
+    """Return whether an ability dispatches immediate direct-damage packets."""
+
+    if "direct_damage" in ability:
+        explicit = ability["direct_damage"]
+        if type(explicit) is not bool:
+            raise ValueError("ability direct_damage must be a boolean")
+        return explicit
+
+    return any(
+        value is not None and value != {} and value != []
+        for value in (
+            ability.get("dice"),
+            ability.get("scaling"),
+            ability.get("flat_damage"),
+        )
+    )
+
+
 def entity_type_of(target: PlayerState | PetState | None, default: str | None = None) -> str | None:
     """Return normalized entity_type for a runtime entity, if available."""
     if target is None:
@@ -1487,6 +1506,70 @@ def resolve_hit_resolution_stage(
 class AccuracyResolutionResult:
     landed: bool
     miss_log: str | None = None
+
+
+@dataclass(frozen=True)
+class NextOffenseEmpowermentSnapshot:
+    """Immutable action snapshot for one active generic next-offense effect."""
+
+    effect_id: str
+    damage_multiplier: float
+    log: str
+
+
+def snapshot_next_offense_empowerments(
+    actor: PlayerState,
+) -> tuple[NextOffenseEmpowermentSnapshot, ...]:
+    """Validate and snapshot every active generic next-offense effect."""
+
+    snapshots: list[NextOffenseEmpowermentSnapshot] = []
+    for effect in actor.effects:
+        if not (effect.get("flags") or {}).get("empower_next_offense"):
+            continue
+
+        effect_id = effect.get("id")
+        if not isinstance(effect_id, str) or not effect_id.strip():
+            raise ValueError(
+                "empower_next_offense effect id must be a non-empty string"
+            )
+
+        damage_multiplier = effect.get("damage_mult")
+        if (
+            isinstance(damage_multiplier, bool)
+            or not isinstance(damage_multiplier, (int, float))
+            or damage_multiplier <= 0
+        ):
+            raise ValueError(
+                "empower_next_offense damage_mult must be numeric and greater than zero"
+            )
+
+        snapshots.append(
+            NextOffenseEmpowermentSnapshot(
+                effect_id=effect_id.strip(),
+                damage_multiplier=float(damage_multiplier),
+                log=str(effect.get("empower_log") or "Empowered strike!"),
+            )
+        )
+
+    return tuple(sorted(snapshots, key=lambda snapshot: snapshot.effect_id))
+
+
+def combined_next_offense_multiplier(
+    snapshots: tuple[NextOffenseEmpowermentSnapshot, ...],
+) -> float:
+    """Combine simultaneous next-offense effects before canonical truncation."""
+
+    return math.prod(snapshot.damage_multiplier for snapshot in snapshots)
+
+
+def consume_next_offense_empowerments(
+    actor: PlayerState,
+    snapshots: tuple[NextOffenseEmpowermentSnapshot, ...],
+) -> None:
+    """Remove every effect represented by an immutable action snapshot."""
+
+    for snapshot in snapshots:
+        remove_effect(actor, snapshot.effect_id)
 
 
 def resolve_accuracy_stage(
@@ -2954,28 +3037,23 @@ def resolve_turn(match: MatchState) -> None:
                 log_parts.append(stealth_log)
 
         has_damage = any(value for value in (dice_data, scaling, flat_damage))
-        has_direct_damage = bool(ability.get("direct_damage", has_damage))
-        next_offense_empowerment: Dict[str, Any] | None = None
+        has_direct_damage = ability_has_direct_damage(ability)
+        next_offense_empowerments: tuple[
+            NextOffenseEmpowermentSnapshot, ...
+        ] = ()
+        next_offense_multiplier = 1.0
         if offensive_action and has_direct_damage:
-            next_offense_empowerment = next(
-                (
-                    effect
-                    for effect in actor.effects
-                    if (effect.get("flags") or {}).get("empower_next_offense")
-                ),
-                None,
+            next_offense_empowerments = snapshot_next_offense_empowerments(actor)
+            next_offense_multiplier = combined_next_offense_multiplier(
+                next_offense_empowerments
             )
-            if next_offense_empowerment is not None:
-                remove_effect(
-                    actor,
-                    str(next_offense_empowerment.get("id") or ""),
-                )
-                log_parts.append(
-                    str(
-                        next_offense_empowerment.get("empower_log")
-                        or "Empowered strike!"
-                    )
-                )
+            consume_next_offense_empowerments(
+                actor,
+                next_offense_empowerments,
+            )
+            log_parts.extend(
+                snapshot.log for snapshot in next_offense_empowerments
+            )
         consumes_onslaught = _is_rage_spending_damaging_ability(ability, has_damage)
         onslaught_stacks = 0
         if consumes_onslaught and has_effect(actor, "onslaught"):
@@ -3349,14 +3427,10 @@ def resolve_turn(match: MatchState) -> None:
         aoe_raw_damage = 0
         total_healing = 0
         total_overhealing = 0
-        empower_multiplier = 1.0
+        empower_multiplier = next_offense_multiplier
         outgoing_mult = outgoing_damage_multiplier(actor) * (1.0 + (0.04 * onslaught_stacks))
         if clarity_consumed and ability_id == "penance":
             outgoing_mult *= CLARITY_OF_MIND_MULTIPLIER
-        if next_offense_empowerment is not None:
-            empower_multiplier = float(
-                next_offense_empowerment.get("damage_mult", 1.0) or 1.0
-            )
         miss_chance = float(ITEMS.get(weapon_id, {}).get("miss_chance", 0) or 0) if weapon_id else 0.0
         accuracy = hit_chance(
             modify_stat(actor, "acc", actor.stats.get("acc", 90)),
@@ -3367,6 +3441,7 @@ def resolve_turn(match: MatchState) -> None:
         had_flame_dance_at_cast_start = has_effect(actor, "flame_dance")
         on_hit_base_damage = 0
         per_hit_damage_values: list[int] = []
+        per_hit_secondary_proc_base_values: list[int] = []
         aoe_damage_instances: list[int] = []
         aoe_raw_damage_instances: list[int] = []
         death_doubled = (
@@ -3452,7 +3527,21 @@ def resolve_turn(match: MatchState) -> None:
                 death_doubled=death_doubled,
                 include_target_mitigation=False,
             )
+            raw_for_secondary_proc = resolve_damage_modification_stage(
+                raw_damage=raw,
+                target=None,
+                ability_school=ability_school,
+                ability_subschool=ability_subschool,
+                ignore_armor=bool(ability.get("ignore_armor") or ability.get("ignore_physical_reduction")),
+                ignore_magic_resist=bool(ability.get("ignore_magic_resist")),
+                passive_damage_multiplier=action_passive_damage_multiplier,
+                empower_multiplier=1.0,
+                outgoing_multiplier=outgoing_mult,
+                death_doubled=death_doubled,
+                include_target_mitigation=False,
+            )
             incoming_for_hit = raw_for_hit
+            secondary_proc_base_without_next_offense = raw_for_secondary_proc
             if not is_aoe_enemy:
                 incoming_for_hit = resolve_damage_modification_stage(
                     raw_damage=raw,
@@ -3463,6 +3552,19 @@ def resolve_turn(match: MatchState) -> None:
                     ignore_magic_resist=bool(ability.get("ignore_magic_resist")),
                     passive_damage_multiplier=action_passive_damage_multiplier,
                     empower_multiplier=empower_multiplier,
+                    outgoing_multiplier=outgoing_mult,
+                    death_doubled=death_doubled,
+                    target_challenger_mode=target_challenger_mode_for_single_target(target_sid, target),
+                )
+                secondary_proc_base_without_next_offense = resolve_damage_modification_stage(
+                    raw_damage=raw,
+                    target=target,
+                    ability_school=ability_school,
+                    ability_subschool=ability_subschool,
+                    ignore_armor=bool(ability.get("ignore_armor") or ability.get("ignore_physical_reduction")),
+                    ignore_magic_resist=bool(ability.get("ignore_magic_resist")),
+                    passive_damage_multiplier=action_passive_damage_multiplier,
+                    empower_multiplier=1.0,
                     outgoing_multiplier=outgoing_mult,
                     death_doubled=death_doubled,
                     target_challenger_mode=target_challenger_mode_for_single_target(target_sid, target),
@@ -3482,6 +3584,15 @@ def resolve_turn(match: MatchState) -> None:
                 if incoming_for_hit > 0:
                     aoe_incoming_damage += incoming_for_hit
                     aoe_damage_instances.append(incoming_for_hit)
+                secondary_proc_base_without_next_offense = resolve_incoming_damage(
+                    raw_for_secondary_proc,
+                    target,
+                    ability_school,
+                    subschool=ability_subschool,
+                    ignore_armor=bool(ability.get("ignore_armor") or ability.get("ignore_physical_reduction")),
+                    ignore_magic_resist=bool(ability.get("ignore_magic_resist")),
+                    challenger_mode=turn_ctx.challenger_mode_by_sid.get(target_sid),
+                )
 
             if is_damage_immune(target, "physical" if ability_school == "physical" else "magic"):
                 reduced = 0
@@ -3501,6 +3612,9 @@ def resolve_turn(match: MatchState) -> None:
                 on_hit_base_damage = reduced
             if reduced > 0:
                 per_hit_damage_values.append(reduced)
+                per_hit_secondary_proc_base_values.append(
+                    secondary_proc_base_without_next_offense
+                )
 
             if on_hit_effects_allowed:
                 effects_on_hit = ability.get("stealth_on_hit_effects") if was_stealthed else None
@@ -3677,7 +3791,10 @@ def resolve_turn(match: MatchState) -> None:
                 extra_logs.extend(passive_logs)
             queue_passive_damage_events(passive_damage_events)
         # Strike-again passives can proc per successful damaging strike.
-        for strike_damage in per_hit_damage_values:
+        for strike_damage, strike_again_base_damage in zip(
+            per_hit_damage_values,
+            per_hit_secondary_proc_base_values,
+        ):
             strike_bonus_damage, strike_logs, _, _, strike_damage_events = trigger_on_hit_passives(
                 actor,
                 target,
@@ -3694,6 +3811,7 @@ def resolve_turn(match: MatchState) -> None:
                 ),
                 attacker_challenger_mode=action_challenger_mode,
                 attacker_outgoing_multiplier=action_passive_damage_multiplier,
+                secondary_proc_base_damage=strike_again_base_damage,
                 resolve_player_produced_healing=resolve_current_player_produced_healing,
             )
             if strike_bonus_damage > 0:
