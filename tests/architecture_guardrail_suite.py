@@ -62,6 +62,8 @@ import re
 from pathlib import Path
 from typing import Callable, Dict, List, NamedTuple, Optional, Tuple
 
+import path_discovery
+
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -1608,6 +1610,539 @@ def guardrail_next_offense_direct_damage_contract() -> Tuple[bool, str]:
 
 
 # =========================================================================== #
+# Guardrail 8: repository documentation contract (AGENTS.md / ROADMAP.md).
+#
+# These assertions used to live in the gameplay regression suite, which forced
+# run_regression.py to require development Markdown inside a deployed runtime
+# tree. Repository documentation is not a runtime artifact, so the contract is
+# validated here instead: this suite is only meaningful in a full source
+# checkout, and it fails loudly (FileNotFoundError from the shared
+# repository-root detector) when the documentation is absent.
+# =========================================================================== #
+
+_REQUIRED_ROADMAP_TEXT: Tuple[str, ...] = (
+    "## Recently completed: periodic-item expansion",
+    "- [x] Scourgelord Chestplate: periodic current-HP sacrifice and Death's Bargain\n"
+    "  next-offense empowerment",
+    "## Active phase: remaining classes",
+    "Every class uses exactly one primary combat resource.",
+)
+
+_FORBIDDEN_ROADMAP_TEXT: Tuple[str, ...] = (
+    "## Active phase: periodic-item expansion",
+    "- [ ] Scourgelord Chestplate",
+)
+
+_REQUIRED_AGENTS_NEXT_OFFENSE_TEXT: Tuple[str, ...] = (
+    "Every active `empower_next_offense` effect snapshots onto the same next valid",
+    "ordered canonically by effect ID",
+    "combine multiplicatively into one scalar before the canonical damage stage",
+    "All snapshotted effects consume together",
+    "exactly once per cast in canonical order",
+    "basis that excludes only the generic next-offense multiplier",
+    "`direct_damage` is a strict boolean ability-definition property",
+    "Offensive-action classification remains broader and separate",
+    "Fixed-value shield-derived damage is explicitly non-direct",
+)
+
+
+def guardrail_next_offense_docs_and_roadmap_contract() -> Tuple[bool, str]:
+    """Validate the roadmap phase state and the AGENTS.md next-offense contract."""
+    repository_root = path_discovery.detect_repository_root()
+    roadmap = _read(repository_root / "ROADMAP.md")
+    agents = _read(repository_root / "AGENTS.md")
+
+    problems: List[str] = []
+    for text in _REQUIRED_ROADMAP_TEXT:
+        if text not in roadmap:
+            problems.append(f"ROADMAP.md is missing required text: {text!r}")
+    for text in _FORBIDDEN_ROADMAP_TEXT:
+        if text in roadmap:
+            problems.append(f"ROADMAP.md still contains stale text: {text!r}")
+
+    normalized_agents = " ".join(agents.split())
+    for text in _REQUIRED_AGENTS_NEXT_OFFENSE_TEXT:
+        if text not in normalized_agents:
+            problems.append(f"AGENTS.md is missing next-offense contract text: {text!r}")
+
+    if problems:
+        return False, "; ".join(problems)
+
+    return True, (
+        f"Validated {len(_REQUIRED_ROADMAP_TEXT)} roadmap statements, "
+        f"{len(_FORBIDDEN_ROADMAP_TEXT)} stale-roadmap prohibitions, and "
+        f"{len(_REQUIRED_AGENTS_NEXT_OFFENSE_TEXT)} AGENTS.md next-offense "
+        f"contract statements in {repository_root}."
+    )
+
+
+# =========================================================================== #
+# Guardrail 9: test path discovery stays canonical and layout-agnostic.
+#
+# Static scan of the test tree. Two classes of historical bug are prohibited:
+# hardcoded ``parents[N] / "duel.html"`` template lookups (which only work in
+# the flat checkout) and repository-documentation lookups derived from the
+# template directory (which only work when the documentation happens to sit
+# next to duel.html). Gameplay regression modules must not read repository
+# documentation at all, so a deployed runtime tree without development Markdown
+# still runs the full gameplay suite.
+#
+# This file is excluded from the scan because it necessarily spells out the
+# prohibited patterns and the documentation filenames it validates.
+# =========================================================================== #
+
+_TESTS_DIR = Path(__file__).resolve().parent
+_GAMEPLAY_REGRESSION_DIR = _TESTS_DIR / "regression"
+
+# Development-documentation extensions. A gameplay regression has no legitimate
+# runtime dependency on any of them, whatever the filename or directory is.
+_MARKDOWN_SUFFIXES: Tuple[str, ...] = (".md", ".markdown")
+
+
+def _is_markdown_path_literal(value: object) -> bool:
+    """Return True when ``value`` is a string literal naming a Markdown file."""
+    if not isinstance(value, str):
+        return False
+    normalized = value.strip().replace("\\", "/").lower()
+    return normalized.endswith(_MARKDOWN_SUFFIXES)
+
+
+def _docstring_constant_ids(tree: ast.AST) -> set:
+    """Return the ids of every Constant node that is a real docstring.
+
+    Module, class, and function docstrings are documentation, not executable
+    path construction, so they are exempt from the Markdown prohibition.
+    Comments never reach the AST at all, so they need no special handling.
+    """
+    docstring_ids = set()
+    for node in ast.walk(tree):
+        if not isinstance(
+            node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+        ):
+            continue
+        body = getattr(node, "body", None)
+        if not body:
+            continue
+        first = body[0]
+        if (
+            isinstance(first, ast.Expr)
+            and isinstance(first.value, ast.Constant)
+            and isinstance(first.value.value, str)
+        ):
+            docstring_ids.add(id(first.value))
+    return docstring_ids
+
+
+def _markdown_path_literals(source: str, filename: str) -> List[Tuple[int, str]]:
+    """Return ``(line, literal)`` for every executable Markdown path literal.
+
+    Detection is AST-based rather than a raw-source substring scan, so it sees
+    the literal regardless of how it is consumed -- ``Path("README.md")``,
+    ``root / "docs/design.md"``, ``open(...)``, ``.read_text()``,
+    ``.read_bytes()``, a project helper such as ``_read(...)``, or any other
+    loader call -- while comments and docstrings that merely *discuss* Markdown
+    are ignored.
+    """
+    tree = ast.parse(source, filename=filename)
+    docstring_ids = _docstring_constant_ids(tree)
+    findings = {
+        (node.lineno, node.value)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Constant)
+        and id(node) not in docstring_ids
+        and _is_markdown_path_literal(node.value)
+    }
+    return sorted(findings)
+
+
+def _gameplay_regression_modules() -> List[Path]:
+    """Return every Python module in the gameplay regression package."""
+    return sorted(_GAMEPLAY_REGRESSION_DIR.rglob("*.py"))
+
+_PROHIBITED_TEST_PATH_PATTERNS: Tuple[Tuple[str, str], ...] = (
+    (
+        r"""parents\[\s*\d+\s*\]\s*/\s*["']duel\.html["']""",
+        'hardcoded parents[N] / "duel.html"; use the canonical '
+        "_detect_duel_html_path() detector instead",
+    ),
+    (
+        r"""parents\[\s*\d+\s*\]\s*/\s*["'](?:AGENTS|ROADMAP)\.md["']""",
+        "hardcoded parents[N] repository-documentation path; use the canonical "
+        "repository-root detector instead",
+    ),
+    (
+        r"""_detect_duel_html_path\(\)\s*\.parent\s*/\s*["'](?:AGENTS|ROADMAP)\.md["']""",
+        "repository documentation resolved from the template directory; "
+        "documentation lookup must be independent of duel.html",
+    ),
+)
+
+_SCOURGELORD_DOC_SCENARIO = "scenario_scourgelord_item_effect_docs_and_handler_validation"
+
+
+def _test_source_files() -> List[Path]:
+    """Return every module in the test tree except this guardrail suite itself.
+
+    Recursive on purpose: a regression domain organized into a subpackage must
+    not escape the canonical-path rules, and this scan must stay consistent with
+    the (also recursive) Markdown scan over ``_gameplay_regression_modules()``.
+    """
+    this_file = Path(__file__).resolve()
+    return [path for path in sorted(_TESTS_DIR.rglob("*.py")) if path != this_file]
+
+
+def _function_source(path: Path, function_name: str) -> Optional[str]:
+    source = _read(path)
+    tree = ast.parse(source, filename=str(path))
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name == function_name:
+            return ast.get_source_segment(source, node)
+    return None
+
+
+def guardrail_test_path_discovery_contract() -> Tuple[bool, str]:
+    """Reject layout-specific path construction inside the test tree."""
+    problems: List[str] = []
+
+    scanned = _test_source_files()
+    if not scanned:
+        return False, "No test sources found to scan; the guardrail anchor moved."
+
+    # The path-pattern scan and the Markdown scan must cover the same tree, so a
+    # regression subpackage cannot be exempt from one but not the other.
+    uncovered = [path for path in _gameplay_regression_modules() if path not in scanned]
+    if uncovered:
+        problems.append(
+            "gameplay regression modules missing from the path-pattern scan: "
+            + ", ".join(str(path.relative_to(_TESTS_DIR)) for path in uncovered)
+        )
+
+    for path in scanned:
+        source = _read(path)
+        for pattern, reason in _PROHIBITED_TEST_PATH_PATTERNS:
+            for match in re.finditer(pattern, source):
+                line_no = source.count("\n", 0, match.start()) + 1
+                problems.append(
+                    f"{path.relative_to(_TESTS_DIR)}:{line_no}: {reason}"
+                )
+
+    # Gameplay regressions may depend only on runtime source/data/template
+    # artifacts, never on development Markdown -- any Markdown file, not just
+    # the repository documentation this suite happens to validate.
+    for path in _gameplay_regression_modules():
+        try:
+            findings = _markdown_path_literals(_read(path), str(path))
+        except SyntaxError as exc:
+            problems.append(f"{path.relative_to(_TESTS_DIR)}: unparseable ({exc}).")
+            continue
+        for line_no, literal in findings:
+            problems.append(
+                f"{path.relative_to(_TESTS_DIR)}:{line_no}: gameplay regression "
+                f"references development Markdown {literal!r}; repository-"
+                "documentation assertions belong to the architecture suite"
+            )
+
+    # The Scourgelord item/UI scenario must read the template through the
+    # canonical detector.
+    scourgelord_source = _function_source(
+        _GAMEPLAY_REGRESSION_DIR / "test_periodic_items.py",
+        _SCOURGELORD_DOC_SCENARIO,
+    )
+    if scourgelord_source is None:
+        problems.append(
+            f"{_SCOURGELORD_DOC_SCENARIO} was not found in test_periodic_items.py; "
+            "the guardrail anchor may have moved."
+        )
+    elif "_detect_duel_html_path()" not in scourgelord_source:
+        problems.append(
+            f"{_SCOURGELORD_DOC_SCENARIO} must load duel.html through "
+            "_detect_duel_html_path()."
+        )
+
+    # Documentation discovery must be independent of template discovery, and
+    # both must be anchored to __file__ rather than the invocation directory.
+    discovery_path = _TESTS_DIR / "path_discovery.py"
+    if not discovery_path.is_file():
+        problems.append("tests/path_discovery.py is missing.")
+    else:
+        discovery_source = _read(discovery_path)
+        if "Path(__file__).resolve()" not in discovery_source:
+            problems.append(
+                "path_discovery.py must anchor discovery on Path(__file__).resolve()."
+            )
+        for cwd_pattern in ("Path.cwd(", "os.getcwd(", "os.curdir"):
+            if cwd_pattern in discovery_source:
+                problems.append(
+                    f"path_discovery.py must not resolve paths from {cwd_pattern})."
+                )
+        for function_name in (
+            "repository_root_candidates",
+            "repository_root_candidates_for",
+            "detect_repository_root",
+        ):
+            function_source = _function_source(discovery_path, function_name)
+            if function_source is None:
+                problems.append(f"path_discovery.{function_name}() is missing.")
+                continue
+            for template_token in ("duel.html", '"templates"', "detect_duel_html_path"):
+                if template_token in function_source:
+                    problems.append(
+                        f"path_discovery.{function_name}() must not derive "
+                        f"documentation paths from the template lookup "
+                        f"({template_token})."
+                    )
+
+        nested_deployment_supported = any(
+            candidate.parent.name == "templates"
+            for candidate in path_discovery.duel_html_candidates()
+        )
+        if not nested_deployment_supported:
+            problems.append(
+                "duel_html_candidates() no longer supports the nested "
+                "<app root>/templates/duel.html deployment layout."
+            )
+
+        # Documentation discovery must stay scoped to the layout the package
+        # root implies. Walking blindly up the tree would let the guardrail
+        # validate an unrelated checkout that happens to carry documentation,
+        # instead of failing loudly. Synthetic roots keep this honest without
+        # depending on where this checkout happens to live.
+        flat_root = Path("/synthetic/repo")
+        nested_root = Path("/synthetic/app/games/duel")
+        scoping_cases: Tuple[Tuple[str, Path, Tuple[Path, ...]], ...] = (
+            ("flat checkout", flat_root, (flat_root,)),
+            (
+                "nested games/duel deployment",
+                nested_root,
+                (nested_root, Path("/synthetic/app")),
+            ),
+            # A flat checkout cloned into a games/duel-shaped path must still
+            # offer its own root first, so artifacts decide the layout rather
+            # than directory names.
+            (
+                "flat checkout in a games/duel-shaped path",
+                Path("/home/dev/games/duel"),
+                (Path("/home/dev/games/duel"), Path("/home/dev")),
+            ),
+        )
+        for label, package_root, expected in scoping_cases:
+            actual = path_discovery.repository_root_candidates_for(package_root)
+            if actual != expected:
+                problems.append(
+                    f"repository_root_candidates_for() on a {label} returned "
+                    f"{tuple(str(path) for path in actual)}, expected "
+                    f"{tuple(str(path) for path in expected)}"
+                )
+
+        forbidden_roots = (
+            Path("/synthetic/app/games"),
+            Path("/synthetic"),
+            Path("/"),
+        )
+        nested_candidates = path_discovery.repository_root_candidates_for(nested_root)
+        for forbidden in forbidden_roots:
+            if forbidden in nested_candidates:
+                problems.append(
+                    "repository_root_candidates_for() must never offer "
+                    f"{forbidden} as a repository root for the nested layout."
+                )
+
+        # Both detectors must accept only readable files: a directory named
+        # duel.html (or AGENTS.md) must never shadow the real artifact.
+        for function_name in ("detect_duel_html_path", "detect_repository_root"):
+            function_source = _function_source(discovery_path, function_name)
+            if function_source is None:
+                problems.append(f"path_discovery.{function_name}() is missing.")
+                continue
+            if ".is_file()" not in function_source:
+                problems.append(
+                    f"path_discovery.{function_name}() must select candidates with "
+                    ".is_file(), so a non-file entry cannot shadow the real artifact."
+                )
+            if ".exists()" in function_source:
+                problems.append(
+                    f"path_discovery.{function_name}() must not accept candidates "
+                    "via .exists(); directories would pass."
+                )
+
+    if problems:
+        return False, "; ".join(problems)
+
+    return True, (
+        f"Scanned {len(scanned)} test sources for "
+        f"{len(_PROHIBITED_TEST_PATH_PATTERNS)} prohibited path patterns and "
+        f"{len(_gameplay_regression_modules())} gameplay regression modules for "
+        f"executable {'/'.join(_MARKDOWN_SUFFIXES)} path literals; the "
+        "Scourgelord docs scenario uses the canonical detector, and "
+        "documentation discovery is __file__-anchored and independent of "
+        "template discovery."
+    )
+
+
+# =========================================================================== #
+# Guardrail 10: the Markdown-reference detector itself.
+#
+# Guardrail 9 is only as strong as _markdown_path_literals(). These focused
+# self-tests run the detector over synthetic sources so a future refactor
+# cannot silently weaken it into a no-op (or into a docstring-tripping false
+# positive). They live here, in static validation, because they must not add a
+# Markdown dependency to the gameplay suite -- no file is ever opened; the
+# synthetic sources are parsed as text.
+# =========================================================================== #
+
+_MARKDOWN_DETECTOR_MUST_DETECT: Tuple[Tuple[str, str, Tuple[str, ...]], ...] = (
+    (
+        "path_read_text",
+        'Path("README.md").read_text()\n',
+        ("README.md",),
+    ),
+    (
+        "builtin_open_markdown_extension",
+        'open("docs/design.markdown")\n',
+        ("docs/design.markdown",),
+    ),
+    (
+        "project_helper_with_composition",
+        '_read(root / "CLASS_IMPLEMENTATION.md")\n',
+        ("CLASS_IMPLEMENTATION.md",),
+    ),
+    (
+        "mixed_case_suffix",
+        'Path("MixedCase.MD")\n',
+        ("MixedCase.MD",),
+    ),
+    (
+        "directory_composition_mixed_case",
+        'load_file(Path("Docs") / "Combat.MD")\n',
+        ("Combat.MD",),
+    ),
+    (
+        "windows_separator",
+        'Path("docs\\\\architecture.md").open()\n',
+        ("docs\\architecture.md",),
+    ),
+    (
+        "read_bytes_on_composed_path",
+        '(repository_root / "SECURITY.md").read_bytes()\n',
+        ("SECURITY.md",),
+    ),
+    (
+        "inside_function_body",
+        (
+            "def scenario_example() -> bool:\n"
+            '    """Legitimate docstring."""\n'
+            '    text = _read(root / "docs/testing.markdown")\n'
+            "    return bool(text)\n"
+        ),
+        ("docs/testing.markdown",),
+    ),
+)
+
+_MARKDOWN_DETECTOR_MUST_IGNORE: Tuple[Tuple[str, str], ...] = (
+    (
+        "module_docstring",
+        '"""README.md is development documentation."""\n',
+    ),
+    (
+        "function_docstring",
+        (
+            "def scenario_example() -> bool:\n"
+            '    """Gameplay regressions must not read README.md."""\n'
+            "    return True\n"
+        ),
+    ),
+    (
+        "class_docstring",
+        (
+            "class Example:\n"
+            '    """See docs/architecture.md for background."""\n'
+        ),
+    ),
+    (
+        "comment_only",
+        "# docs/design.md must not be loaded here\nvalue = 1\n",
+    ),
+    (
+        "ordinary_string",
+        'value = "ordinary gameplay text"\n',
+    ),
+    (
+        "runtime_template_artifact",
+        'duel_html = _detect_duel_html_path().read_text(encoding="utf-8")\n',
+    ),
+    (
+        "non_string_constants",
+        "value = 5\nother = None\n",
+    ),
+)
+
+
+def guardrail_markdown_reference_detector_self_test() -> Tuple[bool, str]:
+    """Prove the Markdown-reference detector detects and ignores correctly."""
+    problems: List[str] = []
+
+    for name, source, expected in _MARKDOWN_DETECTOR_MUST_DETECT:
+        try:
+            found = _markdown_path_literals(source, f"<detect:{name}>")
+        except SyntaxError as exc:
+            problems.append(f"must-detect case {name!r} is unparseable: {exc}")
+            continue
+        literals = tuple(literal for _, literal in found)
+        if literals != expected:
+            problems.append(
+                f"must-detect case {name!r} expected {expected} but the detector "
+                f"reported {literals}"
+            )
+            continue
+        if any(line_no < 1 for line_no, _ in found):
+            problems.append(f"must-detect case {name!r} reported a bad line number")
+
+    for name, source in _MARKDOWN_DETECTOR_MUST_IGNORE:
+        try:
+            found = _markdown_path_literals(source, f"<ignore:{name}>")
+        except SyntaxError as exc:
+            problems.append(f"must-ignore case {name!r} is unparseable: {exc}")
+            continue
+        if found:
+            problems.append(
+                f"must-ignore case {name!r} produced false positives: "
+                f"{tuple(literal for _, literal in found)}"
+            )
+
+    # The literal predicate itself: extensions are matched case-insensitively
+    # and only at the end of the path, and non-strings are never paths.
+    predicate_cases: Tuple[Tuple[object, bool], ...] = (
+        ("README.md", True),
+        ("readme.MARKDOWN", True),
+        ("  docs/design.md  ", True),
+        ("docs\\notes.Md", True),
+        ("duel.html", False),
+        ("md", False),
+        ("design.md.py", False),
+        ("markdown", False),
+        (5, False),
+        (None, False),
+        (b"README.md", False),
+    )
+    for value, expected_flag in predicate_cases:
+        if _is_markdown_path_literal(value) is not expected_flag:
+            problems.append(
+                f"_is_markdown_path_literal({value!r}) should be {expected_flag}"
+            )
+
+    if problems:
+        return False, "; ".join(problems)
+
+    return True, (
+        f"Markdown-reference detector validated on "
+        f"{len(_MARKDOWN_DETECTOR_MUST_DETECT)} must-detect sources, "
+        f"{len(_MARKDOWN_DETECTOR_MUST_IGNORE)} must-ignore sources "
+        "(docstrings/comments/ordinary strings), and "
+        f"{len(predicate_cases)} literal-predicate cases."
+    )
+
+
+# =========================================================================== #
 # Runner plumbing (mirrors the other suites' run_all() contract).
 # =========================================================================== #
 
@@ -1622,6 +2157,18 @@ _GUARDRAILS: Tuple[Tuple[str, Callable[[], Tuple[bool, str]]], ...] = (
         "guardrail_next_offense_direct_damage_contract",
         guardrail_next_offense_direct_damage_contract,
     ),
+    (
+        "guardrail_next_offense_docs_and_roadmap_contract",
+        guardrail_next_offense_docs_and_roadmap_contract,
+    ),
+    (
+        "guardrail_test_path_discovery_contract",
+        guardrail_test_path_discovery_contract,
+    ),
+    (
+        "guardrail_markdown_reference_detector_self_test",
+        guardrail_markdown_reference_detector_self_test,
+    ),
 )
 
 
@@ -1635,3 +2182,16 @@ def run_all() -> List[Tuple[str, bool, str]]:
             continue
         results.append((name, ok, reason))
     return results
+
+
+if __name__ == "__main__":
+    import sys
+
+    outcomes = run_all()
+    for name, ok, reason in outcomes:
+        print(f"PASS: {name} -> {reason}" if ok else f"FAIL: {name} -> {reason}")
+    failures = [entry for entry in outcomes if not entry[1]]
+    if failures:
+        print(f"{len(failures)} guardrail(s) failed!")
+        sys.exit(1)
+    print(f"All {len(outcomes)} architecture guardrails passed.")

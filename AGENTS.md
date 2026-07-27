@@ -24,6 +24,7 @@ Core files:
 * `tests/source_kind_validation_suite.py`: damage source-kind metadata validation.
 * `tests/effect_tags_validation_suite.py`: effect-tag metadata validation.
 * `tests/subschool_validation_suite.py`: school/subschool metadata validation.
+* `tests/path_discovery.py`: canonical, engine-free test-time path discovery for `duel.html` and the repository root.
 
 New regression scenarios belong in the appropriate `tests/regression/` domain module and must be registered in `tests/regression/registry.py`. `tests/regression_suite.py` is now only a compatibility import shim and is not the place to add scenarios.
 
@@ -765,6 +766,25 @@ python tests/run_subschool_validation.py
 * Run all five suites before merging a class or any shared engine foundation.
 * Report exact pass counts.
 * Do not claim a suite passed if it was not executed.
+
+### Test dependencies and path discovery
+
+Gameplay regressions (`tests/run_regression.py`) may depend only on runtime artifacts: engine/content source modules, their data, and the `duel.html` template. They must never read development Markdown (`AGENTS.md`, `ROADMAP.md`, `README.md`, ...), because the deployed runtime tree legitimately ships without a documentation checkout, and a missing document must never fail a gameplay scenario.
+
+Repository-documentation assertions belong to architecture/static validation (`tests/architecture_guardrail_suite.py`). That suite is only defined for a full source checkout, so it fails loudly and explicitly when the documentation is absent rather than degrading to a skip.
+
+Test path discovery is centralized in `tests/path_discovery.py` and must support every documented layout:
+
+* the flat repository checkout (`<repo>/duel.html`, `<repo>/AGENTS.md`); and
+* the deployed nested application layout (`<app>/games/duel/` with `<app>/templates/duel.html`).
+
+Rules:
+
+* Resolve the template with the canonical detector (`_detect_duel_html_path()` / `path_discovery.detect_duel_html_path()`); never hardcode `Path(__file__).resolve().parents[N] / "duel.html"`.
+* Resolve repository documentation with `path_discovery.detect_repository_root()`; never derive it from the template directory (`_detect_duel_html_path().parent / "AGENTS.md"` is prohibited), and never copy documentation into `templates/`. Root discovery offers at most two roots — the package root first (a flat checkout is its own repository root, wherever it happens to be cloned), then the application root two levels above a `games/duel` package as a fallback — and raises rather than searching further up. Artifacts decide the layout: whichever candidate actually carries the documentation wins, directory names never override that, the intermediate `games/` directory is never a candidate, and architecture validation can never silently validate an unrelated checkout further up the tree.
+* All discovery is anchored on `Path(__file__).resolve()`, never on the invocation directory. Running `python games/duel/tests/run_regression.py` from the application root and `python run_regression.py` from inside `games/duel/tests/` must resolve identically.
+
+`guardrail_test_path_discovery_contract` enforces these rules statically over the test tree. Its Markdown check is AST-based and rejects *every* executable `.md` / `.markdown` path literal (case-insensitive, any filename or directory) inside `tests/regression/`, however the literal is consumed — `Path(...)`, `/` composition, `open()`, `.read_text()`, `.read_bytes()`, or any helper/loader call. Comments and module/class/function docstrings that merely discuss Markdown are ignored, and `guardrail_markdown_reference_detector_self_test` pins that detector's behavior with synthetic sources.
 
 ## Guardrail expectations
 

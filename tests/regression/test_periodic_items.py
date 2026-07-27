@@ -6,12 +6,12 @@ import random
 import re
 
 from contextlib import contextmanager
-from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Callable, Iterator
 
 from harness import (
     PetState,
+    _detect_duel_html_path,
     _turn_lines,
     effects,
     make_match,
@@ -1155,9 +1155,7 @@ def scenario_scourgelord_item_effect_docs_and_handler_validation() -> bool:
         == "Your next offensive attack deals 15% more damage."
     )
 
-    duel_html = (
-        Path(__file__).resolve().parents[2] / "duel.html"
-    ).read_text(encoding="utf-8")
+    duel_html = _detect_duel_html_path().read_text(encoding="utf-8")
     assert "/item armor scourgelord_chestplate" in duel_html
     assert passive_text in duel_html
     doc_match = re.search(
@@ -1557,9 +1555,7 @@ def scenario_vial_of_shadows_item_data_docs_and_ui() -> bool:
     assert not any(effect.get("duration") == 5 for effect in vial_effects), \
         "Vial scheduling must not be represented by a five-turn countdown effect"
 
-    duel_html = (
-        Path(__file__).resolve().parents[2] / "duel.html"
-    ).read_text(encoding="utf-8")
+    duel_html = _detect_duel_html_path().read_text(encoding="utf-8")
     required_docs = (
         "Vial of Shadows",
         "/item trinket vial_of_shadows",

@@ -11,24 +11,17 @@ import types
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
+import path_discovery
+
 
 _REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-def _detect_duel_html_path() -> Path:
-    candidates = [
-        _REPO_ROOT / "duel.html",
-        _REPO_ROOT / "templates" / "duel.html",
-        _REPO_ROOT.parent / "templates" / "duel.html",
-        _REPO_ROOT.parent.parent / "templates" / "duel.html",
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    raise FileNotFoundError(
-        "Unable to find duel.html; checked: "
-        + ", ".join(str(path) for path in candidates)
-    )
+# Path discovery lives in path_discovery.py so gameplay regressions and the
+# engine-free static suites share one implementation. These aliases keep the
+# historical harness import surface (_detect_duel_html_path) working.
+_duel_html_candidates = path_discovery.duel_html_candidates
+_detect_duel_html_path = path_discovery.detect_duel_html_path
 
 
 def _detect_layout() -> tuple[Path, Path]:

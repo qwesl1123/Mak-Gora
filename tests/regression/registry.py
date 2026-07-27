@@ -70,7 +70,6 @@ from .test_next_offense import (
     scenario_fixed_value_damage_does_not_qualify_as_direct_offense,
     scenario_scourgelord_refresh_preserves_other_next_offense,
     scenario_next_offense_secondary_sources_remain_unscaled,
-    scenario_next_offense_architecture_docs_and_roadmap_contract,
 )
 from .test_periodic_items import (
     scenario_periodic_item_empty_stage_is_true_noop,
@@ -302,6 +301,7 @@ from .test_ui_docs_metadata import (
     scenario_mindgames_complete_entity_aware_description,
     scenario_effect_panel_payload_normalization,
     scenario_high_risk_snapshot_payload_stability_pack,
+    scenario_test_path_discovery_is_layout_and_cwd_independent,
 )
 from .test_classes_abilities import (
     scenario_mindgames_lay_on_hands,
@@ -469,7 +469,6 @@ SCENARIOS = [
     scenario_fixed_value_damage_does_not_qualify_as_direct_offense,
     scenario_scourgelord_refresh_preserves_other_next_offense,
     scenario_next_offense_secondary_sources_remain_unscaled,
-    scenario_next_offense_architecture_docs_and_roadmap_contract,
     scenario_periodic_item_empty_stage_is_true_noop,
     scenario_periodic_item_stage_runs_once_per_global_turn,
     scenario_periodic_item_schedule_boundaries_use_global_turn,
@@ -697,6 +696,7 @@ SCENARIOS = [
     scenario_step2_pet_legality_and_protection_contracts,
     scenario_high_risk_shared_effect_naming_and_panel_pack,
     scenario_high_risk_snapshot_payload_stability_pack,
+    scenario_test_path_discovery_is_layout_and_cwd_independent,
     scenario_phase0_early_pipeline_contract_lock,
     scenario_phase0_same_turn_protection_and_denial_timing_lock,
     scenario_phase0_absorb_shield_contract_lock,

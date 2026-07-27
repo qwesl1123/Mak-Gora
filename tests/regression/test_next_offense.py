@@ -9,7 +9,6 @@ from typing import Any, Iterator
 
 from harness import (
     ABILITIES,
-    _detect_duel_html_path,
     _turn_lines,
     effects,
     make_match,
@@ -1247,39 +1246,4 @@ def scenario_next_offense_secondary_sources_remain_unscaled() -> bool:
         assert drain_baseline[1]["healing"] == 20
         assert drain_empowered[1]["healing"] == 27, \
             "Drain Life may heal from larger actual direct damage, but not multiply twice"
-    return True
-
-
-def scenario_next_offense_architecture_docs_and_roadmap_contract() -> bool:
-    roadmap = (
-        _detect_duel_html_path().parent / "ROADMAP.md"
-    ).read_text(encoding="utf-8")
-    agents = (
-        _detect_duel_html_path().parent / "AGENTS.md"
-    ).read_text(encoding="utf-8")
-    assert "## Recently completed: periodic-item expansion" in roadmap
-    assert (
-        "- [x] Scourgelord Chestplate: periodic current-HP sacrifice and Death's Bargain\n"
-        "  next-offense empowerment"
-    ) in roadmap
-    assert "## Active phase: remaining classes" in roadmap
-    assert "## Active phase: periodic-item expansion" not in roadmap
-    assert "- [ ] Scourgelord Chestplate" not in roadmap
-    assert "Every class uses exactly one primary combat resource." in roadmap
-
-    required_contract_text = (
-        "Every active `empower_next_offense` effect snapshots onto the same next valid",
-        "ordered canonically by effect ID",
-        "combine multiplicatively into one scalar before the canonical damage stage",
-        "All snapshotted effects consume together",
-        "exactly once per cast in canonical order",
-        "basis that excludes only the generic next-offense multiplier",
-        "`direct_damage` is a strict boolean ability-definition property",
-        "Offensive-action classification remains broader and separate",
-        "Fixed-value shield-derived damage is explicitly non-direct",
-    )
-    normalized_agents = " ".join(agents.split())
-    for text in required_contract_text:
-        assert text in normalized_agents, \
-            f"AGENTS.md is missing next-offense contract text: {text}"
     return True
