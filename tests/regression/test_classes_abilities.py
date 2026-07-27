@@ -56,7 +56,7 @@ def scenario_special_handler_healthstone_mindgames_parity() -> bool:
     expected_self_damage = max(1, int(warlock.res.hp_max * 0.25))
     assert warlock.res.hp == hp_before - expected_self_damage, "Healthstone should still be twisted into fixed self-damage under Mindgames"
     turn_lines = _turn_lines(match, 1)
-    assert any("Mindgames twists healing into" in line for line in turn_lines), "Healthstone path should keep Mindgames twist wording"
+    assert any("Mindgames twists" in line and "healing from Healthstone into Shadow damage" in line for line in turn_lines), "Healthstone path should use the canonical entity-aware Mindgames twist wording"
     assert not any("Healthstone restores" in line for line in turn_lines), "Healthstone restore log should not appear when Mindgames twists healing"
     assert warlock.cooldowns.get("healthstone"), "Healthstone should still consume cooldown via special handler dispatch"
     return True
@@ -93,7 +93,7 @@ def scenario_generic_on_hit_healing_mindgames_backend() -> bool:
     assert warrior.res.hp < mindgames_hp_before, "Mindgames should turn generic on-hit healing into self-damage"
     assert mindgames_match.combat_totals[warrior_sid]["healing"] == 0, "Mindgames-twisted on-hit healing should report zero healing"
     mindgames_turn = _turn_lines(mindgames_match, 1)
-    assert any("Mindgames twists healing into" in line for line in mindgames_turn), "Generic on-hit healing should use backend Mindgames twist logging"
+    assert any("healing from Victory Rush into Shadow damage" in line for line in mindgames_turn), "Generic on-hit healing should use canonical backend Mindgames twist logging"
     assert not any("Heals" in line for line in mindgames_turn), "Twisted Victory Rush should not log normal healing"
     return True
 
@@ -117,8 +117,293 @@ def scenario_mindgames_converts_requested_pre_clamp_healing_near_cap() -> bool:
     assert warlock.res.hp == hp_before - requested, "Mindgames must convert the requested pre-clamp healing amount into self-damage, not only the HP that would have fit below hp_max"
     assert match.combat_totals[warlock_sid]["healing"] == 0, "No normal healing should be credited when Mindgames twists the heal"
     turn_lines = _turn_lines(match, 1)
-    assert any(f"Mindgames twists healing into {requested} self-damage." in line for line in turn_lines), "Mindgames twist log should keep reporting the requested healing amount"
+    assert any(f"Mindgames twists {requested} healing from Healthstone into Shadow damage" in line for line in turn_lines), "Mindgames twist log should report the requested healing amount and source"
     assert not any("Healthstone restores" in line for line in turn_lines), "No normal Healthstone restore log should appear under Mindgames"
+    return True
+
+
+def scenario_player_produced_healing_entity_result_contract() -> bool:
+    match = make_match("paladin", "warrior", seed=6510)
+    paladin_sid, _ = match.players
+    paladin = match.state[paladin_sid]
+    paladin.res.hp = paladin.res.hp_max - 3
+
+    def unexpected_damage(*_args, **_kwargs):
+        raise AssertionError("Normal healing must not enter the damage pipeline")
+
+    normal_player = resolver.resolve_player_produced_healing(
+        paladin,
+        paladin,
+        10,
+        source_name="Holy Light",
+        apply_damage=unexpected_damage,
+    )
+    assert normal_player["requested_healing"] == 10
+    assert normal_player["healing_gained"] == 3 and normal_player["overhealing"] == 7
+    assert normal_player["recipient_label"] == paladin_sid[:5]
+    assert normal_player["twisted_by_mindgames"] is False
+
+    pet_match = make_match("hunter", "warrior", seed=6511)
+    hunter_sid, _ = pet_match.players
+    hunter = pet_match.state[hunter_sid]
+    submit_turn(pet_match, "call_saber", _DEF_PASS)
+    saber = _active_pet(hunter, "frostsaber")
+    assert saber is not None, "Setup: the active pet should exist"
+    saber.hp = saber.hp_max - 2
+    normal_pet = resolver.resolve_player_produced_healing(
+        hunter,
+        saber,
+        8,
+        source_name="Kill Command",
+        apply_damage=unexpected_damage,
+    )
+    assert normal_pet["healing_gained"] == 2 and normal_pet["overhealing"] == 6
+    assert normal_pet["recipient_label"] == f"{hunter_sid[:5]}'s Frostsaber ({saber.id})"
+
+    effects.apply_effect_by_id(paladin, "mindgames", overrides={"duration": 2})
+    captured: list[dict[str, Any]] = []
+
+    def absorbed_damage(source, target, incoming, target_label, source_name, **kwargs):
+        captured.append(
+            {
+                "source": source,
+                "target": target,
+                "incoming": incoming,
+                "target_label": target_label,
+                "source_name": source_name,
+                **kwargs,
+            }
+        )
+        return {
+            "hp_damage": 6,
+            "absorbed": 4,
+            "absorbed_breakdown": [
+                {"name": "Test Shield", "amount": 4},
+            ],
+            "mindgames_healing": 0,
+            "mindgames_healing_gained": 0,
+        }
+
+    twisted = resolver.resolve_player_produced_healing(
+        paladin,
+        paladin,
+        10,
+        source_name="Holy Light",
+        apply_damage=absorbed_damage,
+    )
+    assert twisted["requested_healing"] == 10
+    assert twisted["healing_gained"] == 0 and twisted["overhealing"] == 0
+    assert twisted["twisted_by_mindgames"] is True
+    assert twisted["twisted_hp_damage"] == 6 and twisted["twisted_absorbed"] == 4
+    assert twisted["twisted_absorbed_breakdown"] == [{"name": "Test Shield", "amount": 4}]
+    assert "takes 6 damage. 4 absorbed by Test Shield." in twisted["log"]
+    assert captured and captured[0]["source"] is paladin and captured[0]["target"] is paladin
+    assert captured[0]["incoming"] == 10
+    assert captured[0]["mindgames_flip_damage"] is False
+    assert captured[0]["damage_instances"] == [10]
+    assert captured[0]["school"] == "magical" and captured[0]["subschool"] == "shadow"
+    assert captured[0]["allow_redirect"] is False
+    assert captured[0]["resolve_player_mitigation"] is False
+    assert captured[0]["source_kind"] == "self_damage"
+
+    effects.apply_effect_by_id(hunter, "mindgames", overrides={"duration": 2})
+    immune = resolver.resolve_player_produced_healing(
+        hunter,
+        saber,
+        10,
+        source_name="Kill Command",
+        apply_damage=lambda *_args, **_kwargs: {
+            "hp_damage": 0,
+            "absorbed": 0,
+            "absorbed_breakdown": [],
+        },
+    )
+    assert immune["twisted_immune"] is True
+    assert immune["healing_gained"] == 0 and immune["overhealing"] == 0
+    assert f"{hunter_sid[:5]}'s Frostsaber ({saber.id}) is immune" in immune["log"]
+    return True
+
+
+def scenario_mindgames_kill_command_entity_conversion() -> bool:
+    control = make_match("hunter", "warrior", seed=9105)
+    hunter_sid, _ = control.players
+    hunter = control.state[hunter_sid]
+    submit_turn(control, "call_saber", _DEF_PASS)
+    saber = _active_pet(hunter, "frostsaber")
+    assert saber is not None
+    saber.hp = 10
+    control_mp_before = hunter.res.mp
+    submit_turn(control, "kill_command", _DEF_PASS)
+    control_line = next(
+        line for line in _turn_lines(control, 2) if "cast Kill Command" in line
+    )
+    roll_match = re.search(r"Roll d4 = (\d+)", control_line)
+    assert roll_match is not None
+    requested = int(hunter.stats["atk"] * 0.4) + int(roll_match.group(1))
+    assert saber.hp == 10 + requested
+    assert control.combat_totals[hunter_sid]["healing"] == requested
+    assert control.combat_totals[hunter_sid]["pet_healing"] == 0
+
+    twisted = make_match("hunter", "warrior", seed=9105)
+    twisted_sid, _ = twisted.players
+    twisted_hunter = twisted.state[twisted_sid]
+    submit_turn(twisted, "call_saber", _DEF_PASS)
+    twisted_saber = _active_pet(twisted_hunter, "frostsaber")
+    assert twisted_saber is not None
+    effects.apply_effect_by_id(
+        twisted_hunter,
+        "mindgames",
+        overrides={"duration": 2},
+    )
+    full_hp = twisted_saber.hp
+    twisted_mp_before = twisted_hunter.res.mp
+    submit_turn(twisted, "kill_command", _DEF_PASS)
+    assert twisted_saber.hp == full_hp - requested, "A full-health pet should take the full requested pre-cap amount"
+    assert twisted_hunter.res.mp == twisted_mp_before - (control_mp_before - hunter.res.mp)
+    assert twisted_hunter.cooldowns.get("kill_command") == hunter.cooldowns.get("kill_command")
+    twisted_totals = twisted.combat_totals[twisted_sid]
+    assert twisted_totals["healing"] == 0
+    assert twisted_totals["overhealing"] == 0
+    assert twisted_totals["pet_healing"] == 0
+    assert twisted_totals["damage"] == control.combat_totals[hunter_sid]["damage"], "Twisted pet healing must not add ordinary Hunter damage credit"
+    assert any(
+        f"Mindgames twists {requested} healing from Kill Command into Shadow damage" in line
+        and f"{twisted_sid[:5]}'s Frostsaber ({twisted_saber.id}) takes {requested} damage." in line
+        for line in _turn_lines(twisted, 2)
+    )
+    assert not any("damage into healing" in line for line in _turn_lines(twisted, 2))
+
+    immune = make_match("hunter", "warrior", seed=9105)
+    immune_sid, _ = immune.players
+    immune_hunter = immune.state[immune_sid]
+    submit_turn(immune, "call_saber", _DEF_PASS)
+    immune_saber = _active_pet(immune_hunter, "frostsaber")
+    assert immune_saber is not None
+    effects.apply_effect_by_id(immune_hunter, "mindgames", overrides={"duration": 2})
+    effects.apply_effect_by_id(immune_saber, "unending_resolve", overrides={"duration": 2})
+    immune_hp = immune_saber.hp
+    submit_turn(immune, "kill_command", _DEF_PASS)
+    assert immune_saber.hp == immune_hp
+    assert any("Frostsaber" in line and "is immune and takes 0 damage" in line for line in _turn_lines(immune, 2))
+
+    lethal = make_match("hunter", "warrior", seed=9105)
+    lethal_sid, _ = lethal.players
+    lethal_hunter = lethal.state[lethal_sid]
+    submit_turn(lethal, "call_saber", _DEF_PASS)
+    lethal_saber = _active_pet(lethal_hunter, "frostsaber")
+    assert lethal_saber is not None
+    lethal_saber.hp = 1
+    effects.apply_effect_by_id(lethal_hunter, "mindgames", overrides={"duration": 2})
+    lethal_damage_before = lethal.combat_totals[lethal_sid]["damage"]
+    submit_turn(lethal, "kill_command", _DEF_PASS)
+    assert lethal_hunter.active_pet_id is None
+    assert lethal_saber.id not in lethal_hunter.pets
+    assert lethal_hunter.dead_hunter_pets.get("frostsaber") is True
+    assert sum(line == "Frostsaber dies." for line in _turn_lines(lethal, 2)) == 1
+    assert lethal_hunter.cooldowns.get("kill_command") == [5]
+    assert lethal.combat_totals[lethal_sid]["healing"] == 0
+    assert lethal.combat_totals[lethal_sid]["overhealing"] == 0
+    assert lethal.combat_totals[lethal_sid]["pet_healing"] == 0
+    assert lethal.combat_totals[lethal_sid]["damage"] == lethal_damage_before
+    return True
+
+
+def scenario_mindgames_direct_healing_pipeline_and_terminal_conversion() -> bool:
+    absorbed = make_match("paladin", "warrior", seed=6501)
+    paladin_sid, _ = absorbed.players
+    paladin = absorbed.state[paladin_sid]
+    effects.apply_effect_by_id(paladin, "mindgames", overrides={"duration": 2})
+    effects.add_absorb(
+        paladin,
+        5,
+        source_name="Test Shield",
+        effect_id="power_word_shield",
+    )
+    hp_before = paladin.res.hp
+    submit_turn(absorbed, "holy_light", _DEF_PASS)
+    twist_line = next(
+        line for line in _turn_lines(absorbed, 1)
+        if "healing from Holy Light into Shadow damage" in line
+    )
+    requested_match = re.search(r"Mindgames twists (\d+) healing", twist_line)
+    assert requested_match is not None
+    requested = int(requested_match.group(1))
+    assert hp_before - paladin.res.hp == requested - 5
+    assert f"takes {requested - 5} damage. 5 absorbed by Test Shield." in twist_line
+    assert absorbed.combat_totals[paladin_sid]["healing"] == 0
+    assert absorbed.combat_totals[paladin_sid]["overhealing"] == 0
+    assert absorbed.combat_totals[paladin_sid]["damage"] == 0
+    assert not any("Holy Light restores" in line for line in _turn_lines(absorbed, 1))
+    assert not any("damage into healing" in line for line in _turn_lines(absorbed, 1))
+
+    immune = make_match("paladin", "warrior", seed=6501)
+    immune_sid, _ = immune.players
+    immune_paladin = immune.state[immune_sid]
+    effects.apply_effect_by_id(immune_paladin, "mindgames", overrides={"duration": 2})
+    effects.apply_effect_by_id(immune_paladin, "cloak_of_shadows", overrides={"duration": 2})
+    immune_hp = immune_paladin.res.hp
+    submit_turn(immune, "holy_light", _DEF_PASS)
+    assert immune_paladin.res.hp == immune_hp
+    assert immune.combat_totals[immune_sid]["healing"] == 0
+    assert immune.combat_totals[immune_sid]["overhealing"] == 0
+    assert immune.combat_totals[immune_sid]["damage"] == 0
+    assert any(
+        "healing from Holy Light into Shadow damage" in line
+        and "is immune and takes 0 damage" in line
+        for line in _turn_lines(immune, 1)
+    )
+
+    damage_flip = make_match("warrior", "priest", seed=6512)
+    warrior_sid, priest_sid = damage_flip.players
+    warrior = damage_flip.state[warrior_sid]
+    priest = damage_flip.state[priest_sid]
+    priest.res.hp -= 20
+    effects.apply_effect_by_id(
+        warrior,
+        "mindgames",
+        overrides={"duration": 2, "source_sid": priest_sid},
+    )
+    submit_turn(damage_flip, "basic_attack", _DEF_PASS)
+    damage_flip_lines = _turn_lines(damage_flip, 1)
+    assert any("Mindgames flips" in line and "damage into healing" in line for line in damage_flip_lines)
+    assert not any("Mindgames twists" in line and "healing from" in line for line in damage_flip_lines), \
+        "PR #50 damage-to-healing must bypass the player-produced-healing resolver"
+    assert damage_flip.combat_totals[warrior_sid]["damage"] == 0
+
+    shield = make_match("warlock", "priest", seed=6513)
+    warlock_sid, shield_priest_sid = shield.players
+    warlock = shield.state[warlock_sid]
+    shield_priest = shield.state[shield_priest_sid]
+    shield_priest.res.hp -= 20
+    effects.apply_effect_by_id(
+        warlock,
+        "mindgames",
+        overrides={"duration": 2, "source_sid": shield_priest_sid},
+    )
+    effects.apply_effect_by_id(
+        warlock,
+        "shield_of_vengeance",
+        overrides={"duration": 2},
+    )
+    effects.add_absorb(
+        warlock,
+        5,
+        source_name="Shield of Vengeance",
+        effect_id="shield_of_vengeance",
+    )
+    submit_turn(shield, "healthstone", _DEF_PASS)
+    shield_lines = _turn_lines(shield, 1)
+    assert effects.absorb_total(warlock) == 0
+    assert sum("healing from Healthstone into Shadow damage" in line for line in shield_lines) == 1
+    assert sum(line == "Shield of Vengeance explodes!" for line in shield_lines) == 1
+    assert sum(
+        "Shield of Vengeance hits" in line and "Mindgames flips 5 damage into healing" in line
+        for line in shield_lines
+    ) == 1
+    assert not any(
+        "healing from Healthstone" in line and "damage into healing" in line
+        for line in shield_lines
+    ), "The twisted healing packet itself must never flip back into healing"
     return True
 
 
@@ -127,8 +412,9 @@ def scenario_action_time_player_healing_routes_through_shared_helper() -> bool:
 
     Representative migrated paths: Holy Light (special handler), Penance Self
     (one helper call per healing hit), and Victory Rush (generic on-hit healing
-    via _apply_mindgames_aware_healing). Paths that must never call the helper:
-    Mindgames-twisted heals (self-damage) and pet HP writes (Kill Command).
+    through resolve_player_produced_healing). Paths that must never call the
+    player-HP primitive: Mindgames-twisted damage and pet HP writes (including
+    the normal Kill Command pet clamp).
     Damage-derived healing is covered by
     scenario_damage_derived_player_healing_routes_through_shared_helper;
     passive/end-of-turn healing (items, HoT regen, Ancestral Knowledge, Emerald
@@ -137,7 +423,6 @@ def scenario_action_time_player_healing_routes_through_shared_helper() -> bool:
     """
     original = effects.apply_player_healing
     assert resolver.apply_player_healing is original, "resolver should share the effects.apply_player_healing primitive"
-    assert periodic_items.apply_player_healing is original, "periodic_items should share the effects.apply_player_healing primitive"
     calls: list[tuple[int, int]] = []
 
     def spy(target, amount):
@@ -149,7 +434,6 @@ def scenario_action_time_player_healing_routes_through_shared_helper() -> bool:
     # actually calls in addition to the effects module attribute.
     effects.apply_player_healing = spy
     resolver.apply_player_healing = spy
-    periodic_items.apply_player_healing = spy
     try:
         # Holy Light: exactly one helper call; the near-cap actual gain feeds
         # the log and healing totals.
@@ -228,7 +512,6 @@ def scenario_action_time_player_healing_routes_through_shared_helper() -> bool:
     finally:
         effects.apply_player_healing = original
         resolver.apply_player_healing = original
-        periodic_items.apply_player_healing = original
     return True
 
 
@@ -373,7 +656,7 @@ def scenario_special_handler_holy_light_parity_and_denial_order() -> bool:
     hp_before = paladin.res.hp
     submit_turn(mindgames_match, "mindgames", "holy_light")
     assert paladin.res.hp < hp_before, "Holy Light should still be twisted into self-damage under Mindgames"
-    assert any("Mindgames twists healing into" in line for line in _turn_lines(mindgames_match, 1)), "Holy Light handler should preserve Mindgames twist log wording"
+    assert any("healing from Holy Light into Shadow damage" in line for line in _turn_lines(mindgames_match, 1)), "Holy Light handler should use canonical Mindgames twist wording"
 
     denied_match = make_match("paladin", "warrior", seed=9115)
     denied_paladin_sid, _ = denied_match.players
@@ -428,7 +711,7 @@ def scenario_special_handler_flash_heal_parity_and_denial_order() -> bool:
     hp_before = priest.res.hp
     submit_turn(mindgames_match, "mindgames", "flash_heal")
     assert priest.res.hp < hp_before, "Flash Heal should still be twisted into self-damage under Mindgames"
-    assert any("Mindgames twists healing into" in line for line in _turn_lines(mindgames_match, 1)), "Flash Heal handler should preserve Mindgames twist log wording"
+    assert any("healing from Flash Heal into Shadow damage" in line for line in _turn_lines(mindgames_match, 1)), "Flash Heal handler should use canonical Mindgames twist wording"
 
     denied_match = make_match("priest", "warrior", seed=9118)
     denied_priest_sid, _ = denied_match.players
@@ -465,7 +748,7 @@ def scenario_special_handler_lay_on_hands_parity_and_denial_order() -> bool:
     hp_before = paladin.res.hp
     submit_turn(mindgames_match, "mindgames", "lay_on_hands")
     assert paladin.res.hp < hp_before, "Lay on Hands should still be twisted into self-damage under Mindgames"
-    assert any("Mindgames twists healing into" in line for line in _turn_lines(mindgames_match, 1)), "Lay on Hands handler should preserve Mindgames twist log wording"
+    assert any("healing from Lay on Hands into Shadow damage" in line for line in _turn_lines(mindgames_match, 1)), "Lay on Hands handler should use canonical Mindgames twist wording"
 
     denied_match = make_match("paladin", "warrior", seed=9121)
     denied_paladin_sid, _ = denied_match.players
@@ -536,7 +819,7 @@ def scenario_special_handler_wild_growth_parity_and_denial_order() -> bool:
     hp_before = druid.res.hp
     submit_turn(mindgames_match, "mindgames", "wild_growth")
     assert druid.res.hp < hp_before, "Wild Growth should still be twisted into self-damage under Mindgames"
-    assert any("Mindgames twists healing into" in line for line in _turn_lines(mindgames_match, 1)), "Wild Growth handler should preserve Mindgames twist log wording"
+    assert any("healing from Wild Growth into Shadow damage" in line for line in _turn_lines(mindgames_match, 1)), "Wild Growth handler should use canonical Mindgames twist wording"
 
     cycloned_match = make_match("druid", "druid", seed=9128)
     actor_sid, _ = cycloned_match.players
@@ -640,6 +923,67 @@ def scenario_mindgames_shield_of_vengeance_explosion_interactions() -> bool:
     submit_turn(sov_absorb, _DEF_PASS, _DEF_PASS)
     assert priest.res.hp == hp_before, "Shield of Vengeance explosion should still respect absorbs when Mindgames is absent"
     assert any("Shield of Vengeance explodes!" in line for line in _turn_lines(sov_absorb, 1)), "SoV explosion should still trigger into active absorbs"
+    return True
+
+
+def scenario_mindgames_shield_of_vengeance_converts_each_entity() -> bool:
+    match = make_match("paladin", "priest", seed=9140)
+    paladin_sid, priest_sid = match.players
+    paladin = match.state[paladin_sid]
+    priest = match.state[priest_sid]
+    shadowfiend = PetState(
+        id="p2_shadowfiend",
+        template_id="shadowfiend",
+        name="Shadowfiend",
+        owner_sid=priest_sid,
+        hp=40,
+        hp_max=100,
+        stats={"def": 0, "magic_resist": 0},
+    )
+    priest.pets[shadowfiend.id] = shadowfiend
+    priest.res.hp = priest.res.hp_max - 30
+    effects.add_absorb(
+        priest,
+        12,
+        source_name="Power Word: Shield",
+        effect_id="power_word_shield",
+    )
+    absorb_before = effects.absorb_total(priest)
+    effects.apply_effect_by_id(
+        paladin,
+        "mindgames",
+        overrides={"duration": 2, "source_sid": priest_sid},
+    )
+    effects.apply_effect_by_id(
+        paladin,
+        "shield_of_vengeance",
+        overrides={"duration": 1, "absorbed": 18},
+    )
+    priest_hp_before = priest.res.hp
+    pet_hp_before = shadowfiend.hp
+
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+
+    turn_lines = _turn_lines(match, 1)
+    priest_gained = priest.res.hp - priest_hp_before
+    pet_gained = shadowfiend.hp - pet_hp_before
+    flip_lines = [line for line in turn_lines if "Shield of Vengeance hits" in line and "Mindgames flips" in line]
+    nominal_total = sum(
+        int(value)
+        for line in flip_lines
+        for value in re.findall(r"Mindgames flips (\d+) damage into healing", line)
+    )
+    assert priest_gained == 18 and pet_gained == 18, "SoV should independently heal the enemy champion and pet for the resolved explosion packet"
+    assert effects.absorb_total(priest) == absorb_before, "A Mindgames-converted SoV packet must not consume the champion's absorb"
+    assert match.combat_totals[paladin_sid]["damage"] == 0, "Converted SoV champion and pet packets must credit zero Paladin damage"
+    assert match.combat_totals[priest_sid]["healing"] == priest_gained + pet_gained, "The Mindgames caster should receive effective healing from both entity conversions"
+    assert match.combat_totals[priest_sid]["overhealing"] == nominal_total - priest_gained - pet_gained, "SoV conversion overhealing should use nominal minus actual gain across both recipients"
+    assert len(flip_lines) == 2 and nominal_total == 36, "SoV should emit one 18-point conversion for the champion and one for the pet"
+    assert any(f"{priest_sid[:5]}'s Shadowfiend restores 18 HP." in line for line in flip_lines), "The pet flip log should identify the Priest's Shadowfiend"
+    explosion_idx = turn_lines.index("Shield of Vengeance explodes!")
+    champion_idx = next(i for i, line in enumerate(turn_lines) if line.startswith(f"Shield of Vengeance hits {priest_sid[:5]} "))
+    pet_idx = next(i for i, line in enumerate(turn_lines) if f"{priest_sid[:5]}'s Shadowfiend" in line and "Shield of Vengeance hits" in line)
+    assert explosion_idx < champion_idx < pet_idx, "SoV entity fanout must preserve explosion, champion, then pet log ordering"
     return True
 
 
@@ -924,6 +1268,419 @@ def scenario_hunter_multi_shot_aoe() -> bool:
         elif "(imp3)" in line:
             observed.append("imp3")
     assert observed[:3] == ["imp1", "imp2", "imp3"], "Multi-Shot pet hit order should be deterministic"
+    return True
+
+
+def scenario_mindgames_ordinary_aoe_converts_each_entity() -> bool:
+    match = make_match("hunter", "warlock", seed=9141)
+    hunter_sid, warlock_sid = match.players
+    hunter = match.state[hunter_sid]
+    warlock = match.state[warlock_sid]
+    hunter.stats["acc"] = 999
+    warlock.stats["eva"] = 0
+    warlock.stats["def"] = 0
+    warlock.res.hp = warlock.res.hp_max - 50
+    pets = {
+        "p2_imp_1": PetState(
+            id="p2_imp_1",
+            template_id="imp",
+            name="Imp",
+            owner_sid=warlock_sid,
+            hp=20,
+            hp_max=70,
+            stats={"def": 0, "magic_resist": 0},
+        ),
+        "p2_imp_2": PetState(
+            id="p2_imp_2",
+            template_id="imp",
+            name="Imp",
+            owner_sid=warlock_sid,
+            hp=70,
+            hp_max=70,
+            stats={"def": 0, "magic_resist": 0},
+        ),
+        "p2_imp_3": PetState(
+            id="p2_imp_3",
+            template_id="imp",
+            name="Imp",
+            owner_sid=warlock_sid,
+            hp=30,
+            hp_max=70,
+            stats={"def": 0, "magic_resist": 0},
+        ),
+    }
+    warlock.pets.update(pets)
+    effects.apply_effect_by_id(pets["p2_imp_3"], "divine_shield", overrides={"duration": 2})
+    effects.add_absorb(
+        warlock,
+        9,
+        source_name="Power Word: Shield",
+        effect_id="power_word_shield",
+    )
+    absorb_before = effects.absorb_total(warlock)
+    effects.apply_effect_by_id(
+        hunter,
+        "mindgames",
+        overrides={"duration": 2, "source_sid": warlock_sid},
+    )
+    champion_hp_before = warlock.res.hp
+    pet_hp_before = {pet_id: pet.hp for pet_id, pet in pets.items()}
+
+    submit_turn(match, "multi_shot", _DEF_PASS)
+
+    turn_lines = _turn_lines(match, 1)
+    flip_lines = [line for line in turn_lines if "Mindgames flips" in line]
+    parsed_flips = [
+        (int(nominal), str(label), int(gained))
+        for line in flip_lines
+        for nominal, label, gained in re.findall(
+            r"Mindgames flips (\d+) damage into healing; (.+?) restores (\d+) HP\.",
+            line,
+        )
+    ]
+    champion_gained = warlock.res.hp - champion_hp_before
+    imp1_gained = pets["p2_imp_1"].hp - pet_hp_before["p2_imp_1"]
+    imp2_gained = pets["p2_imp_2"].hp - pet_hp_before["p2_imp_2"]
+    assert champion_gained > 0 and imp1_gained > 0, "Multi-Shot should heal the injured champion and injured pet under Mindgames"
+    assert imp2_gained == 0 and pets["p2_imp_2"].hp == pets["p2_imp_2"].hp_max, "A full-health pet should keep a positive nominal conversion but gain zero capped HP"
+    assert pets["p2_imp_3"].hp == pet_hp_before["p2_imp_3"], "An immune pet should neither take damage nor receive converted healing"
+    assert effects.absorb_total(warlock) == absorb_before, "The champion conversion should occur before and preserve absorbs"
+    assert len(parsed_flips) == 3, "Exactly the champion and two non-immune pets should resolve Mindgames conversions"
+    assert any(label == f"{warlock_sid[:5]}'s Imp (imp1)" and gained == imp1_gained for _, label, gained in parsed_flips), "The first Imp log should identify the actual numbered pet and its gain"
+    assert any(label == f"{warlock_sid[:5]}'s Imp (imp2)" and gained == 0 for _, label, gained in parsed_flips), "The full-health second Imp should retain its distinct label and report zero actual gain"
+    assert not any("(imp3)" in label for _, label, _ in parsed_flips), "The immune third Imp must not be treated as a resolved hit"
+    actual_total = champion_gained + imp1_gained + imp2_gained
+    nominal_total = sum(nominal for nominal, _, _ in parsed_flips)
+    assert match.combat_totals[hunter_sid]["damage"] == 0, "Converted champion and pet packets must add zero Hunter damage credit"
+    assert match.combat_totals[warlock_sid]["healing"] == actual_total, "The Mindgames caster should receive the sum of actual champion and pet healing"
+    assert match.combat_totals[warlock_sid]["overhealing"] == nominal_total - actual_total, "Full-health pet conversion should be credited as caster overhealing"
+
+    control = make_match("hunter", "warlock", seed=9141)
+    control_hunter_sid, control_warlock_sid = control.players
+    control_hunter = control.state[control_hunter_sid]
+    control_warlock = control.state[control_warlock_sid]
+    control_hunter.stats["acc"] = 999
+    control_warlock.stats.update({"eva": 0, "def": 0})
+    control_warlock.pets["p2_imp_1"] = PetState(
+        id="p2_imp_1",
+        template_id="imp",
+        name="Imp",
+        owner_sid=control_warlock_sid,
+        hp=70,
+        hp_max=70,
+        stats={"def": 0, "magic_resist": 0},
+    )
+    control_champion_before = control_warlock.res.hp
+    control_pet_before = control_warlock.pets["p2_imp_1"].hp
+    submit_turn(control, "multi_shot", _DEF_PASS)
+    assert control_warlock.res.hp < control_champion_before, "Normal Multi-Shot champion damage must remain unchanged without Mindgames"
+    assert control_warlock.pets["p2_imp_1"].hp < control_pet_before, "Normal Multi-Shot pet damage must remain unchanged without Mindgames"
+    assert control.combat_totals[control_hunter_sid]["damage"] > 0, "Normal AoE should still credit actual champion and pet HP damage"
+    assert not any("Mindgames flips" in line for line in _turn_lines(control, 1)), "The non-Mindgames control should emit no conversion logs"
+    return True
+
+
+def scenario_mindgames_aoe_snapshot_survives_immune_champion() -> bool:
+    match = make_match("hunter", "warlock", seed=9143)
+    hunter_sid, warlock_sid = match.players
+    hunter = match.state[hunter_sid]
+    warlock = match.state[warlock_sid]
+    hunter.stats["acc"] = 999
+    warlock.stats.update({"eva": 0, "def": 0})
+    vulnerable_imp = PetState(
+        id="p2_imp_1",
+        template_id="imp",
+        name="Imp",
+        owner_sid=warlock_sid,
+        hp=20,
+        hp_max=70,
+        stats={"def": 0, "magic_resist": 0},
+    )
+    warlock.pets[vulnerable_imp.id] = vulnerable_imp
+    effects.apply_effect_by_id(
+        warlock,
+        "divine_shield",
+        overrides={"duration": 2},
+    )
+    effects.apply_effect_by_id(
+        hunter,
+        "mindgames",
+        overrides={"duration": 2, "source_sid": warlock_sid},
+    )
+    champion_hp_before = warlock.res.hp
+    pet_hp_before = vulnerable_imp.hp
+
+    submit_turn(match, "multi_shot", _DEF_PASS)
+
+    turn_lines = _turn_lines(match, 1)
+    pet_gain = vulnerable_imp.hp - pet_hp_before
+    flip_line = next(
+        (
+            line
+            for line in turn_lines
+            if "Mindgames flips" in line and "(imp1)" in line
+        ),
+        None,
+    )
+    assert warlock.res.hp == champion_hp_before, \
+        "The immune champion must receive neither damage nor converted healing"
+    assert pet_gain > 0, \
+        "The vulnerable pet packet must retain the producer's Mindgames action snapshot"
+    assert flip_line is not None, \
+        "The converted pet packet must log the actual numbered pet"
+    nominal = int(
+        re.search(r"Mindgames flips (\d+) damage", flip_line).group(1)
+    )
+    assert match.combat_totals[hunter_sid]["damage"] == 0, \
+        "The immune champion and converted pet packet must credit zero Hunter damage"
+    assert match.combat_totals[warlock_sid]["healing"] == pet_gain, \
+        "The Mindgames caster must receive the pet's actual converted healing"
+    assert match.combat_totals[warlock_sid]["overhealing"] == nominal - pet_gain, \
+        "The Mindgames caster must receive any capped pet conversion as overhealing"
+    assert not any(
+        "Mindgames flips" in line and warlock_sid[:5] in line and "(imp1)" not in line
+        for line in turn_lines
+    ), "The immune champion must not emit a conversion suffix"
+
+    control = make_match("hunter", "warlock", seed=9143)
+    control_hunter_sid, control_warlock_sid = control.players
+    control_hunter = control.state[control_hunter_sid]
+    control_warlock = control.state[control_warlock_sid]
+    control_hunter.stats["acc"] = 999
+    control_warlock.stats.update({"eva": 0, "def": 0})
+    control_imp = PetState(
+        id="p2_imp_1",
+        template_id="imp",
+        name="Imp",
+        owner_sid=control_warlock_sid,
+        hp=70,
+        hp_max=70,
+        stats={"def": 0, "magic_resist": 0},
+    )
+    control_warlock.pets[control_imp.id] = control_imp
+    effects.apply_effect_by_id(
+        control_warlock,
+        "divine_shield",
+        overrides={"duration": 2},
+    )
+    control_champion_hp = control_warlock.res.hp
+    control_pet_hp = control_imp.hp
+    submit_turn(control, "multi_shot", _DEF_PASS)
+    assert control_warlock.res.hp == control_champion_hp, \
+        "The non-Mindgames control champion must remain immune"
+    assert control_imp.hp < control_pet_hp, \
+        "The same vulnerable pet packet must remain normal damage without Mindgames"
+    assert control.combat_totals[control_hunter_sid]["damage"] == control_pet_hp - control_imp.hp
+    assert not any("Mindgames flips" in line for line in _turn_lines(control, 1))
+    return True
+
+
+def scenario_mindgames_converted_aoe_pet_hit_still_applies_dot() -> bool:
+    match = make_match("warrior", "warlock", seed=9142)
+    warrior_sid, warlock_sid = match.players
+    warrior = match.state[warrior_sid]
+    warlock = match.state[warlock_sid]
+    warrior.res.rage = warrior.res.rage_max
+    warrior.stats["atk"] = 20
+    active_imp = PetState(
+        id="p2_imp_1",
+        template_id="imp",
+        name="Imp",
+        owner_sid=warlock_sid,
+        hp=100,
+        hp_max=100,
+        stats={"def": 0, "magic_resist": 0},
+    )
+    immune_imp = PetState(
+        id="p2_imp_2",
+        template_id="imp",
+        name="Imp",
+        owner_sid=warlock_sid,
+        hp=100,
+        hp_max=100,
+        stats={"def": 0, "magic_resist": 0},
+    )
+    warlock.pets.update({active_imp.id: active_imp, immune_imp.id: immune_imp})
+    effects.apply_effect_by_id(immune_imp, "divine_shield", overrides={"duration": 2})
+    effects.apply_effect_by_id(
+        warrior,
+        "mindgames",
+        overrides={"duration": 2, "source_sid": warlock_sid},
+    )
+
+    submit_turn(match, "dragon_roar", _DEF_PASS)
+
+    active_bleed = next((fx for fx in active_imp.effects if fx.get("id") == "dragon_roar_bleed"), None)
+    immune_bleed = next((fx for fx in immune_imp.effects if fx.get("id") == "dragon_roar_bleed"), None)
+    turn_lines = _turn_lines(match, 1)
+    assert any("Dragon Roar hits" in line and "(imp1)" in line and "Mindgames flips" in line for line in turn_lines), "The direct pet packet should be logged as a numbered resolved Mindgames conversion"
+    assert active_bleed is not None, "A fully converted pet hit must remain successful for attached Dragon Roar Bleed application"
+    assert active_bleed.get("mindgames_player_produced") is True, \
+        "The attached pet DoT must retain explicit player-produced eligibility for later ticks"
+    assert immune_bleed is None, "An immune zero-incoming pet packet must not receive the attached DoT"
+    assert any("Dragon Roar applies bleed on Warlock's Imp." in line for line in turn_lines), "The converted pet hit should keep the attached-DoT application log"
+    assert not any("(imp2)" in line and "Mindgames flips" in line for line in turn_lines), "The immune pet must not emit a conversion suffix"
+    return True
+
+
+def scenario_mindgames_player_dot_tick_on_pet_converts() -> bool:
+    match = make_match("warrior", "warlock", seed=9144)
+    warrior_sid, warlock_sid = match.players
+    warrior = match.state[warrior_sid]
+    warlock = match.state[warlock_sid]
+    injured_imp = PetState(
+        id="p2_imp_1",
+        template_id="imp",
+        name="Imp",
+        owner_sid=warlock_sid,
+        hp=20,
+        hp_max=50,
+        stats={"def": 0, "magic_resist": 0},
+    )
+    capped_imp = PetState(
+        id="p2_imp_2",
+        template_id="imp",
+        name="Imp",
+        owner_sid=warlock_sid,
+        hp=47,
+        hp_max=50,
+        stats={"def": 0, "magic_resist": 0},
+    )
+    immune_imp = PetState(
+        id="p2_imp_3",
+        template_id="imp",
+        name="Imp",
+        owner_sid=warlock_sid,
+        hp=20,
+        hp_max=50,
+        stats={"def": 0, "magic_resist": 0},
+    )
+    warlock.pets.update(
+        {
+            injured_imp.id: injured_imp,
+            capped_imp.id: capped_imp,
+            immune_imp.id: immune_imp,
+        }
+    )
+    for pet in (injured_imp, capped_imp, immune_imp):
+        effects.apply_effect_by_id(
+            pet,
+            "dragon_roar_bleed",
+            overrides={
+                "duration": 2,
+                "tick_damage": 10,
+                "source_sid": warrior_sid,
+                "mindgames_player_produced": True,
+            },
+        )
+    effects.apply_effect_by_id(
+        immune_imp,
+        "divine_shield",
+        overrides={"duration": 2},
+    )
+    effects.apply_effect_by_id(
+        warrior,
+        "mindgames",
+        overrides={"duration": 2, "source_sid": warlock_sid},
+    )
+    hp_before = {
+        injured_imp.id: injured_imp.hp,
+        capped_imp.id: capped_imp.hp,
+        immune_imp.id: immune_imp.hp,
+    }
+
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+
+    turn_lines = _turn_lines(match, 1)
+    flip_lines = [
+        line
+        for line in turn_lines
+        if "Dragon Roar Bleed" in line and "Mindgames flips" in line
+    ]
+    assert injured_imp.hp - hp_before[injured_imp.id] == 10, \
+        "A player-produced DoT tick must heal its injured pet recipient"
+    assert capped_imp.hp == capped_imp.hp_max, \
+        "A converted pet DoT tick must cap at the pet's own maximum HP"
+    assert capped_imp.hp - hp_before[capped_imp.id] == 3
+    assert immune_imp.hp == hp_before[immune_imp.id], \
+        "An immune pet must receive neither DoT damage nor converted healing"
+    assert len(flip_lines) == 2, \
+        "Only the two non-immune player-produced pet DoTs should convert"
+    assert any("(p2_imp_1)" in line for line in flip_lines)
+    assert any("(p2_imp_2)" in line for line in flip_lines)
+    assert not any("(p2_imp_3)" in line for line in flip_lines)
+    assert match.combat_totals[warrior_sid]["damage"] == 0, \
+        "Converted pet DoT ticks must credit zero source damage"
+    assert match.combat_totals[warlock_sid]["healing"] == 13, \
+        "The Mindgames caster must receive actual pet DoT conversion healing"
+    assert match.combat_totals[warlock_sid]["overhealing"] == 7, \
+        "The capped pet DoT conversion must credit the caster's overhealing"
+
+    control = make_match("warrior", "warlock", seed=9144)
+    control_warrior_sid, control_warlock_sid = control.players
+    control_warlock = control.state[control_warlock_sid]
+    control_imp = PetState(
+        id="p2_imp_1",
+        template_id="imp",
+        name="Imp",
+        owner_sid=control_warlock_sid,
+        hp=50,
+        hp_max=50,
+        stats={"def": 0, "magic_resist": 0},
+    )
+    control_warlock.pets[control_imp.id] = control_imp
+    effects.apply_effect_by_id(
+        control_imp,
+        "dragon_roar_bleed",
+        overrides={
+            "duration": 2,
+            "tick_damage": 10,
+            "source_sid": control_warrior_sid,
+            "mindgames_player_produced": True,
+        },
+    )
+    submit_turn(control, _DEF_PASS, _DEF_PASS)
+    assert control_imp.hp == 40, \
+        "The same player-produced pet DoT must remain normal damage without Mindgames"
+    assert control.combat_totals[control_warrior_sid]["damage"] == 10
+    assert not any("Mindgames flips" in line for line in _turn_lines(control, 1))
+
+    autonomous = make_match("warrior", "warlock", seed=9144)
+    autonomous_warrior_sid, autonomous_warlock_sid = autonomous.players
+    autonomous_warrior = autonomous.state[autonomous_warrior_sid]
+    autonomous_warlock = autonomous.state[autonomous_warlock_sid]
+    autonomous_imp = PetState(
+        id="p2_imp_1",
+        template_id="imp",
+        name="Imp",
+        owner_sid=autonomous_warlock_sid,
+        hp=50,
+        hp_max=50,
+        stats={"def": 0, "magic_resist": 0},
+    )
+    autonomous_warlock.pets[autonomous_imp.id] = autonomous_imp
+    effects.apply_effect_by_id(
+        autonomous_imp,
+        "dragon_roar_bleed",
+        overrides={
+            "duration": 2,
+            "tick_damage": 10,
+            "source_sid": autonomous_warrior_sid,
+            "mindgames_flip_damage": False,
+        },
+    )
+    effects.apply_effect_by_id(
+        autonomous_warrior,
+        "mindgames",
+        overrides={"duration": 2, "source_sid": autonomous_warlock_sid},
+    )
+    submit_turn(autonomous, _DEF_PASS, _DEF_PASS)
+    assert autonomous_imp.hp == 40, \
+        "An explicitly non-flippable autonomous pet-produced periodic packet must remain damage"
+    assert autonomous.combat_totals[autonomous_warrior_sid]["damage"] == 10
+    assert not any(
+        "Mindgames flips" in line for line in _turn_lines(autonomous, 1)
+    ), "Autonomous pet-produced periodic damage must not inherit owner Mindgames"
     return True
 
 

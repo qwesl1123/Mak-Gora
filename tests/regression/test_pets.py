@@ -14,6 +14,7 @@ from harness import (
     CLASSES,
     PETS,
     PET_AI,
+    PetState,
     SOCKETS,
     _has_effect,
     _turn_lines,
@@ -339,6 +340,46 @@ def scenario_hunter_boar_redirect() -> bool:
     hunter_hp_before_dot = hunter.res.hp
     submit_turn(match, _DEF_PASS, _DEF_PASS)
     assert hunter.res.hp < hunter_hp_before_dot, "DoT damage should not redirect to the boar"
+    return True
+
+
+def scenario_mindgames_redirect_heals_final_pet_entity() -> bool:
+    match = make_match("warlock", "hunter", seed=9143)
+    warlock_sid, hunter_sid = match.players
+    warlock = match.state[warlock_sid]
+    hunter = match.state[hunter_sid]
+    submit_turn(match, _DEF_PASS, "call_boar")
+    boar = _active_pet(hunter, "barrens_boar")
+    assert boar is not None, "Setup: the Hunter should have a live Barrens Boar"
+    boar.hp = max(1, boar.hp_max - 30)
+    hunter.res.hp = hunter.res.hp_max - 20
+    warlock.stats["acc"] = 999
+    hunter.stats["eva"] = 0
+    effects.apply_effect_by_id(
+        hunter,
+        "blocking_defence",
+        overrides={"duration": 1, "redirect_to_pet_id": boar.id},
+    )
+    effects.apply_effect_by_id(
+        warlock,
+        "mindgames",
+        overrides={"duration": 2, "source_sid": hunter_sid},
+    )
+    hunter_hp_before = hunter.res.hp
+    boar_hp_before = boar.hp
+    warlock_damage_before = match.combat_totals[warlock_sid]["damage"]
+    hunter_healing_before = match.combat_totals[hunter_sid]["healing"]
+
+    submit_turn(match, "drain_life", _DEF_PASS)
+
+    turn_lines = _turn_lines(match, 2)
+    boar_gained = boar.hp - boar_hp_before
+    assert hunter.res.hp == hunter_hp_before, "Redirected damage should not heal or damage the original champion target"
+    assert boar_gained > 0, "Mindgames should heal the final redirected pet recipient"
+    assert match.combat_totals[warlock_sid]["damage"] == warlock_damage_before, "A converted redirected packet must credit zero attacker damage"
+    assert match.combat_totals[hunter_sid]["healing"] - hunter_healing_before == boar_gained, "The Mindgames caster should receive the redirected pet's actual healing credit"
+    assert any("Barrens Boar intercepts Drain Life" in line for line in turn_lines), "The existing redirect log should remain present"
+    assert any(f"{hunter_sid[:5]}'s Barrens Boar restores {boar_gained} HP." in line for line in turn_lines), "The conversion log should label the final pet entity, not store its name as a SID"
     return True
 
 
@@ -742,6 +783,39 @@ def scenario_pet_action_text_persists_on_miss() -> bool:
     submit_turn(priest_miss_match, _DEF_PASS, _DEF_PASS)
     latest_priest_turn = priest_miss_match.log[priest_miss_match.log.index("Turn 2") + 1:]
     assert any("Shadowfiend melees the target. Target evades the attack — Miss!" in line for line in latest_priest_turn), "Shadowfiend evade logs should keep its melee action text"
+    return True
+
+
+def scenario_mindgames_does_not_flip_autonomous_pet_damage() -> bool:
+    match = make_match("warlock", "priest", seed=9144)
+    warlock_sid, priest_sid = match.players
+    warlock = match.state[warlock_sid]
+    priest = match.state[priest_sid]
+    submit_turn(match, "summon_imp", _DEF_PASS)
+    imp = _active_pet(warlock, "imp")
+    assert imp is not None, "Setup: Summon Imp should create an autonomous attacker"
+    imp.stats.update({"int": 50, "acc": 999})
+    priest.stats.update({"eva": 0, "def": 0, "magic_resist": 0})
+    effects.apply_effect_by_id(
+        warlock,
+        "mindgames",
+        overrides={"duration": 2, "source_sid": priest_sid},
+    )
+    priest_hp_before = priest.res.hp
+    warlock_damage_before = match.combat_totals[warlock_sid]["damage"]
+    priest_healing_before = match.combat_totals[priest_sid]["healing"]
+    priest_overhealing_before = match.combat_totals[priest_sid]["overhealing"]
+
+    submit_turn(match, _DEF_PASS, _DEF_PASS)
+
+    turn_lines = _turn_lines(match, 2)
+    pet_damage = priest_hp_before - priest.res.hp
+    assert pet_damage > 0, "The autonomous Imp should deal normal HP damage while its owner is debuffed"
+    assert match.combat_totals[warlock_sid]["damage"] - warlock_damage_before == pet_damage, "Autonomous pet damage should retain normal owner attribution"
+    assert match.combat_totals[priest_sid]["healing"] == priest_healing_before, "Autonomous pet damage must not grant Mindgames healing to the caster"
+    assert match.combat_totals[priest_sid]["overhealing"] == priest_overhealing_before, "Autonomous pet damage must not grant Mindgames overhealing"
+    assert any("Imp casts Firebolt for" in line for line in turn_lines), "The pet should keep its ordinary damage log"
+    assert not any("Mindgames flips" in line for line in turn_lines), "apply_damage must not infer Mindgames from the owner object passed as pet source"
     return True
 
 
@@ -1171,6 +1245,148 @@ def scenario_shaman_astral_explosion_no_pet_consumes_absorb() -> bool:
     submit_turn(match, "astral_shift", _DEF_PASS)
     submit_turn(match, "astral_explosion", _DEF_PASS)
     assert effects.absorb_total(shaman) == 0, "Astral Explosion should consume absorb even when no enemy pets are present"
+    return True
+
+
+def scenario_mindgames_astral_explosion_entity_packets() -> bool:
+    def setup(*, with_mindgames: bool):
+        match = make_match(
+            "shaman",
+            "priest",
+            p1_items={"armor": "challengers_chestplate"},
+            seed=7014,
+        )
+        shaman_sid, priest_sid = match.players
+        shaman = match.state[shaman_sid]
+        priest = match.state[priest_sid]
+        shaman.res.mp = shaman.res.mp_max
+        effects.add_absorb(
+            shaman,
+            31,
+            source_name="Test Absorb",
+            effect_id="test_absorb",
+        )
+        pets = {
+            "a_injured": PetState(
+                id="a_injured",
+                template_id="test_astral_pet",
+                name="Injured Sprite",
+                owner_sid=priest_sid,
+                hp=4,
+                hp_max=50,
+                stats={"def": 0, "magic_resist": 0},
+                entity_type="beast",
+            ),
+            "b_full": PetState(
+                id="b_full",
+                template_id="test_astral_pet",
+                name="Full Sprite",
+                owner_sid=priest_sid,
+                hp=50,
+                hp_max=50,
+                stats={"def": 0, "magic_resist": 0},
+                entity_type="beast",
+            ),
+            "c_immune": PetState(
+                id="c_immune",
+                template_id="test_astral_pet",
+                name="Immune Sprite",
+                owner_sid=priest_sid,
+                hp=30,
+                hp_max=50,
+                stats={"def": 0, "magic_resist": 0},
+                entity_type="beast",
+            ),
+        }
+        priest.pets.update(pets)
+        effects.apply_effect_by_id(
+            pets["c_immune"],
+            "divine_shield",
+            overrides={"duration": 2},
+        )
+        if with_mindgames:
+            effects.apply_effect_by_id(
+                shaman,
+                "mindgames",
+                overrides={"duration": 2, "source_sid": priest_sid},
+            )
+        return match, shaman_sid, priest_sid, shaman, priest, pets
+
+    match, shaman_sid, priest_sid, shaman, priest, pets = setup(
+        with_mindgames=True
+    )
+    champion_hp_before = priest.res.hp
+    pet_hp_before = {pet_id: pet.hp for pet_id, pet in pets.items()}
+    log_start = len(match.log)
+
+    submit_turn(match, "astral_explosion", _DEF_PASS)
+
+    hit_lines = [
+        line
+        for line in match.log[log_start:]
+        if line.startswith("Astral Explosion hits ")
+    ]
+    assert effects.absorb_total(shaman) == 0, \
+        "Mindgames Astral Explosion must consume the complete absorb pool"
+    assert [int(re.search(r"for (\d+) damage", line).group(1)) for line in hit_lines] == [12, 11, 11], \
+        "Might must still multiply the 31 absorb pool once and split 34 as 12/11/11"
+    assert ["Injured Sprite" in line for line in hit_lines] == [True, False, False]
+    assert ["Full Sprite" in line for line in hit_lines] == [False, True, False]
+    assert ["Immune Sprite" in line for line in hit_lines] == [False, False, True], \
+        "Astral Explosion target order must follow sorted snapshotted pet IDs"
+    assert pets["a_injured"].hp == pet_hp_before["a_injured"] + 12, \
+        "Mindgames must convert the complete 12-point packet, not cap it to the pet's prior 4 HP"
+    assert pets["b_full"].hp == pet_hp_before["b_full"], \
+        "The full-health pet must gain zero HP"
+    assert pets["c_immune"].hp == pet_hp_before["c_immune"], \
+        "The immune pet must receive neither damage nor converted healing"
+    assert set(priest.pets) == set(pets), \
+        "Converted Astral Explosion packets must not defeat or remove pets"
+    assert priest.res.hp == champion_hp_before, \
+        "Astral Explosion must remain pet-only"
+    assert match.combat_totals[shaman_sid]["damage"] == 0, \
+        "Converted and immune packets must credit zero Shaman damage"
+    assert match.combat_totals[priest_sid]["healing"] == 12
+    assert match.combat_totals[priest_sid]["overhealing"] == 11
+    converted_lines = [line for line in hit_lines if "Mindgames flips" in line]
+    assert len(converted_lines) == 2, \
+        "Each non-immune packet must emit exactly one canonical conversion suffix"
+    assert "Mindgames flips 12 damage into healing; p2_si's Injured Sprite restores 12 HP." in converted_lines[0]
+    assert "Mindgames flips 11 damage into healing; p2_si's Full Sprite restores 0 HP." in converted_lines[1]
+    assert not any(
+        "Immune Sprite" in line and "Mindgames flips" in line
+        for line in hit_lines
+    ), "The immune packet must not produce a conversion result"
+    assert sum(line.count("Mindgames flips") for line in match.log[log_start:]) == 2, \
+        "Astral Explosion must not emit a duplicate bespoke conversion log"
+
+    control, control_shaman_sid, _, control_shaman, control_priest, control_pets = setup(
+        with_mindgames=False
+    )
+    control_champion_hp = control_priest.res.hp
+    control_log_start = len(control.log)
+
+    submit_turn(control, "astral_explosion", _DEF_PASS)
+
+    control_hits = [
+        line
+        for line in control.log[control_log_start:]
+        if line.startswith("Astral Explosion hits ")
+    ]
+    assert effects.absorb_total(control_shaman) == 0
+    assert [int(re.search(r"for (\d+) damage", line).group(1)) for line in control_hits] == [12, 11, 11], \
+        "The non-Mindgames control must preserve multiplier, split, remainder, and full packet logs"
+    assert "a_injured" not in control_priest.pets, \
+        "The 12-point packet must defeat the 4-HP pet"
+    assert sum(line == "Injured Sprite dies." for line in control.log[control_log_start:]) == 1, \
+        "The overkilled pet must be defeated exactly once"
+    assert control_pets["b_full"].hp == 39
+    assert control_pets["c_immune"].hp == 30, \
+        "An immune pet must remain unaffected while other packets resolve"
+    assert control_priest.res.hp == control_champion_hp
+    assert control.combat_totals[control_shaman_sid]["damage"] == 15, \
+        "Damage credit must be 4 overkill-capped HP plus 11 normal HP, excluding immunity"
+    assert not any("Mindgames flips" in line for line in control.log[control_log_start:])
     return True
 
 

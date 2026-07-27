@@ -9,8 +9,8 @@ from typing import Any, Callable, Dict, Mapping, Sequence
 from .damage_types import DAMAGE_SOURCE_PERIODIC_ITEM
 from .dice import roll
 from .effects import (
-    apply_player_healing,
     damage_multiplier_from_passives,
+    has_effect,
     has_flag,
     is_damage_immune,
     modify_stat,
@@ -27,6 +27,10 @@ PERIODIC_SELF_HEAL_HANDLER = "periodic_self_heal"
 # PlayerBuild currently supports these equipment slots. Periodic item ordering
 # must use this tuple rather than build/items dictionary insertion order.
 EQUIPMENT_SLOT_ORDER = ("weapon", "armor", "trinket")
+
+
+def _no_mindgames_flip_suffix(_: Mapping[str, Any]) -> str:
+    return ""
 
 
 @dataclass(frozen=True)
@@ -51,6 +55,10 @@ class PeriodicItemHandlerContext:
     player_sids: tuple[str, ...]
     turn_context: Any
     apply_damage: Callable[..., Dict[str, Any]]
+    mindgames_flip_suffix: Callable[[Mapping[str, Any]], str] = (
+        _no_mindgames_flip_suffix
+    )
+    resolve_player_produced_healing: Callable[..., Mapping[str, Any]] | None = None
 
 
 PeriodicItemHandler = Callable[
@@ -185,21 +193,37 @@ def periodic_self_heal(
     if type(heal_value) is not int or heal_value < 1:
         raise ValueError("periodic_self_heal requires value to be a positive integer")
 
-    # Preserve the legacy item exception: Cyclone suppresses these heals, but
-    # Mindgames and other immunity-all states do not.
+    # Cyclone suppresses the healing event entirely, before Mindgames can
+    # convert it.
     if has_flag(owner, "cycloned"):
         return
 
-    gained = apply_player_healing(owner, heal_value)
-    totals = combat_totals_entry(context.match.combat_totals, activation.owner_sid)
-    totals["healing"] += gained
-    totals["overhealing"] += heal_value - gained
-
     item = ITEMS.get(activation.item_id, {})
     item_name = str(item.get("name") or activation.item_id)
-    context.match.log.append(
-        f"{owner.sid[:5]} heals {gained} HP from {item_name}."
+    if context.resolve_player_produced_healing is None:
+        raise RuntimeError(
+            "player-produced healing requires "
+            "resolve_player_produced_healing"
+        )
+    healing_result = context.resolve_player_produced_healing(
+        owner,
+        owner,
+        heal_value,
+        source_name=item_name,
     )
+    gained = int(healing_result.get("healing_gained", 0) or 0)
+    totals = combat_totals_entry(context.match.combat_totals, activation.owner_sid)
+    totals["healing"] += gained
+    totals["overhealing"] += int(
+        healing_result.get("overhealing", heal_value - gained) or 0
+    )
+
+    if healing_result.get("twisted_by_mindgames"):
+        context.match.log.append(str(healing_result.get("log") or ""))
+    else:
+        context.match.log.append(
+            f"{owner.sid[:5]} heals {gained} HP from {item_name}."
+        )
 
 
 def periodic_global_damage(
@@ -219,6 +243,7 @@ def periodic_global_damage(
         raise ValueError(
             f"Periodic item owner '{activation.owner_sid}' is missing from match state"
         )
+    mindgames_flip_damage = bool(has_effect(owner, "mindgames"))
 
     school = str(passive.get("school") or "").strip().lower()
     if school not in {"physical", "magical"}:
@@ -251,13 +276,14 @@ def periodic_global_damage(
     for target_owner_sid, target, is_player_target in target_snapshot:
         immune_before_application = is_damage_immune(target, immunity_school)
         log_length_before_application = len(context.match.log)
+        target_label = _periodic_target_log_label(target_owner_sid, target)
         target_damage = context.apply_damage(
             owner,
             target,
             outgoing_raw_damage,
-            target.sid if is_player_target else target.name,
+            target.sid if is_player_target else target_label,
             item_name,
-            mindgames_flip_damage=False,
+            mindgames_flip_damage=mindgames_flip_damage,
             damage_instances=[outgoing_raw_damage],
             school=school,
             subschool=subschool,
@@ -266,7 +292,6 @@ def periodic_global_damage(
             resolve_player_mitigation=is_player_target,
             source_kind=DAMAGE_SOURCE_PERIODIC_ITEM,
         )
-        target_label = _periodic_target_log_label(target_owner_sid, target)
         if immune_before_application:
             # Cloak/Cyclone already emit their canonical shared-pipeline line;
             # full immunity and pet immunity need a handler-owned result line.
@@ -278,10 +303,13 @@ def periodic_global_damage(
 
         hp_damage = int(target_damage.get("hp_damage", 0) or 0)
         absorbed = int(target_damage.get("absorbed", 0) or 0)
+        converted_healing = int(target_damage.get("mindgames_healing", 0) or 0)
         total_hp_damage += hp_damage
         context.match.log.append(
-            f"{item_name} hits {target_label} for {hp_damage + absorbed} "
-            f"{damage_label} damage.{_periodic_absorb_suffix(target_damage)}"
+            f"{item_name} hits {target_label} for "
+            f"{hp_damage + absorbed + converted_healing} {damage_label} damage."
+            f"{_periodic_absorb_suffix(target_damage)}"
+            f"{context.mindgames_flip_suffix(target_damage)}"
         )
 
     combat_totals_entry(
@@ -440,6 +468,10 @@ def resolve_periodic_item_stage(
     rng: Any,
     turn_context: Any,
     apply_damage: Callable[..., Dict[str, Any]],
+    mindgames_flip_suffix: Callable[[Mapping[str, Any]], str] = (
+        _no_mindgames_flip_suffix
+    ),
+    resolve_player_produced_healing: Callable[..., Mapping[str, Any]] | None = None,
     before_dispatch: Callable[[], None] | None = None,
 ) -> tuple[PeriodicItemActivation, ...]:
     """Snapshot and dispatch scheduled item effects once for the active turn."""
@@ -456,6 +488,8 @@ def resolve_periodic_item_stage(
         player_sids=player_sids,
         turn_context=turn_context,
         apply_damage=apply_damage,
+        mindgames_flip_suffix=mindgames_flip_suffix,
+        resolve_player_produced_healing=resolve_player_produced_healing,
     )
     dispatch_periodic_item_activations(
         activations,

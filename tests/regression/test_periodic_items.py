@@ -12,6 +12,7 @@ from typing import Any, Callable, Iterator
 
 from harness import (
     PetState,
+    _turn_lines,
     effects,
     make_match,
     resolver,
@@ -88,6 +89,26 @@ def _temporary_periodic_content(
 
 def _unused_apply_damage(*args: Any, **kwargs: Any) -> dict[str, Any]:
     raise AssertionError("The synthetic stage test did not expect damage application")
+
+
+def _resolve_test_player_healing(
+    producer: Any,
+    recipient: Any,
+    requested_amount: int,
+    *,
+    source_name: str,
+    recipient_label: str | None = None,
+    source_kind: str | None = None,
+) -> dict[str, Any]:
+    return resolver.resolve_player_produced_healing(
+        producer,
+        recipient,
+        requested_amount,
+        source_name=source_name,
+        recipient_label=recipient_label,
+        source_kind=source_kind,
+        apply_damage=_unused_apply_damage,
+    )
 
 
 @contextmanager
@@ -818,6 +839,7 @@ def scenario_periodic_self_heal_schedule_and_rng() -> bool:
                 rng=stage_rng,
                 turn_context=None,
                 apply_damage=_unused_apply_damage,
+                resolve_player_produced_healing=_resolve_test_player_healing,
             )
             assert len(activations) == 1
             activation = activations[0]
@@ -850,6 +872,7 @@ def scenario_periodic_self_heal_accounting_and_exceptions() -> bool:
         rng=random.Random(9430),
         turn_context=None,
         apply_damage=_unused_apply_damage,
+        resolve_player_produced_healing=_resolve_test_player_healing,
     )
     assert near_cap_owner.res.hp == near_cap_owner.res.hp_max
     assert near_cap.combat_totals[near_cap_sid]["healing"] == 1
@@ -870,6 +893,7 @@ def scenario_periodic_self_heal_accounting_and_exceptions() -> bool:
         rng=random.Random(9431),
         turn_context=None,
         apply_damage=_unused_apply_damage,
+        resolve_player_produced_healing=_resolve_test_player_healing,
     )
     assert full.combat_totals[full_sid]["healing"] == 0
     assert full.combat_totals[full_sid]["overhealing"] == 3
@@ -910,6 +934,7 @@ def scenario_periodic_self_heal_accounting_and_exceptions() -> bool:
         rng=random.Random(9434),
         turn_context=None,
         apply_damage=_unused_apply_damage,
+        resolve_player_produced_healing=_resolve_test_player_healing,
     )
     assert cyclone_owner.res.hp == cyclone_hp
     assert cycloned.combat_totals == totals_before
@@ -924,23 +949,22 @@ def scenario_periodic_self_heal_accounting_and_exceptions() -> bool:
     )
     mindgames_sid = mindgames.players[0]
     mindgames_owner = mindgames.state[mindgames_sid]
-    mindgames_owner.res.hp -= 20
     effects.apply_effect_by_id(
         mindgames_owner,
         "mindgames",
         overrides={"duration": 2, "source_sid": mindgames.players[1]},
     )
     mindgames_hp = mindgames_owner.res.hp
-    periodic_items.resolve_periodic_item_stage(
-        match=mindgames,
-        rng=random.Random(9435),
-        turn_context=None,
-        apply_damage=_unused_apply_damage,
-    )
-    assert mindgames_owner.res.hp == mindgames_hp + 4
-    assert mindgames.combat_totals[mindgames_sid]["healing"] == 4
-    assert not any("Mindgames" in line for line in mindgames.log), \
-        "Legacy item healing must not be converted by Mindgames"
+    submit_turn(mindgames, _DEF_PASS, _DEF_PASS)
+    assert mindgames_owner.res.hp == mindgames_hp - 4
+    assert mindgames.combat_totals[mindgames_sid]["healing"] == 0
+    assert mindgames.combat_totals[mindgames_sid]["overhealing"] == 0
+    assert mindgames.combat_totals[mindgames_sid]["damage"] == 0
+    assert any(
+        "Mindgames twists 4 healing from Staff of Immortality into Shadow damage" in line
+        and f"{mindgames_sid[:5]} takes 4 damage." in line
+        for line in _turn_lines(mindgames, 1)
+    ), "Player-owned periodic item healing must convert through the shared resolver"
 
     ice_block = make_match(
         "mage",
@@ -958,6 +982,7 @@ def scenario_periodic_self_heal_accounting_and_exceptions() -> bool:
         rng=random.Random(9436),
         turn_context=None,
         apply_damage=_unused_apply_damage,
+        resolve_player_produced_healing=_resolve_test_player_healing,
     )
     assert ice_block_owner.res.hp == ice_block_hp + 3
     assert ice_block.combat_totals[ice_block_sid]["healing"] == 3, \
@@ -986,6 +1011,7 @@ def scenario_staff_dispatches_before_vial_for_same_owner() -> bool:
             rng=random.Random(9440),
             turn_context=None,
             apply_damage=_capture_damage_calls(damage_calls),
+            resolve_player_produced_healing=_resolve_test_player_healing,
         )
 
     assert [
@@ -1512,7 +1538,145 @@ def scenario_vial_of_shadows_shared_mitigation_absorbs_immunity() -> bool:
     return True
 
 
-def scenario_vial_of_shadows_ignores_miss_redirect_and_mindgames() -> bool:
+def scenario_vial_of_shadows_mindgames_converts_all_entities() -> bool:
+    match = make_match(
+        "warrior",
+        "mage",
+        p1_items={"trinket": "vial_of_shadows"},
+        seed=9509,
+    )
+    owner_sid, caster_sid = match.players
+    owner = match.state[owner_sid]
+    caster = match.state[caster_sid]
+    owner.stats.update(
+        {"atk": 11, "int": 10, "def": 0, "magic_resist": 0, "shadow_resist": 0}
+    )
+    caster.stats.update({"def": 0, "magic_resist": 0, "shadow_resist": 0})
+    owner.res.hp = owner.res.hp_max - 30
+    caster.res.hp = caster.res.hp_max - 4
+    owner_pet = _add_periodic_test_entity(
+        owner,
+        "owner_pet",
+        hp=20,
+        stats={"def": 0, "magic_resist": 0, "shadow_resist": 0},
+    )
+    owner_pet.hp_max = 50
+    enemy_pet = _add_periodic_test_entity(
+        caster,
+        "enemy_pet",
+        hp=20,
+        stats={"def": 0, "magic_resist": 0, "shadow_resist": 0},
+    )
+    enemy_pet.hp_max = 50
+    immune_pet = _add_periodic_test_entity(
+        caster,
+        "immune_pet",
+        hp=20,
+        stats={"def": 0, "magic_resist": 0, "shadow_resist": 0},
+    )
+    immune_pet.hp_max = 50
+    effects.apply_effect_by_id(
+        immune_pet,
+        "divine_shield",
+        overrides={"duration": 2},
+    )
+    effects.add_absorb(
+        owner,
+        7,
+        source_name="Owner Shield",
+        effect_id="owner_test_shield",
+    )
+    effects.add_absorb(
+        caster,
+        9,
+        source_name="Caster Shield",
+        effect_id="caster_test_shield",
+    )
+    owner_absorb_before = effects.absorb_total(owner)
+    caster_absorb_before = effects.absorb_total(caster)
+    effects.apply_effect_by_id(
+        owner,
+        "mindgames",
+        overrides={"duration": 2, "source_sid": caster_sid},
+    )
+    targets = (owner, owner_pet, caster, enemy_pet, immune_pet)
+    hp_before = {
+        id(entity): entity.res.hp if hasattr(entity, "res") else entity.hp
+        for entity in targets
+    }
+    log_start = len(match.log)
+    match.turn = 4
+    roll_calls: list[str] = []
+
+    with _fixed_vial_roll(4, roll_calls):
+        submit_turn(match, _DEF_PASS, _DEF_PASS)
+
+    actual_gains = {
+        id(entity): (
+            entity.res.hp if hasattr(entity, "res") else entity.hp
+        ) - hp_before[id(entity)]
+        for entity in targets
+    }
+    assert actual_gains[id(owner)] == 10, \
+        "The owner's eligible Vial self-packet must convert under the explicit flag"
+    assert actual_gains[id(owner_pet)] == 10, \
+        "The owner's pet packet must convert independently"
+    assert actual_gains[id(caster)] == 4, \
+        "The enemy champion conversion must cap at its own maximum HP"
+    assert actual_gains[id(enemy_pet)] == 10, \
+        "The enemy pet packet must convert independently"
+    assert actual_gains[id(immune_pet)] == 0, \
+        "An immune entity must receive neither damage nor converted healing"
+    assert effects.absorb_total(owner) == owner_absorb_before
+    assert effects.absorb_total(caster) == caster_absorb_before, \
+        "Converted periodic packets must preserve player absorbs"
+    assert match.combat_totals[owner_sid]["damage"] == 0, \
+        "All converted periodic packets must credit zero item-owner damage"
+    assert match.combat_totals[caster_sid]["healing"] == 34, \
+        "The Mindgames caster must receive the sum of actual all-entity healing"
+    assert match.combat_totals[caster_sid]["overhealing"] == 6, \
+        "The capped enemy-champion conversion must credit caster overhealing"
+
+    turn_lines = match.log[log_start:]
+    result_lines = [
+        line
+        for line in turn_lines
+        if line.startswith("Vial of Shadows hits ")
+        or line.startswith("Vial of Shadows cannot harm ")
+    ]
+    expected_labels = [
+        owner_sid[:5],
+        f"{owner_sid[:5]}'s Imp (owner_pet)",
+        caster_sid[:5],
+        f"{caster_sid[:5]}'s Imp (enemy_pet)",
+        f"{caster_sid[:5]}'s Imp (immune_pet)",
+    ]
+    assert len(result_lines) == len(expected_labels)
+    assert all(
+        label in line
+        for label, line in zip(expected_labels, result_lines)
+    ), "Vial result logs must preserve player order and sorted entity order"
+    flip_lines = [line for line in result_lines if "Mindgames flips" in line]
+    assert len(flip_lines) == 4, \
+        "Every non-immune player and pet packet must append the canonical suffix"
+    assert all(
+        "Mindgames flips 10 damage into healing" in line
+        for line in flip_lines
+    )
+    assert any(
+        f"{caster_sid[:5]} restores 4 HP." in line
+        for line in flip_lines
+    ), "The capped champion log must show the actual amount restored"
+    assert not any(
+        "immune_pet" in line and "Mindgames flips" in line
+        for line in result_lines
+    )
+    assert roll_calls == ["d6"], \
+        "One all-entity activation must preserve its single deterministic formula roll"
+    return True
+
+
+def scenario_vial_of_shadows_ignores_miss_and_redirect() -> bool:
     match = make_match(
         "warrior",
         "rogue",
@@ -1532,7 +1696,6 @@ def scenario_vial_of_shadows_ignores_miss_redirect_and_mindgames() -> bool:
         name="Barrens Boar",
         entity_type="pet",
     )
-    effects.apply_effect_by_id(owner, "mindgames", overrides={"source_sid": target_sid})
     effects.apply_effect_by_id(target, "blink", overrides={"duration": 2})
     effects.apply_effect_by_id(target, "evasion", overrides={"duration": 2})
     effects.apply_effect_by_id(
@@ -1572,7 +1735,7 @@ def scenario_vial_of_shadows_ignores_miss_redirect_and_mindgames() -> bool:
         submit_turn(match, _DEF_PASS, _DEF_PASS)
 
     assert owner_hp_before - owner.res.hp == expected_owner_damage, \
-        "Mindgames must not flip Vial self-damage into healing"
+        "Vial self-damage must remain normal without Mindgames"
     assert target_hp_before - target.res.hp == expected_target_damage, \
         "Accuracy, Evasion, stealth, and blink-like avoidance must not stop Vial"
     assert pet_hp_before - redirect_pet.hp == expected_pet_damage, \

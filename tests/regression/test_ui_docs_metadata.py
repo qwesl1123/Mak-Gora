@@ -341,6 +341,19 @@ def scenario_duel_html_agony_docs_updated() -> bool:
     return True
 
 
+def scenario_mindgames_complete_entity_aware_description() -> bool:
+    expected = (
+        "Applies a 1-turn debuff to the enemy. Damage caused by the target heals "
+        "each entity it would damage, while healing caused by the target deals "
+        "equal Shadow damage to each entity it would heal."
+    )
+    duel_html_text = _detect_duel_html_path().read_text(encoding="utf-8")
+    assert f"<p>{expected}</p>" in duel_html_text
+    assert ABILITIES["mindgames"].get("description") == expected
+    assert "target healing into self-damage" not in duel_html_text
+    return True
+
+
 def scenario_effect_panel_payload_normalization() -> bool:
     match = make_match("warrior", "warlock", seed=6106)
     warrior_sid, warlock_sid = match.players
