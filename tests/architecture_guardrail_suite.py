@@ -1849,9 +1849,28 @@ def guardrail_next_offense_direct_damage_contract() -> Tuple[bool, str]:
 _TESTS_DIR = Path(__file__).resolve().parent
 _GAMEPLAY_REGRESSION_DIR = _TESTS_DIR / "regression"
 
+def _markdown_fixture_name(stem: str, suffix: str = "md") -> str:
+    """Assemble a Markdown filename for detector fixtures and the suffix table.
+
+    Every Markdown filename this module needs is *built* here rather than
+    written as a literal, so the module contains no Markdown path literal at
+    all. That is what lets the suite-wide scan run with no exemptions: with
+    nothing exempt, every Markdown literal in this file is a failure, and no
+    fixture value can be laundered into an opened path because there is no
+    exempt data to launder.
+
+    The cost is one indirection in the fixture tables; the benefit is that the
+    scan's guarantee is unconditional rather than resting on a carve-out whose
+    consumers would themselves need policing.
+    """
+    return f"{stem}.{suffix}"
+
+
 # Development-documentation extensions. A gameplay regression has no legitimate
 # runtime dependency on any of them, whatever the filename or directory is.
-_MARKDOWN_SUFFIXES: Tuple[str, ...] = (".md", ".markdown")
+_MARKDOWN_SUFFIXES: Tuple[str, ...] = tuple(
+    _markdown_fixture_name("", suffix) for suffix in ("md", "markdown")
+)
 
 
 def _is_markdown_path_literal(value: object) -> bool:
@@ -2149,37 +2168,37 @@ _MARKDOWN_DETECTOR_MUST_DETECT: Tuple[Tuple[str, str, Tuple[str, ...]], ...] = (
     (
         "path_read_text",
         'Path("README.md").read_text()\n',
-        ("README.md",),
+        (_markdown_fixture_name("README"),),
     ),
     (
         "builtin_open_markdown_extension",
         'open("docs/design.markdown")\n',
-        ("docs/design.markdown",),
+        (_markdown_fixture_name("docs/design", "markdown"),),
     ),
     (
         "project_helper_with_composition",
         '_read(root / "CLASS_IMPLEMENTATION.md")\n',
-        ("CLASS_IMPLEMENTATION.md",),
+        (_markdown_fixture_name("CLASS_IMPLEMENTATION"),),
     ),
     (
         "mixed_case_suffix",
         'Path("MixedCase.MD")\n',
-        ("MixedCase.MD",),
+        (_markdown_fixture_name("MixedCase", "MD"),),
     ),
     (
         "directory_composition_mixed_case",
         'load_file(Path("Docs") / "Combat.MD")\n',
-        ("Combat.MD",),
+        (_markdown_fixture_name("Combat", "MD"),),
     ),
     (
         "windows_separator",
         'Path("docs\\\\architecture.md").open()\n',
-        ("docs\\architecture.md",),
+        (_markdown_fixture_name("docs\\architecture"),),
     ),
     (
         "read_bytes_on_composed_path",
         '(repository_root / "SECURITY.md").read_bytes()\n',
-        ("SECURITY.md",),
+        (_markdown_fixture_name("SECURITY"),),
     ),
     (
         "inside_function_body",
@@ -2189,7 +2208,7 @@ _MARKDOWN_DETECTOR_MUST_DETECT: Tuple[Tuple[str, str, Tuple[str, ...]], ...] = (
             '    text = _read(root / "docs/testing.markdown")\n'
             "    return bool(text)\n"
         ),
-        ("docs/testing.markdown",),
+        (_markdown_fixture_name("docs/testing", "markdown"),),
     ),
 )
 
@@ -2240,10 +2259,10 @@ _MARKDOWN_DETECTOR_MUST_IGNORE: Tuple[Tuple[str, str], ...] = (
 # suite-wide Markdown scan below exempt the fixtures by name and reject a
 # Markdown literal anywhere else, including inside a guardrail body.
 _MARKDOWN_PREDICATE_CASES: Tuple[Tuple[object, bool], ...] = (
-    ("README.md", True),
-    ("readme.MARKDOWN", True),
-    ("  docs/design.md  ", True),
-    ("docs\\notes.Md", True),
+    (_markdown_fixture_name("README"), True),
+    (_markdown_fixture_name("readme", "MARKDOWN"), True),
+    ("  " + _markdown_fixture_name("docs/design") + "  ", True),
+    (_markdown_fixture_name("docs\\notes", "Md"), True),
     ("duel.html", False),
     ("md", False),
     ("design.md.py", False),
@@ -2253,22 +2272,84 @@ _MARKDOWN_PREDICATE_CASES: Tuple[Tuple[object, bool], ...] = (
     (b"README.md", False),
 )
 
-# The only module-level tables allowed to contain Markdown path literals. Each
-# is detector input or the suffix table itself -- data under test, never a path
-# this suite opens. Any other Markdown literal in this file is a real
-# documentation dependency and is rejected.
-_MARKDOWN_FIXTURE_CONSTANTS: Tuple[str, ...] = (
+
+# Helpers that reach development documentation without naming a Markdown file.
+# The architecture suite must not reference them at all -- see
+# _documentation_helper_references().
+_DOCUMENTATION_HELPERS: Tuple[str, ...] = ("detect_repository_root",)
+
+# Fixture data: the assembled Markdown names and the tables built from them.
+# None of it is a literal, so the suite-wide literal scan cannot see it -- which
+# means the *consumers* are what keep it from becoming an opened path.
+_MARKDOWN_FIXTURE_NAMES: Tuple[str, ...] = (
+    "_markdown_fixture_name",
     "_MARKDOWN_SUFFIXES",
     "_MARKDOWN_DETECTOR_MUST_DETECT",
     "_MARKDOWN_DETECTOR_MUST_IGNORE",
     "_MARKDOWN_PREDICATE_CASES",
 )
 
+# The closed set of functions allowed to touch fixture data. Everything here
+# feeds it to the detector; nothing here opens a file. Any other function
+# referencing a fixture could route a Markdown name into a read, which is the
+# one way assembled (non-literal) names can still become a dependency.
+_MARKDOWN_FIXTURE_CONSUMERS: Tuple[str, ...] = (
+    "_is_markdown_path_literal",
+    "guardrail_markdown_reference_detector_self_test",
+    "guardrail_test_path_discovery_contract",
+)
 
-# Helpers that reach development documentation without naming a Markdown file.
-# The architecture suite must not reference them at all -- see
-# _documentation_helper_references().
-_DOCUMENTATION_HELPERS: Tuple[str, ...] = ("detect_repository_root",)
+
+def _fixture_reference_violations(tree: ast.AST) -> List[Tuple[int, str]]:
+    """Return ``(line, description)`` for fixture references outside the consumers.
+
+    Module-level references are allowed only inside the fixture definitions
+    themselves (and inside ``_markdown_fixture_name``); everywhere else the
+    reference must sit in a declared consumer. This is what makes the
+    exemption-free literal scan sound: the scan proves no Markdown name is
+    *written* here, and this proves the names that are *assembled* here never
+    reach anything but the detector.
+    """
+    allowed_ids = set()
+    for node in tree.body if isinstance(tree, ast.Module) else []:
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            defines_fixture = any(
+                isinstance(target, ast.Name) and target.id in _MARKDOWN_FIXTURE_NAMES
+                for target in targets
+            )
+            if defines_fixture and node.value is not None:
+                for child in ast.walk(node.value):
+                    allowed_ids.add(id(child))
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name in _MARKDOWN_FIXTURE_NAMES:
+                for child in ast.walk(node):
+                    allowed_ids.add(id(child))
+
+    enclosing: Dict[int, str] = {}
+    for node in tree.body if isinstance(tree, ast.Module) else []:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for child in ast.walk(node):
+                enclosing[id(child)] = node.name
+
+    findings: List[Tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Name) or node.id not in _MARKDOWN_FIXTURE_NAMES:
+            continue
+        if not isinstance(node.ctx, ast.Load):
+            continue  # binding the name is a definition, not a use of the data
+        if id(node) in allowed_ids:
+            continue
+        owner = enclosing.get(id(node))
+        if owner is not None and owner in _MARKDOWN_FIXTURE_CONSUMERS:
+            continue
+        where = f"{owner}()" if owner else "module level"
+        findings.append((
+            node.lineno,
+            f"{where} references Markdown fixture data {node.id}, which is not a "
+            "declared detector consumer",
+        ))
+    return sorted(set(findings))
 
 # The module those helpers live on. Dynamic attribute lookup on it is rejected
 # outright, because an attribute name computed at runtime cannot be checked
@@ -2563,54 +2644,6 @@ def _documentation_helper_references(tree: ast.AST) -> List[Tuple[int, str]]:
     return sorted(set(findings))
 
 
-def _literal_constant_ids(node: ast.AST) -> set:
-    """Return the ids of Constants reachable through *literal containers only*.
-
-    Descends into tuples, lists, sets, and dicts -- the shapes a declared fixture
-    table is written in -- and stops at anything executable. A call, operator, or
-    name is not table data, so a Markdown literal buried inside one
-    (``(Path("README.md").read_text() and "duel.html", False)``) is deliberately
-    left unexempted: the exemption covers data, never behavior that merely sits
-    under a fixture's name.
-    """
-    ids = set()
-    if isinstance(node, ast.Constant):
-        ids.add(id(node))
-    elif isinstance(node, (ast.Tuple, ast.List, ast.Set)):
-        for element in node.elts:
-            ids |= _literal_constant_ids(element)
-    elif isinstance(node, ast.Dict):
-        for key, value in zip(node.keys, node.values):
-            if key is not None:  # ``**expansion`` has no key and is not literal
-                ids |= _literal_constant_ids(key)
-            ids |= _literal_constant_ids(value)
-    return ids
-
-
-def _markdown_fixture_constant_ids(tree: ast.AST) -> set:
-    """Return the ids of every Constant that is literal data in a fixture table.
-
-    Being assigned to a declared fixture name is necessary but not sufficient:
-    only constants reachable through literal containers are exempt, so an
-    executable expression cannot smuggle a documentation path into the
-    exemption by sitting inside one of these assignments.
-    """
-    fixture_ids = set()
-    for node in tree.body if isinstance(tree, ast.Module) else []:
-        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
-            continue
-        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-        if not any(
-            isinstance(target, ast.Name) and target.id in _MARKDOWN_FIXTURE_CONSTANTS
-            for target in targets
-        ):
-            continue
-        if node.value is None:
-            continue
-        fixture_ids |= _literal_constant_ids(node.value)
-    return fixture_ids
-
-
 def guardrail_markdown_reference_detector_self_test() -> Tuple[bool, str]:
     """Prove the Markdown-reference detector detects and ignores correctly."""
     problems: List[str] = []
@@ -2683,18 +2716,24 @@ def guardrail_markdown_reference_detector_self_test() -> Tuple[bool, str]:
     # bodies: a shared helper called by a guardrail is just as much a dependency.
     #
     # (a) Executable Markdown path literals -- ``_read(_REPO_ROOT / "ROADMAP.md")``
-    #     and every other spelling the shared AST detector recognizes. Docstrings
-    #     and comments that merely discuss Markdown are exempt, as are the
-    #     declared detector fixture tables, which are data under test rather than
-    #     paths this suite opens.
-    fixture_ids = _markdown_fixture_constant_ids(suite_tree)
+    #     and every other spelling the shared AST detector recognizes.
+    #
+    #     There is no fixture exemption. Every Markdown filename this module
+    #     needs is assembled by _markdown_fixture_name() instead of written as a
+    #     literal, so the scan can be absolute: any Markdown path literal here is
+    #     a failure, full stop. An exemption would have to be policed at its
+    #     *consumers* too -- exempt data can always be fed to a reader -- and
+    #     having none removes that whole obligation.
+    #
+    #     Docstrings remain exempt, matching the rule applied to gameplay
+    #     regressions: prose that discusses Markdown is documentation, not an
+    #     executable path. Comments never reach the AST at all.
     docstring_ids = _docstring_constant_ids(suite_tree)
     suite_markdown_literals = sorted(
         {
             (node.lineno, node.value)
             for node in ast.walk(suite_tree)
             if isinstance(node, ast.Constant)
-            and id(node) not in fixture_ids
             and id(node) not in docstring_ids
             and _is_markdown_path_literal(node.value)
         }
@@ -2731,15 +2770,28 @@ def guardrail_markdown_reference_detector_self_test() -> Tuple[bool, str]:
             "path_discovery still exports it"
         )
 
-    # The fixture exemption must stay narrow: it is keyed on module-level
-    # assignments to the declared names, so a guardrail cannot launder a
-    # documentation path through a fixture table by reusing one of those names
-    # locally. Prove the exemption is still doing real work rather than
-    # silently covering the whole file.
-    if not fixture_ids:
+    # The detector fixtures must keep exercising real Markdown names even though
+    # none of them is written as a literal. If _markdown_fixture_name() were
+    # broken into returning something the predicate does not recognize, the
+    # must-detect cases above would still "pass" while testing nothing.
+    assembled = _markdown_fixture_name("probe")
+    if not _is_markdown_path_literal(assembled):
         problems.append(
-            "no declared Markdown fixture constants were found; the suite-wide "
-            "Markdown scan may be exempting the wrong nodes"
+            f"_markdown_fixture_name() produced {assembled!r}, which the "
+            "detector does not recognize as a Markdown path; the fixture tables "
+            "would no longer exercise the predicate"
+        )
+
+    # (c) Fixture data has a closed set of consumers. The literal scan proves no
+    #     Markdown name is *written* in this module; assembled names are
+    #     invisible to it, so the only remaining route is feeding one to a
+    #     reader. Restricting who may reference the fixtures closes that.
+    for line_no, description in _fixture_reference_violations(suite_tree):
+        problems.append(
+            f"architecture_guardrail_suite.py:{line_no}: {description}. "
+            "Markdown fixture values are detector input and must never reach a "
+            "file read; add the consumer to _MARKDOWN_FIXTURE_CONSUMERS only if "
+            "it genuinely just feeds the detector"
         )
 
     if problems:
@@ -2753,9 +2805,10 @@ def guardrail_markdown_reference_detector_self_test() -> Tuple[bool, str]:
         f"{len(_MARKDOWN_PREDICATE_CASES)} literal-predicate cases; all "
         f"{len(registered)} registered guardrails validate source architecture "
         "without requiring development Markdown (anywhere in this module: no "
-        "executable Markdown path literal outside the declared fixture tables, "
-        f"and no import, reference, or getattr of {len(_DOCUMENTATION_HELPERS)} "
-        "documentation helper(s), so an alias cannot bypass the prohibition)."
+        "executable Markdown path literal at all -- fixtures are assembled, not "
+        f"written, so the scan needs no exemption -- and no import, reference, "
+        f"or getattr of {len(_DOCUMENTATION_HELPERS)} documentation helper(s), "
+        "so an alias cannot bypass the prohibition)."
     )
 
 
