@@ -2288,28 +2288,106 @@ def _unwrap_walrus(node: ast.AST) -> ast.AST:
     return node
 
 
-def _simple_bindings(tree: ast.AST) -> List[Tuple[str, ast.AST]]:
-    """Return ``(bound_name, value_node)`` for every simple single-name binding.
+def _binding_pairs(target: ast.AST, value: ast.AST) -> List[Tuple[str, ast.AST]]:
+    """Return ``(name, value_node)`` for one target, destructuring as it goes.
 
-    One enumerator for every binding form Python offers, so the checks built on
-    it cannot go stale one syntax at a time: plain assignment, chained
-    assignment (``a = b = value``), annotated assignment
-    (``pd: object = path_discovery``), and the walrus operator. Callers filter
-    by the *value* they care about -- a string literal, or a name that is
-    already a known alias.
+    ``pd, unused = path_discovery, None`` binds ``pd`` to the module just as
+    plainly as ``pd = path_discovery`` does, and nesting changes nothing. Tuple
+    and list targets are therefore paired elementwise with a matching literal
+    value, recursively.
+
+    When the shapes cannot be aligned -- a starred target, a length mismatch, or
+    a value that is not a literal sequence -- every name in the target is paired
+    with the *whole* value instead. That over-approximates rather than
+    under-approximates, which is the correct direction for a prohibition: an
+    unresolvable shape can hide the module, and the alternative is to silently
+    stop looking. In practice the whole value is rarely a bare name, so this
+    contributes nothing unless something really is being passed along.
+    """
+    if isinstance(target, ast.Name):
+        return [(target.id, value)]
+    if isinstance(target, ast.Starred):
+        return _binding_pairs(target.value, value)
+    if isinstance(target, (ast.Tuple, ast.List)):
+        pairs: List[Tuple[str, ast.AST]] = []
+        if isinstance(value, (ast.Tuple, ast.List)):
+            stars = [
+                index
+                for index, element in enumerate(target.elts)
+                if isinstance(element, ast.Starred)
+            ]
+            if not stars and len(target.elts) == len(value.elts):
+                for sub_target, sub_value in zip(target.elts, value.elts):
+                    pairs.extend(_binding_pairs(sub_target, sub_value))
+                return pairs
+            if len(stars) == 1 and len(value.elts) >= len(target.elts) - 1:
+                # ``head, *rest, tail = a, b, c``: the fixed ends still pair up
+                # positionally. The starred name receives a *list* of whatever
+                # is left over, which can never be the module itself.
+                star = stars[0]
+                prefix = target.elts[:star]
+                suffix = target.elts[star + 1:]
+                for sub_target, sub_value in zip(prefix, value.elts[:len(prefix)]):
+                    pairs.extend(_binding_pairs(sub_target, sub_value))
+                if suffix:
+                    tail_values = value.elts[len(value.elts) - len(suffix):]
+                    for sub_target, sub_value in zip(suffix, tail_values):
+                        pairs.extend(_binding_pairs(sub_target, sub_value))
+                return pairs
+        # Shapes cannot be aligned. Pair every name with the whole value, which
+        # over-approximates rather than under-approximates -- the correct
+        # direction for a prohibition, since an unresolvable shape can hide the
+        # module and the alternative is to stop looking.
+        for element in target.elts:
+            pairs.extend(_binding_pairs(element, value))
+        return pairs
+    return []
+
+
+def _iteration_bindings(target: ast.AST, iterable: ast.AST) -> List[Tuple[str, ast.AST]]:
+    """Return the bindings a loop target takes from a literal iterable.
+
+    ``for pd in (path_discovery,)`` binds the module exactly as an assignment
+    would. Only literal sequences are unrolled; anything else yields no binding,
+    because there is no element to pair with.
+    """
+    if not isinstance(iterable, (ast.Tuple, ast.List, ast.Set)):
+        return []
+    pairs: List[Tuple[str, ast.AST]] = []
+    for element in iterable.elts:
+        pairs.extend(_binding_pairs(target, element))
+    return pairs
+
+
+def _simple_bindings(tree: ast.AST) -> List[Tuple[str, ast.AST]]:
+    """Return ``(bound_name, value_node)`` for every name binding in the module.
+
+    One enumerator for every binding form, so the checks built on it cannot go
+    stale one syntax at a time: plain assignment, chained assignment
+    (``a = b = value``), annotated assignment (``pd: object = path_discovery``),
+    the walrus operator, tuple/list destructuring at any nesting depth, and loop
+    and comprehension targets over literal sequences. Callers filter by the
+    *value* they care about -- a string literal, or a name that is already a
+    known alias.
+
+    Not covered, because there is no static value to pair a name with:
+    ``with ... as name``, function parameters, and imports of anything other
+    than the documentation module itself (those are handled directly).
     """
     bindings: List[Tuple[str, ast.AST]] = []
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign):
             for target in node.targets:
-                if isinstance(target, ast.Name):
-                    bindings.append((target.id, node.value))
+                bindings.extend(_binding_pairs(target, node.value))
         elif isinstance(node, ast.AnnAssign):
-            if isinstance(node.target, ast.Name) and node.value is not None:
-                bindings.append((node.target.id, node.value))
+            if node.value is not None:
+                bindings.extend(_binding_pairs(node.target, node.value))
         elif isinstance(node, ast.NamedExpr):
-            if isinstance(node.target, ast.Name):
-                bindings.append((node.target.id, node.value))
+            bindings.extend(_binding_pairs(node.target, node.value))
+        elif isinstance(node, (ast.For, ast.AsyncFor)):
+            bindings.extend(_iteration_bindings(node.target, node.iter))
+        elif isinstance(node, ast.comprehension):
+            bindings.extend(_iteration_bindings(node.target, node.iter))
     return bindings
 
 
