@@ -2265,6 +2265,73 @@ _MARKDOWN_FIXTURE_CONSTANTS: Tuple[str, ...] = (
 )
 
 
+# Helpers that reach development documentation without naming a Markdown file.
+# The architecture suite must not reference them at all -- see
+# _documentation_helper_references().
+_DOCUMENTATION_HELPERS: Tuple[str, ...] = ("detect_repository_root",)
+
+
+def _documentation_helper_references(tree: ast.AST) -> List[Tuple[int, str]]:
+    """Return ``(line, description)`` for every executable documentation-helper reference.
+
+    Every way of *getting at* the helper is rejected, not merely calling it by
+    its own name, because an alias is only reachable through one of these:
+
+    * ``import``/``from ... import`` of the name, aliased or not;
+    * an attribute reference (``path_discovery.detect_repository_root``),
+      whether called, assigned, or passed along;
+    * a bare name reference; and
+    * ``getattr(module, "detect_repository_root")``, which would otherwise hide
+      the reference inside a string.
+
+    String literals elsewhere are *not* references: naming the helper in a tuple
+    of expected exports documents the API rather than depending on it.
+    """
+    findings: List[Tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name in _DOCUMENTATION_HELPERS:
+                    bound = alias.asname or alias.name
+                    findings.append((
+                        node.lineno,
+                        f"the architecture suite imports {alias.name}() "
+                        f"(bound as {bound})",
+                    ))
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                leaf = alias.name.rsplit(".", 1)[-1]
+                if leaf in _DOCUMENTATION_HELPERS:
+                    findings.append((
+                        node.lineno,
+                        f"the architecture suite imports {alias.name}",
+                    ))
+        elif isinstance(node, ast.Attribute) and node.attr in _DOCUMENTATION_HELPERS:
+            findings.append((
+                node.lineno,
+                f"the architecture suite references {node.attr}()",
+            ))
+        elif isinstance(node, ast.Name) and node.id in _DOCUMENTATION_HELPERS:
+            findings.append((
+                node.lineno,
+                f"the architecture suite references {node.id}()",
+            ))
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "getattr"
+            and len(node.args) >= 2
+            and isinstance(node.args[1], ast.Constant)
+            and node.args[1].value in _DOCUMENTATION_HELPERS
+        ):
+            findings.append((
+                node.lineno,
+                f"the architecture suite resolves {node.args[1].value}() "
+                "dynamically via getattr()",
+            ))
+    return sorted(set(findings))
+
+
 def _markdown_fixture_constant_ids(tree: ast.AST) -> set:
     """Return the ids of every Constant inside a declared fixture table."""
     fixture_ids = set()
@@ -2383,29 +2450,26 @@ def guardrail_markdown_reference_detector_self_test() -> Tuple[bool, str]:
         )
 
     # (b) The documentation-root detector, which reaches AGENTS.md/ROADMAP.md
-    #     without ever spelling a Markdown literal here. Detection is on call
-    #     nodes, so the guardrail that merely asserts path_discovery still
-    #     exports the helper (a name in a tuple of strings) is not mistaken for
-    #     a caller.
-    documentation_root_calls = sorted(
-        {
-            node.lineno
-            for node in ast.walk(suite_tree)
-            if isinstance(node, ast.Call)
-            and (
-                (isinstance(node.func, ast.Attribute)
-                 and node.func.attr == "detect_repository_root")
-                or (isinstance(node.func, ast.Name)
-                    and node.func.id == "detect_repository_root")
-            )
-        }
-    )
-    if documentation_root_calls:
+    #     without ever spelling a Markdown literal here.
+    #
+    #     Matching *calls* by syntactic name is not enough: an alias defeats it
+    #     (``from path_discovery import detect_repository_root as repo_root``,
+    #     or ``repo_root = path_discovery.detect_repository_root``), and the call
+    #     would then be spelled ``repo_root()``. Rather than resolving aliases --
+    #     which is unbounded, since an alias can be rebound arbitrarily far from
+    #     the call -- every *reference* is rejected. Aliasing requires a
+    #     reference or an import first, so banning those bans the alias too.
+    #
+    #     Only executable references count. The guardrail that asserts
+    #     path_discovery still exports the helper names it in a tuple of
+    #     strings, which is documentation of the API, not use of it.
+    for line_no, description in _documentation_helper_references(suite_tree):
         problems.append(
-            "the architecture suite calls detect_repository_root() at line(s) "
-            + ", ".join(str(line) for line in documentation_root_calls)
-            + "; architecture guardrails must validate source architecture "
-            "without requiring AGENTS.md or ROADMAP.md to be present"
+            f"architecture_guardrail_suite.py:{line_no}: {description}; "
+            "architecture guardrails must validate source architecture without "
+            "requiring AGENTS.md or ROADMAP.md to be present. Reference the "
+            "helper by name in a string if the intent is to assert that "
+            "path_discovery still exports it"
         )
 
     # The fixture exemption must stay narrow: it is keyed on module-level
@@ -2429,9 +2493,10 @@ def guardrail_markdown_reference_detector_self_test() -> Tuple[bool, str]:
         "(docstrings/comments/ordinary strings), and "
         f"{len(_MARKDOWN_PREDICATE_CASES)} literal-predicate cases; all "
         f"{len(registered)} registered guardrails validate source architecture "
-        "without requiring development Markdown (no executable Markdown path "
-        "literal outside the declared fixture tables, and no "
-        "detect_repository_root() call, anywhere in this module)."
+        "without requiring development Markdown (anywhere in this module: no "
+        "executable Markdown path literal outside the declared fixture tables, "
+        f"and no import, reference, or getattr of {len(_DOCUMENTATION_HELPERS)} "
+        "documentation helper(s), so an alias cannot bypass the prohibition)."
     )
 
 
