@@ -2270,6 +2270,34 @@ _MARKDOWN_FIXTURE_CONSTANTS: Tuple[str, ...] = (
 # _documentation_helper_references().
 _DOCUMENTATION_HELPERS: Tuple[str, ...] = ("detect_repository_root",)
 
+# The module those helpers live on. Dynamic attribute lookup on it is rejected
+# outright, because an attribute name computed at runtime cannot be checked
+# against the helper list statically.
+_DOCUMENTATION_MODULE = "path_discovery"
+
+
+def _string_constant_bindings(tree: ast.AST) -> Dict[str, set]:
+    """Return ``{name: {literal, ...}}`` for simple ``name = "literal"`` assignments.
+
+    Deliberately shallow: it resolves a name bound directly to a string literal,
+    which is all that is needed to see through
+    ``helper = "detect_repository_root"; getattr(module, helper)``. Anything less
+    direct is handled by rejecting dynamic lookup on the documentation module
+    outright, so the check never depends on how far the resolution reaches.
+    """
+    bindings: Dict[str, set] = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if (
+            isinstance(target, ast.Name)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        ):
+            bindings.setdefault(target.id, set()).add(node.value.value)
+    return bindings
+
 
 def _documentation_helper_references(tree: ast.AST) -> List[Tuple[int, str]]:
     """Return ``(line, description)`` for every executable documentation-helper reference.
@@ -2282,12 +2310,16 @@ def _documentation_helper_references(tree: ast.AST) -> List[Tuple[int, str]]:
       whether called, assigned, or passed along;
     * a bare name reference; and
     * ``getattr(module, "detect_repository_root")``, which would otherwise hide
-      the reference inside a string.
+      the reference inside a string -- including through a name bound to that
+      string; and
+    * any *dynamic* attribute lookup on the documentation module, whose
+      attribute name cannot be checked statically at all.
 
     String literals elsewhere are *not* references: naming the helper in a tuple
     of expected exports documents the API rather than depending on it.
     """
     findings: List[Tuple[int, str]] = []
+    bindings = _string_constant_bindings(tree)
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
             for alias in node.names:
@@ -2321,14 +2353,41 @@ def _documentation_helper_references(tree: ast.AST) -> List[Tuple[int, str]]:
             and isinstance(node.func, ast.Name)
             and node.func.id == "getattr"
             and len(node.args) >= 2
-            and isinstance(node.args[1], ast.Constant)
-            and node.args[1].value in _DOCUMENTATION_HELPERS
         ):
-            findings.append((
-                node.lineno,
-                f"the architecture suite resolves {node.args[1].value}() "
-                "dynamically via getattr()",
-            ))
+            attribute = node.args[1]
+            on_discovery_module = (
+                isinstance(node.args[0], ast.Name)
+                and node.args[0].id == _DOCUMENTATION_MODULE
+            )
+            if isinstance(attribute, ast.Constant):
+                if attribute.value in _DOCUMENTATION_HELPERS:
+                    findings.append((
+                        node.lineno,
+                        f"the architecture suite resolves {attribute.value}() "
+                        "dynamically via getattr()",
+                    ))
+            elif isinstance(attribute, ast.Name) and (
+                bindings.get(attribute.id, set()).intersection(_DOCUMENTATION_HELPERS)
+            ):
+                resolved = ", ".join(
+                    sorted(bindings[attribute.id].intersection(_DOCUMENTATION_HELPERS))
+                )
+                findings.append((
+                    node.lineno,
+                    f"the architecture suite resolves {resolved}() via getattr() "
+                    f"through the name {attribute.id!r}",
+                ))
+            elif on_discovery_module:
+                # The attribute name is computed, so it cannot be checked
+                # against the helper list. Reject the lookup itself rather than
+                # guess: this suite has no legitimate need to reach into
+                # path_discovery dynamically.
+                findings.append((
+                    node.lineno,
+                    "the architecture suite performs a dynamic getattr() lookup "
+                    f"on {_DOCUMENTATION_MODULE}, whose attribute name cannot be "
+                    "checked statically",
+                ))
     return sorted(set(findings))
 
 
