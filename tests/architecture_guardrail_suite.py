@@ -86,11 +86,14 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 def _resolve_source_file(
     basename: str,
     nested_directory: str,
+    package_root: Optional[Path] = None,
 ) -> Optional[Path]:
     """Resolve ``basename`` in the nested layout, then flat, or ``None``."""
+    # ``package_root`` is injectable so a flat checkout can exercise nesting.
+    root = _REPO_ROOT if package_root is None else package_root
     candidates = (
-        _REPO_ROOT / nested_directory / basename,
-        _REPO_ROOT / basename,
+        root / nested_directory / basename,
+        root / basename,
     )
     return next((path for path in candidates if path.is_file()), None)
 
@@ -1755,6 +1758,37 @@ def _function_source(path: Path, function_name: str) -> Optional[str]:
     return None
 
 
+def _nested_source_resolution_problems() -> List[str]:
+    """Pin nested engine/content resolution against a synthetic source tree.
+
+    A flat checkout never exercises the nested branch of
+    ``_resolve_source_file()``, so a mix-up would only surface once deployed.
+    """
+    problems: List[str] = []
+    with tempfile.TemporaryDirectory() as temporary:
+        root = Path(temporary)
+        for relative in ("engine/resolver.py", "engine/effects.py", "content/abilities.py"):
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("", encoding="utf-8")
+        cases: Tuple[Tuple[str, str, Optional[str]], ...] = (
+            ("abilities.py", "content", "content/abilities.py"),
+            ("resolver.py", "engine", "engine/resolver.py"),
+            ("effects.py", "engine", "engine/effects.py"),
+            # Content must not be reachable through the engine directory.
+            ("abilities.py", "engine", None),
+        )
+        for basename, nested_directory, expected in cases:
+            actual = _resolve_source_file(basename, nested_directory, root)
+            wanted = None if expected is None else root / expected
+            if actual != wanted:
+                problems.append(
+                    f"_resolve_source_file({basename!r}, {nested_directory!r}) "
+                    f"returned {actual} in the nested layout, expected {wanted}"
+                )
+    return problems
+
+
 def guardrail_test_path_discovery_contract() -> Tuple[bool, str]:
     """Reject layout-specific path construction inside the test tree."""
     problems: List[str] = []
@@ -1920,6 +1954,8 @@ def guardrail_test_path_discovery_contract() -> Tuple[bool, str]:
                     "via .exists(); directories would pass."
                 )
 
+    problems.extend(_nested_source_resolution_problems())
+
     if problems:
         return False, "; ".join(problems)
 
@@ -1928,9 +1964,10 @@ def guardrail_test_path_discovery_contract() -> Tuple[bool, str]:
         f"{len(_PROHIBITED_TEST_PATH_PATTERNS)} prohibited path patterns and "
         f"{len(_gameplay_regression_modules())} gameplay regression modules for "
         f"executable {'/'.join(_MARKDOWN_SUFFIXES)} path literals; the "
-        "Scourgelord docs scenario uses the canonical detector, and "
+        "Scourgelord docs scenario uses the canonical detector, "
         "documentation discovery is __file__-anchored and independent of "
-        "template discovery."
+        "template discovery, and nested engine/content source resolution "
+        "keeps the two kinds separate."
     )
 
 
