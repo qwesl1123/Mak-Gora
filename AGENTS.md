@@ -773,7 +773,7 @@ python tests/run_subschool_validation.py
 * Child output streams straight to the terminal and is never captured, so the exact per-suite pass counts are still reported by the child runners themselves. Report those counts, not the aggregate summary alone.
 * Every suite runs even when an earlier one fails; the command exists to produce one complete validation report. The final summary lists each suite with `PASS`/`FAIL`.
 * A successful aggregate exit (`0`) means all five suites passed. Exit code `1` means at least one suite failed or a declared runner file is missing.
-* Because this is full source-checkout validation, architecture validation is included and therefore requires the repository documentation to be present.
+* Every standard suite depends only on source and runtime artifacts, so none of them requires development Markdown to be present.
 * Run targeted scenarios during development to iterate quickly.
 * Run all five suites before merging a class or any shared engine foundation.
 * Report exact pass counts.
@@ -785,7 +785,7 @@ The aggregate runner is test infrastructure, not gameplay behavior, so its own c
 
 Gameplay regressions (`tests/run_regression.py`) may depend only on runtime artifacts: engine/content source modules, their data, and the `duel.html` template. They must never read development Markdown (`AGENTS.md`, `ROADMAP.md`, `README.md`, ...), because the deployed runtime tree legitimately ships without a documentation checkout, and a missing document must never fail a gameplay scenario.
 
-Repository-documentation assertions belong to architecture/static validation (`tests/architecture_guardrail_suite.py`). That suite is only defined for a full source checkout, so it fails loudly and explicitly when the documentation is absent rather than degrading to a skip.
+Architecture guardrails (`tests/architecture_guardrail_suite.py`) must run in both supported layouts. Engine source files (`resolver.py`, `effects.py`, ...) resolve through the nested `engine/` directory; content/data files (`abilities.py`, ...) resolve through the nested `content/` directory. Each falls back to the repository root for the flat checkout, so resolving a content file as an engine file is a bug. No standard suite may require development Markdown (`AGENTS.md`, `ROADMAP.md`, `README.md`, ...) to be present.
 
 Test path discovery is centralized in `tests/path_discovery.py` and must support every documented layout:
 
