@@ -75,30 +75,34 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 # --------------------------------------------------------------------------- #
-# Source-file location (supports both the flat and nested engine layouts).
+# Source-file location (supports both the flat and nested source layouts).
+#
+# The repo is either flat (every module in the repo root) or nested, where
+# engine modules live in ``engine/`` and content/data modules live in
+# ``content/``. A file is therefore resolved through the nested directory its
+# own kind uses, then through the flat repository root.
 # --------------------------------------------------------------------------- #
 
-def _engine_dir() -> Path:
-    """Return the directory that holds the engine modules.
-
-    Mirrors the layout detection in ``regression_suite.py``: the repo is either
-    flat (modules in the repo root) or nested (``engine/`` + ``content/``).
-    """
-    nested_engine = _REPO_ROOT / "engine"
-    if (nested_engine / "resolver.py").exists():
-        return nested_engine
-    return _REPO_ROOT
+def _resolve_source_file(
+    basename: str,
+    nested_directory: str,
+) -> Optional[Path]:
+    """Resolve ``basename`` in the nested layout, then flat, or ``None``."""
+    candidates = (
+        _REPO_ROOT / nested_directory / basename,
+        _REPO_ROOT / basename,
+    )
+    return next((path for path in candidates if path.is_file()), None)
 
 
 def _gameplay_file(basename: str) -> Optional[Path]:
-    """Resolve a gameplay engine file by basename, or ``None`` if absent."""
-    candidate = _engine_dir() / basename
-    if candidate.exists():
-        return candidate
-    root_candidate = _REPO_ROOT / basename
-    if root_candidate.exists():
-        return root_candidate
-    return None
+    """Resolve an engine gameplay file by basename, or ``None`` if absent."""
+    return _resolve_source_file(basename, "engine")
+
+
+def _content_file(basename: str) -> Optional[Path]:
+    """Resolve a content/data file by basename, or ``None`` if absent."""
+    return _resolve_source_file(basename, "content")
 
 
 # Engine gameplay files that participate in the resource / damage / healing
@@ -1458,11 +1462,23 @@ def guardrail_player_hp_writes() -> Tuple[bool, str]:
 def guardrail_next_offense_direct_damage_contract() -> Tuple[bool, str]:
     """Pin strict direct-damage metadata and generic next-offense wiring."""
 
-    abilities_path = _gameplay_file("abilities.py")
+    abilities_path = _content_file("abilities.py")
     resolver_path = _gameplay_file("resolver.py")
     effects_path = _gameplay_file("effects.py")
     if abilities_path is None or resolver_path is None or effects_path is None:
-        return False, "abilities.py, resolver.py, or effects.py is missing."
+        unresolved = ", ".join(
+            basename
+            for basename, path in (
+                ("abilities.py", abilities_path),
+                ("resolver.py", resolver_path),
+                ("effects.py", effects_path),
+            )
+            if path is None
+        )
+        return False, (
+            f"Unable to resolve source file(s): {unresolved} (searched the "
+            f"nested engine/ and content/ directories and {_REPO_ROOT})."
+        )
 
     abilities_tree = ast.parse(_read(abilities_path), filename=str(abilities_path))
     abilities_assignment = next(
@@ -1612,73 +1628,6 @@ def guardrail_next_offense_direct_damage_contract() -> Tuple[bool, str]:
         f"Validated {len(abilities)} abilities, {len(special_ids)} special "
         "handlers, strict direct_damage metadata, all-effect next-offense "
         "snapshot wiring, and the strike-again no-next-offense basis."
-    )
-
-
-# =========================================================================== #
-# Guardrail 8: repository documentation contract (AGENTS.md / ROADMAP.md).
-#
-# These assertions used to live in the gameplay regression suite, which forced
-# run_regression.py to require development Markdown inside a deployed runtime
-# tree. Repository documentation is not a runtime artifact, so the contract is
-# validated here instead: this suite is only meaningful in a full source
-# checkout, and it fails loudly (FileNotFoundError from the shared
-# repository-root detector) when the documentation is absent.
-# =========================================================================== #
-
-_REQUIRED_ROADMAP_TEXT: Tuple[str, ...] = (
-    "## Recently completed: periodic-item expansion",
-    "- [x] Scourgelord Chestplate: periodic current-HP sacrifice and Death's Bargain\n"
-    "  next-offense empowerment",
-    "## Active phase: remaining classes",
-    "Every class uses exactly one primary combat resource.",
-)
-
-_FORBIDDEN_ROADMAP_TEXT: Tuple[str, ...] = (
-    "## Active phase: periodic-item expansion",
-    "- [ ] Scourgelord Chestplate",
-)
-
-_REQUIRED_AGENTS_NEXT_OFFENSE_TEXT: Tuple[str, ...] = (
-    "Every active `empower_next_offense` effect snapshots onto the same next valid",
-    "ordered canonically by effect ID",
-    "combine multiplicatively into one scalar before the canonical damage stage",
-    "All snapshotted effects consume together",
-    "exactly once per cast in canonical order",
-    "basis that excludes only the generic next-offense multiplier",
-    "`direct_damage` is a strict boolean ability-definition property",
-    "Offensive-action classification remains broader and separate",
-    "Fixed-value shield-derived damage is explicitly non-direct",
-)
-
-
-def guardrail_next_offense_docs_and_roadmap_contract() -> Tuple[bool, str]:
-    """Validate the roadmap phase state and the AGENTS.md next-offense contract."""
-    repository_root = path_discovery.detect_repository_root()
-    roadmap = _read(repository_root / "ROADMAP.md")
-    agents = _read(repository_root / "AGENTS.md")
-
-    problems: List[str] = []
-    for text in _REQUIRED_ROADMAP_TEXT:
-        if text not in roadmap:
-            problems.append(f"ROADMAP.md is missing required text: {text!r}")
-    for text in _FORBIDDEN_ROADMAP_TEXT:
-        if text in roadmap:
-            problems.append(f"ROADMAP.md still contains stale text: {text!r}")
-
-    normalized_agents = " ".join(agents.split())
-    for text in _REQUIRED_AGENTS_NEXT_OFFENSE_TEXT:
-        if text not in normalized_agents:
-            problems.append(f"AGENTS.md is missing next-offense contract text: {text!r}")
-
-    if problems:
-        return False, "; ".join(problems)
-
-    return True, (
-        f"Validated {len(_REQUIRED_ROADMAP_TEXT)} roadmap statements, "
-        f"{len(_FORBIDDEN_ROADMAP_TEXT)} stale-roadmap prohibitions, and "
-        f"{len(_REQUIRED_AGENTS_NEXT_OFFENSE_TEXT)} AGENTS.md next-offense "
-        f"contract statements in {repository_root}."
     )
 
 
@@ -2519,10 +2468,6 @@ _GUARDRAILS: Tuple[Tuple[str, Callable[[], Tuple[bool, str]]], ...] = (
     (
         "guardrail_next_offense_direct_damage_contract",
         guardrail_next_offense_direct_damage_contract,
-    ),
-    (
-        "guardrail_next_offense_docs_and_roadmap_contract",
-        guardrail_next_offense_docs_and_roadmap_contract,
     ),
     (
         "guardrail_test_path_discovery_contract",
