@@ -2276,6 +2276,43 @@ _DOCUMENTATION_HELPERS: Tuple[str, ...] = ("detect_repository_root",)
 _DOCUMENTATION_MODULE = "path_discovery"
 
 
+def _unwrap_walrus(node: ast.AST) -> ast.AST:
+    """Return ``node`` with any enclosing walrus assignments stripped.
+
+    ``getattr((d := pd), name)`` passes a ``NamedExpr``, not a ``Name``, so a
+    matcher that only understands bare names would miss the module it resolves
+    to. Unwrapping keeps the binding forms and the *use* sites consistent.
+    """
+    while isinstance(node, ast.NamedExpr):
+        node = node.value
+    return node
+
+
+def _simple_bindings(tree: ast.AST) -> List[Tuple[str, ast.AST]]:
+    """Return ``(bound_name, value_node)`` for every simple single-name binding.
+
+    One enumerator for every binding form Python offers, so the checks built on
+    it cannot go stale one syntax at a time: plain assignment, chained
+    assignment (``a = b = value``), annotated assignment
+    (``pd: object = path_discovery``), and the walrus operator. Callers filter
+    by the *value* they care about -- a string literal, or a name that is
+    already a known alias.
+    """
+    bindings: List[Tuple[str, ast.AST]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    bindings.append((target.id, node.value))
+        elif isinstance(node, ast.AnnAssign):
+            if isinstance(node.target, ast.Name) and node.value is not None:
+                bindings.append((node.target.id, node.value))
+        elif isinstance(node, ast.NamedExpr):
+            if isinstance(node.target, ast.Name):
+                bindings.append((node.target.id, node.value))
+    return bindings
+
+
 def _documentation_module_aliases(tree: ast.AST) -> set:
     """Return every name bound to the documentation module in this file.
 
@@ -2295,14 +2332,12 @@ def _documentation_module_aliases(tree: ast.AST) -> set:
                 if alias.name == _DOCUMENTATION_MODULE:
                     aliases.add(alias.asname or alias.name)
 
-    # Propagate ``other = <alias>`` rebindings until nothing new appears.
+    # Propagate ``other = <alias>`` rebindings until nothing new appears. Every
+    # binding form counts: an annotated rebinding is as ordinary as a plain one.
     simple_aliases = [
-        (node.targets[0].id, node.value.id)
-        for node in ast.walk(tree)
-        if isinstance(node, ast.Assign)
-        and len(node.targets) == 1
-        and isinstance(node.targets[0], ast.Name)
-        and isinstance(node.value, ast.Name)
+        (bound, value.id)
+        for bound, value in _simple_bindings(tree)
+        if isinstance(value, ast.Name)
     ]
     changed = True
     while changed:
@@ -2317,23 +2352,19 @@ def _documentation_module_aliases(tree: ast.AST) -> set:
 def _string_constant_bindings(tree: ast.AST) -> Dict[str, set]:
     """Return ``{name: {literal, ...}}`` for simple ``name = "literal"`` assignments.
 
-    Deliberately shallow: it resolves a name bound directly to a string literal,
-    which is all that is needed to see through
+    Deliberately shallow in *depth*: it resolves a name bound directly to a
+    string literal, which is all that is needed to see through
     ``helper = "detect_repository_root"; getattr(module, helper)``. Anything less
     direct is handled by rejecting dynamic lookup on the documentation module
     outright, so the check never depends on how far the resolution reaches.
+
+    It is not shallow in *form*: every binding syntax is covered, so an
+    annotated or walrus binding is no more invisible than a plain one.
     """
     bindings: Dict[str, set] = {}
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
-            continue
-        target = node.targets[0]
-        if (
-            isinstance(target, ast.Name)
-            and isinstance(node.value, ast.Constant)
-            and isinstance(node.value.value, str)
-        ):
-            bindings.setdefault(target.id, set()).add(node.value.value)
+    for bound, value in _simple_bindings(tree):
+        if isinstance(value, ast.Constant) and isinstance(value.value, str):
+            bindings.setdefault(bound, set()).add(value.value)
     return bindings
 
 
@@ -2393,10 +2424,10 @@ def _documentation_helper_references(tree: ast.AST) -> List[Tuple[int, str]]:
             and node.func.id == "getattr"
             and len(node.args) >= 2
         ):
-            attribute = node.args[1]
+            target = _unwrap_walrus(node.args[0])
+            attribute = _unwrap_walrus(node.args[1])
             on_discovery_module = (
-                isinstance(node.args[0], ast.Name)
-                and node.args[0].id in module_aliases
+                isinstance(target, ast.Name) and target.id in module_aliases
             )
             if isinstance(attribute, ast.Constant):
                 if attribute.value in _DOCUMENTATION_HELPERS:
@@ -2425,7 +2456,7 @@ def _documentation_helper_references(tree: ast.AST) -> List[Tuple[int, str]]:
                     node.lineno,
                     "the architecture suite performs a dynamic getattr() lookup "
                     f"on {_DOCUMENTATION_MODULE} (as "
-                    f"{node.args[0].id}), whose attribute name cannot be "
+                    f"{target.id}), whose attribute name cannot be "
                     "checked statically",
                 ))
     return sorted(set(findings))
