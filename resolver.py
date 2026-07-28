@@ -4046,14 +4046,31 @@ def resolve_turn(match: MatchState) -> None:
             if not effect_id:
                 continue
             effect = build_effect(effect_id, overrides=entry.get("overrides"))
+            # Predict the final recipient with the same routing semantics as
+            # _apply_effect_entries_stage: a redirected pet absorbing the CC
+            # must not pre-lock the champion's own action.
+            allow_redirect = (
+                ability_target_mode(ability) != "aoe_enemy"
+                and isinstance(target, PlayerState)
+                and target is not actor
+                and is_harmful_target_effect_entry(entry)
+            )
+            resolved_target, _, _, _, _ = resolve_target_resolution(
+                target,
+                target_label=target.sid,
+                source_ability_name=ability.get("name", "the effect"),
+                allow_redirect=allow_redirect,
+            )
             blocked_log = resolve_target_effect_pre_resolution_protection(
                 entry_target=target,
-                resolved_target=target,
+                resolved_target=resolved_target,
                 ability=ability,
                 entry=entry,
                 effect=effect,
             )
             if blocked_log:
+                continue
+            if resolved_target is not target:
                 continue
             flags = effect.get("flags", {}) or {}
             if flags.get("stunned") or effect.get("cant_act_reason"):
@@ -4188,8 +4205,63 @@ def resolve_turn(match: MatchState) -> None:
         if is_offensive_action(ability) and turn_ctx.stealth_start_at_turn_begin.get(actor_sid, False):
             remove_stealth(actor)
 
-    resolve_immediate_effects(sids[0], sids[1], turn_ctx.immediate_contexts[sids[0]])
-    resolve_immediate_effects(sids[1], sids[0], turn_ctx.immediate_contexts[sids[1]])
+    def immediate_context_applies_crowd_control(ctx: Dict[str, Any]) -> bool:
+        if ctx.get("resolved") or not ctx.get("immediate_only"):
+            return False
+        for entry in (ctx.get("ability") or {}).get("target_effects") or []:
+            effect_id = entry.get("id")
+            if not effect_id:
+                continue
+            effect = build_effect(effect_id, overrides=entry.get("overrides"))
+            flags = effect.get("flags", {}) or {}
+            if flags.get("stunned") or effect.get("cant_act_reason"):
+                return True
+        return False
+
+    def immediate_context_adds_incoming_target_protection(ctx: Dict[str, Any]) -> bool:
+        """True when resolving this context would newly apply incoming-target
+        protection (untargetable / miss / immunity) to its actor mid-phase.
+
+        Priority defensives never qualify: their self effects pre-apply before
+        the phase-start prediction, so they are already part of the state the
+        prediction and the pet brace were evaluated against.
+        """
+        if ctx.get("resolved") or not ctx.get("immediate_only"):
+            return False
+        ability = ctx.get("ability") or {}
+        if ability.get("priority_defensive"):
+            return False
+        for entry in ability.get("self_effects") or []:
+            effect_id = entry.get("id")
+            if not effect_id or entry.get("type") == "dispel":
+                continue
+            effect = build_effect(effect_id, overrides=entry.get("overrides"))
+            flags = effect.get("flags", {}) or {}
+            if (
+                flags.get("untargetable")
+                or flags.get("incoming_single_target_miss")
+                or flags.get("incoming_cc_miss")
+                or flags.get("immune_all")
+            ):
+                return True
+        return False
+
+    # Immediate crowd control is denied (or allowed) by the phase-start
+    # prediction above, so it must also resolve against that state. Swap the
+    # two resolutions only when the first-submitted context would newly
+    # protect its actor from crowd control the prediction already resolved
+    # (e.g. routed to a redirecting pet) -- otherwise a same-phase Disengage
+    # would retroactively shield the champion mid-phase. Every other pair,
+    # including plain utility actions such as Flare, keeps submission order.
+    first_sid, second_sid = sids
+    if (
+        immediate_context_adds_incoming_target_protection(turn_ctx.immediate_contexts[first_sid])
+        and not immediate_context_applies_crowd_control(turn_ctx.immediate_contexts[first_sid])
+        and immediate_context_applies_crowd_control(turn_ctx.immediate_contexts[second_sid])
+    ):
+        first_sid, second_sid = second_sid, first_sid
+    resolve_immediate_effects(first_sid, second_sid, turn_ctx.immediate_contexts[first_sid])
+    resolve_immediate_effects(second_sid, first_sid, turn_ctx.immediate_contexts[second_sid])
     turn_ctx.stealth_targeting = {sid: is_stealthed(turn_ctx.match.state[sid]) for sid in sids}
     turn_ctx.committed_action_sids = set(sids)
     turn_ctx.committed_action_protected_effect_ids = {sid: set() for sid in sids}

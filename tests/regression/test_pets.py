@@ -391,16 +391,44 @@ def scenario_hunter_boar_redirects_single_target_cc() -> bool:
     boar = _active_pet(hunter, "barrens_boar")
     assert boar is not None, "Boar should be active for CC redirect coverage"
 
-    effects.apply_effect_by_id(hunter, "blocking_defence", overrides={"duration": 1, "redirect_to_pet_id": boar.id})
-    submit_turn(match, _DEF_PASS, "kidney_shot")
+    boar.rage = max(boar.rage, 5)
+    hunter.pending_pet_command = "special"
+    submit_turn(match, "disengage", "kidney_shot")
+    redirect_turn = _turn_lines(match, 2)
+    assert any("Barrens Boar braces to intercept attacks." in line for line in redirect_turn), "Forced pre-action special should log the brace"
+    assert any("Barrens Boar intercepts Kidney Shot" in line for line in redirect_turn), "Redirected CC should emit the intercept log"
+    assert not any("tries to use Disengage but" in line for line in redirect_turn), "Redirected same-turn CC must not deny the Hunter's action"
+    assert any("cast Disengage." in line for line in redirect_turn), "Hunter's Disengage should resolve on the redirect turn"
+    assert _has_effect(hunter, "disengage"), "Hunter should gain the Disengage effect when the CC is redirected"
     assert not _has_effect(hunter, "stunned"), "Single-target CC should be redirected off the Hunter"
     assert _has_effect(boar, "stunned"), "Single-target CC should land on the boar"
-    assert any("Barrens Boar intercepts Kidney Shot" in line for line in _turn_lines(match, 2)), "Redirected CC should emit the intercept log"
 
     effects.remove_effect(boar, "stunned")
     effects.apply_effect_by_id(hunter, "blocking_defence", overrides={"duration": 1, "redirect_to_pet_id": boar.id})
     submit_turn(match, _DEF_PASS, "fan_of_knives")
     assert not _has_effect(boar, "stunned"), "AoE CC should not redirect to the boar"
+
+    flare_match = make_match("hunter", "rogue", seed=123)
+    flare_hunter_sid, flare_rogue_sid = flare_match.players
+    flare_hunter = flare_match.state[flare_hunter_sid]
+    flare_rogue = flare_match.state[flare_rogue_sid]
+    run_turns(flare_match, [("call_boar", _DEF_PASS)])
+    flare_boar = _active_pet(flare_hunter, "barrens_boar")
+    assert flare_boar is not None, "Boar should be active for the Flare ordering coverage"
+    flare_boar.rage = max(flare_boar.rage, 5)
+    flare_hunter.pending_pet_command = "special"
+    if not _has_effect(flare_rogue, "stealth"):
+        effects.apply_effect_by_id(flare_rogue, "stealth", overrides={"duration": 3})
+    submit_turn(flare_match, "flare", "cheap_shot")
+    flare_turn = _turn_lines(flare_match, 2)
+    assert any("Flare reveals the target." in line for line in flare_turn), "Flare submitted first must still reveal the stealthed Rogue"
+    assert any("stealth broken by Flare." in line for line in flare_turn), "Flare must not be silently consumed by reordered CC execution"
+    assert any("Barrens Boar intercepts Cheap Shot" in line for line in flare_turn), "Cheap Shot should still redirect to the braced boar"
+    # Cheap Shot's duration-1 stun expires in the same turn's cleanup, so the
+    # landed stun is asserted from the turn log rather than lingering state.
+    assert any("Target stunned." in line for line in flare_turn), "Redirected Cheap Shot should stun the boar"
+    assert not any("tries to use Flare but" in line for line in flare_turn), "Hunter's Flare must not be denied by the redirected stun"
+    assert not _has_effect(flare_hunter, "stunned"), "Hunter should stay unstunned while the boar intercepts Cheap Shot"
     return True
 
 
