@@ -17,6 +17,7 @@ Usage:
 
 from __future__ import annotations
 
+import os
 import sys
 
 
@@ -41,9 +42,12 @@ def _reject_markdown_reads(event: str, arguments: tuple) -> None:
     target = arguments[0]
     if isinstance(target, int):  # already-open file descriptor, not a path
         return
+    # os.fsdecode, not str(): it normalizes str, bytes, and os.PathLike alike.
+    # str(b"ROADMAP.md") is "b'ROADMAP.md'", which ends in no known suffix, so
+    # a bytes path would otherwise walk straight past this check.
     try:
-        path = str(target)
-    except Exception:  # pragma: no cover - defensive; never block on a repr
+        path = os.fsdecode(target)
+    except (TypeError, ValueError):  # not a path-like argument at all
         return
     if path.lower().endswith(_PROHIBITED_READ_SUFFIXES):
         raise MarkdownDependencyError(
