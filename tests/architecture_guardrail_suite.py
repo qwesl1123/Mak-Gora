@@ -2232,6 +2232,59 @@ _MARKDOWN_DETECTOR_MUST_IGNORE: Tuple[Tuple[str, str], ...] = (
 )
 
 
+# The literal predicate itself: extensions are matched case-insensitively and
+# only at the end of the path, and non-strings are never paths.
+#
+# Module level, not a local inside the guardrail, so that every Markdown literal
+# in this file lives in a declared fixture table. That is what lets the
+# suite-wide Markdown scan below exempt the fixtures by name and reject a
+# Markdown literal anywhere else, including inside a guardrail body.
+_MARKDOWN_PREDICATE_CASES: Tuple[Tuple[object, bool], ...] = (
+    ("README.md", True),
+    ("readme.MARKDOWN", True),
+    ("  docs/design.md  ", True),
+    ("docs\\notes.Md", True),
+    ("duel.html", False),
+    ("md", False),
+    ("design.md.py", False),
+    ("markdown", False),
+    (5, False),
+    (None, False),
+    (b"README.md", False),
+)
+
+# The only module-level tables allowed to contain Markdown path literals. Each
+# is detector input or the suffix table itself -- data under test, never a path
+# this suite opens. Any other Markdown literal in this file is a real
+# documentation dependency and is rejected.
+_MARKDOWN_FIXTURE_CONSTANTS: Tuple[str, ...] = (
+    "_MARKDOWN_SUFFIXES",
+    "_MARKDOWN_DETECTOR_MUST_DETECT",
+    "_MARKDOWN_DETECTOR_MUST_IGNORE",
+    "_MARKDOWN_PREDICATE_CASES",
+)
+
+
+def _markdown_fixture_constant_ids(tree: ast.AST) -> set:
+    """Return the ids of every Constant inside a declared fixture table."""
+    fixture_ids = set()
+    for node in tree.body if isinstance(tree, ast.Module) else []:
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        if not any(
+            isinstance(target, ast.Name) and target.id in _MARKDOWN_FIXTURE_CONSTANTS
+            for target in targets
+        ):
+            continue
+        if node.value is None:
+            continue
+        for child in ast.walk(node.value):
+            if isinstance(child, ast.Constant):
+                fixture_ids.add(id(child))
+    return fixture_ids
+
+
 def guardrail_markdown_reference_detector_self_test() -> Tuple[bool, str]:
     """Prove the Markdown-reference detector detects and ignores correctly."""
     problems: List[str] = []
@@ -2264,22 +2317,7 @@ def guardrail_markdown_reference_detector_self_test() -> Tuple[bool, str]:
                 f"{tuple(literal for _, literal in found)}"
             )
 
-    # The literal predicate itself: extensions are matched case-insensitively
-    # and only at the end of the path, and non-strings are never paths.
-    predicate_cases: Tuple[Tuple[object, bool], ...] = (
-        ("README.md", True),
-        ("readme.MARKDOWN", True),
-        ("  docs/design.md  ", True),
-        ("docs\\notes.Md", True),
-        ("duel.html", False),
-        ("md", False),
-        ("design.md.py", False),
-        ("markdown", False),
-        (5, False),
-        (None, False),
-        (b"README.md", False),
-    )
-    for value, expected_flag in predicate_cases:
+    for value, expected_flag in _MARKDOWN_PREDICATE_CASES:
         if _is_markdown_path_literal(value) is not expected_flag:
             problems.append(
                 f"_is_markdown_path_literal({value!r}) should be {expected_flag}"
@@ -2300,19 +2338,8 @@ def guardrail_markdown_reference_detector_self_test() -> Tuple[bool, str]:
                 "Markdown prohibition would stop being enforced"
             )
 
-    documentation_guardrails = sorted(
-        name
-        for name in registered
-        if "roadmap" in name.lower() or "agents" in name.lower()
-    )
-    if documentation_guardrails:
-        problems.append(
-            "the architecture suite registers feature-specific documentation "
-            "contract guardrail(s), which force architecture validation to "
-            "require development Markdown: " + ", ".join(documentation_guardrails)
-        )
-
-    suite_source = _read(Path(__file__).resolve())
+    suite_path = Path(__file__).resolve()
+    suite_source = _read(suite_path)
     suite_tree = ast.parse(suite_source, filename=__file__)
     top_level_functions = {
         node.name for node in suite_tree.body if isinstance(node, ast.FunctionDef)
@@ -2324,11 +2351,42 @@ def guardrail_markdown_reference_detector_self_test() -> Tuple[bool, str]:
                 "top-level function in this module"
             )
 
-    # No guardrail may *call* the documentation-root detector. Detection is
-    # AST-based so the guardrail that merely asserts path_discovery still
-    # exports the helper (a name in a tuple of strings) is not mistaken for a
-    # caller, while a real call anywhere in this module -- guardrail or shared
-    # helper -- is caught.
+    # This suite must not depend on development Markdown *at all*, by any route.
+    # Two independent checks close the two ways a dependency can be written, and
+    # both scan the whole module rather than only the registered guardrail
+    # bodies: a shared helper called by a guardrail is just as much a dependency.
+    #
+    # (a) Executable Markdown path literals -- ``_read(_REPO_ROOT / "ROADMAP.md")``
+    #     and every other spelling the shared AST detector recognizes. Docstrings
+    #     and comments that merely discuss Markdown are exempt, as are the
+    #     declared detector fixture tables, which are data under test rather than
+    #     paths this suite opens.
+    fixture_ids = _markdown_fixture_constant_ids(suite_tree)
+    docstring_ids = _docstring_constant_ids(suite_tree)
+    suite_markdown_literals = sorted(
+        {
+            (node.lineno, node.value)
+            for node in ast.walk(suite_tree)
+            if isinstance(node, ast.Constant)
+            and id(node) not in fixture_ids
+            and id(node) not in docstring_ids
+            and _is_markdown_path_literal(node.value)
+        }
+    )
+    for line_no, literal in suite_markdown_literals:
+        problems.append(
+            f"architecture_guardrail_suite.py:{line_no}: the architecture suite "
+            f"references development Markdown {literal!r}; architecture "
+            "guardrails must validate source architecture without requiring "
+            "documentation to be present. Feature-specific documentation "
+            "contracts do not belong in this suite"
+        )
+
+    # (b) The documentation-root detector, which reaches AGENTS.md/ROADMAP.md
+    #     without ever spelling a Markdown literal here. Detection is on call
+    #     nodes, so the guardrail that merely asserts path_discovery still
+    #     exports the helper (a name in a tuple of strings) is not mistaken for
+    #     a caller.
     documentation_root_calls = sorted(
         {
             node.lineno
@@ -2350,6 +2408,17 @@ def guardrail_markdown_reference_detector_self_test() -> Tuple[bool, str]:
             "without requiring AGENTS.md or ROADMAP.md to be present"
         )
 
+    # The fixture exemption must stay narrow: it is keyed on module-level
+    # assignments to the declared names, so a guardrail cannot launder a
+    # documentation path through a fixture table by reusing one of those names
+    # locally. Prove the exemption is still doing real work rather than
+    # silently covering the whole file.
+    if not fixture_ids:
+        problems.append(
+            "no declared Markdown fixture constants were found; the suite-wide "
+            "Markdown scan may be exempting the wrong nodes"
+        )
+
     if problems:
         return False, "; ".join(problems)
 
@@ -2358,9 +2427,11 @@ def guardrail_markdown_reference_detector_self_test() -> Tuple[bool, str]:
         f"{len(_MARKDOWN_DETECTOR_MUST_DETECT)} must-detect sources, "
         f"{len(_MARKDOWN_DETECTOR_MUST_IGNORE)} must-ignore sources "
         "(docstrings/comments/ordinary strings), and "
-        f"{len(predicate_cases)} literal-predicate cases; all "
+        f"{len(_MARKDOWN_PREDICATE_CASES)} literal-predicate cases; all "
         f"{len(registered)} registered guardrails validate source architecture "
-        "without requiring development Markdown."
+        "without requiring development Markdown (no executable Markdown path "
+        "literal outside the declared fixture tables, and no "
+        "detect_repository_root() call, anywhere in this module)."
     )
 
 
