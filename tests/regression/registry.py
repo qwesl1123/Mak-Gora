@@ -301,6 +301,7 @@ from .test_ui_docs_metadata import (
     scenario_mindgames_complete_entity_aware_description,
     scenario_effect_panel_payload_normalization,
     scenario_high_risk_snapshot_payload_stability_pack,
+    scenario_ability_doc_type_labels_and_druid_stat_rows,
     scenario_test_path_discovery_is_layout_and_cwd_independent,
 )
 from .test_classes_abilities import (
@@ -696,6 +697,7 @@ SCENARIOS = [
     scenario_step2_pet_legality_and_protection_contracts,
     scenario_high_risk_shared_effect_naming_and_panel_pack,
     scenario_high_risk_snapshot_payload_stability_pack,
+    scenario_ability_doc_type_labels_and_druid_stat_rows,
     scenario_test_path_discovery_is_layout_and_cwd_independent,
     scenario_phase0_early_pipeline_contract_lock,
     scenario_phase0_same_turn_protection_and_denial_timing_lock,

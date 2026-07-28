@@ -6,6 +6,7 @@ tests/regression/registry.py, which preserves the original run order.
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 from pathlib import Path
 
@@ -464,6 +465,147 @@ def scenario_high_risk_snapshot_payload_stability_pack() -> bool:
     effects.consume_absorbs(target, 3)
     after_consume_snapshot = SOCKETS.snapshot_for(match, p1_sid)
     assert not any(entry.get("name") == "Ice Barrier" for entry in after_consume_snapshot["you_effect_panel"]["buffs_magical"]), "Consumed shield should be removed from snapshot panel payload"
+    return True
+
+
+def scenario_ability_doc_type_labels_and_druid_stat_rows() -> bool:
+    """Ability Type labels name a direct damage school and nothing else.
+
+    Only damaging abilities carry a Type field, and it holds exactly one of the
+    seven direct schools -- no "Magic (...)" wrapper and no targeting qualifier.
+    Properties such as AoE, Single Target, Healing, Defensive, Utility, and
+    Crowd Control are communicated by the top-right documentation icons, so
+    non-damaging abilities keep their plain "Cost | Cooldown" row instead of
+    gaining a Type field. Druid rows additionally drop every "Form Required"
+    label -- the lane's form card already states the form.
+    """
+    duel_html_text = _detect_duel_html_path().read_text(encoding="utf-8")
+    direct_schools = {"Physical", "Fire", "Frost", "Shadow", "Arcane", "Nature", "Holy"}
+
+    def doc_card(ability_name: str) -> str:
+        heading = f"<h4>{ability_name}</h4>"
+        assert duel_html_text.count(heading) == 1, \
+            f"{ability_name} should have exactly one documentation card"
+        start = duel_html_text.index(heading)
+        return duel_html_text[start : duel_html_text.index("</div>", start)]
+
+    def stat_labels(ability_name: str) -> list[str]:
+        """Return the stat labels of an ability card's first stat row."""
+        row = re.search(r"<p>(.*?)</p>", doc_card(ability_name), re.S)
+        assert row is not None, f"{ability_name} should document a stat row"
+        return re.findall(r'<span class="stat">([^<]*)</span>', row.group(1))
+
+    # 1. The redundant magical wording is gone everywhere.
+    assert "Type: Magic (" not in duel_html_text, \
+        'Type labels must not wrap the school in "Magic (...)"'
+
+    # 2/3. Every rendered Type label is a bare direct damage school: no
+    # qualifiers such as "Type: Holy (capped AoE)" and no icon-communicated
+    # property masquerading as a school.
+    rendered_types = set(re.findall(r'<span class="stat">Type: ([^<]*)</span>', duel_html_text))
+    assert rendered_types <= direct_schools, \
+        f"Unexpected Type labels in the docs: {sorted(rendered_types - direct_schools)}"
+    for qualified in ("Type: Holy (", "Type: Nature (", "Type: Physical ("):
+        assert qualified not in duel_html_text, \
+            f"Type labels must not carry qualifiers ({qualified!r})"
+    for icon_property in (
+        "Type: AoE", "Type: Single Target", "Type: Healing", "Type: Defensive",
+        "Type: Utility", "Type: Mobility", "Type: Crowd Control", "Type: Summon",
+        "Type: Immunity",
+    ):
+        assert icon_property not in duel_html_text, \
+            f"{icon_property!r} is communicated by the doc icons, not by a Type field"
+
+    damaging_schools = {
+        "Basic Attack": "Physical",
+        "Mortal Strike": "Physical",
+        "Eviscerate": "Physical",
+        "Multi-Shot": "Physical",
+        "Fireball": "Fire",
+        "Lava Lash": "Fire",
+        "Frost Shock": "Frost",
+        "Arcane Barrage": "Arcane",
+        "Astral Explosion": "Arcane",
+        "Chain Lightning": "Nature",
+        "Divine Storm": "Holy",
+    }
+    for ability_name, school in damaging_schools.items():
+        assert f"Type: {school}" in stat_labels(ability_name), \
+            f"{ability_name} should display its direct school as Type: {school}"
+
+    # 4. Non-damaging abilities never gain a Type field, and their existing
+    # "Cost | Cooldown" row is preserved as-is.
+    non_damaging = (
+        "Die by the Sword", "Ignore Pain", "Ice Block", "Blink", "Ice Barrier",
+        "Ring of Ice", "Cheap Shot", "Vanish", "Cloak of Shadows", "Evasion",
+        "Thistle Tea", "Healthstone", "Unending Resolve", "Fear", "Holy Light",
+        "Hammer of Justice", "Divine Shield", "Lay on Hands", "Pain Suppression",
+        "Psychic Scream", "Mass Dispel", "Aspect of the Turtle", "Flare",
+        "Freezing Trap", "Disengage", "Kill Command", "Healing Stream",
+        "Astral Shift", "Mana Tide Totem",
+    )
+    for ability_name in non_damaging:
+        labels = stat_labels(ability_name)
+        assert not any(label.startswith("Type:") for label in labels), \
+            f"{ability_name} deals no damage and must not display a Type field"
+    assert '<h4>Vanish</h4>\n            <p><span class="stat">Cost: Free</span> | ' \
+        '<span class="stat">Cooldown: 15</span></p>' in duel_html_text, \
+        "Non-damaging rows must keep the existing Cost | Cooldown format"
+
+    # 5. Druid rows no longer repeat the form requirement.
+    assert "Form Required" not in duel_html_text, \
+        "Druid rows must not label the required form; the lane's form card states it"
+
+    # 6/7. Druid damaging rows read Cost | Type | Cooldown, non-damaging rows
+    # read Cost | Cooldown, and the passive row stays passive-only.
+    druid_damaging_rows = {
+        "Maul": ["Cost: 0 Rage", "Type: Physical", "Cooldown: 0"],
+        "Swipe": ["Cost: 5 Rage", "Type: Physical", "Cooldown: 10"],
+        "Claw": ["Cost: 10 Energy", "Type: Physical", "Cooldown: 0"],
+        "Shred": ["Cost: 15 Energy", "Type: Physical", "Cooldown: 2"],
+        "Rip": ["Cost: 0 Energy", "Type: Physical", "Cooldown: 0"],
+        "Wrath": ["Cost: 15 Mana", "Type: Nature", "Cooldown: 0"],
+        "Starfire": ["Cost: 20 Mana", "Type: Arcane", "Cooldown: 0"],
+    }
+    for ability_name, expected in druid_damaging_rows.items():
+        assert stat_labels(ability_name) == expected, \
+            f"Damaging Druid row {ability_name} should read Cost | Type | Cooldown"
+
+    druid_non_damaging_rows = {
+        "Frenzied Regeneration": ["Cost: all current Rage", "Cooldown: 30"],
+        "Barkskin": ["Cost: 0 Rage", "Cooldown: 15"],
+        "Maim": ["Cost: 10 Energy", "Cooldown: 15"],
+        "Prowl": ["Cost: 0 Energy", "Cooldown: 15"],
+        "Cyclone": ["Cost: 0 Mana", "Cooldown: 20"],
+        "Typhoon": ["Cost: 0 Mana", "Cooldown: 5"],
+        "Wild Growth": ["Cost: 70 Mana", "Cooldown: 0"],
+        "Regrowth": ["Cost: 15 Mana", "Cooldown: 15"],
+        "Innervate": ["Cost: 0 Mana", "Cooldown: 50"],
+    }
+    for ability_name, expected in druid_non_damaging_rows.items():
+        assert stat_labels(ability_name) == expected, \
+            f"Non-damaging Druid row {ability_name} should read Cost | Cooldown"
+
+    rage_within = doc_card("The Rage Within")
+    assert stat_labels("The Rage Within") == ["Passive"], \
+        "The Rage Within should keep a concise passive-only label"
+    for absent in ("Type:", "Cost:", "Cooldown:", "kbd"):
+        assert absent not in rage_within, \
+            f"The Rage Within is passive-only and must not document {absent!r}"
+
+    # 8/9. Icon coverage for the two rows whose properties are only visible
+    # through the top-right icon cluster.
+    def icon_members(category: str) -> str:
+        listing = re.search(rf'"{category}": \[([^\]]*)\]', duel_html_text)
+        assert listing is not None, f"Icon category {category} should exist"
+        return listing.group(1)
+
+    assert '"Prowl"' in icon_members("Defensive"), \
+        "Prowl should carry the Defensive icon"
+    assert '"Kill Command"' in icon_members("Healing"), \
+        "Kill Command should carry the Healing icon"
+    assert '"Kill Command"' in icon_members("Utility"), \
+        "Kill Command should carry the Utility icon"
     return True
 
 
