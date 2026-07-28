@@ -2359,20 +2359,41 @@ def _iteration_bindings(target: ast.AST, iterable: ast.AST) -> List[Tuple[str, a
     return pairs
 
 
+def _parameter_default_bindings(arguments: ast.arguments) -> List[Tuple[str, ast.AST]]:
+    """Return the bindings a signature's *defaults* establish.
+
+    ``def guardrail(pd=path_discovery, helper="detect_repository_root")`` binds
+    both names statically before the body runs, so a default is a binding like
+    any other. Defaults align with the tail of the positional parameters;
+    keyword-only defaults align one-to-one and may be ``None`` for a
+    keyword-only parameter that has no default at all.
+    """
+    pairs: List[Tuple[str, ast.AST]] = []
+    positional = list(getattr(arguments, "posonlyargs", [])) + list(arguments.args)
+    defaults = list(arguments.defaults)
+    if defaults:
+        for argument, default in zip(positional[len(positional) - len(defaults):], defaults):
+            pairs.append((argument.arg, default))
+    for argument, default in zip(arguments.kwonlyargs, arguments.kw_defaults):
+        if default is not None:
+            pairs.append((argument.arg, default))
+    return pairs
+
+
 def _simple_bindings(tree: ast.AST) -> List[Tuple[str, ast.AST]]:
     """Return ``(bound_name, value_node)`` for every name binding in the module.
 
     One enumerator for every binding form, so the checks built on it cannot go
     stale one syntax at a time: plain assignment, chained assignment
     (``a = b = value``), annotated assignment (``pd: object = path_discovery``),
-    the walrus operator, tuple/list destructuring at any nesting depth, and loop
-    and comprehension targets over literal sequences. Callers filter by the
-    *value* they care about -- a string literal, or a name that is already a
-    known alias.
+    the walrus operator, tuple/list destructuring at any nesting depth, loop and
+    comprehension targets over literal sequences, and parameter defaults.
+    Callers filter by the *value* they care about -- a string literal, or a name
+    that is already a known alias.
 
-    Not covered, because there is no static value to pair a name with:
-    ``with ... as name``, function parameters, and imports of anything other
-    than the documentation module itself (those are handled directly).
+    Not covered, because there genuinely is no static value to pair a name
+    with: ``with ... as name``, and parameters that have no default (their value
+    arrives from the caller). Imports are handled directly rather than here.
     """
     bindings: List[Tuple[str, ast.AST]] = []
     for node in ast.walk(tree):
@@ -2388,6 +2409,8 @@ def _simple_bindings(tree: ast.AST) -> List[Tuple[str, ast.AST]]:
             bindings.extend(_iteration_bindings(node.target, node.iter))
         elif isinstance(node, ast.comprehension):
             bindings.extend(_iteration_bindings(node.target, node.iter))
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            bindings.extend(_parameter_default_bindings(node.args))
     return bindings
 
 
