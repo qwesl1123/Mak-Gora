@@ -2276,6 +2276,44 @@ _DOCUMENTATION_HELPERS: Tuple[str, ...] = ("detect_repository_root",)
 _DOCUMENTATION_MODULE = "path_discovery"
 
 
+def _documentation_module_aliases(tree: ast.AST) -> set:
+    """Return every name bound to the documentation module in this file.
+
+    ``import path_discovery as pd`` and a later ``discovery = pd`` both make the
+    module reachable under a new name, and a dynamic lookup through that name is
+    exactly as opaque as one through the original. Aliases are resolved to a
+    fixpoint so a chain of rebindings cannot outrun the check.
+    """
+    aliases = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == _DOCUMENTATION_MODULE:
+                    aliases.add(alias.asname or alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                if alias.name == _DOCUMENTATION_MODULE:
+                    aliases.add(alias.asname or alias.name)
+
+    # Propagate ``other = <alias>`` rebindings until nothing new appears.
+    simple_aliases = [
+        (node.targets[0].id, node.value.id)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and isinstance(node.value, ast.Name)
+    ]
+    changed = True
+    while changed:
+        changed = False
+        for bound, source in simple_aliases:
+            if source in aliases and bound not in aliases:
+                aliases.add(bound)
+                changed = True
+    return aliases
+
+
 def _string_constant_bindings(tree: ast.AST) -> Dict[str, set]:
     """Return ``{name: {literal, ...}}`` for simple ``name = "literal"`` assignments.
 
@@ -2320,6 +2358,7 @@ def _documentation_helper_references(tree: ast.AST) -> List[Tuple[int, str]]:
     """
     findings: List[Tuple[int, str]] = []
     bindings = _string_constant_bindings(tree)
+    module_aliases = _documentation_module_aliases(tree)
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom):
             for alias in node.names:
@@ -2357,7 +2396,7 @@ def _documentation_helper_references(tree: ast.AST) -> List[Tuple[int, str]]:
             attribute = node.args[1]
             on_discovery_module = (
                 isinstance(node.args[0], ast.Name)
-                and node.args[0].id == _DOCUMENTATION_MODULE
+                and node.args[0].id in module_aliases
             )
             if isinstance(attribute, ast.Constant):
                 if attribute.value in _DOCUMENTATION_HELPERS:
@@ -2385,14 +2424,45 @@ def _documentation_helper_references(tree: ast.AST) -> List[Tuple[int, str]]:
                 findings.append((
                     node.lineno,
                     "the architecture suite performs a dynamic getattr() lookup "
-                    f"on {_DOCUMENTATION_MODULE}, whose attribute name cannot be "
+                    f"on {_DOCUMENTATION_MODULE} (as "
+                    f"{node.args[0].id}), whose attribute name cannot be "
                     "checked statically",
                 ))
     return sorted(set(findings))
 
 
+def _literal_constant_ids(node: ast.AST) -> set:
+    """Return the ids of Constants reachable through *literal containers only*.
+
+    Descends into tuples, lists, sets, and dicts -- the shapes a declared fixture
+    table is written in -- and stops at anything executable. A call, operator, or
+    name is not table data, so a Markdown literal buried inside one
+    (``(Path("README.md").read_text() and "duel.html", False)``) is deliberately
+    left unexempted: the exemption covers data, never behavior that merely sits
+    under a fixture's name.
+    """
+    ids = set()
+    if isinstance(node, ast.Constant):
+        ids.add(id(node))
+    elif isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        for element in node.elts:
+            ids |= _literal_constant_ids(element)
+    elif isinstance(node, ast.Dict):
+        for key, value in zip(node.keys, node.values):
+            if key is not None:  # ``**expansion`` has no key and is not literal
+                ids |= _literal_constant_ids(key)
+            ids |= _literal_constant_ids(value)
+    return ids
+
+
 def _markdown_fixture_constant_ids(tree: ast.AST) -> set:
-    """Return the ids of every Constant inside a declared fixture table."""
+    """Return the ids of every Constant that is literal data in a fixture table.
+
+    Being assigned to a declared fixture name is necessary but not sufficient:
+    only constants reachable through literal containers are exempt, so an
+    executable expression cannot smuggle a documentation path into the
+    exemption by sitting inside one of these assignments.
+    """
     fixture_ids = set()
     for node in tree.body if isinstance(tree, ast.Module) else []:
         if not isinstance(node, (ast.Assign, ast.AnnAssign)):
@@ -2405,9 +2475,7 @@ def _markdown_fixture_constant_ids(tree: ast.AST) -> set:
             continue
         if node.value is None:
             continue
-        for child in ast.walk(node.value):
-            if isinstance(child, ast.Constant):
-                fixture_ids.add(id(child))
+        fixture_ids |= _literal_constant_ids(node.value)
     return fixture_ids
 
 
