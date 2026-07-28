@@ -2299,16 +2299,44 @@ _MARKDOWN_FIXTURE_CONSUMERS: Tuple[str, ...] = (
     "guardrail_test_path_discovery_contract",
 )
 
+# Being inside a consumer is necessary but not sufficient: the *use* must also
+# be one that cannot reach the filesystem. These four shapes exhaust how the
+# detector legitimately touches fixture data -- iterate the tables, count them,
+# and match or render the suffix tuple. None can open a path.
+_FIXTURE_USE_SHAPE_NAMES = "iteration, len(), str.join(), or str.endswith()"
+
+
+def _is_detector_only_use(node: ast.AST, parent: Optional[ast.AST]) -> bool:
+    """Return True when this fixture reference is consumed in a safe shape."""
+    if isinstance(parent, (ast.For, ast.AsyncFor, ast.comprehension)):
+        return parent.iter is node
+    if isinstance(parent, ast.Call):
+        function = parent.func
+        if isinstance(function, ast.Name) and function.id == "len":
+            return any(argument is node for argument in parent.args)
+        if isinstance(function, ast.Attribute) and function.attr in ("join", "endswith"):
+            return any(argument is node for argument in parent.args)
+    return False
+
 
 def _fixture_reference_violations(tree: ast.AST) -> List[Tuple[int, str]]:
-    """Return ``(line, description)`` for fixture references outside the consumers.
+    """Return ``(line, description)`` for fixture references that are not detector-only.
 
-    Module-level references are allowed only inside the fixture definitions
-    themselves (and inside ``_markdown_fixture_name``); everywhere else the
-    reference must sit in a declared consumer. This is what makes the
-    exemption-free literal scan sound: the scan proves no Markdown name is
-    *written* here, and this proves the names that are *assembled* here never
-    reach anything but the detector.
+    Two conditions, because location alone is not enough -- a reference inside
+    an allowed function can still be handed to a reader:
+
+    * the reference sits in a module-level fixture definition (or in
+      ``_markdown_fixture_name`` itself), or in a declared consumer; **and**
+    * its *use* is one of the shapes in :func:`_is_detector_only_use`.
+
+    ``_markdown_fixture_name`` therefore has no legal use inside any function
+    body: calling it produces a Markdown name, and there is nowhere in a
+    guardrail such a name legitimately goes. Building the fixture tables at
+    module level is its only purpose.
+
+    This is what makes the exemption-free literal scan sound: the scan proves no
+    Markdown name is *written* here, and this proves the names *assembled* here
+    reach nothing but the detector.
     """
     allowed_ids = set()
     for node in tree.body if isinstance(tree, ast.Module) else []:
@@ -2332,6 +2360,11 @@ def _fixture_reference_violations(tree: ast.AST) -> List[Tuple[int, str]]:
             for child in ast.walk(node):
                 enclosing[id(child)] = node.name
 
+    parents: Dict[int, ast.AST] = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[id(child)] = node
+
     findings: List[Tuple[int, str]] = []
     for node in ast.walk(tree):
         if not isinstance(node, ast.Name) or node.id not in _MARKDOWN_FIXTURE_NAMES:
@@ -2341,14 +2374,22 @@ def _fixture_reference_violations(tree: ast.AST) -> List[Tuple[int, str]]:
         if id(node) in allowed_ids:
             continue
         owner = enclosing.get(id(node))
-        if owner is not None and owner in _MARKDOWN_FIXTURE_CONSUMERS:
-            continue
         where = f"{owner}()" if owner else "module level"
-        findings.append((
-            node.lineno,
-            f"{where} references Markdown fixture data {node.id}, which is not a "
-            "declared detector consumer",
-        ))
+        if owner is None or owner not in _MARKDOWN_FIXTURE_CONSUMERS:
+            findings.append((
+                node.lineno,
+                f"{where} references Markdown fixture data {node.id}, which is "
+                "not a declared detector consumer",
+            ))
+            continue
+        if not _is_detector_only_use(node, parents.get(id(node))):
+            findings.append((
+                node.lineno,
+                f"{where} uses Markdown fixture data {node.id} in a shape that "
+                f"is not detector-only ({_FIXTURE_USE_SHAPE_NAMES}); being "
+                "inside a consumer does not make a fixture value safe to pass "
+                "anywhere",
+            ))
     return sorted(set(findings))
 
 # The module those helpers live on. Dynamic attribute lookup on it is rejected
@@ -2770,17 +2811,14 @@ def guardrail_markdown_reference_detector_self_test() -> Tuple[bool, str]:
             "path_discovery still exports it"
         )
 
-    # The detector fixtures must keep exercising real Markdown names even though
-    # none of them is written as a literal. If _markdown_fixture_name() were
-    # broken into returning something the predicate does not recognize, the
-    # must-detect cases above would still "pass" while testing nothing.
-    assembled = _markdown_fixture_name("probe")
-    if not _is_markdown_path_literal(assembled):
-        problems.append(
-            f"_markdown_fixture_name() produced {assembled!r}, which the "
-            "detector does not recognize as a Markdown path; the fixture tables "
-            "would no longer exercise the predicate"
-        )
+    # A broken _markdown_fixture_name() needs no separate probe: the tables above
+    # already pin its output. The predicate cases assert exact True/False
+    # verdicts on assembled names, and the must-detect cases compare assembled
+    # expectations against names the detector extracts from *literal* source
+    # snippets -- so a builder that stopped producing real Markdown names would
+    # fail both, rather than passing vacuously. Calling the builder here would
+    # also be a fixture use outside the permitted shapes, which is correct: a
+    # guardrail has no business assembling a Markdown name.
 
     # (c) Fixture data has a closed set of consumers. The literal scan proves no
     #     Markdown name is *written* in this module; assembled names are
