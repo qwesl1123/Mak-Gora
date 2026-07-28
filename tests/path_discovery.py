@@ -23,8 +23,13 @@ Two rules keep the discovery honest:
   ``templates/duel.html`` without ever shipping ``AGENTS.md``.
 
 Gameplay regressions may therefore depend on :func:`detect_duel_html_path`,
-while :func:`detect_repository_root` is reserved for architecture/static
-validation, which is only meaningful in a full source checkout.
+while :func:`detect_repository_root` is reserved for focused tooling that
+genuinely needs a full source checkout. No standard suite calls it: the
+architecture guardrails validate *source* architecture and must pass in a
+deployed nested tree that ships no documentation at all. What the standard
+suites do pin is this module's shape -- that documentation discovery stays
+scoped, ``__file__``-anchored, and independent of template discovery -- so the
+API stays covered without any suite requiring the documents to exist.
 
 This module deliberately has no engine imports, so the static guardrail suite
 can use it without bootstrapping gameplay modules.
@@ -106,10 +111,14 @@ def detect_repository_root() -> Path:
     Candidates are tried in order, so a checkout that carries its own
     documentation always wins over the nested-deployment fallback. Raises
     ``FileNotFoundError`` when none of the layout's roots has the documentation,
-    which is the correct outcome for architecture validation: it is only defined
-    for a full source checkout, and validating some other checkout found further
-    up the tree would be worse than failing. Gameplay regressions must never
-    call this helper.
+    which is the correct outcome for a documentation lookup: validating some
+    other checkout found further up the tree would be worse than failing.
+
+    Only call this from focused tooling that is explicitly defined for a full
+    source checkout. Gameplay regressions must never call it, and neither may
+    the architecture guardrails: source architecture is validated from source,
+    so a deployed nested tree without ``AGENTS.md``/``ROADMAP.md`` must still
+    run every standard suite.
     """
     candidates = repository_root_candidates()
     for candidate in candidates:

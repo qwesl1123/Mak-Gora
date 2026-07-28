@@ -75,30 +75,96 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 # --------------------------------------------------------------------------- #
-# Source-file location (supports both the flat and nested engine layouts).
+# Source-file location (supports both the flat and nested source layouts).
+#
+# Two layouts are supported, and the nested one splits engine code from content
+# data:
+#
+#   flat:   <package>/resolver.py   <package>/effects.py   <package>/abilities.py
+#   nested: <package>/engine/resolver.py                   <package>/content/abilities.py
+#           <package>/engine/effects.py
+#
+# Engine modules and content modules therefore live in *different* nested
+# subdirectories and must be resolved through different subdirectory hints. A
+# content module looked up through the engine hint resolves in the flat layout
+# and silently disappears in the nested one, which is exactly the failure this
+# resolver exists to prevent.
 # --------------------------------------------------------------------------- #
 
-def _engine_dir() -> Path:
-    """Return the directory that holds the engine modules.
+_ENGINE_SUBDIRECTORY = "engine"
+_CONTENT_SUBDIRECTORY = "content"
 
-    Mirrors the layout detection in ``regression_suite.py``: the repo is either
-    flat (modules in the repo root) or nested (``engine/`` + ``content/``).
+
+def _source_file_candidates(
+    basename: str,
+    subdirectory: str,
+    package_root: Optional[Path] = None,
+) -> Tuple[Path, ...]:
+    """Return every supported location of ``basename``, nested layout first."""
+    root = _REPO_ROOT if package_root is None else package_root
+    return (root / subdirectory / basename, root / basename)
+
+
+def _resolve_source_file(
+    basename: str,
+    subdirectory: str,
+    package_root: Optional[Path] = None,
+) -> Optional[Path]:
+    """Return the first candidate that is a readable *file*, or ``None``.
+
+    ``is_file()`` rather than ``exists()``: a directory (or any other
+    filesystem entry) named ``abilities.py`` is not a source module and must
+    never shadow the real one further down the candidate list.
     """
-    nested_engine = _REPO_ROOT / "engine"
-    if (nested_engine / "resolver.py").exists():
-        return nested_engine
-    return _REPO_ROOT
-
-
-def _gameplay_file(basename: str) -> Optional[Path]:
-    """Resolve a gameplay engine file by basename, or ``None`` if absent."""
-    candidate = _engine_dir() / basename
-    if candidate.exists():
-        return candidate
-    root_candidate = _REPO_ROOT / basename
-    if root_candidate.exists():
-        return root_candidate
+    for candidate in _source_file_candidates(basename, subdirectory, package_root):
+        if candidate.is_file():
+            return candidate
     return None
+
+
+def _gameplay_file(basename: str, package_root: Optional[Path] = None) -> Optional[Path]:
+    """Resolve a gameplay *engine* module by basename, or ``None`` if absent."""
+    return _resolve_source_file(basename, _ENGINE_SUBDIRECTORY, package_root)
+
+
+def _content_file(basename: str, package_root: Optional[Path] = None) -> Optional[Path]:
+    """Resolve a *content data* module by basename, or ``None`` if absent.
+
+    Content data (``abilities.py``, ``items.py``, ``pets.py``) lives in
+    ``content/`` in the nested layout, never in ``engine/``.
+    """
+    return _resolve_source_file(basename, _CONTENT_SUBDIRECTORY, package_root)
+
+
+def _describe_unresolved_sources(
+    requested: Tuple[Tuple[str, str, Optional[Path]], ...],
+    package_root: Optional[Path] = None,
+) -> Optional[str]:
+    """Return a diagnostic naming every unresolved logical file, or ``None``.
+
+    ``requested`` carries ``(kind, basename, resolved)`` triples so the message
+    names the exact logical file that could not be resolved -- and where it was
+    looked for -- instead of a combined "one of these is missing" message.
+    """
+    problems = [
+        "Unable to resolve {kind} module: {basename} (checked {locations})".format(
+            kind=kind,
+            basename=basename,
+            locations=", ".join(
+                str(candidate)
+                for candidate in _source_file_candidates(
+                    basename,
+                    _CONTENT_SUBDIRECTORY if kind == "content" else _ENGINE_SUBDIRECTORY,
+                    package_root,
+                )
+            ),
+        )
+        for kind, basename, resolved in requested
+        if resolved is None
+    ]
+    if not problems:
+        return None
+    return "; ".join(problems)
 
 
 # Engine gameplay files that participate in the resource / damage / healing
@@ -1455,14 +1521,164 @@ def guardrail_player_hp_writes() -> Tuple[bool, str]:
     )
 
 
+# =========================================================================== #
+# Source-resolution self-tests.
+#
+# Guardrail 7 (and every other guardrail that reads source text) is only as
+# strong as the resolver that finds the files. A resolver that returns ``None``
+# in the nested deployment layout turns a real architecture check into a
+# "file is missing" failure -- or, worse, into silently scanning nothing.
+#
+# These self-tests run the resolvers against synthetic trees built in temporary
+# directories, injected through the ``package_root`` parameter. They never touch
+# the real checkout and never execute the rest of the suite.
+# =========================================================================== #
+
+def _run_source_resolution_self_tests() -> List[str]:
+    """Return a list of problems with the flat/nested source resolvers."""
+    problems: List[str] = []
+
+    def touch(path: Path) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("", encoding="utf-8")
+        return path
+
+    def check(label: str, actual: Optional[Path], expected: Optional[Path]) -> None:
+        if actual != expected:
+            problems.append(
+                f"{label}: resolver returned {actual!r}, expected {expected!r}"
+            )
+
+    with tempfile.TemporaryDirectory() as raw_root:
+        # (1) Flat layout: every module sits directly in the package root.
+        flat = Path(raw_root) / "flat"
+        flat_abilities = touch(flat / "abilities.py")
+        flat_resolver = touch(flat / "resolver.py")
+        flat_effects = touch(flat / "effects.py")
+        check("flat abilities.py", _content_file("abilities.py", flat), flat_abilities)
+        check("flat resolver.py", _gameplay_file("resolver.py", flat), flat_resolver)
+        check("flat effects.py", _gameplay_file("effects.py", flat), flat_effects)
+
+        # (2)-(4) Nested layout: content data and engine code are split.
+        nested = Path(raw_root) / "nested"
+        nested_abilities = touch(nested / "content" / "abilities.py")
+        nested_resolver = touch(nested / "engine" / "resolver.py")
+        nested_effects = touch(nested / "engine" / "effects.py")
+        check(
+            "nested content/abilities.py",
+            _content_file("abilities.py", nested),
+            nested_abilities,
+        )
+        check(
+            "nested engine/resolver.py",
+            _gameplay_file("resolver.py", nested),
+            nested_resolver,
+        )
+        check(
+            "nested engine/effects.py",
+            _gameplay_file("effects.py", nested),
+            nested_effects,
+        )
+        # A content module must never be found through the engine hint in the
+        # nested layout -- that confusion is the bug these resolvers fix.
+        if _gameplay_file("abilities.py", nested) is not None:
+            problems.append(
+                "nested content data resolved through the engine hint; "
+                "content modules must not be looked up in engine/"
+            )
+        if _content_file("resolver.py", nested) is not None:
+            problems.append(
+                "nested engine module resolved through the content hint; "
+                "engine modules must not be looked up in content/"
+            )
+
+        # (5) A missing content module must name the exact logical file.
+        missing_root = Path(raw_root) / "missing"
+        touch(missing_root / "engine" / "resolver.py")
+        touch(missing_root / "engine" / "effects.py")
+        missing_abilities = _content_file("abilities.py", missing_root)
+        if missing_abilities is not None:
+            problems.append(
+                "an absent content module resolved to "
+                f"{missing_abilities} instead of None"
+            )
+        diagnostic = _describe_unresolved_sources(
+            (
+                ("content", "abilities.py", missing_abilities),
+                ("engine", "resolver.py", _gameplay_file("resolver.py", missing_root)),
+                ("engine", "effects.py", _gameplay_file("effects.py", missing_root)),
+            ),
+            missing_root,
+        )
+        if diagnostic is None:
+            problems.append(
+                "a missing content module produced no diagnostic at all"
+            )
+        else:
+            if "abilities.py" not in diagnostic:
+                problems.append(
+                    "the missing-module diagnostic does not name abilities.py: "
+                    f"{diagnostic}"
+                )
+            for present in ("resolver.py", "effects.py"):
+                if present in diagnostic:
+                    problems.append(
+                        f"the missing-module diagnostic wrongly blames {present}: "
+                        f"{diagnostic}"
+                    )
+            if str(missing_root / "content" / "abilities.py") not in diagnostic:
+                problems.append(
+                    "the missing-module diagnostic does not report the exact "
+                    f"unresolved path: {diagnostic}"
+                )
+
+        # (6) A *directory* named abilities.py is not a source file, and must
+        #     not shadow the real module further down the candidate list.
+        shadowed = Path(raw_root) / "shadowed"
+        (shadowed / "content" / "abilities.py").mkdir(parents=True)
+        shadowed_flat = touch(shadowed / "abilities.py")
+        check(
+            "directory-shadowed abilities.py",
+            _content_file("abilities.py", shadowed),
+            shadowed_flat,
+        )
+
+        directory_only = Path(raw_root) / "directory_only"
+        (directory_only / "content" / "abilities.py").mkdir(parents=True)
+        if _content_file("abilities.py", directory_only) is not None:
+            problems.append(
+                "a directory named abilities.py was accepted as a source file"
+            )
+
+    return problems
+
+
 def guardrail_next_offense_direct_damage_contract() -> Tuple[bool, str]:
     """Pin strict direct-damage metadata and generic next-offense wiring."""
 
-    abilities_path = _gameplay_file("abilities.py")
+    # (0) Resolver self-tests: a source resolver that quietly loses a module in
+    #     one of the supported layouts must fail loudly, not silently skip work.
+    self_test_problems = _run_source_resolution_self_tests()
+    if self_test_problems:
+        detail = "\n".join(f"  - {p}" for p in self_test_problems)
+        return False, "Source-resolution self-test(s) failed:\n" + detail
+
+    # abilities.py is content data (``content/`` when nested), while resolver.py
+    # and effects.py are engine modules (``engine/`` when nested).
+    abilities_path = _content_file("abilities.py")
     resolver_path = _gameplay_file("resolver.py")
     effects_path = _gameplay_file("effects.py")
-    if abilities_path is None or resolver_path is None or effects_path is None:
-        return False, "abilities.py, resolver.py, or effects.py is missing."
+    unresolved = _describe_unresolved_sources(
+        (
+            ("content", "abilities.py", abilities_path),
+            ("engine", "resolver.py", resolver_path),
+            ("engine", "effects.py", effects_path),
+        )
+    )
+    if unresolved is not None:
+        return False, unresolved
+    assert abilities_path is not None and resolver_path is not None
+    assert effects_path is not None
 
     abilities_tree = ast.parse(_read(abilities_path), filename=str(abilities_path))
     abilities_assignment = next(
@@ -1616,74 +1832,7 @@ def guardrail_next_offense_direct_damage_contract() -> Tuple[bool, str]:
 
 
 # =========================================================================== #
-# Guardrail 8: repository documentation contract (AGENTS.md / ROADMAP.md).
-#
-# These assertions used to live in the gameplay regression suite, which forced
-# run_regression.py to require development Markdown inside a deployed runtime
-# tree. Repository documentation is not a runtime artifact, so the contract is
-# validated here instead: this suite is only meaningful in a full source
-# checkout, and it fails loudly (FileNotFoundError from the shared
-# repository-root detector) when the documentation is absent.
-# =========================================================================== #
-
-_REQUIRED_ROADMAP_TEXT: Tuple[str, ...] = (
-    "## Recently completed: periodic-item expansion",
-    "- [x] Scourgelord Chestplate: periodic current-HP sacrifice and Death's Bargain\n"
-    "  next-offense empowerment",
-    "## Active phase: remaining classes",
-    "Every class uses exactly one primary combat resource.",
-)
-
-_FORBIDDEN_ROADMAP_TEXT: Tuple[str, ...] = (
-    "## Active phase: periodic-item expansion",
-    "- [ ] Scourgelord Chestplate",
-)
-
-_REQUIRED_AGENTS_NEXT_OFFENSE_TEXT: Tuple[str, ...] = (
-    "Every active `empower_next_offense` effect snapshots onto the same next valid",
-    "ordered canonically by effect ID",
-    "combine multiplicatively into one scalar before the canonical damage stage",
-    "All snapshotted effects consume together",
-    "exactly once per cast in canonical order",
-    "basis that excludes only the generic next-offense multiplier",
-    "`direct_damage` is a strict boolean ability-definition property",
-    "Offensive-action classification remains broader and separate",
-    "Fixed-value shield-derived damage is explicitly non-direct",
-)
-
-
-def guardrail_next_offense_docs_and_roadmap_contract() -> Tuple[bool, str]:
-    """Validate the roadmap phase state and the AGENTS.md next-offense contract."""
-    repository_root = path_discovery.detect_repository_root()
-    roadmap = _read(repository_root / "ROADMAP.md")
-    agents = _read(repository_root / "AGENTS.md")
-
-    problems: List[str] = []
-    for text in _REQUIRED_ROADMAP_TEXT:
-        if text not in roadmap:
-            problems.append(f"ROADMAP.md is missing required text: {text!r}")
-    for text in _FORBIDDEN_ROADMAP_TEXT:
-        if text in roadmap:
-            problems.append(f"ROADMAP.md still contains stale text: {text!r}")
-
-    normalized_agents = " ".join(agents.split())
-    for text in _REQUIRED_AGENTS_NEXT_OFFENSE_TEXT:
-        if text not in normalized_agents:
-            problems.append(f"AGENTS.md is missing next-offense contract text: {text!r}")
-
-    if problems:
-        return False, "; ".join(problems)
-
-    return True, (
-        f"Validated {len(_REQUIRED_ROADMAP_TEXT)} roadmap statements, "
-        f"{len(_FORBIDDEN_ROADMAP_TEXT)} stale-roadmap prohibitions, and "
-        f"{len(_REQUIRED_AGENTS_NEXT_OFFENSE_TEXT)} AGENTS.md next-offense "
-        f"contract statements in {repository_root}."
-    )
-
-
-# =========================================================================== #
-# Guardrail 9: test path discovery stays canonical and layout-agnostic.
+# Guardrail 8: test path discovery stays canonical and layout-agnostic.
 #
 # Static scan of the test tree. Two classes of historical bug are prohibited:
 # hardcoded ``parents[N] / "duel.html"`` template lookups (which only work in
@@ -1986,9 +2135,9 @@ def guardrail_test_path_discovery_contract() -> Tuple[bool, str]:
 
 
 # =========================================================================== #
-# Guardrail 10: the Markdown-reference detector itself.
+# Guardrail 9: the Markdown-reference detector itself.
 #
-# Guardrail 9 is only as strong as _markdown_path_literals(). These focused
+# Guardrail 8 is only as strong as _markdown_path_literals(). These focused
 # self-tests run the detector over synthetic sources so a future refactor
 # cannot silently weaken it into a no-op (or into a docstring-tripping false
 # positive). They live here, in static validation, because they must not add a
@@ -2136,6 +2285,71 @@ def guardrail_markdown_reference_detector_self_test() -> Tuple[bool, str]:
                 f"_is_markdown_path_literal({value!r}) should be {expected_flag}"
             )
 
+    # Suite composition. The Markdown prohibition is only enforced while the two
+    # guardrails that carry it stay registered, and architecture validation must
+    # never itself require development Markdown to be deployed: a supported
+    # nested runtime tree legitimately ships neither AGENTS.md nor ROADMAP.md.
+    registered = tuple(name for name, _ in _GUARDRAILS)
+    for required in (
+        "guardrail_test_path_discovery_contract",
+        "guardrail_markdown_reference_detector_self_test",
+    ):
+        if required not in registered:
+            problems.append(
+                f"{required} is no longer registered; the gameplay-regression "
+                "Markdown prohibition would stop being enforced"
+            )
+
+    documentation_guardrails = sorted(
+        name
+        for name in registered
+        if "roadmap" in name.lower() or "agents" in name.lower()
+    )
+    if documentation_guardrails:
+        problems.append(
+            "the architecture suite registers feature-specific documentation "
+            "contract guardrail(s), which force architecture validation to "
+            "require development Markdown: " + ", ".join(documentation_guardrails)
+        )
+
+    suite_source = _read(Path(__file__).resolve())
+    suite_tree = ast.parse(suite_source, filename=__file__)
+    top_level_functions = {
+        node.name for node in suite_tree.body if isinstance(node, ast.FunctionDef)
+    }
+    for name, guardrail in _GUARDRAILS:
+        if guardrail.__name__ not in top_level_functions:
+            problems.append(
+                f"{name} is registered but {guardrail.__name__}() is not a "
+                "top-level function in this module"
+            )
+
+    # No guardrail may *call* the documentation-root detector. Detection is
+    # AST-based so the guardrail that merely asserts path_discovery still
+    # exports the helper (a name in a tuple of strings) is not mistaken for a
+    # caller, while a real call anywhere in this module -- guardrail or shared
+    # helper -- is caught.
+    documentation_root_calls = sorted(
+        {
+            node.lineno
+            for node in ast.walk(suite_tree)
+            if isinstance(node, ast.Call)
+            and (
+                (isinstance(node.func, ast.Attribute)
+                 and node.func.attr == "detect_repository_root")
+                or (isinstance(node.func, ast.Name)
+                    and node.func.id == "detect_repository_root")
+            )
+        }
+    )
+    if documentation_root_calls:
+        problems.append(
+            "the architecture suite calls detect_repository_root() at line(s) "
+            + ", ".join(str(line) for line in documentation_root_calls)
+            + "; architecture guardrails must validate source architecture "
+            "without requiring AGENTS.md or ROADMAP.md to be present"
+        )
+
     if problems:
         return False, "; ".join(problems)
 
@@ -2144,7 +2358,9 @@ def guardrail_markdown_reference_detector_self_test() -> Tuple[bool, str]:
         f"{len(_MARKDOWN_DETECTOR_MUST_DETECT)} must-detect sources, "
         f"{len(_MARKDOWN_DETECTOR_MUST_IGNORE)} must-ignore sources "
         "(docstrings/comments/ordinary strings), and "
-        f"{len(predicate_cases)} literal-predicate cases."
+        f"{len(predicate_cases)} literal-predicate cases; all "
+        f"{len(registered)} registered guardrails validate source architecture "
+        "without requiring development Markdown."
     )
 
 
@@ -2519,10 +2735,6 @@ _GUARDRAILS: Tuple[Tuple[str, Callable[[], Tuple[bool, str]]], ...] = (
     (
         "guardrail_next_offense_direct_damage_contract",
         guardrail_next_offense_direct_damage_contract,
-    ),
-    (
-        "guardrail_next_offense_docs_and_roadmap_contract",
-        guardrail_next_offense_docs_and_roadmap_contract,
     ),
     (
         "guardrail_test_path_discovery_contract",
