@@ -379,7 +379,15 @@ def periodic_global_damage(
         base_raw_damage,
         context,
     )
-    context.match.log.append(f"{owner.sid[:5]} triggers {item_name}.")
+    # An item may own the flavor wording for its own activation line. Items
+    # without that metadata keep the generic handler-owned wording.
+    activation_text = passive.get("activation_text")
+    if isinstance(activation_text, str) and activation_text.strip():
+        context.match.log.append(
+            f"{owner.sid[:5]}'s {item_name} {activation_text.strip()}"
+        )
+    else:
+        context.match.log.append(f"{owner.sid[:5]} triggers {item_name}.")
 
     total_hp_damage = 0
     damage_label = subschool.title() if subschool else school.title()

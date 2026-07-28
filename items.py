@@ -267,6 +267,7 @@ ITEMS = {
             },
             "dice": "d6",
             "target_mode": "all_players_and_pets",
+            "activation_text": "erupts in a burst of darkness!",
         },
     },
 }
