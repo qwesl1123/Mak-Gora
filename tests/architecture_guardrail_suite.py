@@ -2306,6 +2306,123 @@ _MARKDOWN_FIXTURE_CONSUMERS: Tuple[str, ...] = (
 _FIXTURE_USE_SHAPE_NAMES = "iteration, len(), str.join(), or str.endswith()"
 
 
+# Callables a fixture definition may invoke. All are pure value construction:
+# the builder itself, and the sequence constructors the tables are built with.
+_FIXTURE_DEFINITION_CALLEES: Tuple[str, ...] = (
+    "_markdown_fixture_name",
+    "tuple",
+    "list",
+    "frozenset",
+)
+
+
+def _is_fixture_definition_expression(node: Optional[ast.AST]) -> bool:
+    """Return True when an expression only *constructs* fixture data.
+
+    A closed grammar -- constants, sequence and dict literals, string
+    concatenation, f-strings, comprehensions over those, and calls to the
+    builder or a sequence constructor. Nothing in it can perform I/O.
+
+    Being inside a fixture assignment must not by itself make an expression
+    safe: ``_MARKDOWN_PREDICATE_CASES = (_read(_REPO_ROOT / ...),)`` would
+    otherwise acquire a documentation dependency at import time, before any
+    guardrail could report it. Anything outside the grammar -- a call to
+    something else, an attribute access, a subscript, a non-``+`` operator --
+    is rejected, so the fixture tables stay data.
+    """
+    if node is None:
+        return False
+    if isinstance(node, ast.Constant):
+        return True
+    if isinstance(node, ast.Name):
+        return True  # a bound value (e.g. a comprehension variable) is inert
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        return all(_is_fixture_definition_expression(item) for item in node.elts)
+    if isinstance(node, ast.Dict):
+        return all(
+            key is None or _is_fixture_definition_expression(key)
+            for key in node.keys
+        ) and all(_is_fixture_definition_expression(value) for value in node.values)
+    if isinstance(node, ast.BinOp):
+        return isinstance(node.op, ast.Add) and _is_fixture_definition_expression(
+            node.left
+        ) and _is_fixture_definition_expression(node.right)
+    if isinstance(node, ast.JoinedStr):
+        return all(_is_fixture_definition_expression(part) for part in node.values)
+    if isinstance(node, ast.FormattedValue):
+        return _is_fixture_definition_expression(node.value)
+    if isinstance(node, (ast.GeneratorExp, ast.ListComp, ast.SetComp)):
+        return _is_fixture_definition_expression(node.elt) and all(
+            _is_fixture_definition_expression(generator.iter)
+            and all(_is_fixture_definition_expression(test) for test in generator.ifs)
+            for generator in node.generators
+        )
+    if isinstance(node, ast.Call):
+        function = node.func
+        if not isinstance(function, ast.Name):
+            return False
+        if function.id not in _FIXTURE_DEFINITION_CALLEES:
+            return False
+        return all(
+            _is_fixture_definition_expression(argument) for argument in node.args
+        ) and all(
+            _is_fixture_definition_expression(keyword.value)
+            for keyword in node.keywords
+        )
+    return False
+
+
+def _fixture_definition_violations(tree: ast.AST) -> List[Tuple[int, str]]:
+    """Return ``(line, description)`` for fixture definitions that do more than build data."""
+    findings: List[Tuple[int, str]] = []
+    for node in tree.body if isinstance(tree, ast.Module) else []:
+        if isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if not any(
+                isinstance(target, ast.Name) and target.id in _MARKDOWN_FIXTURE_NAMES
+                for target in targets
+            ):
+                continue
+            if node.value is None:
+                continue
+            if not _is_fixture_definition_expression(node.value):
+                names = ", ".join(
+                    target.id for target in targets if isinstance(target, ast.Name)
+                )
+                findings.append((
+                    node.lineno,
+                    f"the definition of {names} is not pure data construction; "
+                    "fixture tables may only build values (constants, sequence "
+                    "and dict literals, string concatenation, f-strings, "
+                    "comprehensions, and calls to "
+                    + "/".join(_FIXTURE_DEFINITION_CALLEES) + ")",
+                ))
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name not in _MARKDOWN_FIXTURE_NAMES:
+                continue
+            body = [
+                statement
+                for statement in node.body
+                if not (
+                    isinstance(statement, ast.Expr)
+                    and isinstance(statement.value, ast.Constant)
+                    and isinstance(statement.value.value, str)
+                )
+            ]
+            returns_data = (
+                len(body) == 1
+                and isinstance(body[0], ast.Return)
+                and _is_fixture_definition_expression(body[0].value)
+            )
+            if not returns_data:
+                findings.append((
+                    node.lineno,
+                    f"{node.name}() must be a single return of constructed data; "
+                    "the fixture builder may not do anything else",
+                ))
+    return sorted(set(findings))
+
+
 def _is_detector_only_use(node: ast.AST, parent: Optional[ast.AST]) -> bool:
     """Return True when this fixture reference is consumed in a safe shape."""
     if isinstance(parent, (ast.For, ast.AsyncFor, ast.comprehension)):
@@ -2788,6 +2905,53 @@ def guardrail_markdown_reference_detector_self_test() -> Tuple[bool, str]:
             "contracts do not belong in this suite"
         )
 
+    # (a2) The runtime backstop. Static scanning approximates the boundary by
+    #      reading source; the runner *observes* it, failing the run if any
+    #      guardrail actually opens a Markdown file. That covers every route
+    #      source inspection cannot follow -- a path assembled at runtime,
+    #      reached through importlib or eval, or carried into a loop body --
+    #      so the static checks no longer have to be exhaustive to be sound.
+    #      Its removal would silently drop that guarantee, so it is pinned here.
+    runner_path = _TESTS_DIR / "run_architecture_guardrails.py"
+    if not runner_path.is_file():
+        problems.append("tests/run_architecture_guardrails.py is missing.")
+    else:
+        runner_source = _read(runner_path)
+        runner_tree = ast.parse(runner_source, filename=str(runner_path))
+        installs_hook = any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "addaudithook"
+            for node in ast.walk(runner_tree)
+        )
+        if not installs_hook:
+            problems.append(
+                "run_architecture_guardrails.py no longer installs an audit "
+                "hook; the runtime guarantee that architecture validation opens "
+                "no development Markdown would be lost, leaving only the static "
+                "approximation"
+            )
+        else:
+            hook_line = next(
+                node.lineno
+                for node in ast.walk(runner_tree)
+                if isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "addaudithook"
+            )
+            suite_import_lines = [
+                node.lineno
+                for node in ast.walk(runner_tree)
+                if isinstance(node, ast.ImportFrom)
+                and node.module == "architecture_guardrail_suite"
+            ]
+            if any(line < hook_line for line in suite_import_lines):
+                problems.append(
+                    "run_architecture_guardrails.py imports the suite before "
+                    "installing the audit hook; reads performed at import time "
+                    "would escape it"
+                )
+
     # (b) The documentation-root detector, which reaches AGENTS.md/ROADMAP.md
     #     without ever spelling a Markdown literal here.
     #
@@ -2824,6 +2988,13 @@ def guardrail_markdown_reference_detector_self_test() -> Tuple[bool, str]:
     #     Markdown name is *written* in this module; assembled names are
     #     invisible to it, so the only remaining route is feeding one to a
     #     reader. Restricting who may reference the fixtures closes that.
+    for line_no, description in _fixture_definition_violations(suite_tree):
+        problems.append(
+            f"architecture_guardrail_suite.py:{line_no}: {description}. A "
+            "fixture definition runs at import time, so a dependency hidden "
+            "there would break the suite before any guardrail could report it"
+        )
+
     for line_no, description in _fixture_reference_violations(suite_tree):
         problems.append(
             f"architecture_guardrail_suite.py:{line_no}: {description}. "
