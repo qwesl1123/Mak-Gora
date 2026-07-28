@@ -4218,18 +4218,50 @@ def resolve_turn(match: MatchState) -> None:
                 return True
         return False
 
-    # Immediate crowd control is denied (or allowed) from the phase-start
-    # prediction above, so it must also resolve against that state: CC contexts
-    # go first, keeping a non-priority action the prediction allowed (e.g. via
-    # a pet redirect) from retroactively shielding the champion mid-phase.
-    # Priority defensives are unaffected -- their effects pre-apply before the
-    # prediction. Ties keep submission order.
-    for actor_sid in sorted(
-        sids,
-        key=lambda sid: 0 if immediate_context_applies_crowd_control(turn_ctx.immediate_contexts[sid]) else 1,
+    def immediate_context_adds_incoming_target_protection(ctx: Dict[str, Any]) -> bool:
+        """True when resolving this context would newly apply incoming-target
+        protection (untargetable / miss / immunity) to its actor mid-phase.
+
+        Priority defensives never qualify: their self effects pre-apply before
+        the phase-start prediction, so they are already part of the state the
+        prediction and the pet brace were evaluated against.
+        """
+        if ctx.get("resolved") or not ctx.get("immediate_only"):
+            return False
+        ability = ctx.get("ability") or {}
+        if ability.get("priority_defensive"):
+            return False
+        for entry in ability.get("self_effects") or []:
+            effect_id = entry.get("id")
+            if not effect_id or entry.get("type") == "dispel":
+                continue
+            effect = build_effect(effect_id, overrides=entry.get("overrides"))
+            flags = effect.get("flags", {}) or {}
+            if (
+                flags.get("untargetable")
+                or flags.get("incoming_single_target_miss")
+                or flags.get("incoming_cc_miss")
+                or flags.get("immune_all")
+            ):
+                return True
+        return False
+
+    # Immediate crowd control is denied (or allowed) by the phase-start
+    # prediction above, so it must also resolve against that state. Swap the
+    # two resolutions only when the first-submitted context would newly
+    # protect its actor from crowd control the prediction already resolved
+    # (e.g. routed to a redirecting pet) -- otherwise a same-phase Disengage
+    # would retroactively shield the champion mid-phase. Every other pair,
+    # including plain utility actions such as Flare, keeps submission order.
+    first_sid, second_sid = sids
+    if (
+        immediate_context_adds_incoming_target_protection(turn_ctx.immediate_contexts[first_sid])
+        and not immediate_context_applies_crowd_control(turn_ctx.immediate_contexts[first_sid])
+        and immediate_context_applies_crowd_control(turn_ctx.immediate_contexts[second_sid])
     ):
-        target_sid = sids[1] if actor_sid == sids[0] else sids[0]
-        resolve_immediate_effects(actor_sid, target_sid, turn_ctx.immediate_contexts[actor_sid])
+        first_sid, second_sid = second_sid, first_sid
+    resolve_immediate_effects(first_sid, second_sid, turn_ctx.immediate_contexts[first_sid])
+    resolve_immediate_effects(second_sid, first_sid, turn_ctx.immediate_contexts[second_sid])
     turn_ctx.stealth_targeting = {sid: is_stealthed(turn_ctx.match.state[sid]) for sid in sids}
     turn_ctx.committed_action_sids = set(sids)
     turn_ctx.committed_action_protected_effect_ids = {sid: set() for sid in sids}
