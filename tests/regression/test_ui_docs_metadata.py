@@ -469,15 +469,20 @@ def scenario_high_risk_snapshot_payload_stability_pack() -> bool:
 
 
 def scenario_ability_doc_type_labels_and_druid_stat_rows() -> bool:
-    """Ability Type labels name a direct damage school and nothing else.
+    """Rendered Type fields carry a bare direct damage school and nothing else.
 
-    Only damaging abilities carry a Type field, and it holds exactly one of the
+    Any Type field the documentation renders must contain exactly one of the
     seven direct schools -- no "Magic (...)" wrapper and no targeting qualifier.
     Properties such as AoE, Single Target, Healing, Defensive, Utility, and
     Crowd Control are communicated by the top-right documentation icons, so
-    non-damaging abilities keep their plain "Cost | Cooldown" row instead of
-    gaining a Type field. Druid rows additionally drop every "Form Required"
-    label -- the lane's form card already states the form.
+    they never appear as a school. The non-damaging abilities covered by this
+    documentation update must not display a Type field; their plain
+    "Cost | Cooldown" row is preserved. Druid rows additionally drop every
+    "Form Required" label -- the lane's form card already states the form.
+
+    This scenario checks representative damaging abilities and the enumerated
+    non-damaging ones. It does not assert that every damaging ability in the
+    documentation carries a Type field; that invariant is not established here.
     """
     duel_html_text = _detect_duel_html_path().read_text(encoding="utf-8")
     direct_schools = {"Physical", "Fire", "Frost", "Shadow", "Arcane", "Nature", "Holy"}
@@ -516,6 +521,8 @@ def scenario_ability_doc_type_labels_and_druid_stat_rows() -> bool:
         assert icon_property not in duel_html_text, \
             f"{icon_property!r} is communicated by the doc icons, not by a Type field"
 
+    # Representative damaging abilities across the classes whose labels this
+    # update touched: each simplified label still names its direct school.
     damaging_schools = {
         "Basic Attack": "Physical",
         "Mortal Strike": "Physical",
@@ -533,8 +540,9 @@ def scenario_ability_doc_type_labels_and_druid_stat_rows() -> bool:
         assert f"Type: {school}" in stat_labels(ability_name), \
             f"{ability_name} should display its direct school as Type: {school}"
 
-    # 4. Non-damaging abilities never gain a Type field, and their existing
-    # "Cost | Cooldown" row is preserved as-is.
+    # 4. The non-damaging abilities covered by this documentation update do not
+    # display a Type field, and their existing "Cost | Cooldown" row is
+    # preserved as-is.
     non_damaging = (
         "Die by the Sword", "Ignore Pain", "Ice Block", "Blink", "Ice Barrier",
         "Ring of Ice", "Cheap Shot", "Vanish", "Cloak of Shadows", "Evasion",
@@ -547,7 +555,7 @@ def scenario_ability_doc_type_labels_and_druid_stat_rows() -> bool:
     for ability_name in non_damaging:
         labels = stat_labels(ability_name)
         assert not any(label.startswith("Type:") for label in labels), \
-            f"{ability_name} deals no damage and must not display a Type field"
+            f"{ability_name} is non-damaging and must not display a Type field"
     assert '<h4>Vanish</h4>\n            <p><span class="stat">Cost: Free</span> | ' \
         '<span class="stat">Cooldown: 15</span></p>' in duel_html_text, \
         "Non-damaging rows must keep the existing Cost | Cooldown format"

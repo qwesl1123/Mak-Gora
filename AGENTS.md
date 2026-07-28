@@ -740,30 +740,6 @@ For visual/frontend changes:
 
 Static docs should match backend behavior. If a mechanic has an intentional exception, document it clearly.
 
-### Ability Type labels
-
-Only abilities that deal damage display a `Type` field, and it names the direct damage school and nothing else:
-
-```text
-Type: Physical
-Type: Fire
-Type: Frost
-Type: Shadow
-Type: Arcane
-Type: Nature
-Type: Holy
-```
-
-Do not wrap the school in redundant magical wording (`Type: Magic (Fire)` is `Type: Fire`) and do not append targeting or other qualifiers (`Type: Holy (capped AoE)` is `Type: Holy`).
-
-AoE, Single Target, Healing, Defensive, Utility, Mobility, Crowd Control, Summon, Immunity, and similar properties are communicated by the top-right documentation icons (`abilityIconCategories` in `duel.html`), never by a `Type` field. A non-damaging ability keeps its plain stat row:
-
-```text
-Cost: Free | Cooldown: 15
-```
-
-Druid rows do not repeat the required form — the lane's form card already states it. Damaging Druid rows read `Cost | Type | Cooldown`; non-damaging Druid rows read `Cost | Cooldown`; passive-only rows carry a concise passive label with no Type, cost, cooldown, or command.
-
 ## Testing rules
 
 Add deterministic regression coverage for gameplay changes.
