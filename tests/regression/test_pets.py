@@ -391,11 +391,17 @@ def scenario_hunter_boar_redirects_single_target_cc() -> bool:
     boar = _active_pet(hunter, "barrens_boar")
     assert boar is not None, "Boar should be active for CC redirect coverage"
 
-    effects.apply_effect_by_id(hunter, "blocking_defence", overrides={"duration": 1, "redirect_to_pet_id": boar.id})
-    submit_turn(match, _DEF_PASS, "kidney_shot")
+    boar.rage = max(boar.rage, 5)
+    hunter.pending_pet_command = "special"
+    submit_turn(match, "disengage", "kidney_shot")
+    redirect_turn = _turn_lines(match, 2)
+    assert any("Barrens Boar braces to intercept attacks." in line for line in redirect_turn), "Forced pre-action special should log the brace"
+    assert any("Barrens Boar intercepts Kidney Shot" in line for line in redirect_turn), "Redirected CC should emit the intercept log"
+    assert not any("tries to use Disengage but" in line for line in redirect_turn), "Redirected same-turn CC must not deny the Hunter's action"
+    assert any("cast Disengage." in line for line in redirect_turn), "Hunter's Disengage should resolve on the redirect turn"
+    assert _has_effect(hunter, "disengage"), "Hunter should gain the Disengage effect when the CC is redirected"
     assert not _has_effect(hunter, "stunned"), "Single-target CC should be redirected off the Hunter"
     assert _has_effect(boar, "stunned"), "Single-target CC should land on the boar"
-    assert any("Barrens Boar intercepts Kidney Shot" in line for line in _turn_lines(match, 2)), "Redirected CC should emit the intercept log"
 
     effects.remove_effect(boar, "stunned")
     effects.apply_effect_by_id(hunter, "blocking_defence", overrides={"duration": 1, "redirect_to_pet_id": boar.id})

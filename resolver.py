@@ -4046,14 +4046,31 @@ def resolve_turn(match: MatchState) -> None:
             if not effect_id:
                 continue
             effect = build_effect(effect_id, overrides=entry.get("overrides"))
+            # Predict the final recipient with the same routing semantics as
+            # _apply_effect_entries_stage: a redirected pet absorbing the CC
+            # must not pre-lock the champion's own action.
+            allow_redirect = (
+                ability_target_mode(ability) != "aoe_enemy"
+                and isinstance(target, PlayerState)
+                and target is not actor
+                and is_harmful_target_effect_entry(entry)
+            )
+            resolved_target, _, _, _, _ = resolve_target_resolution(
+                target,
+                target_label=target.sid,
+                source_ability_name=ability.get("name", "the effect"),
+                allow_redirect=allow_redirect,
+            )
             blocked_log = resolve_target_effect_pre_resolution_protection(
                 entry_target=target,
-                resolved_target=target,
+                resolved_target=resolved_target,
                 ability=ability,
                 entry=entry,
                 effect=effect,
             )
             if blocked_log:
+                continue
+            if resolved_target is not target:
                 continue
             flags = effect.get("flags", {}) or {}
             if flags.get("stunned") or effect.get("cant_act_reason"):
@@ -4188,8 +4205,31 @@ def resolve_turn(match: MatchState) -> None:
         if is_offensive_action(ability) and turn_ctx.stealth_start_at_turn_begin.get(actor_sid, False):
             remove_stealth(actor)
 
-    resolve_immediate_effects(sids[0], sids[1], turn_ctx.immediate_contexts[sids[0]])
-    resolve_immediate_effects(sids[1], sids[0], turn_ctx.immediate_contexts[sids[1]])
+    def immediate_context_applies_crowd_control(ctx: Dict[str, Any]) -> bool:
+        if ctx.get("resolved") or not ctx.get("immediate_only"):
+            return False
+        for entry in (ctx.get("ability") or {}).get("target_effects") or []:
+            effect_id = entry.get("id")
+            if not effect_id:
+                continue
+            effect = build_effect(effect_id, overrides=entry.get("overrides"))
+            flags = effect.get("flags", {}) or {}
+            if flags.get("stunned") or effect.get("cant_act_reason"):
+                return True
+        return False
+
+    # Immediate crowd control is denied (or allowed) from the phase-start
+    # prediction above, so it must also resolve against that state: CC contexts
+    # go first, keeping a non-priority action the prediction allowed (e.g. via
+    # a pet redirect) from retroactively shielding the champion mid-phase.
+    # Priority defensives are unaffected -- their effects pre-apply before the
+    # prediction. Ties keep submission order.
+    for actor_sid in sorted(
+        sids,
+        key=lambda sid: 0 if immediate_context_applies_crowd_control(turn_ctx.immediate_contexts[sid]) else 1,
+    ):
+        target_sid = sids[1] if actor_sid == sids[0] else sids[0]
+        resolve_immediate_effects(actor_sid, target_sid, turn_ctx.immediate_contexts[actor_sid])
     turn_ctx.stealth_targeting = {sid: is_stealthed(turn_ctx.match.state[sid]) for sid in sids}
     turn_ctx.committed_action_sids = set(sids)
     turn_ctx.committed_action_protected_effect_ids = {sid: set() for sid in sids}
