@@ -1058,8 +1058,13 @@ def scenario_staff_dispatches_before_vial_for_same_owner() -> bool:
         for index, line in enumerate(match.log)
         if "heals 4 HP from Staff of Immortality." in line
     )
-    vial_idx = match.log.index(f"{owner_sid[:5]} triggers Vial of Shadows.")
+    vial_idx = match.log.index(
+        f"{owner_sid[:5]}'s Vial of Shadows erupts in a burst of darkness!"
+    )
     assert staff_idx < vial_idx
+    assert not any(
+        line.endswith("triggers Vial of Shadows.") for line in match.log
+    ), "The retired generic Vial activation line must not reappear"
     assert roll_calls == ["d6"], "The added heal must not change Vial's one-roll contract"
     return True
 
@@ -1534,6 +1539,7 @@ def scenario_vial_of_shadows_item_data_docs_and_ui() -> bool:
         },
         "dice": "d6",
         "target_mode": "all_players_and_pets",
+        "activation_text": "erupts in a burst of darkness!",
     }, "Vial production metadata must remain the complete data-driven mechanic"
 
     match = make_match(
@@ -1591,13 +1597,14 @@ def scenario_vial_of_shadows_schedule_boundaries_and_rng() -> bool:
         seed=9502,
     )
     owner_sid = match.players[0]
+    activation_line = (
+        f"{owner_sid[:5]}'s Vial of Shadows erupts in a burst of darkness!"
+    )
     roll_calls: list[str] = []
     with _fixed_vial_roll(1, roll_calls):
         for global_turn in range(1, 11):
             submit_turn(match, _DEF_PASS, _DEF_PASS)
-            trigger_count = match.log.count(
-                f"{owner_sid[:5]} triggers Vial of Shadows."
-            )
+            trigger_count = match.log.count(activation_line)
             expected_count = 0 if global_turn < 5 else 1 if global_turn < 10 else 2
             assert trigger_count == expected_count, \
                 f"Vial scheduled incorrectly on global turn {global_turn}"
@@ -1606,16 +1613,65 @@ def scenario_vial_of_shadows_schedule_boundaries_and_rng() -> bool:
 
     assert roll_calls == ["d6", "d6"], \
         "Turns 5 and 10 must each consume exactly one Vial d6"
+    assert not any(
+        line.endswith("triggers Vial of Shadows.") for line in match.log
+    ), "The retired generic Vial activation line must not reappear"
     turn_5_index = match.log.index("Turn 5")
     turn_6_index = match.log.index("Turn 6")
     turn_10_index = match.log.index("Turn 10")
     trigger_indices = [
         index
         for index, line in enumerate(match.log)
-        if line == f"{owner_sid[:5]} triggers Vial of Shadows."
+        if line == activation_line
     ]
     assert turn_5_index < trigger_indices[0] < turn_6_index
     assert turn_10_index < trigger_indices[1]
+    hit_indices = [
+        index
+        for index, line in enumerate(match.log)
+        if line.startswith("Vial of Shadows hits ")
+    ]
+    assert hit_indices, "Each activation must still emit its per-target hit lines"
+    assert trigger_indices[0] < hit_indices[0], \
+        "The activation line must precede every Vial target-hit line"
+    assert all(
+        any(trigger_index < hit_index for trigger_index in trigger_indices)
+        for hit_index in hit_indices
+    ), "Every Vial hit line must follow an activation line"
+
+    # A periodic global-damage item that owns no activation flavor text must
+    # keep the generic handler-owned wording.
+    plain_passive = {
+        key: value
+        for key, value in ITEMS["vial_of_shadows"]["passive"].items()
+        if key != "activation_text"
+    }
+    plain_item = {
+        "item_id": "test_plain_global_damage_trinket",
+        "name": "Plain Global Trinket",
+        "slot": "trinket",
+        "color": "#a335ee",
+        "mods": {},
+        "passive": copy.deepcopy(plain_passive),
+    }
+    with _temporary_periodic_content(
+        {"test_plain_global_damage_trinket": plain_item},
+        {},
+    ):
+        plain_match = make_match(
+            "priest",
+            "warrior",
+            p1_items={"trinket": "test_plain_global_damage_trinket"},
+            seed=9502,
+        )
+        plain_owner_sid = plain_match.players[0]
+        plain_match.turn = 4
+        with _fixed_vial_roll(1, []):
+            submit_turn(plain_match, _DEF_PASS, _DEF_PASS)
+        assert (
+            f"{plain_owner_sid[:5]} triggers Plain Global Trinket."
+            in plain_match.log
+        ), "An item without activation_text must keep the generic activation line"
     return True
 
 
@@ -2304,11 +2360,11 @@ def scenario_dual_vials_commit_and_preserve_double_ko() -> bool:
     activation_lines = [
         line
         for line in match.log
-        if line.endswith("triggers Vial of Shadows.")
+        if line.endswith("Vial of Shadows erupts in a burst of darkness!")
     ]
     assert activation_lines == [
-        f"{p1_sid[:5]} triggers Vial of Shadows.",
-        f"{p2_sid[:5]} triggers Vial of Shadows.",
+        f"{p1_sid[:5]}'s Vial of Shadows erupts in a burst of darkness!",
+        f"{p2_sid[:5]}'s Vial of Shadows erupts in a burst of darkness!",
     ], "Both committed Vials must execute in canonical player order"
     assert roll_calls == ["d6", "d6"], \
         "Two committed Vials must consume exactly two d6 rolls"
@@ -2401,7 +2457,7 @@ def scenario_vial_triggers_final_shield_of_vengeance_checkpoint() -> bool:
     ), "The final checkpoint must use the existing Shield damage path"
 
     vial_trigger_index = match.log.index(
-        f"{vial_sid[:5]} triggers Vial of Shadows."
+        f"{vial_sid[:5]}'s Vial of Shadows erupts in a burst of darkness!"
     )
     vial_hit_index = next(
         index
@@ -2447,7 +2503,7 @@ def scenario_vial_triggers_final_shield_of_vengeance_checkpoint() -> bool:
         "The final checkpoint must not re-trigger a shield exploded earlier"
     assert already_exploded.log.index("Shield of Vengeance explodes!") < (
         already_exploded.log.index(
-            f"{early_vial_sid[:5]} triggers Vial of Shadows."
+            f"{early_vial_sid[:5]}'s Vial of Shadows erupts in a burst of darkness!"
         )
     ), "The original pre-periodic checkpoint must remain in place"
     assert not effects.has_effect(early_paladin, "shield_of_vengeance")
