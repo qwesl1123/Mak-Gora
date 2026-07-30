@@ -5,7 +5,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, TypedDict
 
 from .models import PetState, PlayerState
 from ..content.balance import DEFAULTS
-from ..content.classes import CLASSES, class_display_name
+from ..content.classes import CLASSES
 from .damage_events import make_passive_damage_event
 from .damage_types import (
     DAMAGE_SOURCE_DOT_TICK,
@@ -1133,6 +1133,7 @@ _EFFECT_PANEL_DESCRIPTION_BY_NAME: Dict[str, str] = {
     "Killing Frenzy": "Able to cast Raptor Strike (if not on cooldown).",
     "Fire Burn": "Damage over time every turn.",
     "Ring of Ice": "Frozen and cannot act. Breaks on damage.",
+    "Crusader's Might": "Next offensive ability deals 20% more damage.",
     "Hot Streak": "Able to cast Pyroblast (if not on cooldown).",
     "Die by the Sword": "Immune to physical damage and reduces all damage taken by 30%.",
     "Ignore Pain": "Absorb shield that helps the Warrior fight through pain.",
@@ -2386,8 +2387,7 @@ def trigger_on_hit_passives(
 
             item_name = effect.get("source_item", "item")
             ability_name = ability.get("name", "spell")
-            owner_class = class_display_name((attacker.build.class_id or "").strip().lower()) if attacker.build else "Player"
-            duplicate_prefix = f"{owner_class}(you)'s {item_name}"
+            duplicate_prefix = f"{attacker.sid[:5]}'s {item_name}"
             duplicate_damage = 0
             duplicate_raw_damage = 0
             per_hit_reduced: list[int] = []

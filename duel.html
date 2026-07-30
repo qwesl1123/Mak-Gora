@@ -2713,7 +2713,7 @@
             <h4>Overpower</h4>
             <p><span class="stat">Cost: 0 Rage</span> | <span class="stat">Type: Physical</span> | <span class="stat">Cooldown: 0</span></p>
             <p><span class="stat">Command: <span class="kbd">overpower</span></span></p>
-            <p>Weapon strike that scales with Attack (0.4x) and d4 power. Generates Rage equal to damage dealt and grants <span class="stat">Onslaught</span> (stackable up to 3, 3 turns). Onslaught increases the next rage-spending damaging ability by 4% per stack and is fully consumed on use.</p>
+            <p>Weapon strike that scales with Attack (0.4x) and d4 power. Generates Rage equal to damage dealt on HP and grants <span class="stat">Onslaught</span> (stackable up to 3, 3 turns). Onslaught increases the next rage-spending damaging ability by 4% per stack and is fully consumed on use.</p>
           </div>
 
           <div class="doc-item">
@@ -4577,7 +4577,12 @@
           output = output.replace(pattern, `<span class="${abilityClass}">$&</span>`);
         });
         warlockAbilities.forEach((ability) => {
-          const pattern = new RegExp(`\\b${escapeRegExp(ability)}\\b`, "g");
+          let pattern;
+          if (ability === "Demonic Circle") {
+            pattern = /\bDemonic Circle\b(?!: Teleport)/g;
+          } else {
+            pattern = new RegExp(`\\b${escapeRegExp(ability)}\\b`, "g");
+          }
           output = output.replace(pattern, `<span class="log-ability-warlock">$&</span>`);
         });
         druidAbilities.forEach((ability) => {

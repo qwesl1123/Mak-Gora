@@ -345,6 +345,95 @@ def scenario_duel_html_agony_docs_updated() -> bool:
     assert '<p><span class="stat">Cost: 20 Mana</span> | <span class="stat">Cooldown: 20</span></p>' in duel_html_text, "Agony docs cost/cooldown should be updated"
     assert '<p><span class="stat">Command: <span class="kbd">agony</span></span></p>' in duel_html_text, "Agony docs command should be present"
     assert "Inflicts Agony for 10 turns. Deals increasing magical DoT damage from 1 up to 10. Not dispellable and not stackable. Agony ignores Magic Resist and Damage Reductions." in duel_html_text, "Agony docs description should match the requested wording exactly"
+
+    overpower_start = duel_html_text.index("<h4>Overpower</h4>")
+    overpower_card = duel_html_text[
+        overpower_start : duel_html_text.index("</div>", overpower_start)
+    ]
+    assert "Generates Rage equal to damage dealt on HP" in overpower_card, \
+        "Overpower docs should qualify Rage generation as actual HP damage"
+    assert "Generates Rage equal to damage dealt and grants" not in overpower_card, \
+        "The old unqualified Overpower Rage sentence should be absent"
+    assert "Cost: 0 Rage" in overpower_card and "Type: Physical" in overpower_card \
+        and "Cooldown: 0" in overpower_card, \
+        "The rest of Overpower's cost/type/cooldown row should remain unchanged"
+    assert 'Command: <span class="kbd">overpower</span>' in overpower_card, \
+        "Overpower's command should remain unchanged"
+    assert '<span class="stat">Onslaught</span>' in overpower_card, \
+        "Overpower's existing Onslaught markup should remain unchanged"
+    return True
+
+
+def scenario_demonic_circle_teleport_uses_exact_log_tooltip() -> bool:
+    """Demonic Circle keeps the existing highlighter while excluding Teleport."""
+    duel_html_text = _detect_duel_html_path().read_text(encoding="utf-8")
+
+    warlock_array_match = re.search(
+        r"const warlockAbilities = \[(?P<body>.*?)\n\s*\];",
+        duel_html_text,
+        flags=re.DOTALL,
+    )
+    assert warlock_array_match, "The existing Warlock ability array should remain present"
+    warlock_array = warlock_array_match.group("body")
+    assert warlock_array.index('"Demonic Circle: Teleport"') < warlock_array.index('"Demonic Circle"'), (
+        "The full Teleport name must remain before the shorter Demonic Circle name"
+    )
+
+    warlock_loop_match = re.search(
+        r"warlockAbilities\.forEach\(\(ability\) => \{(?P<body>.*?)\n\s*\}\);",
+        duel_html_text,
+        flags=re.DOTALL,
+    )
+    assert warlock_loop_match, "The existing Warlock replacement loop should remain present"
+    warlock_loop = warlock_loop_match.group("body")
+    assert 'if (ability === "Demonic Circle") {' in warlock_loop, \
+        "Only the shorter Demonic Circle name should receive an overlap exception"
+    assert r"pattern = /\bDemonic Circle\b(?!: Teleport)/g;" in warlock_loop, \
+        "The short-name regex must explicitly exclude Demonic Circle: Teleport"
+    assert r'pattern = new RegExp(`\\b${escapeRegExp(ability)}\\b`, "g");' in warlock_loop, \
+        "All other Warlock abilities should retain the existing generic matcher"
+    assert 'output = output.replace(pattern, `<span class="log-ability-warlock">$&</span>`);' in warlock_loop, \
+        "The original Warlock color-span replacement should remain unchanged"
+
+    demonic_circle_pattern = re.compile(r"\bDemonic Circle\b(?!: Teleport)")
+    assert demonic_circle_pattern.search("Demonic Circle"), "Standalone Demonic Circle should still match"
+    assert not demonic_circle_pattern.search("Demonic Circle: Teleport"), \
+        "The short-name exception must not split the full Teleport name"
+
+    assert "function stampAbilityTips(html) {" in duel_html_text, \
+        "The existing ability-tooltip stamper must remain present"
+    assert "if (abilityTipData[name]) {" in duel_html_text, \
+        "Ability tooltip stamping must retain its exact abilityTipData lookup"
+    assert 'data-tip-ability="${name.replace(/"/g, \'&quot;\')}"' in duel_html_text, \
+        "The existing stamper should keep the exact matched ability name as its tooltip key"
+
+    for forbidden_name in (
+        "logAbilityClassByName",
+        "buildLogAbilityNamePattern",
+        "tokenizeLogAbilityNames",
+        "applyLogAbilityTokensToHtml",
+    ):
+        assert forbidden_name not in duel_html_text, \
+            f"The focused fix must not add the consolidated highlighter helper {forbidden_name}"
+
+    assert "function stampPetTips(html) {" in duel_html_text and "if (petTipData[name]) {" in duel_html_text, \
+        "The existing pet-tooltip fallback must remain present"
+    assert "line.innerHTML = stampPetTips(stampAbilityTips(highlightLogLine(msg)));" in duel_html_text, \
+        "Ability and pet tooltip stamping order must remain unchanged"
+    assert 'const PET_NAMES = new Set(["Frostsaber", "Emerald Serpent", "Barrens Boar", "Imp", "Mana Tide Totem", "Capacitor Totem"]);' in duel_html_text, \
+        "Companion and totem tooltip fallback names must remain unchanged"
+    assert all(name in duel_html_text for name in (
+        '"Penance (Self)"',
+        '"Penance"',
+        '"Call Frostsaber"',
+        '"Call Emerald Serpent"',
+        '"Call Barrens Boar"',
+    )), "Penance and companion-call highlighting entries should remain present"
+    assert "druidAbilities.forEach((ability) => {" in duel_html_text \
+        and 'if (ability === "Wrath") {' in duel_html_text \
+        and '// Avoid partial overlap with Paladin "Avenging Wrath"' in duel_html_text \
+        and r"pattern = /(?<!Avenging\s)\bWrath\b/g;" in duel_html_text, \
+        "The existing Wrath versus Avenging Wrath protection must remain unchanged"
     return True
 
 
@@ -426,6 +515,7 @@ def scenario_effect_panel_payload_normalization() -> bool:
     assert entries_by_name["Mind Assault"].get("description") == "Mind Blast empowered.", "Mind Assault description should match source text"
     assert entries_by_name["Fire Burn"].get("description") == "Damage over time every turn.", "Fire Burn description should match source text"
     assert entries_by_name["Ambush"].get("description") == "Able to cast Ambush (if not on cooldown).", "Ambush description should match source text"
+    assert entries_by_name["Crusader's Might"].get("description") == "Next offensive ability deals 20% more damage.", "Crusader's Might should expose its exact active-effect mouseover description"
     assert all("duration" not in str(entry.get("description") or "").lower() for entry in all_entries), "Descriptions should not duplicate duration wording"
     assert "Blocking Defence" not in all_names and "Guarded" not in all_names, "Implementation-detail redirect helpers should not leak into the panel"
     assert "bear_form_stats" not in all_names and "Bear Form Stats" not in all_names, "Companion stat effects should not leak into the panel"
