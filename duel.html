@@ -2713,7 +2713,7 @@
             <h4>Overpower</h4>
             <p><span class="stat">Cost: 0 Rage</span> | <span class="stat">Type: Physical</span> | <span class="stat">Cooldown: 0</span></p>
             <p><span class="stat">Command: <span class="kbd">overpower</span></span></p>
-            <p>Weapon strike that scales with Attack (0.4x) and d4 power. Generates Rage equal to damage dealt and grants <span class="stat">Onslaught</span> (stackable up to 3, 3 turns). Onslaught increases the next rage-spending damaging ability by 4% per stack and is fully consumed on use.</p>
+            <p>Weapon strike that scales with Attack (0.4x) and d4 power. Generates Rage equal to damage dealt on HP and grants <span class="stat">Onslaught</span> (stackable up to 3, 3 turns). Onslaught increases the next rage-spending damaging ability by 4% per stack and is fully consumed on use.</p>
           </div>
 
           <div class="doc-item">
@@ -3544,135 +3544,130 @@
         return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       }
 
-      const warriorAbilities = [
-        "Overpower",
-        "Victory Rush",
-        "Rampage",
-        "Mortal Strike",
-        "Execute",
-        "Die by the Sword",
-        "Dragon Roar",
-        "Cleave",
-        "Ignore Pain",
-      ];
-      const mageAbilities = [
-        "Fireball",
-        "Fire Blast",
-        "Arcane Barrage",
-        "Pyroblast",
-        "Ice Block",
-        "Ring of Ice",
-        "Blink",
-        "Ice Barrier",
-      ];
-      const rogueAbilities = [
-        "Cheap Shot",
-        "Kidney Shot",
-        "Vanish",
-        "Cloak of Shadows",
-        "Eviscerate",
-        "Evasion",
-        "Shadowstrike",
-        "Ambush",
-        "Thistle Tea",
-        "Fury of Azzinoth",
-      ];
-      const warlockAbilities = [
-        "Agony",
-        "Corruption",
-        "Unstable Affliction",
-        "Drain Life",
-        "Healthstone",
-        "Dark Pact",
-        "Unending Resolve",
-        "Fear",
-        "Summon Imp",
-        "Demonic Gateway",
-        "Demonic Circle: Teleport",
-        "Demonic Circle",
-      ];
-      const paladinAbilities = [
-        "Crusader Strike",
-        "Judgment",
-        "Final Verdict",
-        "Divine Storm",
-        "Holy Light",
-        "Hammer of Justice",
-        "Divine Shield",
-        "Shield of Vengeance",
-        "Lay on Hands",
-        "Avenging Wrath",
-      ];
-      const priestAbilities = [
-        "Power Word: Shield",
-        "Mind Flay",
-        "Mind Blast",
-        "Vampiric Touch",
-        "Devouring Plague",
-        "Penance",
-        "Penance (Self)",
-        "Pain Suppression",
-        "Mindgames",
-        "Psychic Scream",
-        "Flash Heal",
-        "Mass Dispel",
-        "Shadow Word: Death",
-        "Shadowfiend",
-      ];
-      const hunterAbilities = [
-        "Wildfire Bomb",
-        "Wildfire Burn",
-        "Arcane Shot",
-        "Aspect of the Turtle",
-        "Flare",
-        "Freezing Trap",
-        "Disengage",
-        "Aimed Shot",
-        "Raptor Strike",
-        "Kill Command",
-        "Multi-Shot",
-        "Call Frostsaber",
-        "Call Emerald Serpent",
-        "Call Barrens Boar",
-      ];
-      const shamanAbilities = [
-        "Earth Shock",
-        "Flame Shock",
-        "Frost Shock",
-        "Lightning Bolt",
-        "Lava Lash",
-        "Chain Lightning",
-        "Healing Stream",
-        "Ancestral Guidance",
-        "Ancestral Knowledge",
-        "Astral Shift",
-        "Mana Tide Totem",
-        "Capacitor Totem",
-        "Astral Explosion",
-      ];
-      const druidAbilities = [
-        "Bear Form",
-        "Cat Form",
-        "Moonkin Form",
-        "Tree Form",
-        "Maul",
-        "Swipe",
-        "Frenzied Regeneration",
-        "Barkskin",
-        "Claw",
-        "Shred",
-        "Maim",
-        "Rip",
-        "Prowl",
-        "Wrath",
-        "Starfire",
-        "Cyclone",
-        "Typhoon",
-        "Wild Growth",
-        "Regrowth",
-        "Innervate",
-        "The Rage Within",
-      ];
+      const logAbilityClassByName = Object.freeze({
+        "Overpower": "log-ability-warrior",
+        "Victory Rush": "log-ability-warrior",
+        "Rampage": "log-ability-warrior",
+        "Mortal Strike": "log-ability-warrior",
+        "Execute": "log-ability-warrior",
+        "Die by the Sword": "log-ability-warrior",
+        "Dragon Roar": "log-ability-warrior",
+        "Cleave": "log-ability-warrior",
+        "Ignore Pain": "log-ability-warrior",
+        "Fireball": "log-ability-mage",
+        "Fire Blast": "log-ability-mage",
+        "Arcane Barrage": "log-ability-mage",
+        "Pyroblast": "log-ability-mage",
+        "Ice Block": "log-ability-mage",
+        "Ring of Ice": "log-ability-mage",
+        "Blink": "log-ability-mage",
+        "Ice Barrier": "log-ability-mage",
+        "Cheap Shot": "log-ability-rogue",
+        "Kidney Shot": "log-ability-rogue",
+        "Vanish": "log-ability-rogue",
+        "Cloak of Shadows": "log-ability-rogue",
+        "Eviscerate": "log-ability-rogue",
+        "Evasion": "log-ability-rogue",
+        "Shadowstrike": "log-ability-rogue",
+        "Ambush": "log-ability-rogue",
+        "Thistle Tea": "log-ability-rogue",
+        "Fury of Azzinoth": "log-ability-azzinoth",
+        "Agony": "log-ability-warlock",
+        "Corruption": "log-ability-warlock",
+        "Unstable Affliction": "log-ability-warlock",
+        "Drain Life": "log-ability-warlock",
+        "Healthstone": "log-ability-warlock",
+        "Dark Pact": "log-ability-warlock",
+        "Unending Resolve": "log-ability-warlock",
+        "Fear": "log-ability-warlock",
+        "Summon Imp": "log-ability-warlock",
+        "Demonic Gateway": "log-ability-warlock",
+        "Demonic Circle: Teleport": "log-ability-warlock",
+        "Demonic Circle": "log-ability-warlock",
+        "Crusader Strike": "log-ability-paladin",
+        "Judgment": "log-ability-paladin",
+        "Final Verdict": "log-ability-paladin",
+        "Divine Storm": "log-ability-paladin",
+        "Holy Light": "log-ability-paladin",
+        "Hammer of Justice": "log-ability-paladin",
+        "Divine Shield": "log-ability-paladin",
+        "Shield of Vengeance": "log-ability-paladin",
+        "Lay on Hands": "log-ability-paladin",
+        "Avenging Wrath": "log-ability-paladin",
+        "Power Word: Shield": "log-ability-priest",
+        "Mind Flay": "log-ability-priest",
+        "Mind Blast": "log-ability-priest",
+        "Vampiric Touch": "log-ability-priest",
+        "Devouring Plague": "log-ability-priest",
+        "Penance": "log-ability-priest",
+        "Penance (Self)": "log-ability-priest",
+        "Pain Suppression": "log-ability-priest",
+        "Mindgames": "log-ability-priest",
+        "Psychic Scream": "log-ability-priest",
+        "Flash Heal": "log-ability-priest",
+        "Mass Dispel": "log-ability-priest",
+        "Shadow Word: Death": "log-ability-priest",
+        "Shadowfiend": "log-ability-priest",
+        "Wildfire Bomb": "log-ability-hunter",
+        "Wildfire Burn": "log-ability-hunter",
+        "Arcane Shot": "log-ability-hunter",
+        "Aspect of the Turtle": "log-ability-hunter",
+        "Flare": "log-ability-hunter",
+        "Freezing Trap": "log-ability-hunter",
+        "Disengage": "log-ability-hunter",
+        "Aimed Shot": "log-ability-hunter",
+        "Raptor Strike": "log-ability-hunter",
+        "Kill Command": "log-ability-hunter",
+        "Multi-Shot": "log-ability-hunter",
+        "Call Frostsaber": "log-ability-hunter",
+        "Call Emerald Serpent": "log-ability-hunter",
+        "Call Barrens Boar": "log-ability-hunter",
+        "Earth Shock": "log-ability-shaman",
+        "Flame Shock": "log-ability-shaman",
+        "Frost Shock": "log-ability-shaman",
+        "Lightning Bolt": "log-ability-shaman",
+        "Lava Lash": "log-ability-shaman",
+        "Chain Lightning": "log-ability-shaman",
+        "Healing Stream": "log-ability-shaman",
+        "Ancestral Guidance": "log-ability-shaman",
+        "Ancestral Knowledge": "log-ability-shaman",
+        "Astral Shift": "log-ability-shaman",
+        "Mana Tide Totem": "log-ability-shaman",
+        "Capacitor Totem": "log-ability-shaman",
+        "Astral Explosion": "log-ability-shaman",
+        "Bear Form": "log-ability-druid",
+        "Cat Form": "log-ability-druid",
+        "Moonkin Form": "log-ability-druid",
+        "Tree Form": "log-ability-druid",
+        "Maul": "log-ability-druid",
+        "Swipe": "log-ability-druid",
+        "Frenzied Regeneration": "log-ability-druid",
+        "Barkskin": "log-ability-druid",
+        "Claw": "log-ability-druid",
+        "Shred": "log-ability-druid",
+        "Maim": "log-ability-druid",
+        "Rip": "log-ability-druid",
+        "Prowl": "log-ability-druid",
+        "Wrath": "log-ability-druid",
+        "Starfire": "log-ability-druid",
+        "Cyclone": "log-ability-druid",
+        "Typhoon": "log-ability-druid",
+        "Wild Growth": "log-ability-druid",
+        "Regrowth": "log-ability-druid",
+        "Innervate": "log-ability-druid",
+        "The Rage Within": "log-ability-druid",
+      });
+
+      function buildLogAbilityNamePattern(abilityClassByName) {
+        const namesLongestFirst = Object.keys(abilityClassByName)
+          .sort((left, right) => right.length - left.length || left.localeCompare(right));
+        return new RegExp(
+          `(?<![A-Za-z0-9_])(?:${namesLongestFirst.map(escapeRegExp).join("|")})(?![A-Za-z0-9_])`,
+          "g"
+        );
+      }
+
+      const logAbilityNamePattern = buildLogAbilityNamePattern(logAbilityClassByName);
       const greenItems = [
         "Steel Long Sword",
         "Wand of Fire",
@@ -4456,6 +4451,40 @@
         return html;
       }
 
+      function tokenizeLogAbilityNames(untouchedText) {
+        const abilityTokens = [];
+        const textWithoutAbilities = untouchedText.replace(
+          logAbilityNamePattern,
+          (abilityName) => {
+            // Totem cards are intentionally owned by the pet tooltip data.
+            // Leave exact pet-only names for the existing pet highlighter.
+            if (petTipData[abilityName] && !abilityTipData[abilityName]) {
+              return abilityName;
+            }
+            const token = `__ABILITY_TOKEN_${abilityTokens.length}__`;
+            abilityTokens.push({
+              token,
+              abilityName,
+              className: logAbilityClassByName[abilityName],
+            });
+            return token;
+          }
+        );
+        return { textWithoutAbilities, abilityTokens };
+      }
+
+      function applyLogAbilityTokensToHtml(output, abilityTokens) {
+        let html = output;
+        abilityTokens.forEach(({ token, abilityName, className }) => {
+          const escapedAbilityName = escapeHtml(abilityName);
+          html = html.replace(
+            token,
+            `<span class="${className}" data-tip-ability="${escapedAbilityName}">${escapedAbilityName}</span>`
+          );
+        });
+        return html;
+      }
+
       function highlightLogLine(text) {
         const fxTokens = [];
         const textWithoutFx = String(text).replace(fxTagPattern, (_, fxId, value) => {
@@ -4547,7 +4576,10 @@
           return applyFxTokensToHtml(`<span class="logLineExecute">${renderTextWithFxTags(textWithoutFx)}</span>`, fxTokens);
         }
 
-        let output = escapeHtml(textWithoutFx);
+        // Match abilities once on untouched log text. Tokens keep later
+        // class/item/pet highlighters out of generated ability markup.
+        const { textWithoutAbilities, abilityTokens } = tokenizeLogAbilityNames(textWithoutFx);
+        let output = escapeHtml(textWithoutAbilities);
         const classPatterns = [
           { pattern: /\bWarrior(\(you\))?\b/g, className: "log-class-warrior" },
           { pattern: /\bMage(\(you\))?\b/g, className: "log-class-mage" },
@@ -4563,49 +4595,6 @@
           output = output.replace(pattern, `<span class="${className}">$&</span>`);
         });
 
-        warriorAbilities.forEach((ability) => {
-          const pattern = new RegExp(`\\b${escapeRegExp(ability)}\\b`, "g");
-          output = output.replace(pattern, `<span class="log-ability-warrior">$&</span>`);
-        });
-        mageAbilities.forEach((ability) => {
-          const pattern = new RegExp(`\\b${escapeRegExp(ability)}\\b`, "g");
-          output = output.replace(pattern, `<span class="log-ability-mage">$&</span>`);
-        });
-        rogueAbilities.forEach((ability) => {
-          const pattern = new RegExp(`\\b${escapeRegExp(ability)}\\b`, "g");
-          const abilityClass = ability === "Fury of Azzinoth" ? "log-ability-azzinoth" : "log-ability-rogue";
-          output = output.replace(pattern, `<span class="${abilityClass}">$&</span>`);
-        });
-        warlockAbilities.forEach((ability) => {
-          const pattern = new RegExp(`\\b${escapeRegExp(ability)}\\b`, "g");
-          output = output.replace(pattern, `<span class="log-ability-warlock">$&</span>`);
-        });
-        druidAbilities.forEach((ability) => {
-          let pattern;
-          if (ability === "Wrath") {
-            // Avoid partial overlap with Paladin "Avenging Wrath"
-            pattern = /(?<!Avenging\s)\bWrath\b/g;
-          } else {
-            pattern = new RegExp(`\\b${escapeRegExp(ability)}\\b`, "g");
-          }
-          output = output.replace(pattern, `<span class="log-ability-druid">$&</span>`);
-        });
-        paladinAbilities.forEach((ability) => {
-          const pattern = new RegExp(`\\b${escapeRegExp(ability)}\\b`, "g");
-          output = output.replace(pattern, `<span class="log-ability-paladin">$&</span>`);
-        });
-        priestAbilities.forEach((ability) => {
-          const pattern = new RegExp(`\\b${escapeRegExp(ability)}\\b`, "g");
-          output = output.replace(pattern, `<span class="log-ability-priest">$&</span>`);
-        });
-        hunterAbilities.forEach((ability) => {
-          const pattern = new RegExp(`\\b${escapeRegExp(ability)}\\b`, "g");
-          output = output.replace(pattern, `<span class="log-ability-hunter">$&</span>`);
-        });
-        shamanAbilities.forEach((ability) => {
-          const pattern = new RegExp(`\\b${escapeRegExp(ability)}\\b`, "g");
-          output = output.replace(pattern, `<span class="log-ability-shaman">$&</span>`);
-        });
         [
           { names: ["Frostsaber", "Emerald Serpent", "Barrens Boar"], className: "log-class-hunter" },
           { names: ["Imp"], className: "log-class-warlock" },
@@ -4637,27 +4626,9 @@
           output = output.replace(pattern, `<span class="log-item-orange">$&</span>`);
         });
 
-        return applyFxTokensToHtml(output, fxTokens);
-      }
-
-      // Stamp data-tip-ability onto already-wrapped ability spans.
-      // We match the simple span the existing code produces: <span class="log-ability-XXX">Name</span>
-      // This runs AFTER all color spans are already in place, so coloring is never affected.
-      function stampAbilityTips(html) {
-        if (
-          html.includes("has Flame Dance!")
-          || html.includes("has Lava Surge!")
-        ) {
-          return html;
-        }
-        return html.replace(
-          /<span class="(log-ability-[^"]+)">([^<]+)<\/span>/g,
-          (match, cls, name) => {
-            if (abilityTipData[name]) {
-              return `<span class="${cls}" data-tip-ability="${name.replace(/"/g, '&quot;')}">${name}</span>`;
-            }
-            return match;
-          }
+        return applyFxTokensToHtml(
+          applyLogAbilityTokensToHtml(output, abilityTokens),
+          fxTokens
         );
       }
 
@@ -4708,7 +4679,7 @@
           classes.push("logLineOutcome");
         }
         line.className = classes.join(" ");
-        line.innerHTML = stampPetTips(stampAbilityTips(highlightLogLine(msg)));
+        line.innerHTML = stampPetTips(highlightLogLine(msg));
         logDiv.appendChild(line);
         initThunderfuryFx(line);
         initDragonwrathFx(line);

@@ -345,6 +345,200 @@ def scenario_duel_html_agony_docs_updated() -> bool:
     assert '<p><span class="stat">Cost: 20 Mana</span> | <span class="stat">Cooldown: 20</span></p>' in duel_html_text, "Agony docs cost/cooldown should be updated"
     assert '<p><span class="stat">Command: <span class="kbd">agony</span></span></p>' in duel_html_text, "Agony docs command should be present"
     assert "Inflicts Agony for 10 turns. Deals increasing magical DoT damage from 1 up to 10. Not dispellable and not stackable. Agony ignores Magic Resist and Damage Reductions." in duel_html_text, "Agony docs description should match the requested wording exactly"
+
+    overpower_start = duel_html_text.index("<h4>Overpower</h4>")
+    overpower_card = duel_html_text[
+        overpower_start : duel_html_text.index("</div>", overpower_start)
+    ]
+    assert "Generates Rage equal to damage dealt on HP" in overpower_card, \
+        "Overpower docs should qualify Rage generation as actual HP damage"
+    assert "Generates Rage equal to damage dealt and grants" not in overpower_card, \
+        "The old unqualified Overpower Rage sentence should be absent"
+    assert "Cost: 0 Rage" in overpower_card and "Type: Physical" in overpower_card \
+        and "Cooldown: 0" in overpower_card, \
+        "The rest of Overpower's cost/type/cooldown row should remain unchanged"
+    assert 'Command: <span class="kbd">overpower</span>' in overpower_card, \
+        "Overpower's command should remain unchanged"
+    return True
+
+
+def scenario_overlapping_combat_log_ability_names_use_exact_tooltips() -> bool:
+    """Combat-log ability matching is longest-first and never mutates spans."""
+    duel_html_text = _detect_duel_html_path().read_text(encoding="utf-8")
+
+    mapping_match = re.search(
+        r"const logAbilityClassByName = Object\.freeze\(\{\n"
+        r"(?P<body>.*?)\n      \}\);",
+        duel_html_text,
+        re.S,
+    )
+    assert mapping_match is not None, \
+        "Combat-log ability names should have one inspectable name-to-class mapping"
+    mapping_pairs = re.findall(
+        r'^\s*"([^"]+)": "(log-ability-[^"]+)",$',
+        mapping_match.group("body"),
+        re.M,
+    )
+    ability_classes = dict(mapping_pairs)
+    assert len(ability_classes) == len(mapping_pairs), \
+        "Every combat-log ability name should map to exactly one CSS class"
+
+    expected_overlap_classes = {
+        "Demonic Circle: Teleport": "log-ability-warlock",
+        "Demonic Circle": "log-ability-warlock",
+        "Penance (Self)": "log-ability-priest",
+        "Penance": "log-ability-priest",
+        "Avenging Wrath": "log-ability-paladin",
+        "Wrath": "log-ability-druid",
+        "Shadow Word: Death": "log-ability-priest",
+        "Fury of Azzinoth": "log-ability-azzinoth",
+    }
+    for ability_name, expected_class in expected_overlap_classes.items():
+        assert ability_classes.get(ability_name) == expected_class, \
+            f"{ability_name} should retain its exact combat-log color class"
+
+    expected_color_classes = {
+        "log-ability-warrior",
+        "log-ability-mage",
+        "log-ability-rogue",
+        "log-ability-druid",
+        "log-ability-warlock",
+        "log-ability-paladin",
+        "log-ability-priest",
+        "log-ability-hunter",
+        "log-ability-shaman",
+        "log-ability-azzinoth",
+    }
+    assert set(ability_classes.values()) == expected_color_classes, \
+        "The consolidated mapping should preserve every class color and Fury of Azzinoth's item color"
+
+    pattern_helper = re.search(
+        r"function buildLogAbilityNamePattern\(abilityClassByName\) \{"
+        r"(?P<body>.*?)\n      \}",
+        duel_html_text,
+        re.S,
+    )
+    assert pattern_helper is not None, \
+        "Ability matching should be factored into a deterministic helper"
+    helper_body = pattern_helper.group("body")
+    assert "Object.keys(abilityClassByName)" in helper_body, \
+        "The matcher should derive names from the production mapping"
+    assert "right.length - left.length" in helper_body, \
+        "Ability names should be sorted longest-first before building the alternation"
+    assert 'namesLongestFirst.map(escapeRegExp).join("|")' in helper_body, \
+        "Every ability name should be escaped into one combined alternation"
+    assert "(?<![A-Za-z0-9_])" in helper_body and "(?![A-Za-z0-9_])" in helper_body, \
+        "Name boundaries should support punctuation-ending abilities without partial word matches"
+
+    # Reconstruct the declared deterministic matcher from the production
+    # mapping, without copying its ability lists into the regression.
+    names_longest_first = sorted(ability_classes, key=lambda name: (-len(name), name))
+    overlap_pattern = re.compile(
+        r"(?<![A-Za-z0-9_])(?:"
+        + "|".join(re.escape(name) for name in names_longest_first)
+        + r")(?![A-Za-z0-9_])"
+    )
+    overlap_cases = {
+        "Demonic Circle: Teleport": ["Demonic Circle: Teleport"],
+        "Demonic Circle": ["Demonic Circle"],
+        "Penance (Self)": ["Penance (Self)"],
+        "Avenging Wrath": ["Avenging Wrath"],
+        "Shadow Word: Death": ["Shadow Word: Death"],
+        "Demonic Circle: Teleport then Demonic Circle": [
+            "Demonic Circle: Teleport",
+            "Demonic Circle",
+        ],
+        "Penance (Self) then Penance; Avenging Wrath then Wrath": [
+            "Penance (Self)",
+            "Penance",
+            "Avenging Wrath",
+            "Wrath",
+        ],
+    }
+    for log_text, expected_names in overlap_cases.items():
+        assert overlap_pattern.findall(log_text) == expected_names, \
+            f"Longest-first ability matching failed for {log_text!r}"
+
+    tokenizer_match = re.search(
+        r"function tokenizeLogAbilityNames\(untouchedText\) \{"
+        r"(?P<body>.*?)\n      \}",
+        duel_html_text,
+        re.S,
+    )
+    assert tokenizer_match is not None, \
+        "Ability matches should be tokenized before any markup is generated"
+    tokenizer_body = tokenizer_match.group("body")
+    assert "untouchedText.replace(" in tokenizer_body \
+        and "logAbilityNamePattern" in tokenizer_body, \
+        "The combined matcher should make one replacement pass over untouched log text"
+    assert "className: logAbilityClassByName[abilityName]" in tokenizer_body, \
+        "Each exact match should retain the CSS class from the consolidated mapping"
+
+    token_renderer_match = re.search(
+        r"function applyLogAbilityTokensToHtml\(output, abilityTokens\) \{"
+        r"(?P<body>.*?)\n      \}",
+        duel_html_text,
+        re.S,
+    )
+    assert token_renderer_match is not None, \
+        "Protected ability tokens should have one dedicated HTML renderer"
+    token_renderer_body = token_renderer_match.group("body")
+    assert (
+        'data-tip-ability="${escapedAbilityName}">${escapedAbilityName}</span>'
+        in token_renderer_body
+    ), "The full matched name should be both the tooltip key and the one span's complete text"
+
+    highlighter_start = duel_html_text.index("function highlightLogLine(text)")
+    highlighter_end = duel_html_text.index("function appendLine(", highlighter_start)
+    highlighter_body = duel_html_text[highlighter_start:highlighter_end]
+    assert "tokenizeLogAbilityNames(textWithoutFx)" in highlighter_body, \
+        "Ability tokenization should run against raw log text before other highlighting"
+    assert "applyLogAbilityTokensToHtml(output, abilityTokens)" in highlighter_body, \
+        "Ability spans should be restored only after class/item/pet highlighting"
+    for legacy_loop in (
+        "warriorAbilities.forEach",
+        "mageAbilities.forEach",
+        "rogueAbilities.forEach",
+        "warlockAbilities.forEach",
+        "druidAbilities.forEach",
+        "paladinAbilities.forEach",
+        "priestAbilities.forEach",
+        "hunterAbilities.forEach",
+        "shamanAbilities.forEach",
+        ".forEach((ability) =>",
+        'if (ability === "Wrath")',
+    ):
+        assert legacy_loop not in highlighter_body, \
+            f"Repeated ability replacement pattern should be gone: {legacy_loop}"
+    assert "stampAbilityTips" not in duel_html_text, \
+        "Tooltip stamping should not reparse or mutate generated ability spans"
+
+    # The refactor must leave every other highlighting layer in the pipeline.
+    for preserved_highlighter in (
+        "classPatterns.forEach",
+        "names.forEach((petName)",
+        "greenItems.forEach",
+        "blueItems.forEach",
+        "purpleItems.forEach",
+        "orangeItems.forEach",
+        "applyFxTokensToHtml(",
+        "stampPetTips(highlightLogLine(msg))",
+    ):
+        assert preserved_highlighter in duel_html_text, \
+            f"Existing class/item/pet/FX highlighting should remain: {preserved_highlighter}"
+
+    show_tip_match = re.search(
+        r"function showAbilityTip\(abilityName, abilityClass, e\) \{"
+        r"(?P<body>.*?)\n      \}",
+        duel_html_text,
+        re.S,
+    )
+    assert show_tip_match is not None \
+        and "const d = abilityTipData[abilityName];" in show_tip_match.group("body"), \
+        "showAbilityTip should look up the exact tooltip key without shortening it"
+    assert 'const name = abilityEl.getAttribute("data-tip-ability");' in duel_html_text \
+        and "showAbilityTip(name, cls, e);" in duel_html_text, \
+        "Combat-log mouseover should pass the exact data-tip-ability value to showAbilityTip"
     return True
 
 
@@ -426,6 +620,7 @@ def scenario_effect_panel_payload_normalization() -> bool:
     assert entries_by_name["Mind Assault"].get("description") == "Mind Blast empowered.", "Mind Assault description should match source text"
     assert entries_by_name["Fire Burn"].get("description") == "Damage over time every turn.", "Fire Burn description should match source text"
     assert entries_by_name["Ambush"].get("description") == "Able to cast Ambush (if not on cooldown).", "Ambush description should match source text"
+    assert entries_by_name["Crusader's Might"].get("description") == "Next offensive ability deals 20% more damage.", "Crusader's Might should expose its exact active-effect mouseover description"
     assert all("duration" not in str(entry.get("description") or "").lower() for entry in all_entries), "Descriptions should not duplicate duration wording"
     assert "Blocking Defence" not in all_names and "Guarded" not in all_names, "Implementation-detail redirect helpers should not leak into the panel"
     assert "bear_form_stats" not in all_names and "Bear Form Stats" not in all_names, "Companion stat effects should not leak into the panel"

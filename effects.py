@@ -5,7 +5,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, TypedDict
 
 from .models import PetState, PlayerState
 from ..content.balance import DEFAULTS
-from ..content.classes import CLASSES, class_display_name
+from ..content.classes import CLASSES
 from .damage_events import make_passive_damage_event
 from .damage_types import (
     DAMAGE_SOURCE_DOT_TICK,
@@ -1162,6 +1162,7 @@ _EFFECT_PANEL_DESCRIPTION_BY_NAME: Dict[str, str] = {
     "Divine Shield": "Immune to all damage (can be dispelled).",
     "Shield of Vengeance": "Absorb shield that deals damage when it explodes.",
     "Avenging Wrath": "Increases outgoing damage by 20%. Also empowers Crusader Strike and Judgment.",
+    "Crusader's Might": "Next offensive ability deals 20% more damage.",
     "Power Word: Shield": "Absorb shield (can be dispelled).",
     "Clarity of Mind": "Next Flash Heal or Penance increased by 40%.",
     "Earth Shock": "Outgoing attacks will miss.",
@@ -2386,8 +2387,7 @@ def trigger_on_hit_passives(
 
             item_name = effect.get("source_item", "item")
             ability_name = ability.get("name", "spell")
-            owner_class = class_display_name((attacker.build.class_id or "").strip().lower()) if attacker.build else "Player"
-            duplicate_prefix = f"{owner_class}(you)'s {item_name}"
+            duplicate_prefix = f"{attacker.sid[:5]}'s {item_name}"
             duplicate_damage = 0
             duplicate_raw_damage = 0
             per_hit_reduced: list[int] = []

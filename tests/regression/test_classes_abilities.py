@@ -2924,9 +2924,8 @@ def scenario_paladin_divine_storm_behavior_and_docs() -> bool:
     assert "Divine Storm" in duel_html and "divine_storm" in duel_html, "duel.html should document Divine Storm and its command"
     assert "Cost: 18 Mana" in duel_html and "Cooldown: 10" in duel_html, "duel.html should document Divine Storm cost and cooldown"
     assert "up to 3 enemy targets total" in duel_html and "[(Attack x 0.7) + d6] Holy magic damage" in duel_html, "duel.html should document Divine Storm targeting and damage"
-    paladin_list_match = re.search(r"const paladinAbilities = \[([^\]]+)\];", duel_html)
-    assert paladin_list_match and "Divine Storm" in paladin_list_match.group(1), "Combat log Paladin ability styling should include Divine Storm"
-    assert "paladinAbilities.forEach((ability)" in duel_html and "log-ability-paladin" in duel_html, "Combat log should use existing Paladin ability color wrapping"
+    assert '"Divine Storm": "log-ability-paladin",' in duel_html, "Combat log Paladin ability styling should include Divine Storm"
+    assert "tokenizeLogAbilityNames(textWithoutFx)" in duel_html and "applyLogAbilityTokensToHtml(output, abilityTokens)" in duel_html, "Combat log should use the overlap-safe Paladin ability color wrapping"
     assert re.search(r'"Magical Attack": \[[^\]]*"Divine Storm"', duel_html), "Divine Storm docs should be categorized as a magical attack for tooltip/icon metadata"
     assert re.search(r'"AoE": \[[^\]]*"Divine Storm"', duel_html), "Divine Storm docs should be categorized as AoE for tooltip/icon metadata"
     assert "data-tip-ability" in duel_html, "Combat log ability mouseover stamping should remain enabled"
