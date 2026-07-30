@@ -3308,11 +3308,15 @@ def resolve_turn(match: MatchState) -> None:
         if ability_id in ("vampiric_touch", "devouring_plague"):
             if is_immune_all(target):
                 target_immune_log(log_parts)
+                if ability.get("consume_effect"):
+                    remove_effect(actor, ability["consume_effect"])
                 set_cooldown(actor, ability_id, ability)
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
             dot_template = build_effect((ability.get("dot") or {}).get("id", ""))
             if has_effect(target, "cloak_of_shadows") and is_magical_harmful_effect(dot_template):
                 log_parts.append("Immune!")
+                if ability.get("consume_effect"):
+                    remove_effect(actor, ability["consume_effect"])
                 set_cooldown(actor, ability_id, ability)
                 return {"damage": 0, "healing": 0, "log": " ".join(log_parts), "ability_id": ability_id}
             intellect = modify_stat(actor, "int", actor.stats.get("int", 0))

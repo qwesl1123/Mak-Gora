@@ -2274,6 +2274,37 @@ def scenario_flash_heal_never_misses_from_enemy_avoidance() -> bool:
     return True
 
 
+def scenario_devouring_plague_consumes_insight_on_immune_and_cloaked() -> bool:
+    immune_match = make_match("priest", "mage", seed=8626)
+    priest, mage = _player_states(immune_match)
+    effects.apply_effect_by_id(priest, "shadowy_insight", overrides={"duration": 3})
+    effects.apply_effect_by_id(mage, "iceblock", overrides={"duration": 2})
+    mp_before = priest.res.mp
+    submit_turn(immune_match, "devouring_plague", _DEF_PASS)
+    assert not effects.has_effect(priest, "shadowy_insight"), "Shadowy Insight should be consumed when Devouring Plague is cast at an immune target"
+    assert not effects.has_effect(mage, "devouring_plague"), "No DoT should land on an immune target"
+    assert priest.res.mp < mp_before, "The committed cast should still spend mana"
+
+    cloak_match = make_match("priest", "rogue", seed=8627)
+    priest, rogue = _player_states(cloak_match)
+    effects.remove_effect(rogue, "stealth")
+    effects.apply_effect_by_id(priest, "shadowy_insight", overrides={"duration": 3})
+    effects.apply_effect_by_id(rogue, "cloak_of_shadows", overrides={"duration": 2})
+    submit_turn(cloak_match, "devouring_plague", _DEF_PASS)
+    cloak_turn = _turn_lines(cloak_match, 1)
+    assert any("Immune!" in line for line in cloak_turn), "Cloak of Shadows should block the shadow DoT"
+    assert not effects.has_effect(priest, "shadowy_insight"), "Shadowy Insight should be consumed when Devouring Plague is cast at a Cloaked target"
+    assert not effects.has_effect(rogue, "devouring_plague"), "No DoT should land through Cloak of Shadows"
+
+    deny_match = make_match("priest", "warrior", seed=8628)
+    priest, _ = _player_states(deny_match)
+    effects.apply_effect_by_id(priest, "shadowy_insight", overrides={"duration": 3})
+    priest.res.mp = 0
+    submit_turn(deny_match, "devouring_plague", _DEF_PASS)
+    assert effects.has_effect(priest, "shadowy_insight"), "Shadowy Insight should be kept when the cast is rejected before resolution"
+    return True
+
+
 def scenario_shaman_shocks_apply_phase1_riders_and_lava_surge() -> bool:
     earth_match = make_match("shaman", "warrior", seed=7004)
     shaman_sid, enemy_sid = earth_match.players
