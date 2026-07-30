@@ -1328,7 +1328,7 @@ def scenario_azzinoth_strike_again_deals_secondary_damage() -> bool:
     raise AssertionError("Could not find deterministic Azzinoth strike-again proc seed in range")
 
 
-def scenario_fury_of_azzinoth_cannot_miss_and_ignores_armor() -> bool:
+def scenario_fury_of_azzinoth_cannot_miss() -> bool:
     low_acc_match = make_match("rogue", "warrior", p1_items={"weapon": "twin_blades_azzinoth"}, seed=3201)
     rogue = low_acc_match.state[low_acc_match.players[0]]
     warrior = low_acc_match.state[low_acc_match.players[1]]
@@ -1339,19 +1339,74 @@ def scenario_fury_of_azzinoth_cannot_miss_and_ignores_armor() -> bool:
     latest_turn = low_acc_match.log[low_acc_match.log.index("Turn 1") + 1:]
     assert not any("Miss!" in line for line in latest_turn if "Fury of Azzinoth" in line), "Fury of Azzinoth should not miss even at 0 accuracy"
     assert warrior.res.hp < before_hp, "Fury of Azzinoth should still deal damage at 0 accuracy"
+    return True
 
-    def_only = make_match("rogue", "warrior", p1_items={"weapon": "twin_blades_azzinoth"}, seed=3202)
-    armored = make_match("rogue", "warrior", p1_items={"weapon": "twin_blades_azzinoth"}, seed=3202)
-    def_only_target = def_only.state[def_only.players[1]]
-    armored_target = armored.state[armored.players[1]]
-    def_only_target.stats["def"] += 999
-    armored_target.stats["def"] += 999
-    armored_target.stats["physical_reduction"] += 999
-    submit_turn(def_only, "fury_of_azzinoth", _DEF_PASS)
-    submit_turn(armored, "fury_of_azzinoth", _DEF_PASS)
-    baseline_damage = def_only_target.res.hp_max - def_only_target.res.hp
-    armored_damage = armored_target.res.hp_max - armored_target.res.hp
-    assert armored_damage == baseline_damage, "Fury of Azzinoth should ignore Armor but still respect DEF"
+
+def scenario_fury_of_azzinoth_respects_armor() -> bool:
+    seed = 10
+    armor = 40
+    fury = ABILITIES["fury_of_azzinoth"]
+    assert "ignore_armor" not in fury, "Fury of Azzinoth must use normal physical mitigation"
+    assert not fury.get("ignore_physical_reduction"), "Fury must not replace ignore_armor with another Armor bypass"
+    assert fury.get("cannot_miss") is True
+    assert fury.get("hits") == 4
+    assert fury.get("requires_weapon") == "twin_blades_azzinoth"
+    assert fury.get("heal_from_dealt_damage") is True
+    assert fury.get("scaling") == {"atk": 0.2}
+    assert fury.get("dice") == {"type": "d6", "power_on": "roll"}
+    assert fury.get("cooldown") == 25
+    assert fury.get("damage_type") == "physical"
+
+    def resolve_fury(physical_reduction: int):
+        match = make_match(
+            "rogue",
+            "warrior",
+            p1_items={"weapon": "twin_blades_azzinoth"},
+            seed=seed,
+        )
+        rogue_sid, warrior_sid = match.players
+        rogue = match.state[rogue_sid]
+        warrior = match.state[warrior_sid]
+        rogue.res.hp = 1
+        warrior.stats["def"] = 0
+        warrior.stats["physical_reduction"] = physical_reduction
+        rogue_before = rogue.res.hp
+        warrior_before = warrior.res.hp
+
+        submit_turn(match, "fury_of_azzinoth", _DEF_PASS)
+
+        turn_lines = _turn_lines(match, 1)
+        fury_lines = [line for line in turn_lines if "cast Fury of Azzinoth." in line]
+        assert len(fury_lines) == 1, "Fury of Azzinoth should resolve successfully exactly once"
+        hit_results = re.findall(r"Hit (\d+): .*?Deals (\d+) damage\.", fury_lines[0])
+        assert [hit_number for hit_number, _ in hit_results] == ["1", "2", "3", "4"], \
+            "Fury of Azzinoth should log exactly four ordered hit results"
+        assert "Miss!" not in fury_lines[0], "Fury's cannot_miss metadata should keep every hit from missing"
+        assert not any("strikes again with Twin Blades of Azzinoth" in line for line in turn_lines), \
+            "Pinned seed must isolate Fury's four active hits from the Twin Blades strike-again passive"
+
+        hits = [int(damage) for _, damage in hit_results]
+        damage = warrior_before - warrior.res.hp
+        healing = rogue.res.hp - rogue_before
+        assert damage == sum(hits), "Fury's total damage should equal its four independently resolved hits"
+        assert match.combat_totals[rogue_sid]["damage"] == damage, \
+            "Combat damage totals should use actual post-mitigation HP damage"
+        return hits, damage, healing, match.combat_totals[rogue_sid]
+
+    baseline_hits, baseline_damage, baseline_healing, baseline_totals = resolve_fury(0)
+    armored_hits, armored_damage, armored_healing, armored_totals = resolve_fury(armor)
+    expected_armored_hits = [_expected_mitigated(raw_hit, armor) for raw_hit in baseline_hits]
+
+    assert armored_hits == expected_armored_hits, \
+        "Every Fury hit should pass independently through the existing physical mitigation curve"
+    assert all(armored_hit < raw_hit for raw_hit, armored_hit in zip(baseline_hits, armored_hits)), \
+        "Armor should mitigate each Fury hit, not only the combined total"
+    assert armored_damage < baseline_damage, "Armor should reduce Fury's actual HP damage"
+    assert baseline_healing == baseline_damage, "Unarmored Fury healing should equal actual unarmored HP damage"
+    assert armored_healing == armored_damage, "Armored Fury healing should equal actual post-mitigation HP damage"
+    assert armored_healing < baseline_damage, "Armored Fury must not heal from the larger pre-mitigation total"
+    assert baseline_totals["healing"] == baseline_healing
+    assert armored_totals["healing"] == armored_healing
     return True
 
 
