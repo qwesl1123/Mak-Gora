@@ -3460,6 +3460,7 @@ def resolve_turn(match: MatchState) -> None:
 
         ability_hit_landed = False
         had_flame_dance_at_cast_start = has_effect(actor, "flame_dance")
+        flame_dance_consumed_this_cast = False
         on_hit_base_damage = 0
         per_hit_damage_values: list[int] = []
         per_hit_secondary_proc_base_values: list[int] = []
@@ -3489,6 +3490,16 @@ def resolve_turn(match: MatchState) -> None:
                 continue
 
             ability_hit_landed = True
+            # Consume the cast-start Flame Dance at the first landed hit so a
+            # fire ability that re-grants it (Flame Shock) refreshes the buff
+            # instead of losing the fresh grant to the end-of-cast removal.
+            if (
+                not flame_dance_consumed_this_cast
+                and had_flame_dance_at_cast_start
+                and str(ability_subschool or "").lower() == "fire"
+            ):
+                remove_effect(actor, "flame_dance")
+                flame_dance_consumed_this_cast = True
 
             raw = 0
             local_scaling = dict(scaling)
@@ -3513,7 +3524,7 @@ def resolve_turn(match: MatchState) -> None:
                 if hit_empowerment.get("log"):
                     log_parts.append(f"{prefix}{hit_empowerment['log']}")
             is_empowered_flame_dance = bool(
-                has_effect(actor, "flame_dance")
+                had_flame_dance_at_cast_start
                 and str(ability_subschool or "").lower() == "fire"
             )
             if flat_damage is not None:
@@ -3879,8 +3890,6 @@ def resolve_turn(match: MatchState) -> None:
         active_empowerment = active_ability_empowerment(actor, ability)
         if active_empowerment is not None:
             consume_ability_empowerment(actor, active_empowerment)
-        if had_flame_dance_at_cast_start and has_effect(actor, "flame_dance") and str(ability_subschool or "").lower() == "fire" and ability_hit_landed:
-            remove_effect(actor, "flame_dance")
 
         if consumes_onslaught and onslaught_stacks > 0:
             remove_effect(actor, "onslaught")

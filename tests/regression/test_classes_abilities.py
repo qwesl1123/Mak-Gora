@@ -2305,6 +2305,39 @@ def scenario_devouring_plague_consumes_insight_on_immune_and_cloaked() -> bool:
     return True
 
 
+def scenario_flame_shock_with_flame_dance_consumes_and_regrants() -> bool:
+    original_roll = resolver.roll
+    original_hit = resolver.hit_chance
+    try:
+        resolver.hit_chance = lambda acc, eva: 100
+        resolver.roll = lambda die, rng: {"d4": 2, "d6": 3, "d8": 4}.get(die, original_roll(die, rng))
+
+        match = make_match("shaman", "warrior", seed=8629)
+        shaman, warrior = _player_states(match)
+        shaman.stats.update({"int": 10, "crit": 0})
+        warrior.stats.update({"def": 0, "magic_resist": 0})
+        effects.apply_effect_by_id(shaman, "flame_dance", overrides={"duration": 2})
+        submit_turn(match, "flame_shock", _DEF_PASS)
+        turn = _turn_lines(match, 1)
+        assert any("Empowered by Flame Dance!" in line for line in turn), "The cast-start Flame Dance should empower Flame Shock"
+        assert any("Deals 15 damage." in line for line in turn), "Empowered Flame Shock should deal int((int(10*0.8)+2)*1.5) = 15 damage"
+        assert any("has Flame Dance!" in line for line in turn), "Flame Shock's on-hit grant should land after the old buff is consumed"
+        dance = effects.get_effect(shaman, "flame_dance")
+        assert dance is not None, "Casting Flame Shock with Flame Dance up should refresh the buff, not destroy it"
+        assert int(dance.get("duration", 0) or 0) == 4, "The refreshed Flame Dance should carry the fresh 5-turn grant after end-of-turn ticking"
+
+        miss_match = make_match("shaman", "warrior", seed=8630)
+        shaman, _ = _player_states(miss_match)
+        effects.apply_effect_by_id(shaman, "flame_dance", overrides={"duration": 3})
+        resolver.hit_chance = lambda acc, eva: 0
+        submit_turn(miss_match, "flame_shock", _DEF_PASS)
+        assert effects.has_effect(shaman, "flame_dance"), "A fully missed fire cast should not consume Flame Dance"
+    finally:
+        resolver.roll = original_roll
+        resolver.hit_chance = original_hit
+    return True
+
+
 def scenario_shaman_shocks_apply_phase1_riders_and_lava_surge() -> bool:
     earth_match = make_match("shaman", "warrior", seed=7004)
     shaman_sid, enemy_sid = earth_match.players
