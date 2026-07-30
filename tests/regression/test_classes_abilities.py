@@ -2104,7 +2104,7 @@ def scenario_priest_clarity_of_mind_buff_and_empowerment() -> bool:
         assert int(template.get("duration", 0) or 0) == 4, "Clarity of Mind should last 4 turns"
         assert template.get("stackable") is True, "Clarity of Mind should be stackable"
         assert int(template.get("max_stacks", 0) or 0) == 2, "Clarity of Mind should cap at 2 stacks"
-        assert effects._EFFECT_PANEL_DESCRIPTION_BY_NAME.get("Clarity of Mind") == "Next Flash Heal or Penance increased by 40%.", "Clarity of Mind panel mouseover should match"
+        assert effects._EFFECT_PANEL_DESCRIPTION_BY_NAME.get("Clarity of Mind") == "Flash Heal and Penance increased by 40%. Consumes 1 stack per cast.", "Clarity of Mind panel mouseover should match"
 
         flash_match = make_match("priest", "warrior", seed=8801)
         priest, warrior = _player_states(flash_match)
@@ -2113,6 +2113,7 @@ def scenario_priest_clarity_of_mind_buff_and_empowerment() -> bool:
         submit_turn(flash_match, "flash_heal", _DEF_PASS)
         flash_turn = _turn_lines(flash_match, 1)
         assert any("Flash Heal restores 19 HP." in line for line in flash_turn), "Flash Heal should use [Intellect (1.5x) + d8]"
+        assert not any("Empowered by Clarity of Mind!" in line for line in flash_turn), "Flash Heal without Clarity of Mind should not log an empowerment"
 
         shield_match = make_match("priest", "warrior", seed=8802)
         priest, _ = _player_states(shield_match)
@@ -2126,7 +2127,7 @@ def scenario_priest_clarity_of_mind_buff_and_empowerment() -> bool:
         clarity_entry = next((entry for entry in panel.get("buffs_magical", []) if entry.get("name") == "Clarity of Mind"), None)
         assert clarity_entry is not None, "Active effects should show Clarity of Mind"
         assert clarity_entry.get("stackable") is True and clarity_entry.get("stacks") == 2, "Active effects should show Clarity of Mind stack count"
-        assert clarity_entry.get("description") == "Next Flash Heal or Penance increased by 40%.", "Clarity of Mind mouseover description should match"
+        assert clarity_entry.get("description") == "Flash Heal and Penance increased by 40%. Consumes 1 stack per cast.", "Clarity of Mind mouseover description should match"
 
         clarity["duration"] = 1
         priest.cooldowns.pop("shield", None)
@@ -2143,7 +2144,9 @@ def scenario_priest_clarity_of_mind_buff_and_empowerment() -> bool:
         submit_turn(empowered_flash, "flash_heal", _DEF_PASS)
         clarity_after_flash = effects.get_effect(priest, "clarity_of_mind")
         assert clarity_after_flash is not None and effects.effect_stack_count(clarity_after_flash) == 1, "Flash Heal should consume 1 Clarity of Mind stack on cast"
-        assert any("Flash Heal restores 26 HP." in line for line in _turn_lines(empowered_flash, 1)), "Flash Heal should gain +40% final healing with Clarity of Mind"
+        empowered_flash_turn = _turn_lines(empowered_flash, 1)
+        assert any("Flash Heal restores 26 HP." in line for line in empowered_flash_turn), "Flash Heal should gain +40% final healing with Clarity of Mind"
+        assert any("Empowered by Clarity of Mind!" in line for line in empowered_flash_turn), "Consuming a Clarity of Mind stack should be logged on Flash Heal"
 
         penance_match = make_match("priest", "warrior", seed=8804)
         priest, warrior = _player_states(penance_match)
@@ -2155,6 +2158,7 @@ def scenario_priest_clarity_of_mind_buff_and_empowerment() -> bool:
         clarity_after_penance = effects.get_effect(priest, "clarity_of_mind")
         assert clarity_after_penance is not None and effects.effect_stack_count(clarity_after_penance) == 1, "Penance should consume 1 Clarity of Mind stack total per cast"
         assert hp_before - warrior.res.hp == 24, "Penance should gain +40% final damage across the cast"
+        assert any("Empowered by Clarity of Mind!" in line for line in _turn_lines(penance_match, 1)), "Consuming a Clarity of Mind stack should be logged on Penance"
 
         penance_self_match = make_match("priest", "warrior", seed=8805)
         priest, _ = _player_states(penance_self_match)
@@ -2166,6 +2170,7 @@ def scenario_priest_clarity_of_mind_buff_and_empowerment() -> bool:
         clarity_after_self = effects.get_effect(priest, "clarity_of_mind")
         assert clarity_after_self is not None and effects.effect_stack_count(clarity_after_self) == 1, "Penance (Self) should consume 1 Clarity of Mind stack total per cast"
         assert priest.res.hp - hp_before == 24, "Penance (Self) should gain +40% final healing across the cast"
+        assert any("Empowered by Clarity of Mind!" in line for line in _turn_lines(penance_self_match, 1)), "Consuming a Clarity of Mind stack should be logged on Penance (Self)"
 
         miss_match = make_match("priest", "mage", seed=8806)
         priest, mage = _player_states(miss_match)
@@ -2173,6 +2178,7 @@ def scenario_priest_clarity_of_mind_buff_and_empowerment() -> bool:
         effects.apply_effect_by_id(mage, "blink", overrides={"duration": 2})
         submit_turn(miss_match, "penance", _DEF_PASS)
         assert not effects.has_effect(priest, "clarity_of_mind"), "Clarity of Mind should be consumed when Penance is cast even if it misses"
+        assert any("Empowered by Clarity of Mind!" in line for line in _turn_lines(miss_match, 1)), "Clarity of Mind consumption should be logged even when Penance misses"
 
         immune_match = make_match("priest", "mage", seed=8807)
         priest, mage = _player_states(immune_match)
@@ -2180,11 +2186,51 @@ def scenario_priest_clarity_of_mind_buff_and_empowerment() -> bool:
         effects.apply_effect_by_id(mage, "iceblock", overrides={"duration": 2})
         submit_turn(immune_match, "penance", _DEF_PASS)
         assert not effects.has_effect(priest, "clarity_of_mind"), "Clarity of Mind should be consumed when Penance is cast even if the target is immune"
+        assert any("Empowered by Clarity of Mind!" in line for line in _turn_lines(immune_match, 1)), "Clarity of Mind consumption should be logged even when the target is immune"
 
         duel_html_text = _detect_duel_html_path().read_text(encoding="utf-8")
         assert "Gain an absorb shield for [Intellect (1.0x) + d6] and grant 2 stacks of Clarity of Mind for 4 turns" in duel_html_text, "Power Word: Shield docs should mention Clarity of Mind"
         assert "Heals self for [Intellect (1.5x) + d8]. If Clarity of Mind is active" in duel_html_text, "Flash Heal docs should match live behavior"
         assert "If Clarity of Mind is active, consumes 1 stack total per cast to increase final damage/healing by 40%." in duel_html_text, "Penance docs should match live behavior"
+    finally:
+        resolver.roll = original_roll
+        resolver.hit_chance = original_hit
+    return True
+
+
+def scenario_priest_clarity_of_mind_acquire_and_spend_flow() -> bool:
+    original_roll = resolver.roll
+    original_hit = resolver.hit_chance
+    try:
+        resolver.hit_chance = lambda acc, eva: 100
+        resolver.roll = lambda die, rng: {"d4": 2, "d6": 3, "d8": 4}.get(die, original_roll(die, rng))
+
+        match = make_match("priest", "warrior", seed=8808)
+        priest, warrior = _player_states(match)
+        priest.stats.update({"int": 10, "acc": 999, "crit": 0})
+        warrior.stats.update({"eva": 0, "def": 0, "magic_resist": 0})
+
+        submit_turn(match, "shield", _DEF_PASS)
+        clarity = effects.get_effect(priest, "clarity_of_mind")
+        assert clarity is not None and effects.effect_stack_count(clarity) == 2, "Power Word: Shield should grant 2 Clarity of Mind stacks"
+
+        hp_before = warrior.res.hp
+        submit_turn(match, "penance", _DEF_PASS)
+        penance_turn = _turn_lines(match, 2)
+        assert sum(line.count("Empowered by Clarity of Mind!") for line in penance_turn) == 1, "Penance should log Clarity of Mind consumption exactly once per cast"
+        assert hp_before - warrior.res.hp == 24, "Empowered Penance should deal 24 total damage at int 10 with d4=2"
+        clarity_after_penance = effects.get_effect(priest, "clarity_of_mind")
+        assert clarity_after_penance is not None and effects.effect_stack_count(clarity_after_penance) == 1, "Penance should spend exactly 1 of the 2 shield-granted stacks"
+        panel = effects.build_effect_panel_payload(priest)
+        clarity_entry = next((entry for entry in panel.get("buffs_magical", []) if entry.get("name") == "Clarity of Mind"), None)
+        assert clarity_entry is not None and clarity_entry.get("stacks") == 1, "Active effects should show the remaining Clarity of Mind stack"
+
+        priest.res.hp = priest.res.hp_max - 100
+        submit_turn(match, "flash_heal", _DEF_PASS)
+        flash_turn = _turn_lines(match, 3)
+        assert any("Empowered by Clarity of Mind!" in line for line in flash_turn), "Flash Heal should log Clarity of Mind consumption"
+        assert any("Flash Heal restores 26 HP." in line for line in flash_turn), "Empowered Flash Heal should restore 26 HP at int 10 with d8=4"
+        assert not effects.has_effect(priest, "clarity_of_mind"), "Spending the second stack should remove Clarity of Mind"
     finally:
         resolver.roll = original_roll
         resolver.hit_chance = original_hit

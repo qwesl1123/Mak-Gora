@@ -1164,7 +1164,7 @@ _EFFECT_PANEL_DESCRIPTION_BY_NAME: Dict[str, str] = {
     "Shield of Vengeance": "Absorb shield that deals damage when it explodes.",
     "Avenging Wrath": "Increases outgoing damage by 20%. Also empowers Crusader Strike and Judgment.",
     "Power Word: Shield": "Absorb shield (can be dispelled).",
-    "Clarity of Mind": "Next Flash Heal or Penance increased by 40%.",
+    "Clarity of Mind": "Flash Heal and Penance increased by 40%. Consumes 1 stack per cast.",
     "Earth Shock": "Outgoing attacks will miss.",
     "Flame Dance": "Next Fire spell’s damage increased by 50%.",
     "Frost Shock": "Frozen and cannot act. Breaks on damage.",

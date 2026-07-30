@@ -406,6 +406,13 @@ def _apply_clarity_of_mind_bonus(amount: int, consumed: bool) -> int:
     return int(amount * CLARITY_OF_MIND_MULTIPLIER)
 
 
+def _clarity_of_mind_outgoing_multiplier(ability_id: str, consumed: bool) -> float:
+    # Penance's damage bonus folds into the combined outgoing scalar so it
+    # truncates once alongside the other outgoing multipliers; the heals
+    # (flash_heal, penance_self) apply _apply_clarity_of_mind_bonus instead.
+    return CLARITY_OF_MIND_MULTIPLIER if (consumed and ability_id == "penance") else 1.0
+
+
 # Ability-specific empowerment ("empowered_by" ability metadata). Fixed
 # per-ability empowered formula variants (e.g. empowered Mind Blast) are
 # declared in ability data and resolved through the two helpers below. Broad
@@ -3022,6 +3029,8 @@ def resolve_turn(match: MatchState) -> None:
 
         consume_costs(actor, ability.get("cost", {}), challenger_mode=action_challenger_mode)
         clarity_consumed = _consume_clarity_of_mind_on_cast(actor, ability_id)
+        if clarity_consumed:
+            log_parts.append("Empowered by Clarity of Mind!")
 
         extra_logs: list[Any] = []
         dice_data = ability.get("dice")
@@ -3428,9 +3437,11 @@ def resolve_turn(match: MatchState) -> None:
         total_healing = 0
         total_overhealing = 0
         empower_multiplier = next_offense_multiplier
-        outgoing_mult = outgoing_damage_multiplier(actor) * (1.0 + (0.04 * onslaught_stacks))
-        if clarity_consumed and ability_id == "penance":
-            outgoing_mult *= CLARITY_OF_MIND_MULTIPLIER
+        outgoing_mult = (
+            outgoing_damage_multiplier(actor)
+            * (1.0 + (0.04 * onslaught_stacks))
+            * _clarity_of_mind_outgoing_multiplier(ability_id, clarity_consumed)
+        )
         miss_chance = float(ITEMS.get(weapon_id, {}).get("miss_chance", 0) or 0) if weapon_id else 0.0
         accuracy = hit_chance(
             modify_stat(actor, "acc", actor.stats.get("acc", 90)),
