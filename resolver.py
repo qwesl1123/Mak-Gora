@@ -3084,6 +3084,9 @@ def resolve_turn(match: MatchState) -> None:
                 set_cooldown(actor, ability_id, ability)
                 if ability.get("consume_effect"):
                     remove_effect(actor, ability["consume_effect"])
+                active_empowerment = active_ability_empowerment(actor, ability)
+                if active_empowerment is not None:
+                    consume_ability_empowerment(actor, active_empowerment)
                 if offensive_action and turn_ctx.stealth_start_at_turn_begin.get(actor_sid, False):
                     remove_stealth(actor)
                 if consumes_onslaught and onslaught_stacks > 0:
@@ -3103,6 +3106,9 @@ def resolve_turn(match: MatchState) -> None:
                 set_cooldown(actor, ability_id, ability)
                 if ability.get("consume_effect"):
                     remove_effect(actor, ability["consume_effect"])
+                active_empowerment = active_ability_empowerment(actor, ability)
+                if active_empowerment is not None:
+                    consume_ability_empowerment(actor, active_empowerment)
                 if offensive_action and turn_ctx.stealth_start_at_turn_begin.get(actor_sid, False):
                     remove_stealth(actor)
                 if consumes_onslaught and onslaught_stacks > 0:

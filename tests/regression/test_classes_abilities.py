@@ -3399,6 +3399,48 @@ def scenario_empowerment_consumed_on_miss_but_not_on_rejection() -> bool:
     deny_turn = _turn_lines(deny_match, 1)
     assert any("didn't have enough mana" in line for line in deny_turn), "Zero-mana Mind Blast should be rejected before resolution"
     assert _has_effect(priest, "mind_blast_empowered"), "Empowerment should not be consumed when the action is rejected before resolution"
+
+    rolled_after_commit: list[str] = []
+    original_roll = resolver.roll
+    original_hit = resolver.hit_chance
+    try:
+        def spy_roll(die, rng):
+            rolled_after_commit.append(die)
+            return original_roll(die, rng)
+
+        resolver.roll = spy_roll
+        resolver.hit_chance = lambda acc, eva: 100
+
+        blink_match = make_match("priest", "mage", seed=8623)
+        priest, mage = _player_states(blink_match)
+        effects.apply_effect_by_id(priest, "mind_blast_empowered", overrides={"duration": 5})
+        effects.apply_effect_by_id(mage, "blink", overrides={"duration": 2})
+        submit_turn(blink_match, "mind_blast", _DEF_PASS)
+        blink_turn = _turn_lines(blink_match, 1)
+        assert any("cast Mind Blast" in line and "Miss" in line for line in blink_turn), "Blink should force the pre-roll miss"
+        assert not _has_effect(priest, "mind_blast_empowered"), "Empowerment should be consumed on a committed cast that misses a blinking target"
+        assert "d8" not in rolled_after_commit, "The override die must not be rolled on a blink miss"
+        assert not any("Empowered by Mind Flay!" in line for line in blink_turn), "Blink-missed empowered cast should not log the empowerment"
+
+        stealth_match = make_match("priest", "rogue", seed=8624)
+        priest, _ = _player_states(stealth_match)
+        effects.apply_effect_by_id(priest, "mind_blast_empowered", overrides={"duration": 5})
+        submit_turn(stealth_match, "mind_blast", "vanish")
+        stealth_turn = _turn_lines(stealth_match, 1)
+        assert any("Target is stealthed — Miss!" in line for line in stealth_turn), "Stealth should force the pre-resolution miss"
+        assert not _has_effect(priest, "mind_blast_empowered"), "Empowerment should be consumed on a committed cast against a stealthed target"
+
+        surge_match = make_match("shaman", "mage", seed=8625)
+        shaman, mage = _player_states(surge_match)
+        for _ in range(2):
+            effects.apply_effect_by_id(shaman, "lava_surge", overrides={"duration": 3})
+        effects.apply_effect_by_id(mage, "blink", overrides={"duration": 2})
+        submit_turn(surge_match, "lava_lash", _DEF_PASS)
+        surge = effects.get_effect(shaman, "lava_surge")
+        assert surge is not None and effects.effect_stack_count(surge) == 1, "Stack-mode empowerment should consume exactly one Lava Surge stack on a blink miss"
+    finally:
+        resolver.roll = original_roll
+        resolver.hit_chance = original_hit
     return True
 
 
