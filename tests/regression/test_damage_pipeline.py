@@ -14,6 +14,7 @@ from harness import (
     PETS,
     PET_AI,
     PetState,
+    SOCKETS,
     _has_effect,
     _player_states,
     _turn_lines,
@@ -443,18 +444,45 @@ def scenario_dragonwrath_duplicate_spell_deals_real_damage() -> bool:
     raise AssertionError("Could not find deterministic Dragonwrath duplicate proc seed in range")
 
 
-def scenario_dragonwrath_duplicate_log_includes_class_owner_prefix() -> bool:
-    for seed in range(1, 800):
-        match = make_match("priest", "warrior", p1_items={"weapon": "dragonwrath"}, seed=seed)
-        submit_turn(match, "mind_flay", _DEF_PASS)
-        duplicate_line = next((line for line in match.log if "duplicates Mind Flay!" in line), None)
-        if not duplicate_line:
-            continue
-        assert duplicate_line.startswith("Priest(you)'s Dragonwrath, Tarecgosa's Rest duplicates Mind Flay!"), (
-            "Dragonwrath duplicate log should include class(you)'s weapon owner prefix"
+def scenario_dragonwrath_duplicate_log_is_viewer_relative() -> bool:
+    match = make_match("priest", "warrior", p1_items={"weapon": "dragonwrath"}, seed=5)
+    priest_sid, warrior_sid = match.players
+
+    submit_turn(match, "mind_flay", _DEF_PASS)
+
+    raw_duplicate_lines = [line for line in match.log if "duplicates Mind Flay!" in line]
+    assert len(raw_duplicate_lines) == 1, "Dragonwrath should emit exactly one Mind Flay duplicate event"
+    raw_duplicate_line = raw_duplicate_lines[0]
+    assert raw_duplicate_line.startswith(
+        f"{priest_sid[:5]}'s Dragonwrath, Tarecgosa's Rest duplicates Mind Flay!"
+    ), "Raw Dragonwrath logs should identify the owner with the attacker's SID token"
+    assert "(you)" not in raw_duplicate_line, "Raw shared Dragonwrath logs must not hard-code viewer-relative ownership"
+
+    priest_view = SOCKETS.snapshot_for(match, priest_sid)
+    warrior_view = SOCKETS.snapshot_for(match, warrior_sid)
+    priest_duplicate_lines = [line for line in priest_view["log"] if "duplicates Mind Flay!" in line]
+    warrior_duplicate_lines = [line for line in warrior_view["log"] if "duplicates Mind Flay!" in line]
+    assert len(priest_duplicate_lines) == 1 and len(warrior_duplicate_lines) == 1, (
+        "Each viewer snapshot should render the single Dragonwrath duplicate event exactly once"
+    )
+    priest_duplicate_line = priest_duplicate_lines[0]
+    warrior_duplicate_line = warrior_duplicate_lines[0]
+    assert priest_duplicate_line.startswith("Priest(you)'s"), (
+        "The Dragonwrath owner should see the duplicate attributed to Priest(you)"
+    )
+    assert warrior_duplicate_line.startswith("Priest's"), (
+        "The opponent should see the duplicate attributed to Priest without the viewer marker"
+    )
+    assert "(you)" not in warrior_duplicate_line, "The opponent's Dragonwrath duplicate line must not contain (you)"
+
+    item_fx_markup = "[[fx:fx_dragonwrath]]Dragonwrath, Tarecgosa's Rest[[/fx]]"
+    duplicate_damage_text = "duplicates Mind Flay! Roll d4 = 1. Deals 6 damage."
+    for duplicate_line in (priest_duplicate_line, warrior_duplicate_line):
+        assert item_fx_markup in duplicate_line, "Dragonwrath duplicate snapshots should preserve item FX markup"
+        assert duplicate_damage_text in duplicate_line, (
+            "Dragonwrath duplicate snapshots should preserve the complete deterministic Mind Flay damage text"
         )
-        return True
-    raise AssertionError("Could not find deterministic Dragonwrath Mind Flay duplicate proc seed in range")
+    return True
 
 
 def scenario_dragonwrath_multihit_duplicate_logs_as_single_line() -> bool:
