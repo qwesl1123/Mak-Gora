@@ -2237,6 +2237,43 @@ def scenario_priest_clarity_of_mind_acquire_and_spend_flow() -> bool:
     return True
 
 
+def scenario_flash_heal_never_misses_from_enemy_avoidance() -> bool:
+    original_roll = resolver.roll
+    original_hit = resolver.hit_chance
+    try:
+        resolver.hit_chance = lambda acc, eva: 100
+        resolver.roll = lambda die, rng: {"d4": 2, "d6": 3, "d8": 4}.get(die, original_roll(die, rng))
+
+        stealth_match = make_match("priest", "rogue", seed=8809)
+        priest, _rogue = _player_states(stealth_match)
+        priest.stats["int"] = 10
+        priest.res.hp = priest.res.hp_max - 100
+        mp_before = priest.res.mp
+        submit_turn(stealth_match, "flash_heal", "vanish")
+        stealth_turn = _turn_lines(stealth_match, 1)
+        assert any("Flash Heal restores 19 HP." in line for line in stealth_turn), "Flash Heal should heal in full while the enemy is stealthed"
+        assert not any("Flash Heal" in line and "Miss" in line for line in stealth_turn), "A self-heal should never miss because the enemy is stealthed"
+        assert priest.res.mp < mp_before, "Flash Heal should still spend mana"
+        assert "flash_heal" in priest.cooldowns, "Flash Heal should still go on cooldown"
+
+        blink_match = make_match("priest", "mage", seed=8810)
+        priest, mage = _player_states(blink_match)
+        priest.stats["int"] = 10
+        priest.res.hp = priest.res.hp_max - 100
+        effects.apply_effect_by_id(mage, "blink", overrides={"duration": 2})
+        effects.apply_effect_by_id(priest, "clarity_of_mind", overrides={"duration": 4, "stacks": 1})
+        submit_turn(blink_match, "flash_heal", _DEF_PASS)
+        blink_turn = _turn_lines(blink_match, 1)
+        assert any("Flash Heal restores 26 HP." in line for line in blink_turn), "Flash Heal should heal in full with Clarity of Mind while the enemy is blinking"
+        assert any("Empowered by Clarity of Mind!" in line for line in blink_turn), "Clarity of Mind consumption should be logged on the blink-turn heal"
+        assert not any("Flash Heal" in line and "Miss" in line for line in blink_turn), "A self-heal should never miss because the enemy is blinking"
+        assert not effects.has_effect(priest, "clarity_of_mind"), "The heal should consume exactly the one seeded Clarity of Mind stack"
+    finally:
+        resolver.roll = original_roll
+        resolver.hit_chance = original_hit
+    return True
+
+
 def scenario_shaman_shocks_apply_phase1_riders_and_lava_surge() -> bool:
     earth_match = make_match("shaman", "warrior", seed=7004)
     shaman_sid, enemy_sid = earth_match.players

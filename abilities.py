@@ -1133,7 +1133,7 @@ ABILITIES = {
         "name": "Flash Heal",
         "display_color": "#FFFFFF",
         "cost": {"mp": 25},
-        "dice": {"type": "d8", "power_on": "roll"},
+        "dice": None,
         "direct_damage": False,
         "tags": ["spell", "defense"],
         "school": "magical",
