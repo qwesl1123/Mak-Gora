@@ -117,6 +117,7 @@ from .effects import (
     current_form_id,
     get_effect,
     outgoing_damage_multiplier,
+    outgoing_damage_empowerment_logs,
     is_dispellable_by,
     effect_template,
     effect_has_tag,
@@ -3022,6 +3023,10 @@ def resolve_turn(match: MatchState) -> None:
 
         consume_costs(actor, ability.get("cost", {}), challenger_mode=action_challenger_mode)
         clarity_consumed = _consume_clarity_of_mind_on_cast(actor, ability_id)
+        # The stack is already spent by the committed cast, so the log belongs
+        # here — it must survive an ordinary miss or an immune target too.
+        if clarity_consumed:
+            log_parts.append("Empowered by Clarity of Mind!")
 
         extra_logs: list[Any] = []
         dice_data = ability.get("dice")
@@ -3060,6 +3065,15 @@ def resolve_turn(match: MatchState) -> None:
             onslaught_effect = get_effect(actor, "onslaught")
             if onslaught_effect:
                 onslaught_stacks = effect_stack_count(onslaught_effect)
+        # Every remaining path for a rage-spending damaging ability consumes the
+        # snapshotted stacks — the pre-resolution protection return, the
+        # hit-resolution miss return, and the end-of-cast removal — so the log
+        # is emitted once here, alongside the snapshot that drives all three.
+        if consumes_onslaught and onslaught_stacks > 0:
+            stack_label = "stack" if onslaught_stacks == 1 else "stacks"
+            log_parts.append(
+                f"Empowered by Onslaught ({onslaught_stacks} {stack_label})!"
+            )
         aoe_skip_champion = False
         aoe_champion_log_override: str | None = None
 
@@ -3448,6 +3462,20 @@ def resolve_turn(match: MatchState) -> None:
             ability_id == "death"
             and target.res.hp / max(1, target.res.hp_max) < 0.2
         )
+        # Ability empowerment ("empowered_by") is snapshotted once for the whole
+        # cast: pre-resolution protection and hit resolution have already been
+        # cleared, so from here the cast is committed and the snapshot both
+        # drives every hit's empowered formula and is the spec consumed at
+        # end-of-cast. Logging it here — not per landed hit — keeps the source
+        # visible on an ordinary accuracy miss and prints it once per cast
+        # rather than once per hit.
+        active_empowerment = active_ability_empowerment(actor, ability)
+        empowerment_log = str((active_empowerment or {}).get("log") or "")
+        if empowerment_log:
+            log_parts.append(empowerment_log)
+        # Broad outgoing-damage buffs (Avenging Wrath) identify themselves
+        # generically from effect metadata; they are not consumed by the cast.
+        log_parts.extend(outgoing_damage_empowerment_logs(actor))
         for hit_index in range(1, hits + 1):
             prefix = f"Hit {hit_index}: " if hits > 1 else ""
             roll_power = 0
@@ -3471,17 +3499,17 @@ def resolve_turn(match: MatchState) -> None:
 
             raw = 0
             local_scaling = dict(scaling)
-            # Data-driven ability empowerment ("empowered_by" ability metadata).
+            # Data-driven ability empowerment ("empowered_by" ability metadata),
+            # reusing the per-cast snapshot taken before this loop.
             # RNG-order contract: the base die was already rolled above and
             # accuracy has already resolved, so the override die is rolled only
             # here — after the hit lands — keeping the seeded base-roll ->
             # accuracy -> override-roll sequence unchanged.
-            hit_empowerment = active_ability_empowerment(actor, ability)
-            if hit_empowerment is not None:
-                scaling_override = hit_empowerment.get("scaling_override")
+            if active_empowerment is not None:
+                scaling_override = active_empowerment.get("scaling_override")
                 if scaling_override:
                     local_scaling = dict(scaling_override)
-                dice_override = hit_empowerment.get("dice_override") or {}
+                dice_override = active_empowerment.get("dice_override") or {}
                 if dice_override.get("type"):
                     roll_power = roll(dice_override["type"], r)
                     if dice_data:
@@ -3489,8 +3517,6 @@ def resolve_turn(match: MatchState) -> None:
                         # combat log only shows the override die.
                         log_parts.pop()
                     log_parts.append(f"{prefix}Roll {dice_override['type']} = {roll_power}.")
-                if hit_empowerment.get("log"):
-                    log_parts.append(f"{prefix}{hit_empowerment['log']}")
             is_empowered_flame_dance = bool(
                 has_effect(actor, "flame_dance")
                 and str(ability_subschool or "").lower() == "fire"
@@ -3855,7 +3881,8 @@ def resolve_turn(match: MatchState) -> None:
         # Ability empowerment is consumed exactly once per ability execution,
         # after a valid resolved cast — even when every attack roll missed.
         # Rejected/denied actions return before this point and never consume.
-        active_empowerment = active_ability_empowerment(actor, ability)
+        # The pre-loop snapshot is consumed here so the cast can only spend the
+        # empowerment it actually reported and used.
         if active_empowerment is not None:
             consume_ability_empowerment(actor, active_empowerment)
         if had_flame_dance_at_cast_start and has_effect(actor, "flame_dance") and str(ability_subschool or "").lower() == "fire" and ability_hit_landed:

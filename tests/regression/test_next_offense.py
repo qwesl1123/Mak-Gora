@@ -9,6 +9,7 @@ from typing import Any, Iterator
 
 from harness import (
     ABILITIES,
+    EFFECT_TEMPLATES,
     _turn_lines,
     effects,
     make_match,
@@ -24,8 +25,11 @@ from .helpers import _DEF_PASS, _add_pet
 _CRUSADER_EFFECT_ID = "crusader_empower"
 _DEATH_EFFECT_ID = "deaths_bargain"
 _NEXT_EFFECT_IDS = {_CRUSADER_EFFECT_ID, _DEATH_EFFECT_ID}
-_CRUSADER_LOG = "Empowered strike!"
+_CRUSADER_LOG = "Empowered by Crusader's Might!"
 _DEATH_LOG = "Death's Bargain empowers the attack!"
+# Generic wording used only by next-offense effects that declare no empower_log.
+# Every shipped effect names its source, so this must never reach a combat log.
+_GENERIC_EMPOWER_FALLBACK = "Empowered strike!"
 
 
 @contextmanager
@@ -88,6 +92,8 @@ def _assert_canonical_empowerment_logs(
         f"{label}: Crusader empowerment log count drifted"
     assert combined.count(_DEATH_LOG) == expected_count, \
         f"{label}: Death's Bargain empowerment log count drifted"
+    assert _GENERIC_EMPOWER_FALLBACK not in combined, \
+        f"{label}: named next-offense effects must not fall back to generic wording"
     if expected:
         assert combined.index(_CRUSADER_LOG) < combined.index(_DEATH_LOG), \
             f"{label}: empowerment logs must be ordered by effect ID"
@@ -146,6 +152,14 @@ def _strike_again_values(lines: list[str]) -> list[int]:
 
 
 def scenario_next_offense_multiple_effects_stack_on_same_cast() -> bool:
+    crusader_template = EFFECT_TEMPLATES[_CRUSADER_EFFECT_ID]
+    assert crusader_template.get("empower_log") == _CRUSADER_LOG, \
+        "Crusader's Might should name itself through the generic empower_log field"
+    assert crusader_template.get("damage_mult") == 1.2, \
+        "Crusader's Might should keep its 1.2 next-offense multiplier"
+    assert (crusader_template.get("flags") or {}).get("empower_next_offense") is True, \
+        "Crusader's Might should stay on the generic next-offense system"
+
     results: dict[str, tuple[int, int, list[str], set[str]]] = {}
     variants = {
         "baseline": (),
@@ -192,6 +206,8 @@ def scenario_next_offense_multiple_effects_stack_on_same_cast() -> bool:
     assert "\n".join(results["death"][2]).count(_CRUSADER_LOG) == 0
     assert "\n".join(results["crusader"][2]).count(_CRUSADER_LOG) == 1
     assert "\n".join(results["crusader"][2]).count(_DEATH_LOG) == 0
+    assert _GENERIC_EMPOWER_FALLBACK not in "\n".join(results["crusader"][2]), \
+        "Crusader's Might must no longer emit the generic 'Empowered strike!' fallback"
     return True
 
 

@@ -863,6 +863,9 @@ ABILITIES = {
         "empowered_by": {
             "effect_id": "paladin_final_verdict_empowered",
             "scaling_override": {"atk": 2.0},
+            # Divine Reckoning is the player-facing effect-panel name for
+            # paladin_final_verdict_empowered.
+            "log": "Empowered by Divine Reckoning!",
             "consume": {
                 "mode": "remove",
             },
