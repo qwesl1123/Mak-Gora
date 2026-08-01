@@ -3076,6 +3076,10 @@ def resolve_turn(match: MatchState) -> None:
             )
         aoe_skip_champion = False
         aoe_champion_log_override: str | None = None
+        # Hit resolution captures only the champion-facing suffix; the override
+        # that replaces the whole action log is assembled later so it cannot
+        # freeze a log snapshot taken before the cast-level empowerment lines.
+        aoe_champion_log_suffix: str | None = None
 
         if has_damage or has_target_effects:
             blocked, protection_log = resolve_action_pre_resolution_protection(
@@ -3102,7 +3106,7 @@ def resolve_turn(match: MatchState) -> None:
             )
             if skip_aoe_champion:
                 aoe_skip_champion = True
-                aoe_champion_log_override = " ".join([*log_parts, aoe_immune_log or untargetable_miss_log(target)])
+                aoe_champion_log_suffix = aoe_immune_log or untargetable_miss_log(target)
             if missed:
                 log_parts.append(miss_log or "Miss!")
                 set_cooldown(actor, ability_id, ability)
@@ -3476,6 +3480,12 @@ def resolve_turn(match: MatchState) -> None:
         # Broad outgoing-damage buffs (Avenging Wrath) identify themselves
         # generically from effect metadata; they are not consumed by the cast.
         log_parts.extend(outgoing_damage_empowerment_logs(actor))
+        # A skipped AoE champion replaces the action log wholesale, so build
+        # that override here: after every cast-level empowerment line, and
+        # before the per-hit loop appends roll/damage text for the targets that
+        # do resolve.
+        if aoe_champion_log_suffix:
+            aoe_champion_log_override = " ".join([*log_parts, aoe_champion_log_suffix])
         for hit_index in range(1, hits + 1):
             prefix = f"Hit {hit_index}: " if hits > 1 else ""
             roll_power = 0

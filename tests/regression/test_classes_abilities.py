@@ -28,6 +28,7 @@ from games.duel.engine import periodic_items
 
 from .helpers import (
     _DEF_PASS,
+    _add_pet,
     _pet_took_damage_or_died,
     _active_pet,
 )
@@ -3400,6 +3401,96 @@ def scenario_avenging_wrath_outgoing_empowerment_logs() -> bool:
         multihit_turn = _turn_lines(multihit_match, 1)
         assert sum(1 for line in multihit_turn for _ in re.finditer(r"Hit \d: Roll", line)) == 3, "Arcane Barrage should still resolve three hits"
         assert _log_count(multihit_turn, _AVENGING_WRATH_LOG) == 1, "A multi-hit cast under Avenging Wrath should name it once per cast"
+
+        # Casts that never reach valid resolution must not claim the buff.
+        denied_match = make_match("paladin", "warrior", seed=8654)
+        denied_paladin, _ = _player_states(denied_match)
+        effects.apply_effect_by_id(denied_paladin, "avenging_wrath", overrides={"duration": 4})
+        denied_paladin.res.mp = 0
+        submit_turn(denied_match, "judgment", _DEF_PASS)
+        assert _log_count(_turn_lines(denied_match, 1), _AVENGING_WRATH_LOG) == 0, \
+            "A cast rejected before resolution must not log Avenging Wrath"
+
+        avoided_match = make_match("paladin", "mage", seed=8655)
+        avoided_paladin, avoided_mage = _player_states(avoided_match)
+        effects.apply_effect_by_id(avoided_paladin, "avenging_wrath", overrides={"duration": 4})
+        effects.apply_effect_by_id(avoided_mage, "blink", overrides={"duration": 2})
+        submit_turn(avoided_match, "judgment", _DEF_PASS)
+        avoided_turn = _turn_lines(avoided_match, 1)
+        assert any("Target blinks away — Miss." in line for line in avoided_turn), \
+            "Blink should stop a single-target cast at hit resolution"
+        assert _log_count(avoided_turn, _AVENGING_WRATH_LOG) == 0, \
+            "A cast stopped at hit resolution must not log Avenging Wrath"
+
+        # AoE that skips a blink-like champion still resolves against pets, and
+        # the champion-skip log override must be built after the cast-level
+        # empowerment lines rather than freezing an earlier log snapshot.
+        original_roll = resolver.roll
+        try:
+            resolver.roll = lambda die, rng: {"d6": 4}.get(die, original_roll(die, rng))
+
+            def divine_storm_vs_pet(*, blinked: bool, wrath: bool, seed: int):
+                match = make_match("paladin", "warlock", seed=seed)
+                paladin, warlock = _player_states(match)
+                paladin.stats["crit"] = 0
+                warlock.stats.update({"def": 0, "magic_resist": 0, "damage_reduction": 0})
+                _add_pet(warlock, "aoe_skip_imp", "imp")
+                pet = warlock.pets["aoe_skip_imp"]
+                pet.hp = pet.hp_max = 100
+                pet.stats.update({"def": 0, "magic_resist": 0})
+                if blinked:
+                    effects.apply_effect_by_id(warlock, "blink", overrides={"duration": 2})
+                if wrath:
+                    effects.apply_effect_by_id(paladin, "avenging_wrath", overrides={"duration": 4})
+                champion_hp_before = warlock.res.hp
+                pet_hp_before = pet.hp
+                submit_turn(match, "divine_storm", _DEF_PASS)
+                lines = _turn_lines(match, 1)
+                action_line = next(line for line in lines if "cast Divine Storm" in line)
+                return {
+                    "champion_damage": champion_hp_before - warlock.res.hp,
+                    "pet_damage": pet_hp_before - warlock.pets["aoe_skip_imp"].hp,
+                    "lines": lines,
+                    "action_line": action_line,
+                    "wrath_active": _has_effect(paladin, "avenging_wrath"),
+                }
+
+            skipped_plain = divine_storm_vs_pet(blinked=True, wrath=False, seed=8670)
+            skipped_wrath = divine_storm_vs_pet(blinked=True, wrath=True, seed=8670)
+
+            assert skipped_plain["champion_damage"] == 0 and skipped_wrath["champion_damage"] == 0, \
+                "A blink-like champion must keep taking no direct AoE damage"
+            assert "Target blinks away — Miss." in skipped_wrath["action_line"], \
+                "The champion-skip override must keep the blink-like avoidance text"
+            assert _log_count(skipped_wrath["lines"], _AVENGING_WRATH_LOG) == 1, \
+                "A champion-skipping AoE under Avenging Wrath should name it exactly once"
+            assert _log_count(skipped_plain["lines"], _AVENGING_WRATH_LOG) == 0, \
+                "A champion-skipping AoE without Avenging Wrath should not name it"
+            assert "Roll d6" not in skipped_wrath["action_line"] and "Deals " not in skipped_wrath["action_line"], \
+                "The champion-skip override must not absorb per-hit roll or damage text"
+            assert skipped_plain["pet_damage"] > 0, "AoE must still damage enemy pets past a blinked champion"
+            assert skipped_wrath["pet_damage"] == int(skipped_plain["pet_damage"] * 1.2), \
+                "Pet damage past a skipped champion must still take Avenging Wrath's 1.2 multiplier"
+            assert any("Divine Storm hits" in line and "Imp" in line for line in skipped_wrath["lines"]), \
+                "AoE fanout logging to pets must be unchanged"
+            assert skipped_wrath["wrath_active"], "A champion-skipping AoE must not consume Avenging Wrath"
+
+            # Ordinary (non-skipped) AoE is unaffected by the delayed override.
+            normal_plain = divine_storm_vs_pet(blinked=False, wrath=False, seed=8671)
+            normal_wrath = divine_storm_vs_pet(blinked=False, wrath=True, seed=8671)
+            assert normal_plain["champion_damage"] > 0, "An unprotected champion should still take Divine Storm damage"
+            assert normal_wrath["champion_damage"] == int(normal_plain["champion_damage"] * 1.2), \
+                "Ordinary AoE champion damage must keep Avenging Wrath's 1.2 multiplier"
+            assert normal_wrath["pet_damage"] == int(normal_plain["pet_damage"] * 1.2), \
+                "Ordinary AoE pet damage must keep Avenging Wrath's 1.2 multiplier"
+            assert _log_count(normal_wrath["lines"], _AVENGING_WRATH_LOG) == 1, \
+                "An ordinary AoE cast under Avenging Wrath should name it exactly once"
+            assert "Deals " in normal_wrath["action_line"], \
+                "An ordinary AoE cast should still report its champion damage"
+            assert "Target blinks away — Miss." not in normal_wrath["action_line"], \
+                "An unprotected champion must not pick up champion-skip wording"
+        finally:
+            resolver.roll = original_roll
 
         # Non-damaging casts never report an outgoing-damage empowerment.
         for turn_number, action in enumerate(("holy_light", "lay_on_hands", _DEF_PASS), start=1):
