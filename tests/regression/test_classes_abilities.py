@@ -28,9 +28,19 @@ from games.duel.engine import periodic_items
 
 from .helpers import (
     _DEF_PASS,
+    _add_pet,
     _pet_took_damage_or_died,
     _active_pet,
 )
+
+
+_CLARITY_LOG = "Empowered by Clarity of Mind!"
+_AVENGING_WRATH_LOG = "Empowered by Avenging Wrath!"
+
+
+def _log_count(lines: list[str], needle: str) -> int:
+    """Count occurrences of an exact log fragment across a turn's log lines."""
+    return sum(line.count(needle) for line in lines)
 
 
 def scenario_mindgames_lay_on_hands() -> bool:
@@ -1870,6 +1880,7 @@ def scenario_hunter_rework_phase1_phase2_regression() -> bool:
         submit_turn(empowered_match, "arcane_shot", _DEF_PASS)
         empowered_turn = _turn_lines(empowered_match, 1)
         assert any("cast Arcane Shot" in line and "Roll d8 = 5." in line and "Empowered by Arcane Surge!" in line and "Deals 17 damage." in line for line in empowered_turn), "Arcane Surge should empower Arcane Shot to Attack 1.0x + d8"
+        assert _log_count(empowered_turn, "Empowered by Arcane Surge!") == 1, "An empowered Arcane Shot should name Arcane Surge exactly once"
         assert not _has_effect(empowered_hunter, "arcane_surge"), "Arcane Surge should be consumed on Arcane Shot use"
 
         kill_match = make_match("hunter", "warrior", seed=9104)
@@ -2113,6 +2124,7 @@ def scenario_priest_clarity_of_mind_buff_and_empowerment() -> bool:
         submit_turn(flash_match, "flash_heal", _DEF_PASS)
         flash_turn = _turn_lines(flash_match, 1)
         assert any("Flash Heal restores 19 HP." in line for line in flash_turn), "Flash Heal should use [Intellect (1.5x) + d8]"
+        assert _log_count(flash_turn, _CLARITY_LOG) == 0, "Flash Heal without Clarity of Mind should not log an empowerment"
 
         shield_match = make_match("priest", "warrior", seed=8802)
         priest, _ = _player_states(shield_match)
@@ -2143,7 +2155,9 @@ def scenario_priest_clarity_of_mind_buff_and_empowerment() -> bool:
         submit_turn(empowered_flash, "flash_heal", _DEF_PASS)
         clarity_after_flash = effects.get_effect(priest, "clarity_of_mind")
         assert clarity_after_flash is not None and effects.effect_stack_count(clarity_after_flash) == 1, "Flash Heal should consume 1 Clarity of Mind stack on cast"
-        assert any("Flash Heal restores 26 HP." in line for line in _turn_lines(empowered_flash, 1)), "Flash Heal should gain +40% final healing with Clarity of Mind"
+        empowered_flash_turn = _turn_lines(empowered_flash, 1)
+        assert any("Flash Heal restores 26 HP." in line for line in empowered_flash_turn), "Flash Heal should gain +40% final healing with Clarity of Mind"
+        assert _log_count(empowered_flash_turn, _CLARITY_LOG) == 1, "Empowered Flash Heal should name Clarity of Mind exactly once"
 
         penance_match = make_match("priest", "warrior", seed=8804)
         priest, warrior = _player_states(penance_match)
@@ -2155,6 +2169,8 @@ def scenario_priest_clarity_of_mind_buff_and_empowerment() -> bool:
         clarity_after_penance = effects.get_effect(priest, "clarity_of_mind")
         assert clarity_after_penance is not None and effects.effect_stack_count(clarity_after_penance) == 1, "Penance should consume 1 Clarity of Mind stack total per cast"
         assert hp_before - warrior.res.hp == 24, "Penance should gain +40% final damage across the cast"
+        penance_turn = _turn_lines(penance_match, 1)
+        assert _log_count(penance_turn, _CLARITY_LOG) == 1, "A 3-hit Penance should name Clarity of Mind once per cast, not once per hit"
 
         penance_self_match = make_match("priest", "warrior", seed=8805)
         priest, _ = _player_states(penance_self_match)
@@ -2166,6 +2182,23 @@ def scenario_priest_clarity_of_mind_buff_and_empowerment() -> bool:
         clarity_after_self = effects.get_effect(priest, "clarity_of_mind")
         assert clarity_after_self is not None and effects.effect_stack_count(clarity_after_self) == 1, "Penance (Self) should consume 1 Clarity of Mind stack total per cast"
         assert priest.res.hp - hp_before == 24, "Penance (Self) should gain +40% final healing across the cast"
+        penance_self_turn = _turn_lines(penance_self_match, 1)
+        assert _log_count(penance_self_turn, _CLARITY_LOG) == 1, "A 3-hit Penance (Self) should name Clarity of Mind once per cast, not once per hit"
+
+        # An ordinary accuracy miss still commits the cast, so the spent stack
+        # must remain visible in the log.
+        accuracy_miss_match = make_match("priest", "warrior", seed=8808)
+        priest, _ = _player_states(accuracy_miss_match)
+        effects.apply_effect_by_id(priest, "clarity_of_mind", overrides={"duration": 4, "stacks": 1})
+        resolver.hit_chance = lambda acc, eva: 0
+        try:
+            submit_turn(accuracy_miss_match, "penance", _DEF_PASS)
+        finally:
+            resolver.hit_chance = lambda acc, eva: 100
+        accuracy_miss_turn = _turn_lines(accuracy_miss_match, 1)
+        assert any("Miss!" in line for line in accuracy_miss_turn), "Forced-accuracy setup should produce an ordinary Penance miss"
+        assert not effects.has_effect(priest, "clarity_of_mind"), "Clarity of Mind should still be consumed by a committed Penance whose attack rolls miss"
+        assert _log_count(accuracy_miss_turn, _CLARITY_LOG) == 1, "An ordinary Penance miss should still name Clarity of Mind exactly once"
 
         miss_match = make_match("priest", "mage", seed=8806)
         priest, mage = _player_states(miss_match)
@@ -2173,6 +2206,7 @@ def scenario_priest_clarity_of_mind_buff_and_empowerment() -> bool:
         effects.apply_effect_by_id(mage, "blink", overrides={"duration": 2})
         submit_turn(miss_match, "penance", _DEF_PASS)
         assert not effects.has_effect(priest, "clarity_of_mind"), "Clarity of Mind should be consumed when Penance is cast even if it misses"
+        assert _log_count(_turn_lines(miss_match, 1), _CLARITY_LOG) == 1, "An avoided Penance should still name Clarity of Mind exactly once"
 
         immune_match = make_match("priest", "mage", seed=8807)
         priest, mage = _player_states(immune_match)
@@ -2180,6 +2214,26 @@ def scenario_priest_clarity_of_mind_buff_and_empowerment() -> bool:
         effects.apply_effect_by_id(mage, "iceblock", overrides={"duration": 2})
         submit_turn(immune_match, "penance", _DEF_PASS)
         assert not effects.has_effect(priest, "clarity_of_mind"), "Clarity of Mind should be consumed when Penance is cast even if the target is immune"
+        assert _log_count(_turn_lines(immune_match, 1), _CLARITY_LOG) == 1, "A Penance into immunity should still name Clarity of Mind exactly once"
+
+        # Rejected before costs and cast commitment: no consumption, no log.
+        rejected_match = make_match("priest", "warrior", seed=8809)
+        priest, _ = _player_states(rejected_match)
+        effects.apply_effect_by_id(priest, "clarity_of_mind", overrides={"duration": 4, "stacks": 2})
+        priest.res.mp = 0
+        submit_turn(rejected_match, "penance", _DEF_PASS)
+        rejected_clarity = effects.get_effect(priest, "clarity_of_mind")
+        assert rejected_clarity is not None and effects.effect_stack_count(rejected_clarity) == 2, "A rejected Penance should not consume Clarity of Mind"
+        assert _log_count(_turn_lines(rejected_match, 1), _CLARITY_LOG) == 0, "A rejected Penance should not log Clarity of Mind"
+
+        # Unrelated abilities never touch Clarity of Mind.
+        unrelated_match = make_match("priest", "warrior", seed=8810)
+        priest, _ = _player_states(unrelated_match)
+        effects.apply_effect_by_id(priest, "clarity_of_mind", overrides={"duration": 4, "stacks": 2})
+        submit_turn(unrelated_match, "mind_blast", _DEF_PASS)
+        unrelated_clarity = effects.get_effect(priest, "clarity_of_mind")
+        assert unrelated_clarity is not None and effects.effect_stack_count(unrelated_clarity) == 2, "Mind Blast should not consume Clarity of Mind"
+        assert _log_count(_turn_lines(unrelated_match, 1), _CLARITY_LOG) == 0, "Mind Blast should not log Clarity of Mind"
 
         duel_html_text = _detect_duel_html_path().read_text(encoding="utf-8")
         assert "Gain an absorb shield for [Intellect (1.0x) + d6] and grant 2 stacks of Clarity of Mind for 4 turns" in duel_html_text, "Power Word: Shield docs should mention Clarity of Mind"
@@ -2497,6 +2551,7 @@ def scenario_shaman_lava_lash_empowered_damage_and_consume() -> bool:
     empowered_turn = _turn_lines(match, 2)
     assert any("Roll d6 =" in line for line in empowered_turn), "Empowered Lava Lash should roll d6"
     assert any("Empowered by Lava Surge!" in line for line in empowered_turn), "Empowered Lava Lash should log Lava Surge empowerment"
+    assert _log_count(empowered_turn, "Empowered by Lava Surge!") == 1, "An empowered Lava Lash should name Lava Surge exactly once"
     roll_line = next((line for line in empowered_turn if "Roll d6 =" in line), "")
     dealt_line = next((line for line in empowered_turn if "Deals " in line and "damage" in line), "")
     roll_match = re.search(r"Roll d6 = (\d+)", roll_line)
@@ -2644,6 +2699,18 @@ def scenario_warrior_onslaught_stackable_contract() -> bool:
     submit_turn(ignore_match, "ignore_pain", _DEF_PASS)
     onslaught_after_ignore = effects.get_effect(ignore_warrior, "onslaught")
     assert onslaught_after_ignore is not None and effects.effect_stack_count(onslaught_after_ignore) == 2, "Ignore Pain should not consume Onslaught"
+    assert _log_count(_turn_lines(ignore_match, 1), "Empowered by Onslaught") == 0, "A non-damaging Rage ability should not log Onslaught"
+
+    unrelated_match = make_match("warrior", "mage", seed=7305)
+    unrelated_warrior = unrelated_match.state[unrelated_match.players[0]]
+    unrelated_warrior.stats["acc"] = 999
+    unrelated_warrior.stats["crit"] = 0
+    for _ in range(2):
+        effects.apply_effect_by_id(unrelated_warrior, "onslaught", overrides={"duration": 3})
+    submit_turn(unrelated_match, "basic_attack", _DEF_PASS)
+    onslaught_after_unrelated = effects.get_effect(unrelated_warrior, "onslaught")
+    assert onslaught_after_unrelated is not None and effects.effect_stack_count(onslaught_after_unrelated) == 2, "A non-Rage-spending attack should not consume Onslaught"
+    assert _log_count(_turn_lines(unrelated_match, 1), "Empowered by Onslaught") == 0, "A non-Rage-spending attack should not log Onslaught"
 
     baseline_match = make_match("warrior", "mage", seed=7303)
     baseline_warrior_sid, baseline_enemy_sid = baseline_match.players
@@ -2678,6 +2745,42 @@ def scenario_warrior_onslaught_stackable_contract() -> bool:
     boosted_damage = hp_before - buffed_enemy.res.hp
     assert boosted_damage == int(base_damage * 1.12), "3-stack Onslaught should grant +12% damage to the next qualifying rage spender"
     assert not effects.has_effect(buffed_warrior, "onslaught"), "All Onslaught stacks should be consumed at once by the next qualifying rage spender"
+    assert _log_count(_turn_lines(buffed_match, 1), "Empowered by Onslaught (3 stacks)!") == 1, "A 3-stack Onslaught spender should report the consumed stack count exactly once"
+
+    # Singular/plural stack wording, and a multi-hit spender that must still log
+    # once per cast rather than once per hit.
+    for stacks, expected_label, spender in ((1, "1 stack", "mortal_strike"), (2, "2 stacks", "rampage")):
+        stack_match = make_match("warrior", "mage", seed=7320 + stacks)
+        stack_warrior, stack_enemy = _player_states(stack_match)
+        stack_warrior.stats["acc"] = 999
+        stack_warrior.stats["crit"] = 0
+        stack_enemy.stats["eva"] = 0
+        stack_warrior.res.rage = stack_warrior.res.rage_max
+        for _ in range(stacks):
+            effects.apply_effect_by_id(stack_warrior, "onslaught", overrides={"duration": 3})
+        submit_turn(stack_match, spender, _DEF_PASS)
+        assert not effects.has_effect(stack_warrior, "onslaught"), f"{spender}: all Onslaught stacks should be consumed"
+        assert _log_count(_turn_lines(stack_match, 1), f"Empowered by Onslaught ({expected_label})!") == 1, (
+            f"{spender}: {stacks}-stack Onslaught should log '{expected_label}' exactly once"
+        )
+
+    # An ordinary accuracy miss still commits the cast and consumes the stacks,
+    # so the log must stay visible.
+    miss_match = make_match("warrior", "mage", seed=7330)
+    miss_warrior, _ = _player_states(miss_match)
+    miss_warrior.res.rage = miss_warrior.res.rage_max
+    for _ in range(3):
+        effects.apply_effect_by_id(miss_warrior, "onslaught", overrides={"duration": 3})
+    original_hit = resolver.hit_chance
+    try:
+        resolver.hit_chance = lambda acc, eva: 0
+        submit_turn(miss_match, "mortal_strike", _DEF_PASS)
+    finally:
+        resolver.hit_chance = original_hit
+    miss_turn = _turn_lines(miss_match, 1)
+    assert any("Miss!" in line for line in miss_turn), "Forced-accuracy setup should produce an ordinary Mortal Strike miss"
+    assert not effects.has_effect(miss_warrior, "onslaught"), "A committed Rage spender that misses should still consume every Onslaught stack"
+    assert _log_count(miss_turn, "Empowered by Onslaught (3 stacks)!") == 1, "An ordinary miss should still report the consumed Onslaught stacks exactly once"
 
     execute_match = make_match("warrior", "mage", seed=7304)
     execute_warrior_sid, execute_enemy_sid = execute_match.players
@@ -3076,6 +3179,7 @@ _EMPOWERED_BY_EXPECTED_SPECS = {
     "final_verdict": {
         "effect_id": "paladin_final_verdict_empowered",
         "scaling_override": {"atk": 2.0},
+        "log": "Empowered by Divine Reckoning!",
         "consume": {"mode": "remove"},
     },
     "crusader_strike": {
@@ -3209,6 +3313,7 @@ def scenario_paladin_empowered_by_scaling_profiles() -> bool:
         submit_turn(verdict_match, "final_verdict", _DEF_PASS)
         verdict_turn = _turn_lines(verdict_match, 1)
         assert any(f"Deals {expected_verdict} damage." in line for line in verdict_turn), "Empowered Final Verdict should deal exactly Attack 2.0x + d8"
+        assert _log_count(verdict_turn, "Empowered by Divine Reckoning!") == 1, "An empowered Final Verdict should name Divine Reckoning exactly once"
         assert not _has_effect(paladin, "paladin_final_verdict_empowered"), "Final Verdict empowerment should be removed after use"
 
         strike_match = make_match("paladin", "warrior", seed=8602)
@@ -3235,10 +3340,170 @@ def scenario_paladin_empowered_by_scaling_profiles() -> bool:
         judgment_turn = _turn_lines(judgment_match, 1)
         assert any(f"Deals {expected_judgment} damage." in line for line in judgment_turn), "Judgment under Avenging Wrath should deal exactly [Attack 1.4x + d6] * 1.2"
         assert _has_effect(paladin, "avenging_wrath"), "Avenging Wrath should not be consumed by Judgment"
+
+        # Both abilities carry their own Avenging Wrath scaling override, but the
+        # empowerment line is emitted once by the generic active-effect path.
+        assert _log_count(strike_turn, _AVENGING_WRATH_LOG) == 1, "Crusader Strike should name Avenging Wrath once, not twice"
+        assert _log_count(judgment_turn, _AVENGING_WRATH_LOG) == 1, "Judgment should name Avenging Wrath once, not twice"
         return True
     finally:
         resolver.roll = original_roll
         resolver.hit_chance = original_hit
+
+
+def scenario_avenging_wrath_outgoing_empowerment_logs() -> bool:
+    template = EFFECT_TEMPLATES["avenging_wrath"]
+    assert template.get("outgoing_damage_mult") == 1.2, "Avenging Wrath should keep its 1.2 global outgoing multiplier"
+    assert template.get("empower_log") == _AVENGING_WRATH_LOG, "Avenging Wrath should name itself through generic effect metadata"
+
+    # The generic helper reports only active effects that pair an outgoing
+    # multiplier with a log line, and never repeats a source.
+    helper_match = make_match("paladin", "warrior", seed=8651)
+    helper_paladin, _ = _player_states(helper_match)
+    assert effects.outgoing_damage_empowerment_logs(helper_paladin) == [], "No outgoing-damage empowerment should be reported without one active"
+    effects.apply_effect_by_id(helper_paladin, "avenging_wrath", overrides={"duration": 4})
+    assert effects.outgoing_damage_empowerment_logs(helper_paladin) == [_AVENGING_WRATH_LOG], "An active Avenging Wrath should report exactly one empowerment log"
+
+    original_hit = resolver.hit_chance
+    try:
+        resolver.hit_chance = lambda acc, eva: 100
+
+        # A plain damaging cast: exact 1.2 multiplier, one empowerment line, and
+        # the buff survives the cast.
+        baseline_match = make_match("paladin", "warrior", seed=8652)
+        baseline_paladin, baseline_warrior = _player_states(baseline_match)
+        baseline_paladin.stats["crit"] = 0
+        baseline_warrior.stats["def"] = 0
+        hp_before = baseline_warrior.res.hp
+        submit_turn(baseline_match, "basic_attack", _DEF_PASS)
+        plain_damage = hp_before - baseline_warrior.res.hp
+        assert _log_count(_turn_lines(baseline_match, 1), _AVENGING_WRATH_LOG) == 0, "A cast without Avenging Wrath should not log it"
+
+        wrath_match = make_match("paladin", "warrior", seed=8652)
+        wrath_paladin, wrath_warrior = _player_states(wrath_match)
+        wrath_paladin.stats["crit"] = 0
+        wrath_warrior.stats["def"] = 0
+        effects.apply_effect_by_id(wrath_paladin, "avenging_wrath", overrides={"duration": 4})
+        hp_before = wrath_warrior.res.hp
+        submit_turn(wrath_match, "basic_attack", _DEF_PASS)
+        wrath_damage = hp_before - wrath_warrior.res.hp
+        assert wrath_damage == int(plain_damage * 1.2), "Avenging Wrath should keep granting exactly +20% outgoing damage"
+        assert _log_count(_turn_lines(wrath_match, 1), _AVENGING_WRATH_LOG) == 1, "A damaging cast under Avenging Wrath should name it exactly once"
+        assert _has_effect(wrath_paladin, "avenging_wrath"), "Avenging Wrath must not be consumed by a damaging cast"
+
+        # Multi-hit: one line per cast, not one per hit.
+        multihit_match = make_match("mage", "warrior", seed=8653)
+        multihit_mage, multihit_warrior = _player_states(multihit_match)
+        multihit_mage.stats["crit"] = 0
+        multihit_warrior.stats["magic_resist"] = 0
+        effects.apply_effect_by_id(multihit_mage, "avenging_wrath", overrides={"duration": 4})
+        submit_turn(multihit_match, "arcane_barrage", _DEF_PASS)
+        multihit_turn = _turn_lines(multihit_match, 1)
+        assert sum(1 for line in multihit_turn for _ in re.finditer(r"Hit \d: Roll", line)) == 3, "Arcane Barrage should still resolve three hits"
+        assert _log_count(multihit_turn, _AVENGING_WRATH_LOG) == 1, "A multi-hit cast under Avenging Wrath should name it once per cast"
+
+        # Casts that never reach valid resolution must not claim the buff.
+        denied_match = make_match("paladin", "warrior", seed=8654)
+        denied_paladin, _ = _player_states(denied_match)
+        effects.apply_effect_by_id(denied_paladin, "avenging_wrath", overrides={"duration": 4})
+        denied_paladin.res.mp = 0
+        submit_turn(denied_match, "judgment", _DEF_PASS)
+        assert _log_count(_turn_lines(denied_match, 1), _AVENGING_WRATH_LOG) == 0, \
+            "A cast rejected before resolution must not log Avenging Wrath"
+
+        avoided_match = make_match("paladin", "mage", seed=8655)
+        avoided_paladin, avoided_mage = _player_states(avoided_match)
+        effects.apply_effect_by_id(avoided_paladin, "avenging_wrath", overrides={"duration": 4})
+        effects.apply_effect_by_id(avoided_mage, "blink", overrides={"duration": 2})
+        submit_turn(avoided_match, "judgment", _DEF_PASS)
+        avoided_turn = _turn_lines(avoided_match, 1)
+        assert any("Target blinks away — Miss." in line for line in avoided_turn), \
+            "Blink should stop a single-target cast at hit resolution"
+        assert _log_count(avoided_turn, _AVENGING_WRATH_LOG) == 0, \
+            "A cast stopped at hit resolution must not log Avenging Wrath"
+
+        # AoE that skips a blink-like champion still resolves against pets, and
+        # the champion-skip log override must be built after the cast-level
+        # empowerment lines rather than freezing an earlier log snapshot.
+        original_roll = resolver.roll
+        try:
+            resolver.roll = lambda die, rng: {"d6": 4}.get(die, original_roll(die, rng))
+
+            def divine_storm_vs_pet(*, blinked: bool, wrath: bool, seed: int):
+                match = make_match("paladin", "warlock", seed=seed)
+                paladin, warlock = _player_states(match)
+                paladin.stats["crit"] = 0
+                warlock.stats.update({"def": 0, "magic_resist": 0, "damage_reduction": 0})
+                _add_pet(warlock, "aoe_skip_imp", "imp")
+                pet = warlock.pets["aoe_skip_imp"]
+                pet.hp = pet.hp_max = 100
+                pet.stats.update({"def": 0, "magic_resist": 0})
+                if blinked:
+                    effects.apply_effect_by_id(warlock, "blink", overrides={"duration": 2})
+                if wrath:
+                    effects.apply_effect_by_id(paladin, "avenging_wrath", overrides={"duration": 4})
+                champion_hp_before = warlock.res.hp
+                pet_hp_before = pet.hp
+                submit_turn(match, "divine_storm", _DEF_PASS)
+                lines = _turn_lines(match, 1)
+                action_line = next(line for line in lines if "cast Divine Storm" in line)
+                return {
+                    "champion_damage": champion_hp_before - warlock.res.hp,
+                    "pet_damage": pet_hp_before - warlock.pets["aoe_skip_imp"].hp,
+                    "lines": lines,
+                    "action_line": action_line,
+                    "wrath_active": _has_effect(paladin, "avenging_wrath"),
+                }
+
+            skipped_plain = divine_storm_vs_pet(blinked=True, wrath=False, seed=8670)
+            skipped_wrath = divine_storm_vs_pet(blinked=True, wrath=True, seed=8670)
+
+            assert skipped_plain["champion_damage"] == 0 and skipped_wrath["champion_damage"] == 0, \
+                "A blink-like champion must keep taking no direct AoE damage"
+            assert "Target blinks away — Miss." in skipped_wrath["action_line"], \
+                "The champion-skip override must keep the blink-like avoidance text"
+            assert _log_count(skipped_wrath["lines"], _AVENGING_WRATH_LOG) == 1, \
+                "A champion-skipping AoE under Avenging Wrath should name it exactly once"
+            assert _log_count(skipped_plain["lines"], _AVENGING_WRATH_LOG) == 0, \
+                "A champion-skipping AoE without Avenging Wrath should not name it"
+            assert "Roll d6" not in skipped_wrath["action_line"] and "Deals " not in skipped_wrath["action_line"], \
+                "The champion-skip override must not absorb per-hit roll or damage text"
+            assert skipped_plain["pet_damage"] > 0, "AoE must still damage enemy pets past a blinked champion"
+            assert skipped_wrath["pet_damage"] == int(skipped_plain["pet_damage"] * 1.2), \
+                "Pet damage past a skipped champion must still take Avenging Wrath's 1.2 multiplier"
+            assert any("Divine Storm hits" in line and "Imp" in line for line in skipped_wrath["lines"]), \
+                "AoE fanout logging to pets must be unchanged"
+            assert skipped_wrath["wrath_active"], "A champion-skipping AoE must not consume Avenging Wrath"
+
+            # Ordinary (non-skipped) AoE is unaffected by the delayed override.
+            normal_plain = divine_storm_vs_pet(blinked=False, wrath=False, seed=8671)
+            normal_wrath = divine_storm_vs_pet(blinked=False, wrath=True, seed=8671)
+            assert normal_plain["champion_damage"] > 0, "An unprotected champion should still take Divine Storm damage"
+            assert normal_wrath["champion_damage"] == int(normal_plain["champion_damage"] * 1.2), \
+                "Ordinary AoE champion damage must keep Avenging Wrath's 1.2 multiplier"
+            assert normal_wrath["pet_damage"] == int(normal_plain["pet_damage"] * 1.2), \
+                "Ordinary AoE pet damage must keep Avenging Wrath's 1.2 multiplier"
+            assert _log_count(normal_wrath["lines"], _AVENGING_WRATH_LOG) == 1, \
+                "An ordinary AoE cast under Avenging Wrath should name it exactly once"
+            assert "Deals " in normal_wrath["action_line"], \
+                "An ordinary AoE cast should still report its champion damage"
+            assert "Target blinks away — Miss." not in normal_wrath["action_line"], \
+                "An unprotected champion must not pick up champion-skip wording"
+        finally:
+            resolver.roll = original_roll
+
+        # Non-damaging casts never report an outgoing-damage empowerment.
+        for turn_number, action in enumerate(("holy_light", "lay_on_hands", _DEF_PASS), start=1):
+            quiet_match = make_match("paladin", "warrior", seed=8660 + turn_number)
+            quiet_paladin, _ = _player_states(quiet_match)
+            quiet_paladin.res.hp = max(1, quiet_paladin.res.hp_max - 60)
+            effects.apply_effect_by_id(quiet_paladin, "avenging_wrath", overrides={"duration": 4})
+            submit_turn(quiet_match, action, _DEF_PASS)
+            assert _log_count(_turn_lines(quiet_match, 1), _AVENGING_WRATH_LOG) == 0, f"{action} is not a damaging cast and must not log Avenging Wrath"
+            assert _has_effect(quiet_paladin, "avenging_wrath"), f"{action} must not consume Avenging Wrath"
+    finally:
+        resolver.hit_chance = original_hit
+    return True
 
 
 def scenario_mind_blast_empowered_formula_consume_and_rng_order() -> bool:
@@ -3268,6 +3533,7 @@ def scenario_mind_blast_empowered_formula_consume_and_rng_order() -> bool:
             for line in turn
         ), "Empowered Mind Blast should deal exactly Intellect 1.3x + d8 with the Mind Flay log"
         assert not any("Roll d6 = 3." in line for line in turn), "The displayed base-roll log line should be replaced by the override roll"
+        assert _log_count(turn, "Empowered by Mind Flay!") == 1, "An empowered Mind Blast should name Mind Flay exactly once"
         assert not _has_effect(priest, "mind_blast_empowered"), "Mind Blast empowerment should be removed after use"
 
         # RNG-order guardrail: the base d6 is still consumed from the seeded
@@ -3282,40 +3548,85 @@ def scenario_mind_blast_empowered_formula_consume_and_rng_order() -> bool:
         resolver.hit_chance = original_hit
 
 
+# (actor class, ability id, ability display name, empowering effect id,
+#  expected log line, override die that must not be rolled before accuracy).
+_METADATA_EMPOWERMENT_CASES = (
+    ("priest", "mind_blast", "Mind Blast", "mind_blast_empowered", "Empowered by Mind Flay!", "d8"),
+    ("hunter", "arcane_shot", "Arcane Shot", "arcane_surge", "Empowered by Arcane Surge!", "d8"),
+    ("shaman", "lava_lash", "Lava Lash", "lava_surge", "Empowered by Lava Surge!", "d6"),
+    ("paladin", "final_verdict", "Final Verdict", "paladin_final_verdict_empowered", "Empowered by Divine Reckoning!", None),
+)
+
+
 def scenario_empowerment_consumed_on_miss_but_not_on_rejection() -> bool:
-    rolled_dice: list[str] = []
-    original_roll = resolver.roll
+    for index, (
+        actor_class,
+        ability_id,
+        ability_name,
+        effect_id,
+        expected_log,
+        override_die,
+    ) in enumerate(_METADATA_EMPOWERMENT_CASES):
+        rolled_dice: list[str] = []
+        original_roll = resolver.roll
+        original_hit = resolver.hit_chance
+        try:
+            resolver.hit_chance = lambda acc, eva: 0
+
+            def spy_roll(die, rng, _sink=rolled_dice):
+                _sink.append(die)
+                return original_roll(die, rng)
+
+            resolver.roll = spy_roll
+
+            miss_match = make_match(actor_class, "warrior", seed=8621 + index)
+            actor, _ = _player_states(miss_match)
+            effects.apply_effect_by_id(actor, effect_id, overrides={"duration": 5})
+            submit_turn(miss_match, ability_id, _DEF_PASS)
+            miss_turn = _turn_lines(miss_match, 1)
+            assert any(f"cast {ability_name}" in line and "Miss!" in line for line in miss_turn), \
+                f"{ability_name}: forced-miss setup should produce an attack-roll miss"
+            assert not _has_effect(actor, effect_id), \
+                f"{ability_name}: empowerment should still be consumed on a valid cast whose attack roll misses"
+            assert _log_count(miss_turn, expected_log) == 1, \
+                f"{ability_name}: a missed empowered cast should still name its empowerment exactly once"
+            if override_die is not None:
+                assert override_die not in rolled_dice, \
+                    f"{ability_name}: the override die must not be rolled when the hit does not land"
+        finally:
+            resolver.roll = original_roll
+            resolver.hit_chance = original_hit
+
+        deny_match = make_match(actor_class, "warrior", seed=8631 + index)
+        actor, _ = _player_states(deny_match)
+        effects.apply_effect_by_id(actor, effect_id, overrides={"duration": 5})
+        actor.res.mp = 0
+        submit_turn(deny_match, ability_id, _DEF_PASS)
+        deny_turn = _turn_lines(deny_match, 1)
+        assert any("didn't have enough mana" in line for line in deny_turn), \
+            f"{ability_name}: a zero-mana cast should be rejected before resolution"
+        assert _has_effect(actor, effect_id), \
+            f"{ability_name}: empowerment should not be consumed when the action is rejected before resolution"
+        assert _log_count(deny_turn, expected_log) == 0, \
+            f"{ability_name}: a rejected cast should not log the empowerment"
+
+    # A stack-consuming empowerment spends exactly one stack on an ordinary
+    # miss and still names itself once.
     original_hit = resolver.hit_chance
     try:
         resolver.hit_chance = lambda acc, eva: 0
-
-        def spy_roll(die, rng):
-            rolled_dice.append(die)
-            return original_roll(die, rng)
-
-        resolver.roll = spy_roll
-
-        miss_match = make_match("priest", "warrior", seed=8621)
-        priest, _ = _player_states(miss_match)
-        effects.apply_effect_by_id(priest, "mind_blast_empowered", overrides={"duration": 5})
-        submit_turn(miss_match, "mind_blast", _DEF_PASS)
-        miss_turn = _turn_lines(miss_match, 1)
-        assert any("cast Mind Blast" in line and "Miss!" in line for line in miss_turn), "Forced-miss setup should produce an attack-roll miss"
-        assert not _has_effect(priest, "mind_blast_empowered"), "Empowerment should still be consumed on a valid cast whose attack roll misses"
-        assert "d8" not in rolled_dice, "The override die must not be rolled when the hit does not land"
-        assert not any("Empowered by Mind Flay!" in line for line in miss_turn), "Missed empowered cast should not log the empowerment"
+        stack_match = make_match("shaman", "warrior", seed=8641)
+        shaman, _ = _player_states(stack_match)
+        for _ in range(2):
+            effects.apply_effect_by_id(shaman, "lava_surge", overrides={"duration": 3})
+        submit_turn(stack_match, "lava_lash", _DEF_PASS)
     finally:
-        resolver.roll = original_roll
         resolver.hit_chance = original_hit
-
-    deny_match = make_match("priest", "warrior", seed=8622)
-    priest, _ = _player_states(deny_match)
-    effects.apply_effect_by_id(priest, "mind_blast_empowered", overrides={"duration": 5})
-    priest.res.mp = 0
-    submit_turn(deny_match, "mind_blast", _DEF_PASS)
-    deny_turn = _turn_lines(deny_match, 1)
-    assert any("didn't have enough mana" in line for line in deny_turn), "Zero-mana Mind Blast should be rejected before resolution"
-    assert _has_effect(priest, "mind_blast_empowered"), "Empowerment should not be consumed when the action is rejected before resolution"
+    surge_after_miss = effects.get_effect(shaman, "lava_surge")
+    assert surge_after_miss is not None and effects.effect_stack_count(surge_after_miss) == 1, \
+        "A missed Lava Lash should consume exactly one Lava Surge stack, as on a landed hit"
+    assert _log_count(_turn_lines(stack_match, 1), "Empowered by Lava Surge!") == 1, \
+        "A missed Lava Lash should name Lava Surge exactly once"
     return True
 
 

@@ -399,6 +399,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "name": "Crusader's Might",
         "duration": 5,
         "damage_mult": 1.2,
+        "empower_log": "Empowered by Crusader's Might!",
         "flags": {"empower_next_offense": True},
         "tags": ["proc"],
         "resolution_layer": "action_selection_modifiers",
@@ -633,6 +634,7 @@ EFFECT_TEMPLATES: Dict[str, Dict[str, Any]] = {
         "school": "magical",
         "subschool": "holy",
         "outgoing_damage_mult": 1.2,
+        "empower_log": "Empowered by Avenging Wrath!",
         "flags": {"avenging_wrath": True},
         "display": {
             "war_council": True,
@@ -2074,6 +2076,24 @@ def outgoing_damage_multiplier(target: PlayerState) -> float:
     for effect in target.effects:
         mult *= float(effect.get("outgoing_damage_mult", 1.0) or 1.0)
     return mult
+
+
+def outgoing_damage_empowerment_logs(target: PlayerState) -> List[str]:
+    """Return the combat-log lines of active outgoing-damage empowerments.
+
+    Presentation-only companion to outgoing_damage_multiplier(): an effect that
+    declares both ``outgoing_damage_mult`` and ``empower_log`` identifies itself
+    in the combat log of every damaging cast it modifies. Duplicate and empty
+    log strings are dropped so one cast never repeats a source.
+    """
+    logs: List[str] = []
+    for effect in target.effects:
+        if "outgoing_damage_mult" not in effect:
+            continue
+        log = str(effect.get("empower_log") or "").strip()
+        if log and log not in logs:
+            logs.append(log)
+    return logs
 
 
 def consume_absorbs(ps: PlayerState, incoming: int) -> tuple[int, int, List[Dict[str, Any]]]:
