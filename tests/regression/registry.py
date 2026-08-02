@@ -17,6 +17,7 @@ from collections import Counter
 from typing import Any, Callable, List, Tuple
 
 from . import (
+    test_admission_and_event_rates,
     test_bounded_combat_log,
     test_resources,
     test_equipment_authority,
@@ -30,6 +31,21 @@ from . import (
     test_effects_cc,
     test_ui_docs_metadata,
     test_classes_abilities,
+)
+from .test_admission_and_event_rates import (
+    scenario_admission_queue_cap_boundaries,
+    scenario_admission_lazy_queue_expiration,
+    scenario_admission_room_cap_and_capacity_recovery,
+    scenario_admission_room_ids_are_lifetime_unique,
+    scenario_admission_per_event_token_buckets,
+    scenario_admission_throttle_warning_suppression,
+    scenario_admission_limiter_record_hard_cap,
+    scenario_admission_eventlet_lock_and_concurrency,
+    scenario_admission_capacity_recovery_transport,
+    scenario_admission_two_tab_same_pc_flow,
+    scenario_admission_ordinary_duel_and_source_guardrails,
+    scenario_admission_exact_rate_ttl_and_warning_boundaries,
+    scenario_admission_policy_configuration_validation,
 )
 from .test_bounded_combat_log import (
     scenario_bounded_combat_log_retention_rollover,
@@ -412,6 +428,7 @@ from .test_classes_abilities import (
 
 
 _DOMAIN_MODULES = (
+    test_admission_and_event_rates,
     test_bounded_combat_log,
     test_resources,
     test_equipment_authority,
@@ -429,6 +446,19 @@ _DOMAIN_MODULES = (
 
 
 SCENARIOS = [
+    scenario_admission_queue_cap_boundaries,
+    scenario_admission_lazy_queue_expiration,
+    scenario_admission_room_cap_and_capacity_recovery,
+    scenario_admission_room_ids_are_lifetime_unique,
+    scenario_admission_per_event_token_buckets,
+    scenario_admission_throttle_warning_suppression,
+    scenario_admission_limiter_record_hard_cap,
+    scenario_admission_eventlet_lock_and_concurrency,
+    scenario_admission_capacity_recovery_transport,
+    scenario_admission_two_tab_same_pc_flow,
+    scenario_admission_ordinary_duel_and_source_guardrails,
+    scenario_admission_exact_rate_ttl_and_warning_boundaries,
+    scenario_admission_policy_configuration_validation,
     scenario_bounded_combat_log_retention_rollover,
     scenario_bounded_combat_log_extend_and_supplied_history,
     scenario_bounded_combat_log_rejects_non_append_mutations,

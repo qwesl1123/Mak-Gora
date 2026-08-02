@@ -36,6 +36,7 @@ MAX_ACTION_TOP_LEVEL_FIELDS = 1
 MAX_EQUIPMENT_FIELDS = 3
 
 _PREP_FIELDS = frozenset({"class_id", "items"})
+THROTTLE_WARNING = "Too many requests. Slow down."
 
 
 def _parse_prep_payload(payload):
@@ -527,6 +528,38 @@ def snapshot_for(match, viewer_sid):
         "ability_meta": ability_meta,
     }
 
+
+def _consume_protected_event(sid, event):
+    decision = state.consume_event_token(sid, event)
+    if decision.allowed:
+        return True
+    if decision.emit_warning:
+        emit("duel_system", THROTTLE_WARNING)
+    return False
+
+
+def deliver_match_setup(socketio, match):
+    p1, p2 = match.players
+    join_room(match.room_id, sid=p1)
+    join_room(match.room_id, sid=p2)
+
+    socketio.emit("duel_role", "P1", to=p1)
+    socketio.emit("duel_role", "P2", to=p2)
+    socketio.emit(
+        "duel_system",
+        "Match found. Prep phase: pick class + items.",
+        to=match.room_id,
+    )
+    socketio.emit("duel_prep_options", {
+        "classes": CLASSES,
+        "items": ITEMS,
+        "abilities": ABILITIES,
+    }, to=match.room_id)
+    # Send initial snapshots to both players after role assignment resets cursors.
+    socketio.emit("duel_snapshot", snapshot_for(match, p1), to=p1)
+    socketio.emit("duel_snapshot", snapshot_for(match, p2), to=p2)
+
+
 def register_duel_socket_handlers(socketio):
     @socketio.on("connect")
     def duel_connect():
@@ -536,48 +569,34 @@ def register_duel_socket_handlers(socketio):
     @socketio.on("duel_queue")
     def duel_queue(*payload_args):
         sid = request.sid
+        if not _consume_protected_event(sid, state.QUEUE_EVENT):
+            return
         if not _accepts_empty_event_payload(payload_args):
             emit("duel_system", "Invalid queue submission.")
             return
-        if state.get_match_by_sid(sid):
+        seed = int(time.time() * 1000) & 0xFFFFFFFF
+        result = state.request_matchmaking(sid, seed)
+        if result.status == "already_in_duel":
             emit("duel_system", "Already in a duel.")
             return
-        
-        # Prevent duplicate queue entries
-        if sid in state.duel_queue:
+        if result.status == "already_queued":
             emit("duel_system", "Already in queue.")
+        elif result.status == "queue_full":
+            emit("duel_system", "Matchmaking is currently full. Try again shortly.")
             return
-            
-        state.enqueue(sid)
-        emit("duel_system", "Queued for DUEL...")
+        elif result.status == "room_full":
+            emit("duel_system", "All duel rooms are currently occupied. You remain queued.")
+        elif result.newly_queued:
+            emit("duel_system", "Queued for DUEL...")
 
-        if len(state.duel_queue) >= 2:
-            p1 = state.duel_queue.pop(0)
-            p2 = state.duel_queue.pop(0)
-            seed = int(time.time() * 1000) & 0xFFFFFFFF
-            match = state.create_room(p1, p2, seed)
-
-            join_room(match.room_id, sid=p1)
-            join_room(match.room_id, sid=p2)
-
-            # Send role assignments
-            socketio.emit("duel_role", "P1", to=p1)
-            socketio.emit("duel_role", "P2", to=p2)
-
-            socketio.emit("duel_system", "Match found. Prep phase: pick class + items.", to=match.room_id)
-            socketio.emit("duel_prep_options", {
-                "classes": CLASSES,
-                "items": ITEMS,
-                "abilities": ABILITIES,
-            }, to=match.room_id)
-            
-            # Send initial snapshots to both players
-            socketio.emit("duel_snapshot", snapshot_for(match, p1), to=p1)
-            socketio.emit("duel_snapshot", snapshot_for(match, p2), to=p2)
+        if result.match is not None:
+            deliver_match_setup(socketio, result.match)
 
     @socketio.on("duel_prep_submit")
     def duel_prep_submit(*payload_args):
         sid = request.sid
+        if not _consume_protected_event(sid, state.PREP_EVENT):
+            return
         match = state.get_match_by_sid(sid)
         if not match:
             emit("duel_system", "Not in a duel.")
@@ -640,6 +659,8 @@ def register_duel_socket_handlers(socketio):
     @socketio.on("duel_lock_in")
     def duel_lock_in(*payload_args):
         sid = request.sid
+        if not _consume_protected_event(sid, state.LOCK_EVENT):
+            return
         match = state.get_match_by_sid(sid)
         if not match:
             emit("duel_system", "Not in a duel.")
@@ -662,6 +683,8 @@ def register_duel_socket_handlers(socketio):
     @socketio.on("duel_action")
     def duel_action(*payload_args):
         sid = request.sid
+        if not _consume_protected_event(sid, state.ACTION_EVENT):
+            return
         match = state.get_match_by_sid(sid)
         if not match:
             emit("duel_system", "Not in a duel.")
@@ -714,6 +737,8 @@ def register_duel_socket_handlers(socketio):
     @socketio.on("duel_chat")
     def duel_chat(*payload_args):
         sid = request.sid
+        if not _consume_protected_event(sid, state.CHAT_EVENT):
+            return
         match = state.get_match_by_sid(sid)
         if not match:
             emit("duel_system", "Not in a duel.")
@@ -745,8 +770,7 @@ def register_duel_socket_handlers(socketio):
     @socketio.on("disconnect")
     def duel_disconnect(_reason=None):
         sid = request.sid
-        state.dequeue(sid)
-        match = state.get_match_by_sid(sid)
+        match = state.disconnect_sid(sid)
         if not match:
             return
         
@@ -768,4 +792,9 @@ def register_duel_socket_handlers(socketio):
         leave_room(room_id, sid=sid)
         
         # Clean up the match state
-        state.cleanup_room(room_id)
+        cleaned_match = state.cleanup_room(room_id)
+        if cleaned_match is not None:
+            seed = int(time.time() * 1000) & 0xFFFFFFFF
+            replacement = state.try_pair_waiting(seed)
+            if replacement is not None:
+                deliver_match_setup(socketio, replacement)
