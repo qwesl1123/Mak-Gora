@@ -117,6 +117,7 @@ class _FakeSocketIO:
 def _registered_handlers(
     *,
     assert_unlocked: bool = False,
+    on_direct_emit=None,
 ) -> Iterator[
     tuple[
         _FakeSocketIO,
@@ -148,6 +149,8 @@ def _registered_handlers(
     ) -> None:
         assert_lock_released()
         direct_emits.append((SOCKETS.request.sid, event, payload, kwargs))
+        if on_direct_emit is not None:
+            on_direct_emit(event, payload)
 
     def join(room_id: str, *, sid: str) -> None:
         assert_lock_released()
@@ -529,6 +532,31 @@ def scenario_admission_capacity_recovery_transport() -> bool:
             event == "duel_prep_options" and kwargs.get("to") == replacement.room_id
             for event, _payload, kwargs in socketio.emitted
         )
+
+    with _isolated_admission(policy, FakeClock()):
+        transport: dict[str, Any] = {}
+
+        def assert_setup_precedes_paired_ack(event: str, payload: Any) -> None:
+            if event != "duel_system" or payload != "Queued for DUEL...":
+                return
+            match = state.get_match_by_sid(SOCKETS.request.sid)
+            if match is None:
+                return
+            assert transport["joins"] == [
+                (match.room_id, match.players[0]),
+                (match.room_id, match.players[1]),
+            ]
+            emitted = transport["socketio"].emitted
+            assert sum(event_name == "duel_role" for event_name, _data, _kw in emitted) == 2
+            assert sum(event_name == "duel_snapshot" for event_name, _data, _kw in emitted) == 2
+
+        with _registered_handlers(
+            assert_unlocked=True,
+            on_direct_emit=assert_setup_precedes_paired_ack,
+        ) as (socketio, _direct, joins, _leaves):
+            transport.update({"socketio": socketio, "joins": joins})
+            _call(socketio, "ordered-p1", state.QUEUE_EVENT)
+            _call(socketio, "ordered-p2", state.QUEUE_EVENT)
     return True
 
 

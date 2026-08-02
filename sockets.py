@@ -579,6 +579,10 @@ def register_duel_socket_handlers(socketio):
         if result.status == "already_in_duel":
             emit("duel_system", "Already in a duel.")
             return
+        # Complete the existing setup transport before any intermediate
+        # acknowledgement can yield and let disconnect cleanup remove the room.
+        if result.match is not None:
+            deliver_match_setup(socketio, result.match)
         if result.status == "already_queued":
             emit("duel_system", "Already in queue.")
         elif result.status == "queue_full":
@@ -588,9 +592,6 @@ def register_duel_socket_handlers(socketio):
             emit("duel_system", "All duel rooms are currently occupied. You remain queued.")
         elif result.newly_queued:
             emit("duel_system", "Queued for DUEL...")
-
-        if result.match is not None:
-            deliver_match_setup(socketio, result.match)
 
     @socketio.on("duel_prep_submit")
     def duel_prep_submit(*payload_args):
