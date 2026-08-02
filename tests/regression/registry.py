@@ -18,6 +18,7 @@ from typing import Any, Callable, List, Tuple
 
 from . import (
     test_resources,
+    test_availability_containment,
     test_equipment_authority,
     test_socket_payload_authority,
     test_items_challenger,
@@ -29,6 +30,23 @@ from . import (
     test_effects_cc,
     test_ui_docs_metadata,
     test_classes_abilities,
+)
+from .test_availability_containment import (
+    scenario_availability_bounded_combat_log_and_cursor,
+    scenario_availability_queue_ttl,
+    scenario_availability_prep_idle_expiration,
+    scenario_availability_prep_absolute_expiration,
+    scenario_availability_combat_idle_activity_rules,
+    scenario_availability_combat_absolute_expiration,
+    scenario_availability_ended_room_grace_period,
+    scenario_availability_queue_capacity,
+    scenario_availability_room_capacity,
+    scenario_availability_per_sid_event_throttling,
+    scenario_availability_limiter_cleanup,
+    scenario_availability_socketio_buffer_configuration,
+    scenario_availability_two_tab_same_pc_flow,
+    scenario_availability_full_ordinary_duel_flow,
+    scenario_availability_boundary_values,
 )
 from .test_equipment_authority import (
     scenario_duplicate_weapon_stats_cannot_stack,
@@ -402,6 +420,7 @@ from .test_classes_abilities import (
 
 _DOMAIN_MODULES = (
     test_resources,
+    test_availability_containment,
     test_equipment_authority,
     test_socket_payload_authority,
     test_items_challenger,
@@ -761,6 +780,21 @@ SCENARIOS = [
     scenario_mind_blast_empowered_formula_consume_and_rng_order,
     scenario_empowerment_consumed_on_miss_but_not_on_rejection,
     scenario_lava_surge_and_flame_dance_stack_on_lava_lash,
+    scenario_availability_bounded_combat_log_and_cursor,
+    scenario_availability_queue_ttl,
+    scenario_availability_prep_idle_expiration,
+    scenario_availability_prep_absolute_expiration,
+    scenario_availability_combat_idle_activity_rules,
+    scenario_availability_combat_absolute_expiration,
+    scenario_availability_ended_room_grace_period,
+    scenario_availability_queue_capacity,
+    scenario_availability_room_capacity,
+    scenario_availability_per_sid_event_throttling,
+    scenario_availability_limiter_cleanup,
+    scenario_availability_socketio_buffer_configuration,
+    scenario_availability_two_tab_same_pc_flow,
+    scenario_availability_full_ordinary_duel_flow,
+    scenario_availability_boundary_values,
 ]
 
 

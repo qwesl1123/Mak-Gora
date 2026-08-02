@@ -1,7 +1,9 @@
 # games/duel/engine/models.py
 from dataclasses import dataclass, field
 from threading import RLock
-from typing import Dict, List, Optional, Any
+from typing import Any, Callable, Dict, List, Optional
+
+from ..availability import BoundedCombatLog, DEFAULT_AVAILABILITY_POLICY
 
 # Canonical per-combatant combat-total keys. "healing"/"overhealing" account
 # player-produced healing; "pet_healing"/"pet_overhealing" account healing
@@ -96,9 +98,59 @@ class MatchState:
     locked_in: Dict[str, bool] = field(default_factory=dict)
     submitted: Dict[str, Dict[str, Any]] = field(default_factory=dict)  # per-turn action
     state: Dict[str, PlayerState] = field(default_factory=dict)         # sid -> PlayerState
-    log: List[str] = field(default_factory=list)
+    log: BoundedCombatLog | List[str] = field(default_factory=BoundedCombatLog)
     winner: Optional[str] = None
     combat_totals: Dict[str, Dict[str, int]] = field(default_factory=dict)
     turn_in_progress: bool = False
     last_resolved_key: Optional[str] = None
     turn_lock: RLock = field(default_factory=RLock)
+    max_retained_log_entries: int = DEFAULT_AVAILABILITY_POLICY.max_retained_log_entries
+    created_at: Optional[float] = None
+    phase_started_at: Optional[float] = None
+    last_gameplay_activity_at: Optional[float] = None
+    ended_at: Optional[float] = None
+    availability_closed: bool = False
+    availability_transport_setup_in_progress: bool = False
+    availability_resolution_in_progress: bool = False
+    availability_pending_cleanup_reason: Optional[str] = None
+    availability_pending_cleanup_message: Optional[str] = None
+    monotonic_clock: Callable[[], float] = field(
+        default_factory=lambda: __import__("time").monotonic,
+        repr=False,
+        compare=False,
+    )
+
+    def __post_init__(self) -> None:
+        existing_sequence = int(getattr(self.log, "sequence", len(self.log)))
+        self.log = BoundedCombatLog(
+            self.log,
+            max_entries=self.max_retained_log_entries,
+            sequence=existing_sequence,
+        )
+        now = float(self.monotonic_clock())
+        if self.created_at is None:
+            self.created_at = now
+        if self.phase_started_at is None:
+            self.phase_started_at = now
+        if self.last_gameplay_activity_at is None:
+            self.last_gameplay_activity_at = now
+        if self.phase == "ended" and self.ended_at is None:
+            self.ended_at = now
+
+    @property
+    def log_sequence(self) -> int:
+        return self.log.sequence
+
+    def mark_gameplay_activity(self, now: Optional[float] = None) -> None:
+        self.last_gameplay_activity_at = (
+            float(self.monotonic_clock()) if now is None else float(now)
+        )
+
+    def mark_phase_started(self, phase: str, now: Optional[float] = None) -> None:
+        timestamp = float(self.monotonic_clock()) if now is None else float(now)
+        if self.phase != phase:
+            self.phase = phase
+            self.phase_started_at = timestamp
+        self.last_gameplay_activity_at = timestamp
+        if phase == "ended" and self.ended_at is None:
+            self.ended_at = timestamp

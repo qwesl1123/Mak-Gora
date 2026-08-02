@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import types
 
 from contextlib import contextmanager
 from typing import Any, Iterator
@@ -42,6 +43,8 @@ def _registered_handlers(
     direct_emits: list[tuple[str, str, Any, dict[str, Any]]] = []
     match_lookups: list[str] = []
     original_get_match = SOCKETS.state.get_match_by_sid
+    original_match_is_retained = SOCKETS.state.match_is_retained
+    original_consume_event_token = SOCKETS.state.consume_event_token
     original_emit = SOCKETS.emit
     original_sid = SOCKETS.request.sid
 
@@ -60,12 +63,23 @@ def _registered_handlers(
         direct_emits.append((SOCKETS.request.sid, event, payload, kwargs))
 
     SOCKETS.state.get_match_by_sid = get_match_by_sid
+    SOCKETS.state.match_is_retained = lambda candidate, sid=None: (
+        candidate is match and (sid is None or sid in match.players)
+        if match is not None
+        else False
+    )
+    SOCKETS.state.consume_event_token = lambda _sid, _event: types.SimpleNamespace(
+        allowed=True,
+        emit_warning=False,
+    )
     SOCKETS.emit = record_direct_emit
     SOCKETS.register_duel_socket_handlers(socketio)
     try:
         yield socketio, direct_emits, match_lookups
     finally:
         SOCKETS.state.get_match_by_sid = original_get_match
+        SOCKETS.state.match_is_retained = original_match_is_retained
+        SOCKETS.state.consume_event_token = original_consume_event_token
         SOCKETS.emit = original_emit
         SOCKETS.request.sid = original_sid
 
@@ -555,8 +569,10 @@ def scenario_socket_chat_is_bounded_plain_text() -> bool:
 
 def scenario_socket_identity_and_no_payload_events_are_authoritative() -> bool:
     original_queue = list(SOCKETS.state.duel_queue)
+    original_queue_times = dict(SOCKETS.state.queued_at_by_sid)
     try:
         SOCKETS.state.duel_queue.clear()
+        SOCKETS.state.queued_at_by_sid.clear()
         with _registered_handlers(None) as (socketio, direct_emits, lookups):
             queue = socketio.handlers["duel_queue"]
             SOCKETS.request.sid = "queue_sid"
@@ -578,9 +594,13 @@ def scenario_socket_identity_and_no_payload_events_are_authoritative() -> bool:
             SOCKETS.state.duel_queue.clear()
             _call_socket_handler(queue, None)
             assert SOCKETS.state.duel_queue == ["queue_sid"]
-            assert lookups and set(lookups) == {"queue_sid"}
+            assert lookups == [], (
+                "Queue authority now resolves atomically through queue_sid_for_match"
+            )
     finally:
         SOCKETS.state.duel_queue[:] = original_queue
+        SOCKETS.state.queued_at_by_sid.clear()
+        SOCKETS.state.queued_at_by_sid.update(original_queue_times)
 
     p1_sid, p2_sid = "identity_p1", "identity_p2"
     match = MatchState(
@@ -606,21 +626,18 @@ def scenario_socket_identity_and_no_payload_events_are_authoritative() -> bool:
         assert match.locked_in[p1_sid] is True
 
         calls: dict[str, list[Any]] = {
-            "dequeue": [],
+            "disconnect_sid": [],
             "leave_room": [],
-            "cleanup_room": [],
         }
-        original_dequeue = SOCKETS.state.dequeue
+        original_disconnect_sid = SOCKETS.state.disconnect_sid
         original_leave_room = SOCKETS.leave_room
-        original_cleanup_room = SOCKETS.state.cleanup_room
-        SOCKETS.state.dequeue = lambda sid: calls["dequeue"].append(sid)
+        SOCKETS.state.disconnect_sid = lambda sid: (
+            calls["disconnect_sid"].append(sid) or match
+        )
         SOCKETS.leave_room = (
             lambda room_id, **kwargs: calls["leave_room"].append(
                 (room_id, kwargs.get("sid"))
             )
-        )
-        SOCKETS.state.cleanup_room = (
-            lambda room_id: calls["cleanup_room"].append(room_id)
         )
         try:
             _call_socket_handler(
@@ -628,14 +645,12 @@ def scenario_socket_identity_and_no_payload_events_are_authoritative() -> bool:
                 "client disconnect",
             )
         finally:
-            SOCKETS.state.dequeue = original_dequeue
+            SOCKETS.state.disconnect_sid = original_disconnect_sid
             SOCKETS.leave_room = original_leave_room
-            SOCKETS.state.cleanup_room = original_cleanup_room
 
         assert calls == {
-            "dequeue": [p1_sid],
+            "disconnect_sid": [p1_sid],
             "leave_room": [(match.room_id, p1_sid)],
-            "cleanup_room": [match.room_id],
         }
         assert lookups and set(lookups) == {p1_sid}
         disconnect_emits = [
