@@ -26,6 +26,94 @@ ITEM_FX_MARKUP = [
     (TWIN_BLADES_AZZINOTH_NAME, "fx_twin_blades_azzinoth"),
 ]
 
+MAX_CLASS_ID_CHARACTERS = 100
+MAX_ITEM_ID_CHARACTERS = 150
+MAX_EQUIPMENT_SLOT_CHARACTERS = 32
+MAX_CHAT_CHARACTERS = 500
+MAX_PREP_TOP_LEVEL_FIELDS = 2
+MAX_ACTION_TOP_LEVEL_FIELDS = 1
+MAX_EQUIPMENT_FIELDS = 3
+
+_PREP_FIELDS = frozenset({"class_id", "items"})
+
+
+def _parse_prep_payload(payload):
+    if not isinstance(payload, dict) or not payload:
+        raise ValueError("Invalid prep submission.")
+    if len(payload) > MAX_PREP_TOP_LEVEL_FIELDS:
+        raise ValueError("Unknown prep field.")
+    if any(not isinstance(key, str) or key not in _PREP_FIELDS for key in payload):
+        raise ValueError("Unknown prep field.")
+
+    parsed = {}
+    if "class_id" in payload:
+        class_id = payload["class_id"]
+        if not isinstance(class_id, str):
+            raise ValueError("Invalid prep submission.")
+        if len(class_id) > MAX_CLASS_ID_CHARACTERS:
+            raise ValueError("Class ID is too long.")
+        parsed["class_id"] = class_id
+
+    if "items" in payload:
+        items_payload = payload["items"]
+        if not isinstance(items_payload, dict):
+            raise ValueError("Equipment selections must be an object.")
+        if len(items_payload) > MAX_EQUIPMENT_FIELDS:
+            raise ValueError("Invalid prep submission.")
+
+        parsed_items = {}
+        for slot, item_id in items_payload.items():
+            if not isinstance(slot, str):
+                raise ValueError("Unknown equipment slot.")
+            if len(slot) > MAX_EQUIPMENT_SLOT_CHARACTERS:
+                raise ValueError("Equipment slot is too long.")
+            if not isinstance(item_id, str):
+                raise ValueError("Item IDs must be text.")
+            if len(item_id) > MAX_ITEM_ID_CHARACTERS:
+                raise ValueError("Item ID is too long.")
+            parsed_items[slot] = item_id
+        parsed["items"] = parsed_items
+
+    return parsed
+
+
+def _parse_action_payload(payload):
+    if not isinstance(payload, dict):
+        raise ValueError("Invalid action submission.")
+    if len(payload) > MAX_ACTION_TOP_LEVEL_FIELDS:
+        raise ValueError("Unknown action field.")
+    if any(key != "ability_id" for key in payload):
+        raise ValueError("Unknown action field.")
+    if set(payload) != {"ability_id"}:
+        raise ValueError("Invalid action submission.")
+
+    raw_ability_id = payload["ability_id"]
+    if not isinstance(raw_ability_id, str):
+        raise ValueError("Ability ID must be text.")
+    if len(raw_ability_id) > resolver.MAX_ABILITY_ID_CHARACTERS:
+        raise ValueError("Ability ID is too long.")
+
+    action = resolver.normalize_player_action({"ability_id": raw_ability_id})
+    if action["ability_id"] not in ABILITIES:
+        raise ValueError("Unknown ability.")
+    return action
+
+
+def _parse_chat_payload(payload):
+    if not isinstance(payload, str):
+        raise ValueError("Chat messages must be text.")
+    if len(payload) > MAX_CHAT_CHARACTERS:
+        raise ValueError("Chat message is too long.")
+
+    message = payload.strip()
+    if not message:
+        raise ValueError("Chat message cannot be empty.")
+    return message
+
+
+def _accepts_empty_event_payload(payload_args):
+    return not payload_args or (len(payload_args) == 1 and payload_args[0] is None)
+
 
 def _picked_class_id(match, sid):
     picked = match.picks.get(sid, {})
@@ -64,8 +152,7 @@ def _normalized_item_updates(items_payload):
 
 
 def _canonical_prep_pick(current, payload):
-    if not isinstance(payload, dict):
-        raise ValueError("Invalid prep submission.")
+    payload = _parse_prep_payload(payload)
 
     current_payload = current if isinstance(current, dict) else {}
     current_class_id = None
@@ -443,8 +530,11 @@ def register_duel_socket_handlers(socketio):
         emit("duel_system", "Connected to Arena Server")
     
     @socketio.on("duel_queue")
-    def duel_queue():
+    def duel_queue(*payload_args):
         sid = request.sid
+        if not _accepts_empty_event_payload(payload_args):
+            emit("duel_system", "Invalid queue submission.")
+            return
         if state.get_match_by_sid(sid):
             emit("duel_system", "Already in a duel.")
             return
@@ -482,7 +572,7 @@ def register_duel_socket_handlers(socketio):
             socketio.emit("duel_snapshot", snapshot_for(match, p2), to=p2)
 
     @socketio.on("duel_prep_submit")
-    def duel_prep_submit(payload):
+    def duel_prep_submit(*payload_args):
         sid = request.sid
         match = state.get_match_by_sid(sid)
         if not match:
@@ -491,7 +581,14 @@ def register_duel_socket_handlers(socketio):
         if match.phase != "prep":
             emit("duel_system", "Prep phase is over.")
             return
+        if match.locked_in.get(sid):
+            emit("duel_system", "Your build is locked in and cannot be changed.")
+            return
+        if len(payload_args) != 1:
+            emit("duel_system", "Invalid prep submission.")
+            return
 
+        payload = payload_args[0]
         current = match.picks.get(sid, {})
         try:
             merged = _canonical_prep_pick(current, payload)
@@ -537,7 +634,7 @@ def register_duel_socket_handlers(socketio):
         socketio.emit("duel_system", "Combat begins.", to=match.room_id)
 
     @socketio.on("duel_lock_in")
-    def duel_lock_in():
+    def duel_lock_in(*payload_args):
         sid = request.sid
         match = state.get_match_by_sid(sid)
         if not match:
@@ -545,6 +642,9 @@ def register_duel_socket_handlers(socketio):
             return
         if match.phase != "prep":
             emit("duel_system", "Prep phase is over.")
+            return
+        if not _accepts_empty_event_payload(payload_args):
+            emit("duel_system", "Invalid lock-in submission.")
             return
         if not player_has_class(match, sid):
             picked = match.picks.get(sid, {})
@@ -556,7 +656,7 @@ def register_duel_socket_handlers(socketio):
         try_start_combat(match)
 
     @socketio.on("duel_action")
-    def duel_action(payload):
+    def duel_action(*payload_args):
         sid = request.sid
         match = state.get_match_by_sid(sid)
         if not match:
@@ -565,12 +665,17 @@ def register_duel_socket_handlers(socketio):
         if match.phase != "combat":
             emit("duel_system", "Prep phase: choose class/items before combat.")
             return
-
-        action = resolver.normalize_player_action(payload if isinstance(payload, dict) else {"ability_id": payload})
-        ability_id = action.get("ability_id", "")
-        if ability_id not in ABILITIES:
-            emit("duel_system", f"Unknown ability '{ability_id}'. Try again.")
+        if len(payload_args) != 1:
+            emit("duel_system", "Invalid action submission.")
             return
+
+        payload = payload_args[0]
+        try:
+            action = _parse_action_payload(payload)
+        except ValueError as exc:
+            emit("duel_system", str(exc))
+            return
+        ability_id = action["ability_id"]
         should_resolve = False
         with match.turn_lock:
             resolver.submit_action(match, sid, action)
@@ -603,11 +708,20 @@ def register_duel_socket_handlers(socketio):
                 socketio.emit("duel_system", "Duel ended.", to=match.room_id)
 
     @socketio.on("duel_chat")
-    def duel_chat(message):
+    def duel_chat(*payload_args):
         sid = request.sid
         match = state.get_match_by_sid(sid)
         if not match:
             emit("duel_system", "Not in a duel.")
+            return
+        if len(payload_args) != 1:
+            emit("duel_system", "Chat messages must be text.")
+            return
+        payload = payload_args[0]
+        try:
+            message = _parse_chat_payload(payload)
+        except ValueError as exc:
+            emit("duel_system", str(exc))
             return
         
         game = match
@@ -625,7 +739,7 @@ def register_duel_socket_handlers(socketio):
         }, to=match.room_id)
 
     @socketio.on("disconnect")
-    def duel_disconnect():
+    def duel_disconnect(_reason=None):
         sid = request.sid
         state.dequeue(sid)
         match = state.get_match_by_sid(sid)
