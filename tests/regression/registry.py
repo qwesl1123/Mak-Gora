@@ -18,6 +18,7 @@ from typing import Any, Callable, List, Tuple
 
 from . import (
     test_resources,
+    test_equipment_authority,
     test_items_challenger,
     test_next_offense,
     test_periodic_items,
@@ -27,6 +28,14 @@ from . import (
     test_effects_cc,
     test_ui_docs_metadata,
     test_classes_abilities,
+)
+from .test_equipment_authority import (
+    scenario_duplicate_weapon_stats_cannot_stack,
+    scenario_duplicate_item_passives_cannot_stack,
+    scenario_duplicate_periodic_items_cannot_stack,
+    scenario_socket_equipment_updates_are_atomic,
+    scenario_equipment_class_and_direct_build_checks_remain_authoritative,
+    scenario_legal_incremental_three_slot_prep_is_unchanged,
 )
 from .test_resources import (
     scenario_on_hit_resource_gain_log_uses_actual_gained,
@@ -381,6 +390,7 @@ from .test_classes_abilities import (
 
 _DOMAIN_MODULES = (
     test_resources,
+    test_equipment_authority,
     test_items_challenger,
     test_next_offense,
     test_periodic_items,
@@ -712,6 +722,12 @@ SCENARIOS = [
     scenario_pet_attack_logs_on_miss_and_immune_consistently,
     scenario_pet_hot_tick_credits_owner_pet_healing_bucket,
     scenario_phase0_normal_vs_immediate_parity_ordering_lock,
+    scenario_duplicate_weapon_stats_cannot_stack,
+    scenario_duplicate_item_passives_cannot_stack,
+    scenario_duplicate_periodic_items_cannot_stack,
+    scenario_socket_equipment_updates_are_atomic,
+    scenario_equipment_class_and_direct_build_checks_remain_authoritative,
+    scenario_legal_incremental_three_slot_prep_is_unchanged,
     scenario_invalid_class_rejected,
     scenario_valid_class_id_is_normalized_before_build,
     scenario_prep_selection_name_uses_current_submission,

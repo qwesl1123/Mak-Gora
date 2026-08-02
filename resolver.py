@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional, Tuple, Callable, Mapping, TypedDict
 from .models import MatchState, PlayerState, PlayerBuild, Resources, PetState, combat_totals_entry, new_combat_totals
 from .damage_events import PassiveDamageEvent, make_queued_damage_event
-from .periodic_items import resolve_periodic_item_stage
+from .periodic_items import EQUIPMENT_SLOT_ORDER, resolve_periodic_item_stage
 from .damage_types import (
     DAMAGE_SOURCE_ABSORB_EXPLOSION,
     DAMAGE_SOURCE_DIRECT_ABILITY,
@@ -963,6 +963,113 @@ def validated_class_data(class_id: object) -> tuple[str, Dict[str, Any]]:
     normalized = validated_class_id(class_id)
     return normalized, CLASSES[normalized]
 
+
+def canonicalize_equipment(
+    items_payload: object,
+    *,
+    class_id: object = None,
+    base_items: object = None,
+    allow_omitted_slot: bool = False,
+) -> Dict[str, Optional[str]]:
+    """Validate equipment ownership and return the fixed authoritative shape.
+
+    ``base_items`` supports the socket protocol's incremental updates. Only that
+    boundary may set ``allow_omitted_slot`` for the frontend's empty-key form;
+    direct/internal builds must always supply canonical slot keys.
+    """
+    if base_items is None:
+        canonical_items: Dict[str, Optional[str]] = {
+            slot: None for slot in EQUIPMENT_SLOT_ORDER
+        }
+    else:
+        canonical_items = canonicalize_equipment(base_items)
+
+    if not isinstance(items_payload, Mapping):
+        raise ValueError("Equipment selections must be an object.")
+
+    normalized_entries: list[tuple[str, Optional[str]]] = []
+    submitted_item_ids: set[str] = set()
+    submitted_slots: set[str] = set()
+    is_incremental_update = base_items is not None
+
+    for raw_slot, raw_item_id in items_payload.items():
+        if not isinstance(raw_slot, str):
+            raise ValueError("Unknown equipment slot.")
+
+        submitted_slot = normalize_command_input(raw_slot)
+        if raw_item_id is None:
+            if is_incremental_update or allow_omitted_slot:
+                raise ValueError("Item IDs must be text.")
+            if submitted_slot not in EQUIPMENT_SLOT_ORDER:
+                raise ValueError("Unknown equipment slot.")
+            if submitted_slot in submitted_slots:
+                raise ValueError("Equipment slot cannot be submitted more than once.")
+            submitted_slots.add(submitted_slot)
+            normalized_entries.append((submitted_slot, None))
+            continue
+
+        if not isinstance(raw_item_id, str):
+            raise ValueError("Item IDs must be text.")
+        item_id = normalize_command_input(raw_item_id)
+        if not item_id or item_id not in ITEMS:
+            raise ValueError("Unknown item.")
+
+        # Detect multiplicity before slot checks so a repeated ID cannot become
+        # acceptable merely because one submitted copy is also off-slot.
+        if item_id in submitted_item_ids:
+            raise ValueError("The same item cannot be equipped more than once.")
+        submitted_item_ids.add(item_id)
+
+        item = ITEMS[item_id]
+        canonical_slot = normalize_command_input(item.get("slot"))
+        if canonical_slot not in EQUIPMENT_SLOT_ORDER:
+            raise ValueError("Item has an invalid equipment slot.")
+
+        if not submitted_slot and allow_omitted_slot:
+            submitted_slot = canonical_slot
+        elif submitted_slot not in EQUIPMENT_SLOT_ORDER:
+            raise ValueError("Unknown equipment slot.")
+
+        if submitted_slot != canonical_slot:
+            raise ValueError(
+                f"{item['name']} cannot be equipped in the {submitted_slot} slot."
+            )
+        if submitted_slot in submitted_slots:
+            raise ValueError("Equipment slot cannot be submitted more than once.")
+        submitted_slots.add(submitted_slot)
+        normalized_entries.append((submitted_slot, item_id))
+
+    for slot, item_id in normalized_entries:
+        canonical_items[slot] = item_id
+
+    equipped_item_ids = [
+        item_id for item_id in canonical_items.values() if item_id is not None
+    ]
+    if len(equipped_item_ids) != len(set(equipped_item_ids)):
+        raise ValueError("The same item cannot be equipped more than once.")
+
+    normalized_class_id = None
+    if class_id is not None:
+        normalized_class_id = normalize_class_id(class_id)
+        if not normalized_class_id:
+            raise ValueError("Unknown class.")
+
+    if normalized_class_id:
+        class_name = class_display_name(
+            normalized_class_id,
+            default=normalized_class_id,
+        )
+        for item_id in equipped_item_ids:
+            item = ITEMS[item_id]
+            allowed_classes = item.get("classes")
+            if allowed_classes and normalized_class_id not in allowed_classes:
+                raise ValueError(
+                    f"{item['name']} cannot be equipped by {class_name}."
+                )
+
+    return canonical_items
+
+
 def apply_prep_build(match: MatchState) -> None:
     """
     Called once when both players have selected class + items.
@@ -972,13 +1079,22 @@ def apply_prep_build(match: MatchState) -> None:
     for sid in match.players:
         pick = match.picks.get(sid)
         if isinstance(pick, PlayerBuild):
-            build = pick
+            raw_class_id = pick.class_id
+            raw_items = pick.items
+        elif isinstance(pick, Mapping):
+            raw_class_id = pick.get("class_id")
+            raw_items = pick.get("items", {})
         else:
-            payload = pick or {}
-            build = PlayerBuild(class_id=payload.get("class_id"))
-            build.items.update(payload.get("items", {}))
+            raise ValueError("Invalid prep build.")
 
-        build.class_id, class_data = validated_class_data(build.class_id)
+        normalized_class_id, class_data = validated_class_data(raw_class_id)
+        build = PlayerBuild(
+            class_id=normalized_class_id,
+            items=canonicalize_equipment(
+                raw_items,
+                class_id=normalized_class_id,
+            ),
+        )
         prepared_builds[sid] = (build, class_data)
 
     match.combat_totals = {sid: new_combat_totals() for sid in match.players}
@@ -1001,15 +1117,11 @@ def apply_prep_build(match: MatchState) -> None:
         # Store equipped items for passive effects
         equipped_items = []
         
-        for slot, item_id in build.items.items():
+        for slot in EQUIPMENT_SLOT_ORDER:
+            item_id = build.items[slot]
             if not item_id:
                 continue
-            item = ITEMS.get(item_id)
-            if not item:
-                continue
-            allowed_classes = item.get("classes")
-            if allowed_classes and build.class_id not in allowed_classes:
-                continue
+            item = ITEMS[item_id]
             
             equipped_items.append((item_id, item))
             
