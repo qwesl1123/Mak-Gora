@@ -53,6 +53,75 @@ def scenario_bounded_combat_log_extend_and_supplied_history() -> bool:
     match.log.extend(["entry-5", "entry-6", "entry-7"])
     assert match.log == ["entry-5", "entry-6", "entry-7"]
     assert match.log.sequence == 8
+
+    match.log += ["entry-8", "entry-9"]
+    assert match.log == ["entry-7", "entry-8", "entry-9"]
+    assert match.log.sequence == 10
+    return True
+
+
+def scenario_bounded_combat_log_rejects_non_append_mutations() -> bool:
+    log = BoundedCombatLog(
+        ["entry-0", "entry-1", "entry-2"],
+        capacity=3,
+    )
+    before_entries = list(log)
+    before_sequence = log.sequence
+    before_capacity = log.capacity
+
+    assert isinstance(log, list)
+    assert list(iter(log)) == before_entries
+    assert log[0] == "entry-0"
+    assert log[-1] == "entry-2"
+    assert log[1:] == ["entry-1", "entry-2"]
+    assert log == before_entries
+    assert len(log) == 3
+    assert "entry-1" in log
+    assert repr(log) == repr(before_entries)
+
+    def set_item() -> None:
+        log[0] = "replacement"
+
+    def set_slice() -> None:
+        log[0:2] = ["replacement"]
+
+    def delete_item() -> None:
+        del log[0]
+
+    def delete_slice() -> None:
+        del log[0:2]
+
+    def multiply() -> None:
+        nonlocal log
+        log *= 2
+
+    prohibited_operations = (
+        set_item,
+        set_slice,
+        delete_item,
+        delete_slice,
+        multiply,
+        lambda: log.insert(0, "inserted"),
+        log.clear,
+        log.pop,
+        lambda: log.remove(log[0]),
+        log.reverse,
+        log.sort,
+    )
+    for operation in prohibited_operations:
+        try:
+            operation()
+        except TypeError as exc:
+            assert "append-only" in str(exc)
+        else:
+            raise AssertionError(
+                f"{operation!r} must not mutate an append-only combat log"
+            )
+
+        assert list(log) == before_entries
+        assert log.sequence == before_sequence
+        assert log.capacity == before_capacity
+        assert len(log) <= log.capacity
     return True
 
 
@@ -161,6 +230,22 @@ def scenario_bounded_combat_log_new_match_cursor_reset() -> bool:
     handler = html[handler_start:handler_end]
     assert "lastLogLength = 0;" in handler
     assert handler.index("lastLogLength = 0;") < handler.index("myRole = role;")
+
+    clamped_slice = "Math.max(data.log.length - newCount, 0)"
+    assert clamped_slice in html
+
+    def cursor_result(
+        last_log_length: int,
+        log_length: int,
+        visible_log_length: int,
+    ) -> tuple[int, int]:
+        new_count = max(log_length - last_log_length, 0)
+        slice_start = max(visible_log_length - new_count, 0)
+        return slice_start, visible_log_length - slice_start
+
+    assert cursor_result(0, 50, 30) == (0, 30)
+    assert cursor_result(47, 50, 30) == (27, 3)
+    assert cursor_result(50, 50, 30) == (30, 0)
 
     socket_source = Path(SOCKETS.__file__).read_text(encoding="utf-8")
     role_emit = socket_source.index('socketio.emit("duel_role", "P1"')

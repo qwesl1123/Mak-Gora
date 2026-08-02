@@ -34,6 +34,7 @@ from . import (
 from .test_bounded_combat_log import (
     scenario_bounded_combat_log_retention_rollover,
     scenario_bounded_combat_log_extend_and_supplied_history,
+    scenario_bounded_combat_log_rejects_non_append_mutations,
     scenario_bounded_combat_log_snapshot_cursor_rollover,
     scenario_bounded_combat_log_periodic_immunity_detector,
     scenario_bounded_combat_log_short_duel_is_unchanged,
@@ -430,6 +431,7 @@ _DOMAIN_MODULES = (
 SCENARIOS = [
     scenario_bounded_combat_log_retention_rollover,
     scenario_bounded_combat_log_extend_and_supplied_history,
+    scenario_bounded_combat_log_rejects_non_append_mutations,
     scenario_bounded_combat_log_snapshot_cursor_rollover,
     scenario_bounded_combat_log_periodic_immunity_detector,
     scenario_bounded_combat_log_short_duel_is_unchanged,

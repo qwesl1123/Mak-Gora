@@ -46,7 +46,7 @@ class BoundedCombatLog(list[str]):
     def _evict_oldest(self) -> None:
         overflow = len(self) - self.capacity
         if overflow > 0:
-            del self[:overflow]
+            super().__delitem__(slice(0, overflow))
 
     def append(self, entry: str) -> None:
         super().append(entry)
@@ -64,6 +64,22 @@ class BoundedCombatLog(list[str]):
     def __iadd__(self, entries: Iterable[str]):
         self.extend(entries)
         return self
+
+    @staticmethod
+    def _reject_non_append_mutation(*_args, **_kwargs):
+        raise TypeError(
+            "BoundedCombatLog is append-only; use append() or extend()"
+        )
+
+    __setitem__ = _reject_non_append_mutation
+    __delitem__ = _reject_non_append_mutation
+    __imul__ = _reject_non_append_mutation
+    insert = _reject_non_append_mutation
+    clear = _reject_non_append_mutation
+    pop = _reject_non_append_mutation
+    remove = _reject_non_append_mutation
+    reverse = _reject_non_append_mutation
+    sort = _reject_non_append_mutation
 
 
 def new_combat_totals() -> Dict[str, int]:

@@ -5327,7 +5327,7 @@
         if (data.log) {
           const total = data.log_length ?? data.log.length;
           const newCount = Math.max(total - lastLogLength, 0);
-          const sliceStart = data.log.length - newCount;
+          const sliceStart = Math.max(data.log.length - newCount, 0);
           data.log.slice(sliceStart).forEach(line => appendLine(line, "logLineTurn"));
           lastLogLength = total;
         }
