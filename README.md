@@ -40,6 +40,15 @@ Rough overview, no need to overthink it:
 3. Run the app: `python app.py`
 4. Open your browser to the address it prints and start dueling
 
+### Resource limits
+
+Each duel retains the latest 500 combat-log entries while snapshots continue
+to expose the latest 30. Inbound Socket.IO messages are limited to 16 KiB.
+Set `MAKGORA_MAX_RETAINED_LOG_ENTRIES` or
+`MAKGORA_SOCKET_MAX_BUFFER_BYTES` before startup to override those defaults.
+The retained-log value must be at least 30 and the socket buffer at least 4096
+bytes; invalid explicit values stop startup with a configuration error.
+
 ## Development Documentation
 
 - [Roadmap](ROADMAP.md) — current development phase and class progress

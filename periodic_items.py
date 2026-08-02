@@ -394,7 +394,7 @@ def periodic_global_damage(
     immunity_school = "physical" if school == "physical" else "magic"
     for target_owner_sid, target, is_player_target in target_snapshot:
         immune_before_application = is_damage_immune(target, immunity_school)
-        log_length_before_application = len(context.match.log)
+        log_sequence_before_application = context.match.log.sequence
         target_label = _periodic_target_log_label(target_owner_sid, target)
         target_damage = context.apply_damage(
             owner,
@@ -414,7 +414,7 @@ def periodic_global_damage(
         if immune_before_application:
             # Cloak/Cyclone already emit their canonical shared-pipeline line;
             # full immunity and pet immunity need a handler-owned result line.
-            if len(context.match.log) == log_length_before_application:
+            if context.match.log.sequence == log_sequence_before_application:
                 context.match.log.append(
                     f"{item_name} cannot harm {target_label}; the target is immune."
                 )

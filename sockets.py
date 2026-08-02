@@ -4,6 +4,7 @@ from flask_socketio import emit, join_room, leave_room
 import time
 
 from . import state
+from .availability import SNAPSHOT_LOG_ENTRY_LIMIT
 from .engine import resolver
 from .engine.effects import (
     build_champion_mouseover_payload,
@@ -507,7 +508,10 @@ def snapshot_for(match, viewer_sid):
         "enemy_effect_panel": effect_panel_for(enemy),
         "you_pets": pets_for(you),
         "enemy_pets": pets_for(enemy),
-        "log": [format_log_line(line) for line in match.log[-30:]],
+        "log": [
+            format_log_line(line)
+            for line in match.log[-SNAPSHOT_LOG_ENTRY_LIMIT:]
+        ],
         "winner": match.winner,
         "friendly_total_damage": friendly_totals.get("damage", 0),
         "friendly_total_healing": friendly_totals.get("healing", 0),
@@ -518,7 +522,7 @@ def snapshot_for(match, viewer_sid):
         "completed_turns": completed_turns,
         "friendly_damage_per_turn": friendly_dpt,
         "enemy_damage_per_turn": enemy_dpt,
-        "log_length": len(match.log),
+        "log_length": match.log.sequence,
         "friendly_cooldowns": friendly_cooldowns,
         "ability_meta": ability_meta,
     }

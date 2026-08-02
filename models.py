@@ -1,7 +1,9 @@
 # games/duel/engine/models.py
 from dataclasses import dataclass, field
 from threading import RLock
-from typing import Dict, List, Optional, Any
+from typing import Any, Dict, Iterable, List, Optional
+
+from ..availability import RESOURCE_LIMITS
 
 # Canonical per-combatant combat-total keys. "healing"/"overhealing" account
 # player-produced healing; "pet_healing"/"pet_overhealing" account healing
@@ -10,6 +12,58 @@ from typing import Dict, List, Optional, Any
 # healing lost only to an upper max-HP cap and is excluded from effective
 # healing totals.
 COMBAT_TOTAL_KEYS = ("damage", "healing", "pet_healing", "overhealing", "pet_overhealing")
+
+
+class BoundedCombatLog(list[str]):
+    """Chronological list-compatible log with bounded retained history."""
+
+    def __init__(
+        self,
+        entries: Iterable[str] = (),
+        *,
+        capacity: int,
+        sequence: int | None = None,
+    ) -> None:
+        if isinstance(capacity, bool) or not isinstance(capacity, int) or capacity <= 0:
+            raise ValueError("Combat-log capacity must be a positive integer")
+
+        supplied_entries = list(entries)
+        historical_count = len(supplied_entries) if sequence is None else sequence
+        if (
+            isinstance(historical_count, bool)
+            or not isinstance(historical_count, int)
+            or historical_count < len(supplied_entries)
+        ):
+            raise ValueError(
+                "Combat-log sequence must be an integer at least as large as "
+                "the supplied retained history"
+            )
+
+        self.capacity = capacity
+        self.sequence = historical_count
+        super().__init__(supplied_entries[-capacity:])
+
+    def _evict_oldest(self) -> None:
+        overflow = len(self) - self.capacity
+        if overflow > 0:
+            del self[:overflow]
+
+    def append(self, entry: str) -> None:
+        super().append(entry)
+        self.sequence += 1
+        self._evict_oldest()
+
+    def extend(self, entries: Iterable[str]) -> None:
+        new_entries = list(entries)
+        if not new_entries:
+            return
+        super().extend(new_entries)
+        self.sequence += len(new_entries)
+        self._evict_oldest()
+
+    def __iadd__(self, entries: Iterable[str]):
+        self.extend(entries)
+        return self
 
 
 def new_combat_totals() -> Dict[str, int]:
@@ -96,9 +150,22 @@ class MatchState:
     locked_in: Dict[str, bool] = field(default_factory=dict)
     submitted: Dict[str, Dict[str, Any]] = field(default_factory=dict)  # per-turn action
     state: Dict[str, PlayerState] = field(default_factory=dict)         # sid -> PlayerState
-    log: List[str] = field(default_factory=list)
+    max_retained_log_entries: int = field(
+        default_factory=lambda: RESOURCE_LIMITS.max_retained_log_entries
+    )
+    log: BoundedCombatLog | List[str] = field(default_factory=list)
     winner: Optional[str] = None
     combat_totals: Dict[str, Dict[str, int]] = field(default_factory=dict)
     turn_in_progress: bool = False
     last_resolved_key: Optional[str] = None
     turn_lock: RLock = field(default_factory=RLock)
+
+    def __post_init__(self) -> None:
+        existing_sequence = (
+            self.log.sequence if isinstance(self.log, BoundedCombatLog) else None
+        )
+        self.log = BoundedCombatLog(
+            self.log,
+            capacity=self.max_retained_log_entries,
+            sequence=existing_sequence,
+        )

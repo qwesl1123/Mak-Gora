@@ -4758,6 +4758,7 @@
 
       socket.on("duel_system", (msg) => appendLine("🛡️ " + msg, "logLineSystem"));
       socket.on("duel_role", (role) => {
+        lastLogLength = 0;
         myRole = role;
         roleText.textContent = role;
         appendLine("⚔️ You are " + role, "logLineSystem");

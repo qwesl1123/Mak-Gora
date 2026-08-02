@@ -17,6 +17,7 @@ from collections import Counter
 from typing import Any, Callable, List, Tuple
 
 from . import (
+    test_bounded_combat_log,
     test_resources,
     test_equipment_authority,
     test_socket_payload_authority,
@@ -29,6 +30,15 @@ from . import (
     test_effects_cc,
     test_ui_docs_metadata,
     test_classes_abilities,
+)
+from .test_bounded_combat_log import (
+    scenario_bounded_combat_log_retention_rollover,
+    scenario_bounded_combat_log_extend_and_supplied_history,
+    scenario_bounded_combat_log_snapshot_cursor_rollover,
+    scenario_bounded_combat_log_periodic_immunity_detector,
+    scenario_bounded_combat_log_short_duel_is_unchanged,
+    scenario_bounded_combat_log_new_match_cursor_reset,
+    scenario_socketio_resource_limit_configuration,
 )
 from .test_equipment_authority import (
     scenario_duplicate_weapon_stats_cannot_stack,
@@ -401,6 +411,7 @@ from .test_classes_abilities import (
 
 
 _DOMAIN_MODULES = (
+    test_bounded_combat_log,
     test_resources,
     test_equipment_authority,
     test_socket_payload_authority,
@@ -417,6 +428,13 @@ _DOMAIN_MODULES = (
 
 
 SCENARIOS = [
+    scenario_bounded_combat_log_retention_rollover,
+    scenario_bounded_combat_log_extend_and_supplied_history,
+    scenario_bounded_combat_log_snapshot_cursor_rollover,
+    scenario_bounded_combat_log_periodic_immunity_detector,
+    scenario_bounded_combat_log_short_duel_is_unchanged,
+    scenario_bounded_combat_log_new_match_cursor_reset,
+    scenario_socketio_resource_limit_configuration,
     scenario_grant_player_resource_central_helper,
     scenario_apply_player_healing_helper_contract,
     scenario_mindgames_lay_on_hands,
