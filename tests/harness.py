@@ -68,6 +68,7 @@ def _bootstrap_engine_modules() -> Dict[str, Any]:
             pkg.__path__ = []
             sys.modules[pkg_name] = pkg
 
+    _load_module("games.duel.availability", _REPO_ROOT / "availability.py")
     _load_module("games.duel.engine.models", _ENGINE_DIR / "models.py")
     _load_module("games.duel.engine.damage_types", _ENGINE_DIR / "damage_types.py")
     _load_module("games.duel.engine.damage_events", _ENGINE_DIR / "damage_events.py")
@@ -196,9 +197,11 @@ def state_extract(match) -> Dict[str, Any]:
     return state
 
 
-def _assert_invariants(match, prior_turn: int, prior_log_len: int) -> None:
+def _assert_invariants(match, prior_turn: int, prior_log_sequence: int) -> None:
     assert match.turn == prior_turn + 1, "resolve_turn should increment turn exactly once"
-    new_lines = match.log[prior_log_len:]
+    new_count = match.log_sequence - prior_log_sequence
+    retained_new_count = min(new_count, len(match.log))
+    new_lines = match.log[-retained_new_count:] if retained_new_count else []
     header = f"Turn {match.turn}"
     assert sum(1 for line in new_lines if line == header) == 1, "duplicate/missing turn header for a single turn"
     assert not match.submitted, "match.submitted should be cleared after successful resolution"
@@ -242,12 +245,12 @@ def make_match(p1_class, p2_class, p1_items=None, p2_items=None, seed=123):
 
 def submit_turn(match, p1_ability_id, p2_ability_id):
     s1, s2 = match.players
-    prior_turn, prior_log_len = match.turn, len(match.log)
+    prior_turn, prior_log_sequence = match.turn, match.log_sequence
     submit_action(match, s1, {"ability_id": p1_ability_id})
     submit_action(match, s2, {"ability_id": p2_ability_id})
     resolve_turn(match)
     if match.turn == prior_turn + 1:
-        _assert_invariants(match, prior_turn, prior_log_len)
+        _assert_invariants(match, prior_turn, prior_log_sequence)
     else:
         raise AssertionError("turn did not resolve")
     return state_extract(match)

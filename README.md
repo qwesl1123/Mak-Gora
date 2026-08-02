@@ -42,9 +42,12 @@ Rough overview, no need to overthink it:
 
 ## Development Documentation
 
+- [Application Availability](docs/AVAILABILITY.md) - process-local limits, lifecycle expiration, per-SID throttling, and environment overrides
 - [Roadmap](ROADMAP.md) — current development phase and class progress
 - [Agent and Architecture Rules](AGENTS.md) — mandatory engine and contribution contracts
 - [New Class Specification](CLASS_IMPLEMENTATION.md) — reusable, class-neutral design template and completion checklist (copy it per class; never fill in the template itself)
+
+Application-layer availability controls are enabled by default and preserve normal two-tab, same-computer duel testing.
 
 ### Validating Changes
 

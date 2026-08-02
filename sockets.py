@@ -1,9 +1,11 @@
 # games/duel/sockets.py
 from flask import request
 from flask_socketio import emit, join_room, leave_room
+import logging
 import time
 
 from . import state
+from .availability import SNAPSHOT_LOG_ENTRY_LIMIT
 from .engine import resolver
 from .engine.effects import (
     build_champion_mouseover_payload,
@@ -16,6 +18,9 @@ from .content.pets import PETS
 from .content.classes import CLASSES, class_display_name, normalize_class_id
 from .content.items import ITEMS
 from .content.abilities import ABILITIES
+
+
+logger = logging.getLogger(__name__)
 
 THUNDERFURY_NAME = "Thunderfury, Blessed Blade of the Windseeker"
 DRAGONWRATH_NAME = "Dragonwrath, Tarecgosa's Rest"
@@ -482,6 +487,10 @@ def snapshot_for(match, viewer_sid):
             "display_color": ability_data.get("display_color"),
         }
 
+    visible_log = [
+        format_log_line(line)
+        for line in match.log[-SNAPSHOT_LOG_ENTRY_LIMIT:]
+    ]
     return {
         "phase": match.phase,
         "turn": match.turn,
@@ -507,7 +516,7 @@ def snapshot_for(match, viewer_sid):
         "enemy_effect_panel": effect_panel_for(enemy),
         "you_pets": pets_for(you),
         "enemy_pets": pets_for(enemy),
-        "log": [format_log_line(line) for line in match.log[-30:]],
+        "log": visible_log,
         "winner": match.winner,
         "friendly_total_damage": friendly_totals.get("damage", 0),
         "friendly_total_healing": friendly_totals.get("healing", 0),
@@ -518,12 +527,24 @@ def snapshot_for(match, viewer_sid):
         "completed_turns": completed_turns,
         "friendly_damage_per_turn": friendly_dpt,
         "enemy_damage_per_turn": enemy_dpt,
-        "log_length": len(match.log),
+        # Compatibility alias: both cursors are monotonic even when retained
+        # entries roll over at the configured cap.
+        "log_length": match.log_sequence,
+        "log_sequence": match.log_sequence,
+        "log_start_sequence": match.log_sequence - len(visible_log) + 1,
         "friendly_cooldowns": friendly_cooldowns,
         "ability_meta": ability_meta,
     }
 
 def register_duel_socket_handlers(socketio):
+    def throttle(sid, event_name):
+        decision = state.consume_event_token(sid, event_name)
+        if decision.allowed:
+            return True
+        if decision.emit_warning:
+            emit("duel_system", "Too many requests. Slow down.", to=sid)
+        return False
+
     @socketio.on("connect")
     def duel_connect():
         sid = request.sid
@@ -532,48 +553,111 @@ def register_duel_socket_handlers(socketio):
     @socketio.on("duel_queue")
     def duel_queue(*payload_args):
         sid = request.sid
+        if not throttle(sid, "duel_queue"):
+            return
         if not _accepts_empty_event_payload(payload_args):
             emit("duel_system", "Invalid queue submission.")
             return
-        if state.get_match_by_sid(sid):
+        seed = int(time.time() * 1000) & 0xFFFFFFFF
+        result = state.queue_sid_for_match(
+            sid,
+            seed,
+            start_transport_setup=True,
+        )
+        state.apply_cleanup_actions(socketio, result.cleanup_actions)
+
+        if result.status == "already_in_duel":
             emit("duel_system", "Already in a duel.")
             return
-        
-        # Prevent duplicate queue entries
-        if sid in state.duel_queue:
+        if result.status == "already_queued":
             emit("duel_system", "Already in queue.")
             return
-            
-        state.enqueue(sid)
-        emit("duel_system", "Queued for DUEL...")
+        if result.status == "queue_full":
+            logger.warning(
+                "Queue capacity rejection sid_prefix=%s cap=%d",
+                sid[:12],
+                state.availability_policy.max_queued_sids,
+            )
+            emit("duel_system", "Matchmaking is currently full. Try again shortly.")
+            return
+        if result.status == "room_full":
+            logger.warning(
+                "Room capacity rejection sid_prefix=%s cap=%d",
+                sid[:12],
+                state.availability_policy.max_active_rooms,
+            )
+            emit("duel_system", "All duel rooms are currently occupied. Please wait.")
+            return
+        if result.status == "queued":
+            emit("duel_system", "Queued for DUEL...")
+            return
 
-        if len(state.duel_queue) >= 2:
-            p1 = state.duel_queue.pop(0)
-            p2 = state.duel_queue.pop(0)
-            seed = int(time.time() * 1000) & 0xFFFFFFFF
-            match = state.create_room(p1, p2, seed)
-
+        match = result.match
+        if match is None:
+            raise RuntimeError("matched queue result did not include a room")
+        try:
+            if not state.match_accepts_delivery(match):
+                return
+            emit("duel_system", "Queued for DUEL...")
+            p1, p2 = match.players
+            if not state.match_accepts_delivery(match):
+                return
             join_room(match.room_id, sid=p1)
+            if not state.match_accepts_delivery(match):
+                return
             join_room(match.room_id, sid=p2)
-
-            # Send role assignments
+            if not state.match_accepts_delivery(match):
+                return
             socketio.emit("duel_role", "P1", to=p1)
+            if not state.match_accepts_delivery(match):
+                return
             socketio.emit("duel_role", "P2", to=p2)
-
-            socketio.emit("duel_system", "Match found. Prep phase: pick class + items.", to=match.room_id)
-            socketio.emit("duel_prep_options", {
-                "classes": CLASSES,
-                "items": ITEMS,
-                "abilities": ABILITIES,
-            }, to=match.room_id)
-            
-            # Send initial snapshots to both players
-            socketio.emit("duel_snapshot", snapshot_for(match, p1), to=p1)
-            socketio.emit("duel_snapshot", snapshot_for(match, p2), to=p2)
+            if not state.match_accepts_delivery(match):
+                return
+            socketio.emit(
+                "duel_system",
+                "Match found. Prep phase: pick class + items.",
+                to=match.room_id,
+            )
+            if not state.match_accepts_delivery(match):
+                return
+            socketio.emit(
+                "duel_prep_options",
+                {"classes": CLASSES, "items": ITEMS, "abilities": ABILITIES},
+                to=match.room_id,
+            )
+            if not state.match_accepts_delivery(match):
+                return
+            p1_snapshot = snapshot_for(match, p1)
+            if not state.match_accepts_delivery(match):
+                return
+            socketio.emit("duel_snapshot", p1_snapshot, to=p1)
+            if not state.match_accepts_delivery(match):
+                return
+            p2_snapshot = snapshot_for(match, p2)
+            if not state.match_accepts_delivery(match):
+                return
+            socketio.emit("duel_snapshot", p2_snapshot, to=p2)
+        except Exception:
+            logger.exception("Duel transport setup failed")
+            cleanup_actions = state.request_match_cleanup(
+                match,
+                reason="transport_setup_failed",
+                message="Match setup failed. Queue again to continue.",
+            )
+            state.apply_cleanup_actions(socketio, cleanup_actions)
+        finally:
+            cleanup_actions = state.finalize_match_operation(
+                match,
+                "transport_setup",
+            )
+            state.apply_cleanup_actions(socketio, cleanup_actions)
 
     @socketio.on("duel_prep_submit")
     def duel_prep_submit(*payload_args):
         sid = request.sid
+        if not throttle(sid, "duel_prep_submit"):
+            return
         match = state.get_match_by_sid(sid)
         if not match:
             emit("duel_system", "Not in a duel.")
@@ -597,7 +681,22 @@ def register_duel_socket_handlers(socketio):
             return
 
         # Commit only after the complete proposed class/equipment build passes.
-        match.picks[sid] = merged
+        commit_error = None
+        with match.turn_lock:
+            if not state.match_is_retained(match, sid):
+                commit_error = "Not in a duel."
+            elif match.phase != "prep":
+                commit_error = "Prep phase is over."
+            elif match.locked_in.get(sid):
+                commit_error = "Your build is locked in and cannot be changed."
+            else:
+                changed = merged != current
+                match.picks[sid] = merged
+                if changed:
+                    match.mark_gameplay_activity(state.current_time())
+        if commit_error:
+            emit("duel_system", commit_error)
+            return
         selection_name = _prep_selection_name(payload)
         if selection_name:
             emit("duel_system", f"🛡️ Prep saved, {selection_name}.")
@@ -612,30 +711,67 @@ def register_duel_socket_handlers(socketio):
         return _picked_class_id(match, sid) is not None
 
     def try_start_combat(match):
+        with match.turn_lock:
+            started, invalid_messages, error_message = _try_start_combat_locked(match)
+        for player_sid, message in invalid_messages:
+            socketio.emit("duel_system", message, to=player_sid)
+        if error_message:
+            for player_sid in match.players:
+                socketio.emit("duel_system", error_message, to=player_sid)
+        if not started:
+            return
+        if not state.match_accepts_delivery(match):
+            return
+        p1, p2 = match.players
+        p1_snapshot = snapshot_for(match, p1)
+        if not state.match_accepts_delivery(match):
+            return
+        socketio.emit(
+            "duel_snapshot",
+            p1_snapshot,
+            to=p1,
+        )
+        if not state.match_accepts_delivery(match):
+            return
+        p2_snapshot = snapshot_for(match, p2)
+        if not state.match_accepts_delivery(match):
+            return
+        socketio.emit(
+            "duel_snapshot",
+            p2_snapshot,
+            to=p2,
+        )
+        if state.match_accepts_delivery(match):
+            socketio.emit("duel_system", "Combat begins.", to=match.room_id)
+
+    def _try_start_combat_locked(match):
+        if not state.match_is_retained(match):
+            return False, [], None
         if match.phase != "prep":
-            return
+            return False, [], None
         if not both_players_locked(match):
-            return
+            return False, [], None
         if not all(player_has_class(match, sid) for sid in match.players):
+            invalid_messages = []
             for player_sid in match.players:
                 picked = match.picks.get(player_sid, {})
                 if isinstance(picked, dict) and picked.get("class_id") and not normalize_class_id(picked.get("class_id")):
-                    socketio.emit("duel_system", _invalid_class_message(picked.get("class_id")), to=player_sid)
-            return
+                    invalid_messages.append(
+                        (player_sid, _invalid_class_message(picked.get("class_id")))
+                    )
+            return False, invalid_messages, None
         try:
             resolver.apply_prep_build(match)
         except ValueError as exc:
-            for player_sid in match.players:
-                socketio.emit("duel_system", f"Cannot start combat: {exc}", to=player_sid)
-            return
-        match.phase = "combat"
-        socketio.emit("duel_snapshot", snapshot_for(match, match.players[0]), to=match.players[0])
-        socketio.emit("duel_snapshot", snapshot_for(match, match.players[1]), to=match.players[1])
-        socketio.emit("duel_system", "Combat begins.", to=match.room_id)
+            return False, [], f"Cannot start combat: {exc}"
+        match.mark_phase_started("combat", state.current_time())
+        return True, [], None
 
     @socketio.on("duel_lock_in")
     def duel_lock_in(*payload_args):
         sid = request.sid
+        if not throttle(sid, "duel_lock_in"):
+            return
         match = state.get_match_by_sid(sid)
         if not match:
             emit("duel_system", "Not in a duel.")
@@ -651,13 +787,28 @@ def register_duel_socket_handlers(socketio):
             attempted_class_id = picked.get("class_id") if isinstance(picked, dict) else None
             emit("duel_system", _invalid_class_message(attempted_class_id))
             return
-        match.locked_in[sid] = True
+        commit_error = None
+        with match.turn_lock:
+            if not state.match_is_retained(match, sid):
+                commit_error = "Not in a duel."
+            elif match.phase != "prep":
+                commit_error = "Prep phase is over."
+            elif match.locked_in.get(sid):
+                commit_error = "Already locked in."
+            else:
+                match.locked_in[sid] = True
+                match.mark_gameplay_activity(state.current_time())
+        if commit_error:
+            emit("duel_system", commit_error)
+            return
         emit("duel_system", "Locked in. Waiting for opponent...")
         try_start_combat(match)
 
     @socketio.on("duel_action")
     def duel_action(*payload_args):
         sid = request.sid
+        if not throttle(sid, "duel_action"):
+            return
         match = state.get_match_by_sid(sid)
         if not match:
             emit("duel_system", "Not in a duel.")
@@ -677,39 +828,108 @@ def register_duel_socket_handlers(socketio):
             return
         ability_id = action["ability_id"]
         should_resolve = False
+        commit_error = None
+        acknowledgement = None
         with match.turn_lock:
-            resolver.submit_action(match, sid, action)
-            ability_name = ABILITIES.get(ability_id, {}).get("name", ability_id)
-            cooldown_remaining = 0
-            ps = match.state.get(sid)
-            if ps:
-                cooldown_remaining = resolver.cooldown_remaining(ps, ability_id, ABILITIES.get(ability_id, {}))
-            if cooldown_remaining > 0:
-                emit("duel_system", f"🛡️ Action received. Warning {ability_name} is on cooldown.")
+            if not state.match_is_retained(match, sid):
+                commit_error = "Not in a duel."
+            elif match.phase != "combat":
+                commit_error = "Prep phase: choose class/items before combat."
+            elif (
+                match.turn_in_progress
+                or match.availability_resolution_in_progress
+            ):
+                commit_error = "Turn resolution is in progress. Try again shortly."
             else:
-                emit("duel_system", f"🛡️ Action received. {ability_name}")
+                resolver.submit_action(match, sid, action)
+                match.mark_gameplay_activity(state.current_time())
+                ability_name = ABILITIES.get(ability_id, {}).get("name", ability_id)
+                cooldown_remaining = 0
+                ps = match.state.get(sid)
+                if ps:
+                    cooldown_remaining = resolver.cooldown_remaining(
+                        ps,
+                        ability_id,
+                        ABILITIES.get(ability_id, {}),
+                    )
+                if cooldown_remaining > 0:
+                    acknowledgement = (
+                        f"🛡️ Action received. Warning {ability_name} is on cooldown."
+                    )
+                else:
+                    acknowledgement = f"🛡️ Action received. {ability_name}"
 
-            if resolver.ready_to_resolve(match) and not match.turn_in_progress:
-                payload_key = resolver.resolution_key(match)
-                if payload_key != match.last_resolved_key:
-                    match.turn_in_progress = True
-                    should_resolve = True
+                if resolver.ready_to_resolve(match) and not match.turn_in_progress:
+                    payload_key = resolver.resolution_key(match)
+                    if payload_key != match.last_resolved_key:
+                        if state.begin_match_resolution(match, sid):
+                            match.turn_in_progress = True
+                            should_resolve = True
+                        else:
+                            match.submitted.pop(sid, None)
+                            commit_error = "Not in a duel."
 
-        if should_resolve:
+        if commit_error:
+            emit("duel_system", commit_error)
+            return
+        if not should_resolve:
+            emit("duel_system", acknowledgement)
+            return
+
+        try:
+            try:
+                emit("duel_system", acknowledgement)
+            except Exception:
+                logger.exception(
+                    "Failed to deliver action acknowledgement before resolution"
+                )
             try:
                 resolver.resolve_turn(match)
             except Exception:
-                match.turn_in_progress = False
-                emit("duel_system", "Turn resolution failed. Please submit your action again.")
+                with match.turn_lock:
+                    match.turn_in_progress = False
+                try:
+                    if state.match_accepts_delivery(match, sid):
+                        emit(
+                            "duel_system",
+                            "Turn resolution failed. Please submit your action again.",
+                        )
+                except Exception:
+                    logger.exception("Failed to deliver turn-resolution failure notice")
                 raise
-            socketio.emit("duel_snapshot", snapshot_for(match, match.players[0]), to=match.players[0])
-            socketio.emit("duel_snapshot", snapshot_for(match, match.players[1]), to=match.players[1])
+
             if match.phase == "ended":
-                socketio.emit("duel_system", "Duel ended.", to=match.room_id)
+                state.mark_match_ended(match)
+
+            try:
+                if not state.match_accepts_delivery(match):
+                    return
+                p1, p2 = match.players
+                p1_snapshot = snapshot_for(match, p1)
+                if not state.match_accepts_delivery(match):
+                    return
+                socketio.emit("duel_snapshot", p1_snapshot, to=p1)
+                if not state.match_accepts_delivery(match):
+                    return
+                p2_snapshot = snapshot_for(match, p2)
+                if not state.match_accepts_delivery(match):
+                    return
+                socketio.emit("duel_snapshot", p2_snapshot, to=p2)
+                if match.phase == "ended" and state.match_accepts_delivery(match):
+                    socketio.emit("duel_system", "Duel ended.", to=match.room_id)
+            except Exception:
+                logger.exception("Duel result delivery failed after committed resolution")
+        finally:
+            with match.turn_lock:
+                match.turn_in_progress = False
+                cleanup_actions = state.finalize_match_operation(match, "resolution")
+            state.apply_cleanup_actions(socketio, cleanup_actions)
 
     @socketio.on("duel_chat")
     def duel_chat(*payload_args):
         sid = request.sid
+        if not throttle(sid, "duel_chat"):
+            return
         match = state.get_match_by_sid(sid)
         if not match:
             emit("duel_system", "Not in a duel.")
@@ -723,14 +943,23 @@ def register_duel_socket_handlers(socketio):
         except ValueError as exc:
             emit("duel_system", str(exc))
             return
-        
+        with match.turn_lock:
+            chat_allowed = state.match_is_retained(match, sid)
+        if not chat_allowed:
+            emit("duel_system", "Not in a duel.")
+            return
+
         game = match
         p1, p2 = game.players
         role = "P1" if sid == p1 else "P2"
         
         # Get player class name
         player_class = _picked_class_name(match, sid)
-        
+
+        if not state.match_accepts_delivery(match, sid):
+            emit("duel_system", "Not in a duel.")
+            return
+
         # Broadcast the chat message to both players with class name
         socketio.emit("duel_chat", {
             "playerClass": player_class,
@@ -741,8 +970,7 @@ def register_duel_socket_handlers(socketio):
     @socketio.on("disconnect")
     def duel_disconnect(_reason=None):
         sid = request.sid
-        state.dequeue(sid)
-        match = state.get_match_by_sid(sid)
+        match = state.disconnect_sid(sid)
         if not match:
             return
         
@@ -757,11 +985,24 @@ def register_duel_socket_handlers(socketio):
         
         # Send disconnect message to the room BEFORE leaving
         disconnect_msg = f"⚠️ {player_class} ({role}) has left the instance"
-        socketio.emit("duel_system", disconnect_msg, to=room_id)
-        socketio.emit("duel_system", "Duel ended.", to=room_id)
+        try:
+            socketio.emit("duel_system", disconnect_msg, to=room_id)
+        except Exception:
+            logger.exception("Failed to deliver duel disconnect notice")
+        try:
+            socketio.emit("duel_system", "Duel ended.", to=room_id)
+        except Exception:
+            logger.exception("Failed to deliver duel-ended disconnect notice")
         
         # Now remove the player from the room
-        leave_room(room_id, sid=sid)
+        try:
+            leave_room(room_id, sid=sid)
+        except Exception:
+            logger.exception("Failed to remove disconnected SID from duel room")
         
-        # Clean up the match state
-        state.cleanup_room(room_id)
+        close_room = getattr(socketio, "close_room", None)
+        if callable(close_room):
+            try:
+                close_room(room_id)
+            except Exception:
+                logger.exception("Failed to close disconnected duel room")

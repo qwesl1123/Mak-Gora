@@ -239,6 +239,32 @@ If behavior can be represented as ability/effect/item/pet data, prefer data.
 
 If a helper is reusable across multiple abilities/items/effects, put it in `effects.py` or another focused helper module instead of embedding it inside one resolver branch.
 
+## Application availability boundary
+
+`availability.py` owns the validated process-local availability policy, the
+list-compatible bounded combat log, and per-event throttle definitions.
+`state.py` owns queue timestamps, room/SID mappings, limiter records, the
+availability lock, and the single lifecycle sweeper. Keep these controls out of
+gameplay formulas and reverse-proxy assumptions.
+
+Queue/room capacity decisions and mapping changes must remain atomic. Match
+cleanup and handler commits coordinate with the match turn lock, but the global
+availability lock must never be held during combat resolution, Socket.IO emits,
+snapshot serialization, background-task sleep, or other large work. Cleanup
+collects state changes first and applies transport notifications afterward.
+
+Lifecycle expiration uses an injectable monotonic clock and the inclusive
+boundary `now >= deadline`. Only committed prep changes, first lock-in, accepted
+actions, and the prep-to-combat transition refresh gameplay activity. Rejected,
+malformed, throttled, duplicate queue/lock, no-op prep, and chat events do not.
+Prep and combat absolute lifetimes are never refreshed.
+
+Combat-log retention uses the monotonic `log_sequence` as the permanent cursor;
+retained list length is not a global cursor and must not be used to detect
+whether an append occurred after rollover. Protected Socket.IO event throttles
+are keyed by SID, never by IP. Reverse-proxy and per-IP controls remain outside
+this repository.
+
 ## Global periodic-item stage
 
 Scheduled equipment effects use the single global `periodic_item_stage`. It runs exactly once for the active one-based global match turn, after normal end-of-turn pet/player ticks, deferred explosions, class mechanics, and their phase logs, but before duration/expiry cleanup, pet cleanup, and final alive/winner evaluation. Never run periodic equipment inside an individual player loop or create a separate stage per item.

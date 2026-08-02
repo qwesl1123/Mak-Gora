@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import random
+import types
 
 from contextlib import contextmanager
 from typing import Any, Iterator
@@ -43,11 +44,20 @@ def _prep_handlers(match: MatchState) -> Iterator[tuple[_FakeSocketIO, list[tupl
     socketio = _FakeSocketIO()
     direct_emits: list[tuple[str, str, Any, dict[str, Any]]] = []
     original_get_match = SOCKETS.state.get_match_by_sid
+    original_match_is_retained = SOCKETS.state.match_is_retained
+    original_consume_event_token = SOCKETS.state.consume_event_token
     original_emit = SOCKETS.emit
     original_sid = SOCKETS.request.sid
 
     SOCKETS.state.get_match_by_sid = (
         lambda sid: match if sid in match.players else None
+    )
+    SOCKETS.state.match_is_retained = lambda candidate, sid=None: (
+        candidate is match and (sid is None or sid in match.players)
+    )
+    SOCKETS.state.consume_event_token = lambda _sid, _event: types.SimpleNamespace(
+        allowed=True,
+        emit_warning=False,
     )
 
     def record_direct_emit(
@@ -64,6 +74,8 @@ def _prep_handlers(match: MatchState) -> Iterator[tuple[_FakeSocketIO, list[tupl
         yield socketio, direct_emits
     finally:
         SOCKETS.state.get_match_by_sid = original_get_match
+        SOCKETS.state.match_is_retained = original_match_is_retained
+        SOCKETS.state.consume_event_token = original_consume_event_token
         SOCKETS.emit = original_emit
         SOCKETS.request.sid = original_sid
 
