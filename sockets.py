@@ -17,8 +17,6 @@ from .content.classes import CLASSES, class_display_name, normalize_class_id
 from .content.items import ITEMS
 from .content.abilities import ABILITIES
 
-_ITEM_SLOTS = {"weapon", "armor", "trinket"}
-
 THUNDERFURY_NAME = "Thunderfury, Blessed Blade of the Windseeker"
 DRAGONWRATH_NAME = "Dragonwrath, Tarecgosa's Rest"
 TWIN_BLADES_AZZINOTH_NAME = "Twin Blades of Azzinoth"
@@ -53,22 +51,53 @@ def _invalid_class_message(class_id):
 
 
 def _normalized_item_updates(items_payload):
-    if not isinstance(items_payload, dict):
-        return {}
+    canonical_items = resolver.canonicalize_equipment(
+        items_payload,
+        base_items={},
+        allow_omitted_slot=True,
+    )
+    return {
+        slot: item_id
+        for slot, item_id in canonical_items.items()
+        if item_id is not None
+    }
 
-    normalized_items = {}
-    for raw_slot, raw_item_id in items_payload.items():
-        item_id = resolver.normalize_command_input(raw_item_id)
-        if not item_id or item_id not in ITEMS:
-            continue
 
-        slot = resolver.normalize_command_input(raw_slot)
-        if slot not in _ITEM_SLOTS:
-            slot = ITEMS[item_id].get("slot", "")
-        if slot in _ITEM_SLOTS:
-            normalized_items[slot] = item_id
+def _canonical_prep_pick(current, payload):
+    if not isinstance(payload, dict):
+        raise ValueError("Invalid prep submission.")
 
-    return normalized_items
+    current_payload = current if isinstance(current, dict) else {}
+    current_class_id = None
+    if current_payload.get("class_id") is not None:
+        current_class_id = normalize_class_id(current_payload.get("class_id"))
+        if not current_class_id:
+            raise ValueError(_invalid_class_message(current_payload.get("class_id")))
+
+    proposed_class_id = current_class_id
+    if "class_id" in payload:
+        proposed_class_id = normalize_class_id(payload.get("class_id"))
+        if not proposed_class_id:
+            raise ValueError(_invalid_class_message(payload.get("class_id")))
+
+    current_items = current_payload.get("items", {})
+    if "items" in payload:
+        proposed_items = resolver.canonicalize_equipment(
+            payload.get("items"),
+            class_id=proposed_class_id,
+            base_items=current_items,
+            allow_omitted_slot=True,
+        )
+    else:
+        proposed_items = resolver.canonicalize_equipment(
+            current_items,
+            class_id=proposed_class_id,
+        )
+
+    proposed = {"items": proposed_items}
+    if proposed_class_id:
+        proposed["class_id"] = proposed_class_id
+    return proposed
 
 
 def _prep_selection_name(payload):
@@ -79,7 +108,11 @@ def _prep_selection_name(payload):
     if normalized_class_id:
         return class_display_name(normalized_class_id, default=None)
 
-    for item_id in _normalized_item_updates(payload.get("items", {})).values():
+    try:
+        item_updates = _normalized_item_updates(payload.get("items", {}))
+    except ValueError:
+        return None
+    for item_id in item_updates.values():
         return ITEMS[item_id]["name"]
     return None
 
@@ -459,35 +492,17 @@ def register_duel_socket_handlers(socketio):
             emit("duel_system", "Prep phase is over.")
             return
 
-        # store picks
         current = match.picks.get(sid, {})
-        if not isinstance(current, dict):
-            current = {}
-        if not isinstance(payload, dict):
-            payload = {}
+        try:
+            merged = _canonical_prep_pick(current, payload)
+        except ValueError as exc:
+            emit("duel_system", str(exc))
+            return
 
-        merged = {**current}
-        class_error = None
-        if "class_id" in payload:
-            normalized_class_id = normalize_class_id(payload.get("class_id"))
-            if normalized_class_id:
-                merged["class_id"] = normalized_class_id
-            else:
-                class_error = _invalid_class_message(payload.get("class_id"))
-        for key, value in payload.items():
-            if key not in {"class_id", "items"}:
-                merged[key] = value
-        items = _normalized_item_updates(current.get("items", {}))
-        items.update(_normalized_item_updates(payload.get("items", {})))
-        if items:
-            merged["items"] = items
+        # Commit only after the complete proposed class/equipment build passes.
         match.picks[sid] = merged
         selection_name = _prep_selection_name(payload)
-        if class_error and selection_name:
-            emit("duel_system", f"{class_error} Existing selection unchanged; saved {selection_name}.")
-        elif class_error:
-            emit("duel_system", class_error)
-        elif selection_name:
+        if selection_name:
             emit("duel_system", f"🛡️ Prep saved, {selection_name}.")
         else:
             emit("duel_system", "🛡️ Prep saved.")
