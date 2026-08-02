@@ -19,6 +19,7 @@ from typing import Any, Callable, List, Tuple
 from . import (
     test_resources,
     test_equipment_authority,
+    test_socket_payload_authority,
     test_items_challenger,
     test_next_offense,
     test_periodic_items,
@@ -36,6 +37,17 @@ from .test_equipment_authority import (
     scenario_socket_equipment_updates_are_atomic,
     scenario_equipment_class_and_direct_build_checks_remain_authoritative,
     scenario_legal_incremental_three_slot_prep_is_unchanged,
+)
+from .test_socket_payload_authority import (
+    scenario_socket_prep_unknown_fields_are_rejected,
+    scenario_socket_prep_structural_values_are_rejected,
+    scenario_socket_prep_lock_is_final_and_opponent_can_continue,
+    scenario_socket_hidden_action_fields_are_rejected,
+    scenario_socket_valid_action_is_minimally_canonical,
+    scenario_socket_action_structural_values_are_rejected,
+    scenario_resolver_action_boundary_rejects_hidden_fields,
+    scenario_socket_chat_is_bounded_plain_text,
+    scenario_socket_identity_and_no_payload_events_are_authoritative,
 )
 from .test_resources import (
     scenario_on_hit_resource_gain_log_uses_actual_gained,
@@ -391,6 +403,7 @@ from .test_classes_abilities import (
 _DOMAIN_MODULES = (
     test_resources,
     test_equipment_authority,
+    test_socket_payload_authority,
     test_items_challenger,
     test_next_offense,
     test_periodic_items,
@@ -728,6 +741,15 @@ SCENARIOS = [
     scenario_socket_equipment_updates_are_atomic,
     scenario_equipment_class_and_direct_build_checks_remain_authoritative,
     scenario_legal_incremental_three_slot_prep_is_unchanged,
+    scenario_socket_prep_unknown_fields_are_rejected,
+    scenario_socket_prep_structural_values_are_rejected,
+    scenario_socket_prep_lock_is_final_and_opponent_can_continue,
+    scenario_socket_hidden_action_fields_are_rejected,
+    scenario_socket_valid_action_is_minimally_canonical,
+    scenario_socket_action_structural_values_are_rejected,
+    scenario_resolver_action_boundary_rejects_hidden_fields,
+    scenario_socket_chat_is_bounded_plain_text,
+    scenario_socket_identity_and_no_payload_events_are_authoritative,
     scenario_invalid_class_rejected,
     scenario_valid_class_id_is_normalized_before_build,
     scenario_prep_selection_name_uses_current_submission,

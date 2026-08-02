@@ -23,6 +23,9 @@ from ..content.balance import DEFAULTS, CAPS
 from ..content.pets import PETS
 
 
+MAX_ABILITY_ID_CHARACTERS = 100
+
+
 def normalize_command_input(text: object) -> str:
     """Normalize player-entered command text to canonical lookup form."""
     if not isinstance(text, str):
@@ -30,14 +33,25 @@ def normalize_command_input(text: object) -> str:
     return "_".join(text.strip().lower().split())
 
 
-def normalize_player_action(action: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalize player-entered action payloads without changing internal canonical ids."""
+def normalize_player_action(action: object) -> Dict[str, str]:
+    """Validate and return the minimal canonical player-action shape."""
     if not isinstance(action, dict):
-        return {}
-    normalized = dict(action)
-    if "ability_id" in normalized:
-        normalized["ability_id"] = normalize_command_input(normalized.get("ability_id"))
-    return normalized
+        raise ValueError("Action submission must be an object.")
+    if set(action) != {"ability_id"}:
+        raise ValueError("Action submission must contain only ability_id.")
+
+    raw_ability_id = action["ability_id"]
+    if not isinstance(raw_ability_id, str):
+        raise ValueError("Ability ID must be text.")
+    if len(raw_ability_id) > MAX_ABILITY_ID_CHARACTERS:
+        raise ValueError("Ability ID is too long.")
+
+    ability_id = normalize_command_input(raw_ability_id)
+    if not ability_id:
+        raise ValueError("Ability ID cannot be empty.")
+    if len(ability_id) > MAX_ABILITY_ID_CHARACTERS:
+        raise ValueError("Ability ID is too long.")
+    return {"ability_id": ability_id}
 
 
 def ability_has_direct_damage(ability: Mapping[str, Any]) -> bool:
