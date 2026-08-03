@@ -37,6 +37,7 @@ class MatchmakingResult:
     status: str
     match: MatchState | None = None
     newly_queued: bool = False
+    expired_queue_sids: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -202,15 +203,24 @@ def request_matchmaking(
     active_policy = _policy(policy)
     current_time = _now(now)
     with state_lock:
-        _expire_queued_sids_locked(current_time, active_policy)
+        expired_queue_sids = _expire_queued_sids_locked(
+            current_time,
+            active_policy,
+        )
         room_id = sid_to_room.get(sid)
         if room_id in duel_rooms:
-            return MatchmakingResult("already_in_duel")
+            return MatchmakingResult(
+                "already_in_duel",
+                expired_queue_sids=expired_queue_sids,
+            )
 
         already_queued = sid in duel_queue
         if not already_queued:
             if len(duel_queue) >= active_policy.max_queued_sids:
-                return MatchmakingResult("queue_full")
+                return MatchmakingResult(
+                    "queue_full",
+                    expired_queue_sids=expired_queue_sids,
+                )
             duel_queue.append(sid)
             queued_at_by_sid[sid] = current_time
 
@@ -220,12 +230,22 @@ def request_matchmaking(
                 status = "matched"
             else:
                 status = "already_queued" if already_queued else "queued"
-            return MatchmakingResult(status, match, not already_queued)
+            return MatchmakingResult(
+                status,
+                match,
+                not already_queued,
+                expired_queue_sids,
+            )
         if len(duel_rooms) >= active_policy.max_active_rooms and not already_queued:
-            return MatchmakingResult("room_full", newly_queued=True)
+            return MatchmakingResult(
+                "room_full",
+                newly_queued=True,
+                expired_queue_sids=expired_queue_sids,
+            )
         return MatchmakingResult(
             "already_queued" if already_queued else "queued",
             newly_queued=not already_queued,
+            expired_queue_sids=expired_queue_sids,
         )
 
 

@@ -270,6 +270,21 @@ def scenario_lifecycle_queue_background_expiration() -> bool:
         replacement = next(iter(state.duel_rooms.values()))
         assert replacement.players == ["fresh-a", "fresh-b"]
         assert "expired" not in replacement.players
+
+    with _isolated_state(admission_policy=policy) as (clock, _policy):
+        _create_room("occupied-a", "occupied-b")
+        state.request_matchmaking("lazy-expired", 5, now=0, policy=policy)
+        clock.set(10)
+        socketio = FakeSocketIO()
+        with _registered_handlers(socketio):
+            _call(socketio, "new-request", state.QUEUE_EVENT)
+        assert "lazy-expired" not in state.duel_queue
+        assert any(
+            event == "duel_system"
+            and payload == SOCKETS.QUEUE_EXPIRED_MESSAGE
+            and kwargs.get("to") == "lazy-expired"
+            for event, payload, kwargs in socketio.emitted
+        )
     return True
 
 

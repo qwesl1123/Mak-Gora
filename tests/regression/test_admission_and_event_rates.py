@@ -249,6 +249,7 @@ def scenario_admission_lazy_queue_expiration() -> bool:
         clock.set(30)
         newcomer = state.request_matchmaking("newcomer", seed=3)
         assert newcomer.match is None
+        assert newcomer.expired_queue_sids == ("expired",)
         assert state.duel_queue == ["newcomer"]
         assert "expired" not in state.queued_at_by_sid
 

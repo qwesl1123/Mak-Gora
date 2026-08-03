@@ -613,6 +613,14 @@ def apply_detached_room_cleanup(socketio, detached):
         )
 
 
+def _notify_queue_expirations(socketio, expired_queue_sids):
+    for sid in expired_queue_sids:
+        try:
+            socketio.emit("duel_system", QUEUE_EXPIRED_MESSAGE, to=sid)
+        except Exception:
+            logger.exception("Failed queue-expiration notice for SID")
+
+
 def _match_expiration(match, now, policy):
     if match.phase == "ended":
         if match.ended_at is None:
@@ -664,6 +672,11 @@ def _recover_room_capacity(
     admission_policy,
 ):
     replacements = []
+    expired_queue_sids = state.expire_queued_sids(
+        now=now,
+        policy=admission_policy,
+    )
+    _notify_queue_expirations(socketio, expired_queue_sids)
     for offset in range(room_count):
         seed = (int(now * 1000) + offset) & 0xFFFFFFFF
         try:
@@ -681,6 +694,8 @@ def _recover_room_capacity(
         try:
             deliver_match_setup(socketio, replacement)
         except Exception:
+            # PR 3C deliberately has no setup rollback/lease transaction. A
+            # partially delivered replacement stays bounded by the prep TTL.
             logger.exception(
                 "Failed replacement setup for room %s",
                 replacement.room_id,
@@ -741,11 +756,7 @@ def run_lifecycle_sweep(
         finally:
             match.turn_lock.release()
 
-    for sid in expired_queue_sids:
-        try:
-            socketio.emit("duel_system", QUEUE_EXPIRED_MESSAGE, to=sid)
-        except Exception:
-            logger.exception("Failed queue-expiration notice for SID")
+    _notify_queue_expirations(socketio, expired_queue_sids)
 
     for detached in detached_rooms:
         apply_detached_room_cleanup(socketio, detached)
@@ -804,6 +815,7 @@ def register_duel_socket_handlers(socketio):
             return
         seed = int(time.time() * 1000) & 0xFFFFFFFF
         result = state.request_matchmaking(sid, seed)
+        _notify_queue_expirations(socketio, result.expired_queue_sids)
         if result.status == "already_in_duel":
             emit("duel_system", "Already in a duel.")
             return
