@@ -43,11 +43,15 @@ def _prep_handlers(match: MatchState) -> Iterator[tuple[_FakeSocketIO, list[tupl
     socketio = _FakeSocketIO()
     direct_emits: list[tuple[str, str, Any, dict[str, Any]]] = []
     original_get_match = SOCKETS.state.get_match_by_sid
+    original_consume_token = SOCKETS.state.consume_event_token
     original_emit = SOCKETS.emit
     original_sid = SOCKETS.request.sid
 
     SOCKETS.state.get_match_by_sid = (
         lambda sid: match if sid in match.players else None
+    )
+    SOCKETS.state.consume_event_token = (
+        lambda sid, event: SOCKETS.state.ThrottleDecision(allowed=True)
     )
 
     def record_direct_emit(
@@ -64,6 +68,7 @@ def _prep_handlers(match: MatchState) -> Iterator[tuple[_FakeSocketIO, list[tupl
         yield socketio, direct_emits
     finally:
         SOCKETS.state.get_match_by_sid = original_get_match
+        SOCKETS.state.consume_event_token = original_consume_token
         SOCKETS.emit = original_emit
         SOCKETS.request.sid = original_sid
 

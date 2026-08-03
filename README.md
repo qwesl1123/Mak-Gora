@@ -49,6 +49,42 @@ Set `MAKGORA_MAX_RETAINED_LOG_ENTRIES` or
 The retained-log value must be at least 30 and the socket buffer at least 4096
 bytes; invalid explicit values stop startup with a configuration error.
 
+Matchmaking retains at most 100 queued Socket.IO SIDs and 50 duel rooms by
+default. Queue entries expire lazily after 15 minutes when matchmaking state is
+next accessed; clients receive no proactive timeout and must queue again.
+`MAKGORA_MAX_QUEUED_SIDS`, `MAKGORA_MAX_ACTIVE_ROOMS`, and
+`MAKGORA_QUEUE_TTL_SECONDS` override these values. Room IDs use a
+process-lifetime monotonic sequence and are not reused after cleanup.
+
+High-frequency client events use per-SID token buckets:
+
+| Event | Sustained rate | Burst |
+| --- | --- | --- |
+| `duel_queue` | 3 events / 10 seconds | 3 |
+| `duel_prep_submit` | 12 events / 10 seconds | 12 |
+| `duel_lock_in` | 4 events / 10 seconds | 4 |
+| `duel_action` | 10 events / 10 seconds | 8 |
+| `duel_chat` | 8 events / 10 seconds | 5 |
+
+Use `MAKGORA_<QUEUE|PREP|LOCK|ACTION|CHAT>_RATE_EVENTS`,
+`MAKGORA_<QUEUE|PREP|LOCK|ACTION|CHAT>_RATE_WINDOW_SECONDS`, and
+`MAKGORA_<QUEUE|PREP|LOCK|ACTION|CHAT>_RATE_BURST` to override a category.
+Throttle warnings are limited to one per SID every 2 seconds, configurable with
+`MAKGORA_THROTTLE_WARNING_COOLDOWN_SECONDS`.
+
+At most 1,000 limiter records are retained; `MAKGORA_MAX_LIMITER_SIDS`
+overrides the cap. A new SID at capacity evicts the least-recently-seen record
+with a deterministic SID tie-breaker, and disconnect removes its record
+immediately. A client that rotates through many new SIDs can reset its
+individual SID rate, but queue and room caps still bound retained matchmaking
+state. The limits are per SID, not per IP, so two tabs on one computer remain
+independent. Proxy-level and identity-based controls remain external.
+
+Queue expiration is lazy in PR 3B. Prep, combat, and ended-room expiration are
+not implemented until PR 3C. There is no lifecycle sweeper. Admission state is
+guarded with an Eventlet semaphore but remains process-local; running multiple
+application workers is not supported by this PR.
+
 ## Development Documentation
 
 - [Roadmap](ROADMAP.md) — current development phase and class progress

@@ -740,6 +740,37 @@ For visual/frontend changes:
 
 Static docs should match backend behavior. If a mechanic has an intentional exception, document it clearly.
 
+## Admission state and Socket.IO event rates
+
+Matchmaking admission remains process-local and is coordinated by the single
+Eventlet `Semaphore(1)` in `state.py`. It protects `duel_queue`,
+`queued_at_by_sid`, `duel_rooms`, `sid_to_room`, the lifetime room-ID sequence,
+and limiter records. Treat the semaphore as non-reentrant: public state
+functions acquire it once, while private `_locked` helpers require the caller
+to hold it and never emit, call Socket.IO, resolve turns, sleep, or yield.
+Transport joins, leaves, emits, snapshot building, prep application, and turn
+resolution must occur after the admission lock is released.
+
+The queue is capped and timestamped with an injectable monotonic clock.
+Expiration is lazy and inclusive (`now >= queued_at + queue_ttl_seconds`) before
+matchmaking admission or pairing; there is no queue timer or background
+sweeper. Room capacity counts every retained prep, combat, or ended room.
+Cleanup that frees a room may atomically promote one waiting FIFO pair before
+the normal match-setup transport helper runs. Room IDs come from a monotonic
+process-lifetime sequence and are never recycled by cleanup.
+
+The five protected incoming events (`duel_queue`, `duel_prep_submit`,
+`duel_lock_in`, `duel_action`, and `duel_chat`) use independent per-SID,
+per-category token buckets. Limiter records have a hard cap with deterministic
+least-recently-seen eviction, warnings share one SID-wide cooldown, and
+disconnect removes the SID's limiter immediately. Arbitrary event names must
+not create buckets. These controls are not per-IP and do not replace external
+reverse-proxy or identity-based rate limits.
+
+Queue expiration is lazy in PR 3B. Prep, combat, and ended-room expiration are
+not implemented until PR 3C. Admission state remains process-local. Running
+multiple application workers is not supported by this PR.
+
 ## Testing rules
 
 Add deterministic regression coverage for gameplay changes.
