@@ -815,7 +815,14 @@ def register_duel_socket_handlers(socketio):
             return
         seed = int(time.time() * 1000) & 0xFFFFFFFF
         result = state.request_matchmaking(sid, seed)
-        _notify_queue_expirations(socketio, result.expired_queue_sids)
+        _notify_queue_expirations(
+            socketio,
+            tuple(
+                expired_sid
+                for expired_sid in result.expired_queue_sids
+                if expired_sid != sid
+            ),
+        )
         if result.status == "already_in_duel":
             emit("duel_system", "Already in a duel.")
             return

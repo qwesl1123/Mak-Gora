@@ -285,6 +285,17 @@ def scenario_lifecycle_queue_background_expiration() -> bool:
             and kwargs.get("to") == "lazy-expired"
             for event, payload, kwargs in socketio.emitted
         )
+
+        socketio.emitted.clear()
+        clock.set(20)
+        _call(socketio, "new-request", state.QUEUE_EVENT)
+        assert "new-request" in state.duel_queue
+        assert not any(
+            event == "duel_system"
+            and payload == SOCKETS.QUEUE_EXPIRED_MESSAGE
+            and kwargs.get("to") == "new-request"
+            for event, payload, kwargs in socketio.emitted
+        )
     return True
 
 
