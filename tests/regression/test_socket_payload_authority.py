@@ -16,6 +16,9 @@ class _FakeSocketIO:
     def __init__(self) -> None:
         self.handlers: dict[str, Any] = {}
         self.emitted: list[tuple[str, Any, dict[str, Any]]] = []
+        self.entered_rooms: list[tuple[str, str]] = []
+        self.closed_rooms: list[str] = []
+        self.server = _FakeSocketIOServer(self)
 
     def on(self, event: str):
         def register(handler):
@@ -26,6 +29,18 @@ class _FakeSocketIO:
 
     def emit(self, event: str, payload: Any = None, **kwargs: Any) -> None:
         self.emitted.append((event, payload, kwargs))
+
+    def close_room(self, room_id: str) -> None:
+        self.closed_rooms.append(room_id)
+
+
+class _FakeSocketIOServer:
+    def __init__(self, socketio: _FakeSocketIO) -> None:
+        self.socketio = socketio
+
+    def enter_room(self, sid: str, room_id: str, *, namespace: str) -> None:
+        assert namespace == "/"
+        self.socketio.entered_rooms.append((room_id, sid))
 
 
 @contextmanager
@@ -45,6 +60,13 @@ def _registered_handlers(
     original_consume_token = SOCKETS.state.consume_event_token
     original_emit = SOCKETS.emit
     original_sid = SOCKETS.request.sid
+    with SOCKETS.state.state_lock:
+        saved_rooms = dict(SOCKETS.state.duel_rooms)
+        saved_mappings = dict(SOCKETS.state.sid_to_room)
+        if match is not None:
+            SOCKETS.state.duel_rooms[match.room_id] = match
+            for player_sid in match.players:
+                SOCKETS.state.sid_to_room[player_sid] = match.room_id
 
     def get_match_by_sid(sid: str) -> MatchState | None:
         match_lookups.append(sid)
@@ -73,6 +95,11 @@ def _registered_handlers(
         SOCKETS.state.consume_event_token = original_consume_token
         SOCKETS.emit = original_emit
         SOCKETS.request.sid = original_sid
+        with SOCKETS.state.state_lock:
+            SOCKETS.state.duel_rooms.clear()
+            SOCKETS.state.duel_rooms.update(saved_rooms)
+            SOCKETS.state.sid_to_room.clear()
+            SOCKETS.state.sid_to_room.update(saved_mappings)
 
 
 def _call_socket_handler(handler: Any, *args: Any) -> None:
@@ -616,22 +643,23 @@ def scenario_socket_identity_and_no_payload_events_are_authoritative() -> bool:
 
         calls: dict[str, list[Any]] = {
             "disconnect_sid": [],
-            "leave_room": [],
-            "cleanup_room": [],
+            "detach_match_if_current": [],
         }
         original_disconnect_sid = SOCKETS.state.disconnect_sid
-        original_leave_room = SOCKETS.leave_room
-        original_cleanup_room = SOCKETS.state.cleanup_room
+        original_detach = SOCKETS.state.detach_match_if_current
         SOCKETS.state.disconnect_sid = (
             lambda sid: calls["disconnect_sid"].append(sid) or match
         )
-        SOCKETS.leave_room = (
-            lambda room_id, **kwargs: calls["leave_room"].append(
-                (room_id, kwargs.get("sid"))
+        SOCKETS.state.detach_match_if_current = lambda current, **kwargs: (
+            calls["detach_match_if_current"].append(
+                (current.room_id, kwargs["reason"], kwargs["message"])
             )
-        )
-        SOCKETS.state.cleanup_room = (
-            lambda room_id: calls["cleanup_room"].append(room_id)
+            or SOCKETS.state.DetachedRoom(
+                current.room_id,
+                tuple(current.players),
+                kwargs["reason"],
+                kwargs["message"],
+            )
         )
         try:
             _call_socket_handler(
@@ -640,13 +668,13 @@ def scenario_socket_identity_and_no_payload_events_are_authoritative() -> bool:
             )
         finally:
             SOCKETS.state.disconnect_sid = original_disconnect_sid
-            SOCKETS.leave_room = original_leave_room
-            SOCKETS.state.cleanup_room = original_cleanup_room
+            SOCKETS.state.detach_match_if_current = original_detach
 
         assert calls == {
             "disconnect_sid": [p1_sid],
-            "leave_room": [(match.room_id, p1_sid)],
-            "cleanup_room": [match.room_id],
+            "detach_match_if_current": [
+                (match.room_id, "disconnect", "Opponent disconnected.")
+            ],
         }
         assert lookups and set(lookups) == {p1_sid}
         disconnect_emits = [
@@ -654,5 +682,7 @@ def scenario_socket_identity_and_no_payload_events_are_authoritative() -> bool:
             for entry in socketio.emitted
             if entry[0] == "duel_system" and entry[2].get("to") == match.room_id
         ]
-        assert len(disconnect_emits) == 2
+        assert len(disconnect_emits) == 1
+        assert disconnect_emits[0][1] == "Opponent disconnected."
+        assert socketio.closed_rooms == [match.room_id]
     return True

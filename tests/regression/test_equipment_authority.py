@@ -46,6 +46,12 @@ def _prep_handlers(match: MatchState) -> Iterator[tuple[_FakeSocketIO, list[tupl
     original_consume_token = SOCKETS.state.consume_event_token
     original_emit = SOCKETS.emit
     original_sid = SOCKETS.request.sid
+    with SOCKETS.state.state_lock:
+        saved_rooms = dict(SOCKETS.state.duel_rooms)
+        saved_mappings = dict(SOCKETS.state.sid_to_room)
+        SOCKETS.state.duel_rooms[match.room_id] = match
+        for player_sid in match.players:
+            SOCKETS.state.sid_to_room[player_sid] = match.room_id
 
     SOCKETS.state.get_match_by_sid = (
         lambda sid: match if sid in match.players else None
@@ -71,6 +77,11 @@ def _prep_handlers(match: MatchState) -> Iterator[tuple[_FakeSocketIO, list[tupl
         SOCKETS.state.consume_event_token = original_consume_token
         SOCKETS.emit = original_emit
         SOCKETS.request.sid = original_sid
+        with SOCKETS.state.state_lock:
+            SOCKETS.state.duel_rooms.clear()
+            SOCKETS.state.duel_rooms.update(saved_rooms)
+            SOCKETS.state.sid_to_room.clear()
+            SOCKETS.state.sid_to_room.update(saved_mappings)
 
 
 def _call_socket_handler(handler: Any, *args: Any) -> None:

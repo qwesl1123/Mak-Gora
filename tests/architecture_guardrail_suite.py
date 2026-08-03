@@ -43,6 +43,10 @@ Guardrails implemented here:
    every active next-offense effect is snapshotted/consumed through the shared
    helpers, and strike-again receives the explicit no-next-offense parent basis.
 
+8. Process-local lifecycle coordination: match lifecycle uses one Eventlet
+   semaphore, one process sweeper startup, match-before-registry lock ordering,
+   and no cleanup leases or chat-based activity refresh.
+
 Design notes / limitations:
 
 * These checks are deliberately conservative. They catch the *obvious* bad
@@ -2495,7 +2499,166 @@ def guardrail_aggregate_runner_failure_semantics() -> Tuple[bool, str]:
 # Runner plumbing (mirrors the other suites' run_all() contract).
 # =========================================================================== #
 
+
+def guardrail_match_lifecycle_coordination() -> Tuple[bool, str]:
+    required_paths = {
+        name: _REPO_ROOT / name
+        for name in ("models.py", "state.py", "sockets.py", "__init__.py")
+    }
+    missing = [name for name, path in required_paths.items() if not path.is_file()]
+    if missing:
+        return False, f"Missing lifecycle source files: {', '.join(missing)}"
+
+    sources = {name: _read(path) for name, path in required_paths.items()}
+    trees = {name: ast.parse(source) for name, source in sources.items()}
+    problems: List[str] = []
+
+    model_tree = trees["models.py"]
+    threading_locks = [
+        alias.name
+        for node in ast.walk(model_tree)
+        if isinstance(node, ast.ImportFrom) and node.module == "threading"
+        for alias in node.names
+        if alias.name in {"Lock", "RLock"}
+    ]
+    if threading_locks:
+        problems.append(
+            "Match lifecycle imports native threading locks: "
+            + ", ".join(threading_locks)
+        )
+    if "from eventlet.semaphore import Semaphore" not in sources["models.py"]:
+        problems.append("MatchState does not import Eventlet Semaphore.")
+
+    combined = "\n".join(sources.values()).lower()
+    forbidden_terms = (
+        "availability_transport_setup_in_progress",
+        "availability_resolution_in_progress",
+        "availability_pending_cleanup_reason",
+        "availability_pending_cleanup_message",
+        "availability_closed",
+        "cleanup_lease",
+        "deferred_cleanup",
+    )
+    present_forbidden = [term for term in forbidden_terms if term in combined]
+    if present_forbidden:
+        problems.append(
+            "Lease/deferred-cleanup state was added: "
+            + ", ".join(present_forbidden)
+        )
+    if "eventlet.monkey_patch" in combined:
+        problems.append("Global Eventlet monkey patching is forbidden.")
+
+    socket_tree = trees["sockets.py"]
+    background_calls = [
+        node
+        for node in ast.walk(socket_tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "start_background_task"
+    ]
+    if len(background_calls) != 1:
+        problems.append(
+            f"Expected one process sweeper startup call; found {len(background_calls)}."
+        )
+
+    init_calls = [
+        node
+        for node in ast.walk(trees["__init__.py"])
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "start_lifecycle_sweeper_once"
+    ]
+    if len(init_calls) != 1:
+        problems.append(
+            f"Application initialization must start the sweeper once; found {len(init_calls)} calls."
+        )
+
+    def context_name(expression: ast.expr) -> str:
+        if isinstance(expression, ast.Name):
+            return expression.id
+        if isinstance(expression, ast.Attribute):
+            prefix = context_name(expression.value)
+            return f"{prefix}.{expression.attr}" if prefix else expression.attr
+        return ""
+
+    for filename in ("state.py", "sockets.py"):
+        for node in ast.walk(trees[filename]):
+            if not isinstance(node, ast.With):
+                continue
+            contexts = {context_name(item.context_expr) for item in node.items}
+            if not contexts & {"state_lock", "state.state_lock"}:
+                continue
+            nested = list(ast.walk(ast.Module(body=node.body, type_ignores=[])))
+            if any(
+                isinstance(child, ast.With)
+                and any(
+                    context_name(item.context_expr).endswith(".turn_lock")
+                    for item in child.items
+                )
+                for child in nested
+            ):
+                problems.append(
+                    f"{filename} acquires a match lock while state_lock is held."
+                )
+            if any(
+                isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Attribute)
+                and child.func.attr in {"emit", "resolve_turn"}
+                for child in nested
+            ):
+                problems.append(
+                    f"{filename} emits or resolves while state_lock is held."
+                )
+
+    lifecycle_functions = {
+        node.name: node
+        for node in ast.walk(socket_tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name in {"_match_expiration", "run_lifecycle_sweep", "lifecycle_sweeper"}
+    }
+    for function_name, function in lifecycle_functions.items():
+        if any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "time"
+            and node.func.attr == "time"
+            for node in ast.walk(function)
+        ):
+            problems.append(f"{function_name} uses wall-clock time.")
+
+    chat_handlers = [
+        node
+        for node in ast.walk(socket_tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "duel_chat"
+    ]
+    if len(chat_handlers) != 1:
+        problems.append(f"Expected one duel_chat handler; found {len(chat_handlers)}.")
+    elif any(
+        isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign))
+        and any(
+            isinstance(target, ast.Attribute)
+            and target.attr == "last_gameplay_activity_at"
+            for target in (
+                node.targets
+                if isinstance(node, ast.Assign)
+                else [node.target]
+            )
+        )
+        for node in ast.walk(chat_handlers[0])
+    ):
+        problems.append("Chat refreshes lifecycle activity.")
+
+    if problems:
+        return False, "; ".join(problems)
+    return True, (
+        "Match lifecycle uses Eventlet coordination, one startup-guarded process "
+        "sweeper, match-before-registry locking, no transport/resolver work under "
+        "state_lock, monotonic deadlines, and no lease/deferred-cleanup state."
+    )
+
 _GUARDRAILS: Tuple[Tuple[str, Callable[[], Tuple[bool, str]]], ...] = (
+    ("guardrail_match_lifecycle_coordination", guardrail_match_lifecycle_coordination),
     ("guardrail_player_resource_writes", guardrail_player_resource_writes),
     ("guardrail_damage_resource_gains_post_damage", guardrail_damage_resource_gains_post_damage),
     ("guardrail_raw_proc_bonus_damage", guardrail_raw_proc_bonus_damage),

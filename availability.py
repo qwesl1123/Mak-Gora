@@ -62,6 +62,38 @@ class AdmissionPolicy:
 
 
 @dataclass(frozen=True)
+class LifecyclePolicy:
+    prep_idle_ttl_seconds: float = 10 * 60
+    prep_absolute_ttl_seconds: float = 30 * 60
+    combat_idle_ttl_seconds: float = 15 * 60
+    combat_absolute_ttl_seconds: float = 2 * 60 * 60
+    ended_grace_seconds: float = 2 * 60
+    sweep_interval_seconds: float = 30
+
+    def __post_init__(self) -> None:
+        values = {
+            "prep_idle_ttl_seconds": self.prep_idle_ttl_seconds,
+            "prep_absolute_ttl_seconds": self.prep_absolute_ttl_seconds,
+            "combat_idle_ttl_seconds": self.combat_idle_ttl_seconds,
+            "combat_absolute_ttl_seconds": self.combat_absolute_ttl_seconds,
+            "ended_grace_seconds": self.ended_grace_seconds,
+            "sweep_interval_seconds": self.sweep_interval_seconds,
+        }
+        for name, value in values.items():
+            _require_positive_finite(name, value)
+        if self.prep_absolute_ttl_seconds < self.prep_idle_ttl_seconds:
+            raise ValueError(
+                "prep_absolute_ttl_seconds must be greater than or equal to "
+                "prep_idle_ttl_seconds"
+            )
+        if self.combat_absolute_ttl_seconds < self.combat_idle_ttl_seconds:
+            raise ValueError(
+                "combat_absolute_ttl_seconds must be greater than or equal to "
+                "combat_idle_ttl_seconds"
+            )
+
+
+@dataclass(frozen=True)
 class ResourceLimits:
     max_retained_log_entries: int = 500
     socket_max_buffer_bytes: int = 16 * 1024
@@ -89,6 +121,7 @@ class ResourceLimits:
 
 DEFAULT_RESOURCE_LIMITS = ResourceLimits()
 DEFAULT_ADMISSION_POLICY = AdmissionPolicy()
+DEFAULT_LIFECYCLE_POLICY = LifecyclePolicy()
 _EVENT_RATE_PREFIXES = {
     "queue_rate": "QUEUE",
     "prep_rate": "PREP",
@@ -174,6 +207,50 @@ def load_admission_policy(
         ) from exc
 
 
+def load_lifecycle_policy(
+    environment: Mapping[str, str] | None = None,
+) -> LifecyclePolicy:
+    source = os.environ if environment is None else environment
+    defaults = DEFAULT_LIFECYCLE_POLICY
+    try:
+        return LifecyclePolicy(
+            prep_idle_ttl_seconds=_environment_float(
+                source,
+                "MAKGORA_PREP_IDLE_TTL_SECONDS",
+                defaults.prep_idle_ttl_seconds,
+            ),
+            prep_absolute_ttl_seconds=_environment_float(
+                source,
+                "MAKGORA_PREP_ABSOLUTE_TTL_SECONDS",
+                defaults.prep_absolute_ttl_seconds,
+            ),
+            combat_idle_ttl_seconds=_environment_float(
+                source,
+                "MAKGORA_COMBAT_IDLE_TTL_SECONDS",
+                defaults.combat_idle_ttl_seconds,
+            ),
+            combat_absolute_ttl_seconds=_environment_float(
+                source,
+                "MAKGORA_COMBAT_ABSOLUTE_TTL_SECONDS",
+                defaults.combat_absolute_ttl_seconds,
+            ),
+            ended_grace_seconds=_environment_float(
+                source,
+                "MAKGORA_ENDED_GRACE_SECONDS",
+                defaults.ended_grace_seconds,
+            ),
+            sweep_interval_seconds=_environment_float(
+                source,
+                "MAKGORA_LIFECYCLE_SWEEP_INTERVAL_SECONDS",
+                defaults.sweep_interval_seconds,
+            ),
+        )
+    except ValueError as exc:
+        raise ValueError(
+            f"Invalid Mak'Gora lifecycle configuration: {exc}"
+        ) from exc
+
+
 def load_resource_limits(
     environment: Mapping[str, str] | None = None,
 ) -> ResourceLimits:
@@ -201,3 +278,4 @@ def load_resource_limits(
 # Invalid explicit values therefore stop startup instead of silently falling back.
 RESOURCE_LIMITS = load_resource_limits()
 ADMISSION_POLICY = load_admission_policy()
+LIFECYCLE_POLICY = load_lifecycle_policy()

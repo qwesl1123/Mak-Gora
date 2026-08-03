@@ -1,7 +1,8 @@
 # games/duel/engine/models.py
 from dataclasses import dataclass, field
-from threading import RLock
 from typing import Any, Dict, Iterable, List, Optional
+
+from eventlet.semaphore import Semaphore
 
 from ..availability import RESOURCE_LIMITS
 
@@ -174,7 +175,11 @@ class MatchState:
     combat_totals: Dict[str, Dict[str, int]] = field(default_factory=dict)
     turn_in_progress: bool = False
     last_resolved_key: Optional[str] = None
-    turn_lock: RLock = field(default_factory=RLock)
+    created_at: float = 0.0
+    phase_started_at: float = 0.0
+    last_gameplay_activity_at: float = 0.0
+    ended_at: Optional[float] = None
+    turn_lock: Semaphore = field(default_factory=lambda: Semaphore(1))
 
     def __post_init__(self) -> None:
         existing_sequence = (

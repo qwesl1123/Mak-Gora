@@ -752,12 +752,47 @@ Transport joins, leaves, emits, snapshot building, prep application, and turn
 resolution must occur after the admission lock is released.
 
 The queue is capped and timestamped with an injectable monotonic clock.
-Expiration is lazy and inclusive (`now >= queued_at + queue_ttl_seconds`) before
-matchmaking admission or pairing; there is no queue timer or background
-sweeper. Room capacity counts every retained prep, combat, or ended room.
-Cleanup that frees a room may atomically promote one waiting FIFO pair before
-the normal match-setup transport helper runs. Room IDs come from a monotonic
-process-lifetime sequence and are never recycled by cleanup.
+Expiration is inclusive (`now >= deadline`) and runs both lazily before
+matchmaking admission/pairing and proactively in the single process lifecycle
+sweeper. Room capacity counts every retained prep, combat, or ended room. Room
+IDs come from a monotonic process-lifetime sequence and are never recycled by
+cleanup.
+
+Every registered match snapshots `created_at`, `phase_started_at`, and
+`last_gameplay_activity_at` from that same monotonic clock. `ended_at` is set
+once when combat becomes ended. Prep has 10-minute idle and 30-minute absolute
+TTLs; combat has 15-minute idle and 2-hour absolute TTLs; ended rooms have a
+2-minute grace period. Only an accepted state-changing prep submission, a
+SID's first lock-in, the prep-to-combat transition, or an accepted first action
+submission for the turn refreshes idle activity. Invalid, rejected, duplicate,
+throttled, snapshot, system, queue, and chat traffic does not. Absolute phase
+deadlines never refresh.
+
+`MatchState.turn_lock` is the one non-reentrant Eventlet `Semaphore(1)` for
+match operations and lifecycle cleanup. The canonical lock order is the match
+semaphore and then `state_lock`; never wait for a match semaphore while holding
+`state_lock`. After acquiring the match semaphore, handlers and cleanup must
+revalidate the registered match identity under `state_lock` before mutating or
+delivering it. Setup delivery and turn resolution may hold only that match's
+semaphore, never the registry semaphore.
+
+One startup-guarded sweeper runs per process every 30 seconds. Each pass expires
+queued SIDs through the shared queue-expiration helper, snapshots registered
+matches under `state_lock`, then tries each match semaphore without blocking.
+Busy rooms are skipped until the next sweep. Disconnect waits cooperatively for
+only the affected match semaphore. All removal routes use
+`detach_match_if_current()` for atomic registry/queue detachment, then perform
+notices, Socket.IO room closure, replacement pairing, and replacement setup
+outside locks. Each detached room permits at most one FIFO replacement pair.
+Individual notification, room-close, and setup failures must not stop later
+cleanup work.
+
+Expiration may occur up to one sweep interval late when a match is busy.
+This is intentional and avoids cleanup leases or a deferred-operation state
+machine.
+
+Lifecycle state remains process-local. Multiple application workers are not
+supported.
 
 The five protected incoming events (`duel_queue`, `duel_prep_submit`,
 `duel_lock_in`, `duel_action`, and `duel_chat`) use independent per-SID,
@@ -766,10 +801,6 @@ least-recently-seen eviction, warnings share one SID-wide cooldown, and
 disconnect removes the SID's limiter immediately. Arbitrary event names must
 not create buckets. These controls are not per-IP and do not replace external
 reverse-proxy or identity-based rate limits.
-
-Queue expiration is lazy in PR 3B. Prep, combat, and ended-room expiration are
-not implemented until PR 3C. Admission state remains process-local. Running
-multiple application workers is not supported by this PR.
 
 ## Testing rules
 
