@@ -2501,9 +2501,15 @@ def guardrail_aggregate_runner_failure_semantics() -> Tuple[bool, str]:
 
 
 def guardrail_match_lifecycle_coordination() -> Tuple[bool, str]:
+    models_path = _gameplay_file("models.py")
+    if models_path is None:
+        return False, "Missing lifecycle source files: models.py"
     required_paths = {
-        name: _REPO_ROOT / name
-        for name in ("models.py", "state.py", "sockets.py", "__init__.py")
+        "models.py": models_path,
+        **{
+            name: _REPO_ROOT / name
+            for name in ("state.py", "sockets.py", "__init__.py")
+        },
     }
     missing = [name for name, path in required_paths.items() if not path.is_file()]
     if missing:
@@ -2680,8 +2686,48 @@ def guardrail_match_lifecycle_coordination() -> Tuple[bool, str]:
                 problems.append(
                     "Stale direct setup does not emit one requester-local retry notice."
                 )
-            if not any(isinstance(node, ast.Return) for node in stale_nodes):
+            requester_guards = [
+                node
+                for node in stale_guard.body
+                if isinstance(node, ast.If)
+                and isinstance(node.test, ast.Compare)
+                and isinstance(node.test.left, ast.Name)
+                and node.test.left.id == "sid"
+                and len(node.test.ops) == 1
+                and isinstance(node.test.ops[0], ast.In)
+                and len(node.test.comparators) == 1
+                and context_name(node.test.comparators[0]) == "result.match.players"
+            ]
+            if len(requester_guards) != 1:
+                problems.append(
+                    "Stale direct setup retry is not gated to a requester in the stale match."
+                )
+            elif not any(
+                isinstance(node, ast.Return)
+                for node in ast.walk(requester_guards[0])
+            ):
                 problems.append("Stale direct setup does not return after its retry notice.")
+
+            rematched_requester_guards = [
+                node
+                for node in stale_guard.body
+                if isinstance(node, ast.If)
+                and any(
+                    isinstance(child, ast.Call)
+                    and context_name(child.func) == "state.get_match_by_sid"
+                    and len(child.args) == 1
+                    and isinstance(child.args[0], ast.Name)
+                    and child.args[0].id == "sid"
+                    for child in ast.walk(node.test)
+                )
+            ]
+            if len(rematched_requester_guards) != 1 or not any(
+                isinstance(node, ast.Return)
+                for node in ast.walk(rematched_requester_guards[0])
+            ):
+                problems.append(
+                    "Stale unrelated setup does not preserve an already rematched requester."
+                )
 
             forbidden_stale_calls = [
                 context_name(node.func)

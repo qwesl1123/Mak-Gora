@@ -864,8 +864,11 @@ def register_duel_socket_handlers(socketio):
         if result.match is not None:
             delivered = deliver_match_setup(socketio, result.match)
             if not delivered:
-                emit("duel_system", MATCH_SETUP_INTERRUPTED_MESSAGE)
-                return
+                if sid in result.match.players:
+                    emit("duel_system", MATCH_SETUP_INTERRUPTED_MESSAGE)
+                    return
+                if state.get_match_by_sid(sid) is not None:
+                    return
         if result.status == "already_queued":
             emit("duel_system", "Already in queue.")
         elif result.status == "queue_full":

@@ -1221,6 +1221,89 @@ def scenario_lifecycle_direct_matchmaking_stale_setup_notifies_requester() -> bo
             assert not state.duel_queue
             assert not state.queued_at_by_sid
             assert not state.sid_to_room
+
+    # A queue request can opportunistically set up two older waiting SIDs.
+    # If that unrelated match becomes stale, the current requester keeps its
+    # real queued result instead of receiving the stale match's retry notice.
+    with _isolated_state(admission_policy=policy):
+        socketio = FakeSocketIO()
+        with _registered_handlers(socketio):
+            occupied = _create_room("occupied-a", "occupied-b")
+            _call(socketio, "older-a", state.QUEUE_EVENT)
+            _call(socketio, "older-b", state.QUEUE_EVENT)
+            assert state.duel_queue == ["older-a", "older-b"]
+            with occupied.turn_lock:
+                assert state.detach_match_if_current(
+                    occupied,
+                    reason="test_capacity_release",
+                    message="test",
+                ) is not None
+            socketio.direct_emitted.clear()
+
+            setup_ready = Event()
+            resume_setup = Event()
+            created_matches: list[MatchState] = []
+            original_deliver = SOCKETS.deliver_match_setup
+
+            def paused_unrelated_deliver(
+                active_socketio: Any,
+                match: MatchState,
+            ) -> bool:
+                created_matches.append(match)
+                setup_ready.send()
+                resume_setup.wait()
+                SOCKETS.request.sid = "requester"
+                return original_deliver(active_socketio, match)
+
+            def request_match() -> None:
+                SOCKETS.request.sid = "requester"
+                socketio.handlers[state.QUEUE_EVENT]()
+
+            def disconnect_older_peer() -> None:
+                SOCKETS.request.sid = "older-a"
+                socketio.handlers["disconnect"]("client disconnect")
+
+            SOCKETS.deliver_match_setup = paused_unrelated_deliver
+            requester = None
+            try:
+                requester = eventlet.spawn(request_match)
+                eventlet.sleep(0)
+                setup_ready.wait()
+                stale_match = created_matches[0]
+                assert stale_match.players == ["older-a", "older-b"]
+                assert "requester" not in stale_match.players
+                assert state.duel_queue == ["requester"]
+
+                disconnect = eventlet.spawn(disconnect_older_peer)
+                eventlet.sleep(0)
+                disconnect.wait()
+                close_attempts_after_disconnect = tuple(socketio.close_attempts)
+                assert close_attempts_after_disconnect == (stale_match.room_id,)
+
+                SOCKETS.request.sid = "requester"
+                resume_setup.send()
+                eventlet.sleep(0)
+                requester.wait()
+            finally:
+                if not resume_setup.ready():
+                    resume_setup.send()
+                SOCKETS.deliver_match_setup = original_deliver
+
+            assert state.duel_queue == ["requester"]
+            assert "requester" in state.queued_at_by_sid
+            assert "requester" not in state.sid_to_room
+            assert socketio.direct_emitted == [
+                ("requester", "duel_system", "Queued for DUEL...", {})
+            ]
+            assert not any(
+                payload == SOCKETS.MATCH_SETUP_INTERRUPTED_MESSAGE
+                for _sid, _event, payload, _kwargs in socketio.direct_emitted
+            )
+            assert not any(
+                payload == SOCKETS.MATCH_SETUP_INTERRUPTED_MESSAGE
+                for _event, payload, _kwargs in socketio.emitted
+            )
+            assert tuple(socketio.close_attempts) == close_attempts_after_disconnect
     return True
 
 
