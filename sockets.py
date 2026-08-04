@@ -48,6 +48,9 @@ QUEUE_EXPIRED_MESSAGE = (
     "Your matchmaking queue entry expired. Queue again to continue."
 )
 MATCH_SETUP_FAILED_MESSAGE = "Match setup failed. Queue again to continue."
+MATCH_SETUP_INTERRUPTED_MESSAGE = (
+    "Match setup was interrupted. Queue again to continue."
+)
 
 logger = logging.getLogger(__name__)
 
@@ -859,7 +862,9 @@ def register_duel_socket_handlers(socketio):
         # Complete the existing setup transport before any intermediate
         # acknowledgement can yield and let disconnect cleanup remove the room.
         if result.match is not None:
-            if not deliver_match_setup(socketio, result.match):
+            delivered = deliver_match_setup(socketio, result.match)
+            if not delivered:
+                emit("duel_system", MATCH_SETUP_INTERRUPTED_MESSAGE)
                 return
         if result.status == "already_queued":
             emit("duel_system", "Already in queue.")

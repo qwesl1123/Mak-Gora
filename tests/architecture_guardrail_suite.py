@@ -2538,6 +2538,9 @@ def guardrail_match_lifecycle_coordination() -> Tuple[bool, str]:
         "availability_closed",
         "cleanup_lease",
         "deferred_cleanup",
+        "setup_lease",
+        "reservation_state",
+        "pending_setup",
     )
     present_forbidden = [term for term in forbidden_terms if term in combined]
     if present_forbidden:
@@ -2621,6 +2624,106 @@ def guardrail_match_lifecycle_coordination() -> Tuple[bool, str]:
         problems.append("Missing room-capacity recovery coordinator.")
     if failed_cleanup_function is None:
         problems.append("Missing failed-setup transport cleanup helper.")
+
+    duel_queue_handlers = [
+        node
+        for node in ast.walk(socket_tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "duel_queue"
+    ]
+    if len(duel_queue_handlers) != 1:
+        problems.append(
+            f"Expected one duel_queue handler; found {len(duel_queue_handlers)}."
+        )
+    else:
+        duel_queue_handler = duel_queue_handlers[0]
+        handler_nodes = list(ast.walk(duel_queue_handler))
+        direct_setup_assignments = [
+            node
+            for node in handler_nodes
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "delivered"
+                for target in node.targets
+            )
+            and isinstance(node.value, ast.Call)
+            and context_name(node.value.func) == "deliver_match_setup"
+        ]
+        stale_setup_guards = [
+            node
+            for node in handler_nodes
+            if isinstance(node, ast.If)
+            and isinstance(node.test, ast.UnaryOp)
+            and isinstance(node.test.op, ast.Not)
+            and isinstance(node.test.operand, ast.Name)
+            and node.test.operand.id == "delivered"
+        ]
+        if len(direct_setup_assignments) != 1 or len(stale_setup_guards) != 1:
+            problems.append(
+                "duel_queue does not capture and check direct setup delivery once."
+            )
+        else:
+            stale_guard = stale_setup_guards[0]
+            stale_nodes = list(ast.walk(stale_guard))
+            interrupted_emits = [
+                node
+                for node in stale_nodes
+                if isinstance(node, ast.Call)
+                and context_name(node.func) == "emit"
+                and len(node.args) >= 2
+                and isinstance(node.args[0], ast.Constant)
+                and node.args[0].value == "duel_system"
+                and context_name(node.args[1]) == "MATCH_SETUP_INTERRUPTED_MESSAGE"
+                and not any(keyword.arg == "to" for keyword in node.keywords)
+            ]
+            if len(interrupted_emits) != 1:
+                problems.append(
+                    "Stale direct setup does not emit one requester-local retry notice."
+                )
+            if not any(isinstance(node, ast.Return) for node in stale_nodes):
+                problems.append("Stale direct setup does not return after its retry notice.")
+
+            forbidden_stale_calls = [
+                context_name(node.func)
+                for node in stale_nodes
+                if isinstance(node, ast.Call)
+                and context_name(node.func) in {
+                    "state.request_matchmaking",
+                    "state.detach_match_if_current",
+                    "state.duel_queue.append",
+                    "socketio.close_room",
+                }
+            ]
+            if forbidden_stale_calls:
+                problems.append(
+                    "Stale direct setup performs duplicate cleanup or requeue work: "
+                    + ", ".join(forbidden_stale_calls)
+                )
+
+            stale_assignment_targets = []
+            for node in stale_nodes:
+                if isinstance(node, ast.Assign):
+                    targets = node.targets
+                elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+                    targets = [node.target]
+                else:
+                    continue
+                for target in targets:
+                    target_value = target.value if isinstance(target, ast.Subscript) else target
+                    stale_assignment_targets.append(context_name(target_value))
+            forbidden_stale_targets = {
+                "state.duel_queue",
+                "state.queued_at_by_sid",
+                "state.sid_to_room",
+            }
+            mutated_stale_state = sorted(
+                set(stale_assignment_targets) & forbidden_stale_targets
+            )
+            if mutated_stale_state:
+                problems.append(
+                    "Stale direct setup mutates queue or SID mapping state: "
+                    + ", ".join(mutated_stale_state)
+                )
 
     if recovery_function is not None:
         recovery_nodes = list(ast.walk(recovery_function))
@@ -2828,7 +2931,8 @@ def guardrail_match_lifecycle_coordination() -> Tuple[bool, str]:
         "Match lifecycle uses Eventlet coordination, one startup-guarded process "
         "sweeper, match-before-registry locking, no transport/resolver work under "
         "state_lock, immediate failed-setup detachment with direct SID cleanup and "
-        "same-slot retry, monotonic deadlines, and no lease/deferred-cleanup state."
+        "same-slot retry, requester-local stale-setup notification without duplicate "
+        "cleanup or requeue, monotonic deadlines, and no lease/deferred-cleanup state."
     )
 
 _GUARDRAILS: Tuple[Tuple[str, Callable[[], Tuple[bool, str]]], ...] = (

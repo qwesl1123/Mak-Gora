@@ -66,6 +66,7 @@ from .test_lifecycle_expiration import (
     scenario_lifecycle_initial_emit_setup_failure_detaches_and_retries,
     scenario_lifecycle_stale_replacement_setup_retries_same_slot,
     scenario_lifecycle_failed_setup_transport_failure_isolation,
+    scenario_lifecycle_direct_matchmaking_stale_setup_notifies_requester,
     scenario_lifecycle_ordinary_two_tab_duel,
     scenario_lifecycle_exact_boundaries_and_source_guardrails,
 )
@@ -499,6 +500,7 @@ SCENARIOS = [
     scenario_lifecycle_initial_emit_setup_failure_detaches_and_retries,
     scenario_lifecycle_stale_replacement_setup_retries_same_slot,
     scenario_lifecycle_failed_setup_transport_failure_isolation,
+    scenario_lifecycle_direct_matchmaking_stale_setup_notifies_requester,
     scenario_lifecycle_ordinary_two_tab_duel,
     scenario_lifecycle_exact_boundaries_and_source_guardrails,
     scenario_bounded_combat_log_retention_rollover,

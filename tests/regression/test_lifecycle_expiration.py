@@ -1100,6 +1100,130 @@ def scenario_lifecycle_failed_setup_transport_failure_isolation() -> bool:
     return True
 
 
+def scenario_lifecycle_direct_matchmaking_stale_setup_notifies_requester() -> bool:
+    policy = _admission_policy(max_active_rooms=1, queue_ttl_seconds=100)
+    with _isolated_state(admission_policy=policy):
+        socketio = FakeSocketIO()
+        with _registered_handlers(socketio):
+            _call(socketio, "waiting-peer", state.QUEUE_EVENT)
+            assert state.duel_queue == ["waiting-peer"]
+            socketio.direct_emitted.clear()
+
+            setup_ready = Event()
+            resume_setup = Event()
+            created_matches: list[MatchState] = []
+            matchmaking_calls: list[str] = []
+            detach_calls: list[MatchState] = []
+            original_deliver = SOCKETS.deliver_match_setup
+            original_request_matchmaking = state.request_matchmaking
+            original_detach = state.detach_match_if_current
+
+            def paused_deliver(active_socketio: Any, match: MatchState) -> bool:
+                created_matches.append(match)
+                setup_ready.send()
+                resume_setup.wait()
+                # The harness uses a SimpleNamespace in place of Flask's
+                # greenthread-local request proxy; restore the requester here.
+                SOCKETS.request.sid = "requester"
+                return original_deliver(active_socketio, match)
+
+            def tracked_request_matchmaking(sid: str, seed: int, **kwargs: Any) -> Any:
+                matchmaking_calls.append(sid)
+                return original_request_matchmaking(sid, seed, **kwargs)
+
+            def tracked_detach(match: MatchState, **kwargs: Any) -> Any:
+                detach_calls.append(match)
+                return original_detach(match, **kwargs)
+
+            def request_match() -> None:
+                SOCKETS.request.sid = "requester"
+                socketio.handlers[state.QUEUE_EVENT]()
+
+            def disconnect_waiting_peer() -> None:
+                SOCKETS.request.sid = "waiting-peer"
+                socketio.handlers["disconnect"]("client disconnect")
+
+            SOCKETS.deliver_match_setup = paused_deliver
+            state.request_matchmaking = tracked_request_matchmaking
+            state.detach_match_if_current = tracked_detach
+            requester = None
+            try:
+                requester = eventlet.spawn(request_match)
+                eventlet.sleep(0)
+                setup_ready.wait()
+                match = created_matches[0]
+                assert state.get_match_by_sid("requester") is match
+
+                disconnect = eventlet.spawn(disconnect_waiting_peer)
+                eventlet.sleep(0)
+                disconnect.wait()
+                close_attempts_after_disconnect = tuple(socketio.close_attempts)
+                assert close_attempts_after_disconnect == (match.room_id,)
+                assert any(
+                    event == "duel_system"
+                    and payload == "Opponent disconnected."
+                    and kwargs.get("to") == match.room_id
+                    for event, payload, kwargs in socketio.emitted
+                )
+
+                SOCKETS.request.sid = "requester"
+                resume_setup.send()
+                eventlet.sleep(0)
+                requester.wait()
+            finally:
+                if not resume_setup.ready():
+                    resume_setup.send()
+                SOCKETS.deliver_match_setup = original_deliver
+                state.request_matchmaking = original_request_matchmaking
+                state.detach_match_if_current = original_detach
+
+            assert match.room_id not in state.duel_rooms
+            assert "requester" not in state.duel_queue
+            assert "requester" not in state.queued_at_by_sid
+            assert "requester" not in state.sid_to_room
+            assert state.get_match_by_sid("requester") is None
+            assert socketio.direct_emitted == [
+                (
+                    "requester",
+                    "duel_system",
+                    SOCKETS.MATCH_SETUP_INTERRUPTED_MESSAGE,
+                    {},
+                )
+            ]
+            assert not any(
+                sid == "waiting-peer"
+                and payload == SOCKETS.MATCH_SETUP_INTERRUPTED_MESSAGE
+                for sid, _event, payload, _kwargs in socketio.direct_emitted
+            )
+            assert not any(
+                payload == SOCKETS.MATCH_SETUP_INTERRUPTED_MESSAGE
+                and kwargs.get("to") == match.room_id
+                for _event, payload, kwargs in socketio.emitted
+            )
+            assert not any(
+                event in {"duel_role", "duel_prep_options", "duel_snapshot"}
+                for event, _payload, _kwargs in socketio.emitted
+            )
+            assert not any(
+                payload == "Match found. Prep phase: pick class + items."
+                for _event, payload, _kwargs in socketio.emitted
+            )
+            assert not any(
+                payload in {
+                    "Queued for DUEL...",
+                    "Match found. Prep phase: pick class + items.",
+                }
+                for _sid, _event, payload, _kwargs in socketio.direct_emitted
+            )
+            assert matchmaking_calls == ["requester"]
+            assert detach_calls == [match]
+            assert tuple(socketio.close_attempts) == close_attempts_after_disconnect
+            assert not state.duel_queue
+            assert not state.queued_at_by_sid
+            assert not state.sid_to_room
+    return True
+
+
 def scenario_lifecycle_ordinary_two_tab_duel() -> bool:
     policy = _admission_policy(max_active_rooms=1)
     lifecycle = _lifecycle_policy(ended_grace_seconds=5)
@@ -1110,6 +1234,31 @@ def scenario_lifecycle_ordinary_two_tab_duel() -> bool:
             _call(socketio, "tab-b", state.QUEUE_EVENT)
             match = state.get_match_by_sid("tab-a")
             assert match is not None
+            assert state.get_match_by_sid("tab-b") is match
+            assert socketio.entered_rooms == [
+                (match.room_id, "tab-a"),
+                (match.room_id, "tab-b"),
+            ]
+            assert [
+                (event, kwargs.get("to"))
+                for event, _payload, kwargs in socketio.emitted
+                if kwargs.get("to") in {"tab-a", "tab-b", match.room_id}
+            ] == [
+                ("duel_role", "tab-a"),
+                ("duel_role", "tab-b"),
+                ("duel_system", match.room_id),
+                ("duel_prep_options", match.room_id),
+                ("duel_snapshot", "tab-a"),
+                ("duel_snapshot", "tab-b"),
+            ]
+            assert not any(
+                payload == SOCKETS.MATCH_SETUP_INTERRUPTED_MESSAGE
+                for _sid, _event, payload, _kwargs in socketio.direct_emitted
+            )
+            assert not any(
+                payload == SOCKETS.MATCH_SETUP_INTERRUPTED_MESSAGE
+                for _event, payload, _kwargs in socketio.emitted
+            )
             _call(socketio, "tab-a", state.PREP_EVENT, {"class_id": "warrior"})
             _call(socketio, "tab-b", state.PREP_EVENT, {"class_id": "mage"})
             _call(socketio, "tab-a", state.LOCK_EVENT)
