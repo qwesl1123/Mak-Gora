@@ -1390,6 +1390,87 @@ def scenario_lifecycle_direct_matchmaking_stale_setup_notifies_requester() -> bo
                 for _event, payload, _kwargs in socketio.emitted
             )
             assert socketio.closed_rooms == [released_during_setup.room_id]
+
+    # A requester can also expire while an unrelated setup yields. Its queue
+    # expiration notice remains authoritative; the old handler must not append
+    # a queued acknowledgement after the requester has left the queue.
+    expiration_policy = _admission_policy(
+        max_active_rooms=1,
+        queue_ttl_seconds=100,
+    )
+    with _isolated_state(admission_policy=expiration_policy) as (clock, _policy):
+        socketio = FakeSocketIO()
+        with _registered_handlers(socketio):
+            occupied = _create_room("occupied-a", "occupied-b")
+            _call(socketio, "older-a", state.QUEUE_EVENT)
+            _call(socketio, "older-b", state.QUEUE_EVENT)
+            with occupied.turn_lock:
+                assert state.detach_match_if_current(
+                    occupied,
+                    reason="test_capacity_release",
+                    message="test",
+                ) is not None
+            socketio.direct_emitted.clear()
+
+            setup_ready = Event()
+            resume_setup = Event()
+            created_matches: list[MatchState] = []
+            original_deliver = SOCKETS.deliver_match_setup
+
+            def paused_expiration_deliver(
+                active_socketio: Any,
+                match: MatchState,
+            ) -> bool:
+                created_matches.append(match)
+                setup_ready.send()
+                resume_setup.wait()
+                SOCKETS.request.sid = "requester"
+                return original_deliver(active_socketio, match)
+
+            def request_match() -> None:
+                SOCKETS.request.sid = "requester"
+                socketio.handlers[state.QUEUE_EVENT]()
+
+            SOCKETS.deliver_match_setup = paused_expiration_deliver
+            requester = None
+            try:
+                requester = eventlet.spawn(request_match)
+                eventlet.sleep(0)
+                setup_ready.wait()
+                unrelated_match = created_matches[0]
+                assert unrelated_match.players == ["older-a", "older-b"]
+                assert state.duel_queue == ["requester"]
+
+                clock.set(expiration_policy.queue_ttl_seconds)
+                _call(socketio, "expiration-trigger", state.QUEUE_EVENT)
+                assert state.duel_queue == ["expiration-trigger"]
+                assert "requester" not in state.queued_at_by_sid
+                socketio.direct_emitted.clear()
+
+                SOCKETS.request.sid = "requester"
+                resume_setup.send()
+                eventlet.sleep(0)
+                requester.wait()
+            finally:
+                if not resume_setup.ready():
+                    resume_setup.send()
+                SOCKETS.deliver_match_setup = original_deliver
+
+            assert state.get_match_by_sid("requester") is None
+            assert "requester" not in state.duel_queue
+            assert socketio.direct_emitted == []
+            assert [
+                (event, payload, kwargs.get("to"))
+                for event, payload, kwargs in socketio.emitted
+                if kwargs.get("to") == "requester"
+            ] == [
+                ("duel_system", SOCKETS.QUEUE_EXPIRED_MESSAGE, "requester")
+            ]
+            assert not any(
+                payload == SOCKETS.MATCH_SETUP_INTERRUPTED_MESSAGE
+                or payload == "Queued for DUEL..."
+                for _event, payload, _kwargs in socketio.emitted
+            )
     return True
 
 

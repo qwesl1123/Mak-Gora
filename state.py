@@ -255,6 +255,11 @@ def get_match_by_sid(sid: str) -> Optional[MatchState]:
         return duel_rooms.get(room_id) if room_id else None
 
 
+def is_sid_queued(sid: str) -> bool:
+    with state_lock:
+        return sid in duel_queue
+
+
 def is_registered_match(
     match: MatchState,
     *,

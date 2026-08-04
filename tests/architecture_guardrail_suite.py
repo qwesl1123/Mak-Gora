@@ -2619,6 +2619,39 @@ def guardrail_match_lifecycle_coordination() -> Tuple[bool, str]:
                     f"{filename} emits or resolves while state_lock is held."
                 )
 
+    state_functions = {
+        node.name: node
+        for node in trees["state.py"].body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    queue_status_function = state_functions.get("is_sid_queued")
+    if queue_status_function is None:
+        problems.append("Missing atomic queue-membership query.")
+    else:
+        locked_membership_checks = [
+            child
+            for child in ast.walk(queue_status_function)
+            if isinstance(child, ast.With)
+            and any(
+                context_name(item.context_expr) == "state_lock"
+                for item in child.items
+            )
+            and any(
+                isinstance(descendant, ast.Compare)
+                and isinstance(descendant.left, ast.Name)
+                and descendant.left.id == "sid"
+                and len(descendant.ops) == 1
+                and isinstance(descendant.ops[0], ast.In)
+                and len(descendant.comparators) == 1
+                and context_name(descendant.comparators[0]) == "duel_queue"
+                for descendant in ast.walk(child)
+            )
+        ]
+        if len(locked_membership_checks) != 1:
+            problems.append(
+                "Queue-membership query is not guarded by the registry semaphore."
+            )
+
     socket_functions = {
         node.name: node
         for node in socket_tree.body
@@ -2708,19 +2741,11 @@ def guardrail_match_lifecycle_coordination() -> Tuple[bool, str]:
             ):
                 problems.append("Stale direct setup does not return after its retry notice.")
 
-            rematched_requester_guards = [
+            unrelated_requester_guards = [
                 node
                 for node in handler_nodes
                 if isinstance(node, ast.If)
                 and node not in stale_nodes
-                and any(
-                    isinstance(child, ast.Call)
-                    and context_name(child.func) == "state.get_match_by_sid"
-                    and len(child.args) == 1
-                    and isinstance(child.args[0], ast.Name)
-                    and child.args[0].id == "sid"
-                    for child in ast.walk(node.test)
-                )
                 and any(
                     isinstance(child, ast.Compare)
                     and isinstance(child.left, ast.Name)
@@ -2732,13 +2757,31 @@ def guardrail_match_lifecycle_coordination() -> Tuple[bool, str]:
                     for child in ast.walk(node.test)
                 )
             ]
-            if len(rematched_requester_guards) != 1 or not any(
-                isinstance(node, ast.Return)
-                for node in ast.walk(rematched_requester_guards[0])
-            ):
+            if len(unrelated_requester_guards) != 1:
                 problems.append(
-                    "Unrelated setup does not revalidate an already rematched requester."
+                    "Unrelated setup does not isolate requester revalidation."
                 )
+            else:
+                unrelated_nodes = list(ast.walk(unrelated_requester_guards[0]))
+                queue_membership_checks = [
+                    node
+                    for node in unrelated_nodes
+                    if isinstance(node, ast.Call)
+                    and context_name(node.func) == "state.is_sid_queued"
+                    and len(node.args) == 1
+                    and isinstance(node.args[0], ast.Name)
+                    and node.args[0].id == "sid"
+                ]
+                if (
+                    len(queue_membership_checks) != 1
+                    or not any(
+                        isinstance(node, ast.Return)
+                        for node in unrelated_nodes
+                    )
+                ):
+                    problems.append(
+                        "Unrelated setup does not atomically revalidate queue disposition."
+                    )
 
             forbidden_stale_calls = [
                 context_name(node.func)

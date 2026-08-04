@@ -869,7 +869,7 @@ def register_duel_socket_handlers(socketio):
                     return
             if (
                 sid not in result.match.players
-                and state.get_match_by_sid(sid) is not None
+                and not state.is_sid_queued(sid)
             ):
                 return
         if result.status == "already_queued":
