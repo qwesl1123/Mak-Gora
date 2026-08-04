@@ -2710,8 +2710,9 @@ def guardrail_match_lifecycle_coordination() -> Tuple[bool, str]:
 
             rematched_requester_guards = [
                 node
-                for node in stale_guard.body
+                for node in handler_nodes
                 if isinstance(node, ast.If)
+                and node not in stale_nodes
                 and any(
                     isinstance(child, ast.Call)
                     and context_name(child.func) == "state.get_match_by_sid"
@@ -2720,13 +2721,23 @@ def guardrail_match_lifecycle_coordination() -> Tuple[bool, str]:
                     and child.args[0].id == "sid"
                     for child in ast.walk(node.test)
                 )
+                and any(
+                    isinstance(child, ast.Compare)
+                    and isinstance(child.left, ast.Name)
+                    and child.left.id == "sid"
+                    and len(child.ops) == 1
+                    and isinstance(child.ops[0], ast.NotIn)
+                    and len(child.comparators) == 1
+                    and context_name(child.comparators[0]) == "result.match.players"
+                    for child in ast.walk(node.test)
+                )
             ]
             if len(rematched_requester_guards) != 1 or not any(
                 isinstance(node, ast.Return)
                 for node in ast.walk(rematched_requester_guards[0])
             ):
                 problems.append(
-                    "Stale unrelated setup does not preserve an already rematched requester."
+                    "Unrelated setup does not revalidate an already rematched requester."
                 )
 
             forbidden_stale_calls = [
