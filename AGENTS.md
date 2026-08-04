@@ -783,9 +783,16 @@ Busy rooms are skipped until the next sweep. Disconnect waits cooperatively for
 only the affected match semaphore. All removal routes use
 `detach_match_if_current()` for atomic registry/queue detachment, then perform
 notices, Socket.IO room closure, replacement pairing, and replacement setup
-outside locks. Each detached room permits at most one FIFO replacement pair.
-Individual notification, room-close, and setup failures must not stop later
-cleanup work.
+outside locks. Each detached room releases one capacity slot, and only a FIFO
+replacement whose setup returns `True` fills that slot or appears in recovery
+results. A setup exception reacquires only the replacement match semaphore,
+detaches the room through `detach_match_if_current()`, then directly notifies
+both SIDs and closes any partial Socket.IO room after releasing all locks. The
+failed players are not automatically requeued, and recovery retries the same
+slot with the next eligible FIFO pair. A `False` setup result means the match is
+already stale and retries the slot without duplicate detachment or failure
+notice. Individual notification, room-close, pairing, and setup failures must
+not stop later cleanup work or later released slots.
 
 Expiration may occur up to one sweep interval late when a match is busy.
 This is intentional and avoids cleanup leases or a deferred-operation state

@@ -89,8 +89,13 @@ cleanup. The lock order is match semaphore then registry semaphore. The
 sweeper never waits for a busy match; disconnect waits cooperatively for only
 the affected match. All room removal uses one atomic state-detachment path,
 with Socket.IO notices/closure and FIFO capacity-recovery setup performed after
-locks are released. A detached room can promote at most one waiting pair, and
-individual transport failures do not stop later cleanup.
+locks are released. A detached room can promote at most one successfully
+delivered waiting pair. If replacement setup fails, the replacement is detached
+immediately, both SIDs receive direct retry notices, any partial Socket.IO room
+is closed, and the same capacity slot is retried with the next FIFO pair. Failed
+players are not automatically requeued, stale replacements are not reported as
+successful, and individual transport failures do not stop later cleanup. This
+uses no setup lease or deferred-cleanup state.
 
 Expiration may occur up to one sweep interval late when a match is busy.
 This is intentional and avoids cleanup leases or a deferred-operation state

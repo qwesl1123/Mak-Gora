@@ -114,7 +114,7 @@ class FakeSocketIOServer:
         self.socketio = socketio
 
     def enter_room(self, sid: str, room_id: str, *, namespace: str) -> None:
-        self.socketio._assert_registry_unlocked()
+        self.socketio._assert_transport_locks("enter_room", sid)
         if sid in self.socketio.fail_setup_sids:
             raise RuntimeError("forced setup failure")
         assert namespace == "/"
@@ -130,14 +130,23 @@ class FakeSocketIO:
         self.closed_rooms: list[str] = []
         self.started_tasks: list[tuple[Any, tuple[Any, ...]]] = []
         self.sleeps: list[float] = []
+        self.emit_attempts: list[tuple[str, Any, dict[str, Any]]] = []
+        self.close_attempts: list[str] = []
         self.fail_emit_targets: set[str] = set()
+        self.fail_emit_once_targets: set[str] = set()
         self.fail_close_rooms: set[str] = set()
         self.fail_setup_sids: set[str] = set()
+        self.transport_probe: Any | None = None
         self.fail_start = False
         self.server = FakeSocketIOServer(self)
 
     def _assert_registry_unlocked(self) -> None:
         assert not state.state_lock.locked(), "transport ran while state_lock was held"
+
+    def _assert_transport_locks(self, operation: str, target: str) -> None:
+        self._assert_registry_unlocked()
+        if self.transport_probe is not None:
+            self.transport_probe(operation, target)
 
     def on(self, event: str) -> Any:
         def register(handler: Any) -> Any:
@@ -147,14 +156,19 @@ class FakeSocketIO:
         return register
 
     def emit(self, event: str, payload: Any = None, **kwargs: Any) -> None:
-        self._assert_registry_unlocked()
         target = kwargs.get("to")
+        self._assert_transport_locks("emit", target)
+        self.emit_attempts.append((event, payload, kwargs))
+        if target in self.fail_emit_once_targets:
+            self.fail_emit_once_targets.remove(target)
+            raise RuntimeError("forced one-shot emit failure")
         if target in self.fail_emit_targets:
             raise RuntimeError("forced emit failure")
         self.emitted.append((event, payload, kwargs))
 
     def close_room(self, room_id: str) -> None:
-        self._assert_registry_unlocked()
+        self._assert_transport_locks("close_room", room_id)
+        self.close_attempts.append(room_id)
         if room_id in self.fail_close_rooms:
             raise RuntimeError("forced close failure")
         self.closed_rooms.append(room_id)
@@ -725,6 +739,32 @@ def scenario_lifecycle_capacity_recovery() -> bool:
         assert len(result.replacement_room_ids) == len(set(result.replacement_room_ids)) == 2
         assert not ({room.room_id for room in old_rooms} & set(result.replacement_room_ids))
         assert len(socketio.entered_rooms) == 4
+        replacements = list(state.duel_rooms.values())
+        assert result.replacement_room_ids == tuple(
+            replacement.room_id for replacement in replacements
+        )
+        for replacement in replacements:
+            p1, p2 = replacement.players
+            assert [
+                entry for entry in socketio.entered_rooms
+                if entry[0] == replacement.room_id
+            ] == [(replacement.room_id, p1), (replacement.room_id, p2)]
+            assert [
+                (event, kwargs.get("to"))
+                for event, _payload, kwargs in socketio.emitted
+                if kwargs.get("to") in {p1, p2, replacement.room_id}
+            ] == [
+                ("duel_role", p1),
+                ("duel_role", p2),
+                ("duel_system", replacement.room_id),
+                ("duel_prep_options", replacement.room_id),
+                ("duel_snapshot", p1),
+                ("duel_snapshot", p2),
+            ]
+        assert not any(
+            payload == SOCKETS.MATCH_SETUP_FAILED_MESSAGE
+            for _event, payload, _kwargs in socketio.emit_attempts
+        )
     return True
 
 
@@ -750,8 +790,15 @@ def scenario_lifecycle_cleanup_failure_isolation() -> bool:
         assert len(failures) == 3
         assert len(result.detached_rooms) == 2
         assert second.room_id in socketio.closed_rooms
-        assert len(state.duel_rooms) == 2
-        assert any(sid == "next-3" for _room, sid in socketio.entered_rooms)
+        assert len(state.duel_rooms) == 1
+        replacement = state.get_match_by_sid("next-3")
+        assert replacement is not None
+        assert replacement.players == ["next-3", "next-4"]
+        assert state.get_match_by_sid("next-4") is replacement
+        assert result.replacement_room_ids == (replacement.room_id,)
+        assert state.get_match_by_sid("next-1") is None
+        assert state.get_match_by_sid("next-2") is None
+        assert all(sid not in state.duel_queue for sid in ("next-1", "next-2"))
 
         socketio.fail_emit_targets.clear()
         socketio.fail_close_rooms.clear()
@@ -762,7 +809,294 @@ def scenario_lifecycle_cleanup_failure_isolation() -> bool:
             lifecycle_policy=lifecycle,
             admission_policy=policy,
         )
+        assert len(later.detached_rooms) == 1
+    return True
+
+
+def scenario_lifecycle_partial_setup_failure_detaches_and_retries() -> bool:
+    policy = _admission_policy(max_active_rooms=1, queue_ttl_seconds=100)
+    lifecycle = _lifecycle_policy()
+    with _isolated_state(admission_policy=policy):
+        old = _create_room("old-a", "old-b")
+        for sid in ("failed-a", "failed-b", "success-a", "success-b"):
+            state.request_matchmaking(sid, 30, now=1, policy=policy)
+
+        socketio = FakeSocketIO()
+        socketio.fail_setup_sids.add("failed-b")
+        failed_matches: list[MatchState] = []
+        lock_observations: set[str] = set()
+        original_deliver = SOCKETS.deliver_match_setup
+
+        def tracked_deliver(active_socketio: Any, match: MatchState) -> bool:
+            if match.players == ["failed-a", "failed-b"]:
+                failed_matches.append(match)
+            return original_deliver(active_socketio, match)
+
+        def probe(operation: str, target: str) -> None:
+            if not failed_matches:
+                return
+            failed = failed_matches[0]
+            observation = None
+            if operation == "emit" and target in failed.players:
+                observation = "direct_notice"
+            elif operation == "close_room" and target == failed.room_id:
+                observation = "partial_close"
+            elif target in {"success-a", "success-b"}:
+                observation = "later_setup"
+            if observation is not None:
+                assert not state.state_lock.locked()
+                assert not failed.turn_lock.locked()
+                lock_observations.add(observation)
+
+        SOCKETS.deliver_match_setup = tracked_deliver
+        socketio.transport_probe = probe
+        try:
+            with _captured_server_failures() as failures:
+                result = SOCKETS.run_lifecycle_sweep(
+                    socketio,
+                    now=10,
+                    lifecycle_policy=lifecycle,
+                    admission_policy=policy,
+                )
+        finally:
+            SOCKETS.deliver_match_setup = original_deliver
+
+        assert failures == [
+            f"Failed replacement setup for room {failed_matches[0].room_id}"
+        ]
+        failed = failed_matches[0]
+        assert failed.room_id not in state.duel_rooms
+        assert all(sid not in state.sid_to_room for sid in failed.players)
+        assert all(sid not in state.duel_queue for sid in failed.players)
+        assert socketio.entered_rooms.count((failed.room_id, "failed-a")) == 1
+        assert (failed.room_id, "failed-b") not in socketio.entered_rooms
+        assert failed.room_id in socketio.closed_rooms
+        assert {
+            kwargs.get("to")
+            for event, payload, kwargs in socketio.emitted
+            if event == "duel_system" and payload == SOCKETS.MATCH_SETUP_FAILED_MESSAGE
+        } == {"failed-a", "failed-b"}
+
+        success = state.get_match_by_sid("success-a")
+        assert success is not None
+        assert success.players == ["success-a", "success-b"]
+        assert state.get_match_by_sid("success-b") is success
+        assert result.replacement_room_ids == (success.room_id,)
+        assert len(state.duel_rooms) == policy.max_active_rooms
+        assert {
+            sid for room_id, sid in socketio.entered_rooms
+            if room_id == success.room_id
+        } == {"success-a", "success-b"}
+        assert old.room_id in socketio.closed_rooms
+        assert lock_observations == {
+            "direct_notice",
+            "partial_close",
+            "later_setup",
+        }
+    return True
+
+
+def scenario_lifecycle_initial_emit_setup_failure_detaches_and_retries() -> bool:
+    policy = _admission_policy(max_active_rooms=1, queue_ttl_seconds=100)
+    lifecycle = _lifecycle_policy()
+    with _isolated_state(admission_policy=policy):
+        _create_room("old-a", "old-b")
+        for sid in ("failed-a", "failed-b", "success-a", "success-b"):
+            state.request_matchmaking(sid, 31, now=1, policy=policy)
+
+        socketio = FakeSocketIO()
+        socketio.fail_emit_once_targets.add("failed-a")
+        failed_matches: list[MatchState] = []
+        original_deliver = SOCKETS.deliver_match_setup
+
+        def tracked_deliver(active_socketio: Any, match: MatchState) -> bool:
+            if match.players == ["failed-a", "failed-b"]:
+                failed_matches.append(match)
+            return original_deliver(active_socketio, match)
+
+        SOCKETS.deliver_match_setup = tracked_deliver
+        try:
+            with _captured_server_failures():
+                result = SOCKETS.run_lifecycle_sweep(
+                    socketio,
+                    now=10,
+                    lifecycle_policy=lifecycle,
+                    admission_policy=policy,
+                )
+        finally:
+            SOCKETS.deliver_match_setup = original_deliver
+
+        failed = failed_matches[0]
+        assert [
+            entry for entry in socketio.entered_rooms if entry[0] == failed.room_id
+        ] == [(failed.room_id, "failed-a"), (failed.room_id, "failed-b")]
+        assert failed.room_id not in state.duel_rooms
+        assert all(sid not in state.sid_to_room for sid in failed.players)
+        assert failed.room_id in socketio.closed_rooms
+        assert {
+            kwargs.get("to")
+            for event, payload, kwargs in socketio.emitted
+            if event == "duel_system" and payload == SOCKETS.MATCH_SETUP_FAILED_MESSAGE
+        } == {"failed-a", "failed-b"}
+        success = state.get_match_by_sid("success-a")
+        assert success is not None
+        assert state.get_match_by_sid("success-b") is success
+        assert result.replacement_room_ids == (success.room_id,)
+    return True
+
+
+def scenario_lifecycle_stale_replacement_setup_retries_same_slot() -> bool:
+    policy = _admission_policy(max_active_rooms=1, queue_ttl_seconds=100)
+    with _isolated_state(admission_policy=policy):
+        old = _create_room("old-a", "old-b")
+        for sid in ("stale-a", "stale-b", "success-a", "success-b"):
+            state.request_matchmaking(sid, 32, now=1, policy=policy)
+        with old.turn_lock:
+            assert state.detach_match_if_current(
+                old,
+                reason="test_release",
+                message="Test capacity release.",
+            ) is not None
+
+        socketio = FakeSocketIO()
+        replacement_ready = Event()
+        replacement_detached = Event()
+        stale_matches: list[MatchState] = []
+        pairing_seeds: list[int] = []
+        detach_calls: list[MatchState] = []
+        original_pair = state.try_pair_waiting
+        original_detach = state.detach_match_if_current
+
+        def tracked_pair(seed: int, **kwargs: Any) -> MatchState | None:
+            pairing_seeds.append(seed)
+            replacement = original_pair(seed, **kwargs)
+            if not stale_matches and replacement is not None:
+                stale_matches.append(replacement)
+                replacement_ready.send()
+                replacement_detached.wait()
+            return replacement
+
+        def tracked_detach(match: MatchState, **kwargs: Any) -> Any:
+            detach_calls.append(match)
+            return original_detach(match, **kwargs)
+
+        def detach_before_setup() -> None:
+            replacement_ready.wait()
+            stale = stale_matches[0]
+            with stale.turn_lock:
+                detached = state.detach_match_if_current(
+                    stale,
+                    reason="test_stale",
+                    message="Test stale replacement.",
+                )
+            assert detached is not None
+            replacement_detached.send()
+
+        state.try_pair_waiting = tracked_pair
+        state.detach_match_if_current = tracked_detach
+        try:
+            detacher = eventlet.spawn(detach_before_setup)
+            recovery = eventlet.spawn(
+                SOCKETS._recover_room_capacity,
+                socketio,
+                1,
+                now=10,
+                admission_policy=policy,
+            )
+            replacement_ids = recovery.wait()
+            detacher.wait()
+        finally:
+            state.try_pair_waiting = original_pair
+            state.detach_match_if_current = original_detach
+
+        stale = stale_matches[0]
+        assert pairing_seeds == [10000, 10001]
+        assert detach_calls == [stale]
+        assert stale.room_id not in state.duel_rooms
+        assert all(sid not in state.sid_to_room for sid in stale.players)
+        assert not any(
+            payload == SOCKETS.MATCH_SETUP_FAILED_MESSAGE
+            for _event, payload, _kwargs in socketio.emit_attempts
+        )
+        assert stale.room_id not in socketio.close_attempts
+        success = state.get_match_by_sid("success-a")
+        assert success is not None
+        assert state.get_match_by_sid("success-b") is success
+        assert replacement_ids == (success.room_id,)
+    return True
+
+
+def scenario_lifecycle_failed_setup_transport_failure_isolation() -> bool:
+    policy = _admission_policy(max_active_rooms=2, queue_ttl_seconds=100)
+    lifecycle = _lifecycle_policy()
+    with _isolated_state(admission_policy=policy):
+        old_rooms = (
+            _create_room("old-1a", "old-1b"),
+            _create_room("old-2a", "old-2b"),
+        )
+        for sid in (
+            "failed-a",
+            "failed-b",
+            "success-1a",
+            "success-1b",
+            "success-2a",
+            "success-2b",
+        ):
+            state.request_matchmaking(sid, 33, now=1, policy=policy)
+
+        socketio = FakeSocketIO()
+        socketio.fail_setup_sids.add("failed-b")
+        socketio.fail_emit_targets.add("failed-a")
+        failed_matches: list[MatchState] = []
+        original_deliver = SOCKETS.deliver_match_setup
+
+        def tracked_deliver(active_socketio: Any, match: MatchState) -> bool:
+            if match.players == ["failed-a", "failed-b"]:
+                failed_matches.append(match)
+                socketio.fail_close_rooms.add(match.room_id)
+            return original_deliver(active_socketio, match)
+
+        SOCKETS.deliver_match_setup = tracked_deliver
+        try:
+            with _captured_server_failures() as failures:
+                result = SOCKETS.run_lifecycle_sweep(
+                    socketio,
+                    now=10,
+                    lifecycle_policy=lifecycle,
+                    admission_policy=policy,
+                )
+        finally:
+            SOCKETS.deliver_match_setup = original_deliver
+
+        failed = failed_matches[0]
+        assert len(failures) == 3
+        assert failed.room_id not in state.duel_rooms
+        assert all(sid not in state.sid_to_room for sid in failed.players)
+        assert all(sid not in state.duel_queue for sid in failed.players)
+        assert {
+            kwargs.get("to")
+            for event, payload, kwargs in socketio.emit_attempts
+            if event == "duel_system" and payload == SOCKETS.MATCH_SETUP_FAILED_MESSAGE
+        } == {"failed-a", "failed-b"}
+        assert failed.room_id in socketio.close_attempts
+        assert failed.room_id not in socketio.closed_rooms
+        assert len(result.replacement_room_ids) == 2
+        assert set(result.replacement_room_ids) == set(state.duel_rooms)
+        assert [match.players for match in state.duel_rooms.values()] == [
+            ["success-1a", "success-1b"],
+            ["success-2a", "success-2b"],
+        ]
+        assert len(state.duel_rooms) == policy.max_active_rooms
+        assert all(room.room_id in socketio.closed_rooms for room in old_rooms)
+
+        later = SOCKETS.run_lifecycle_sweep(
+            socketio,
+            now=20,
+            lifecycle_policy=lifecycle,
+            admission_policy=policy,
+        )
         assert len(later.detached_rooms) == 2
+        assert not state.duel_rooms
     return True
 
 

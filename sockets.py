@@ -47,6 +47,7 @@ THROTTLE_WARNING = "Too many requests. Slow down."
 QUEUE_EXPIRED_MESSAGE = (
     "Your matchmaking queue entry expired. Queue again to continue."
 )
+MATCH_SETUP_FAILED_MESSAGE = "Match setup failed. Queue again to continue."
 
 logger = logging.getLogger(__name__)
 
@@ -613,6 +614,21 @@ def apply_detached_room_cleanup(socketio, detached):
         )
 
 
+def apply_failed_setup_cleanup(socketio, detached):
+    for sid in detached.players:
+        try:
+            socketio.emit("duel_system", detached.message, to=sid)
+        except Exception:
+            logger.exception("Failed direct match-setup failure notice")
+    try:
+        socketio.close_room(detached.room_id)
+    except Exception:
+        logger.exception(
+            "Failed partial Socket.IO room cleanup for room %s",
+            detached.room_id,
+        )
+
+
 def _notify_queue_expirations(socketio, expired_queue_sids):
     for sid in expired_queue_sids:
         try:
@@ -672,34 +688,48 @@ def _recover_room_capacity(
     admission_policy,
 ):
     replacements = []
+    pairing_attempt = 0
     expired_queue_sids = state.expire_queued_sids(
         now=now,
         policy=admission_policy,
     )
     _notify_queue_expirations(socketio, expired_queue_sids)
-    for offset in range(room_count):
-        seed = (int(now * 1000) + offset) & 0xFFFFFFFF
-        try:
-            replacement = state.try_pair_waiting(
-                seed,
-                now=now,
-                policy=admission_policy,
-            )
-        except Exception:
-            logger.exception("Failed replacement matchmaking")
-            continue
-        if replacement is None:
-            continue
-        replacements.append(replacement.room_id)
-        try:
-            deliver_match_setup(socketio, replacement)
-        except Exception:
-            # PR 3C deliberately has no setup rollback/lease transaction. A
-            # partially delivered replacement stays bounded by the prep TTL.
-            logger.exception(
-                "Failed replacement setup for room %s",
-                replacement.room_id,
-            )
+    for _slot in range(room_count):
+        while True:
+            seed = (int(now * 1000) + pairing_attempt) & 0xFFFFFFFF
+            pairing_attempt += 1
+            try:
+                replacement = state.try_pair_waiting(
+                    seed,
+                    now=now,
+                    policy=admission_policy,
+                )
+            except Exception:
+                logger.exception("Failed replacement matchmaking")
+                break
+            if replacement is None:
+                return tuple(replacements)
+
+            try:
+                delivered = deliver_match_setup(socketio, replacement)
+            except Exception:
+                logger.exception(
+                    "Failed replacement setup for room %s",
+                    replacement.room_id,
+                )
+                with replacement.turn_lock:
+                    detached = state.detach_match_if_current(
+                        replacement,
+                        reason="setup_failed",
+                        message=MATCH_SETUP_FAILED_MESSAGE,
+                    )
+                if detached is not None:
+                    apply_failed_setup_cleanup(socketio, detached)
+                continue
+
+            if delivered:
+                replacements.append(replacement.room_id)
+                break
     return tuple(replacements)
 
 

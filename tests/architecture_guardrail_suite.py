@@ -2610,6 +2610,179 @@ def guardrail_match_lifecycle_coordination() -> Tuple[bool, str]:
                     f"{filename} emits or resolves while state_lock is held."
                 )
 
+    socket_functions = {
+        node.name: node
+        for node in socket_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    recovery_function = socket_functions.get("_recover_room_capacity")
+    failed_cleanup_function = socket_functions.get("apply_failed_setup_cleanup")
+    if recovery_function is None:
+        problems.append("Missing room-capacity recovery coordinator.")
+    if failed_cleanup_function is None:
+        problems.append("Missing failed-setup transport cleanup helper.")
+
+    if recovery_function is not None:
+        recovery_nodes = list(ast.walk(recovery_function))
+        delivered_assignments = [
+            node
+            for node in recovery_nodes
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "delivered"
+                for target in node.targets
+            )
+            and isinstance(node.value, ast.Call)
+            and context_name(node.value.func) == "deliver_match_setup"
+        ]
+        replacement_appends = [
+            node
+            for node in recovery_nodes
+            if isinstance(node, ast.Call)
+            and context_name(node.func) == "replacements.append"
+        ]
+        delivered_guards = [
+            node
+            for node in recovery_nodes
+            if isinstance(node, ast.If)
+            and isinstance(node.test, ast.Name)
+            and node.test.id == "delivered"
+        ]
+        guarded_appends = {
+            id(node)
+            for guard in delivered_guards
+            for node in ast.walk(guard)
+            if isinstance(node, ast.Call)
+            and context_name(node.func) == "replacements.append"
+        }
+        if len(delivered_assignments) != 1:
+            problems.append("Replacement setup delivery is not captured exactly once.")
+        if len(replacement_appends) != 1 or id(replacement_appends[0]) not in guarded_appends:
+            problems.append("Replacement room IDs are not appended only after successful delivery.")
+
+        detach_calls = [
+            node
+            for node in recovery_nodes
+            if isinstance(node, ast.Call)
+            and context_name(node.func) == "state.detach_match_if_current"
+        ]
+        setup_failure_detaches = [
+            node
+            for node in detach_calls
+            if any(
+                keyword.arg == "reason"
+                and isinstance(keyword.value, ast.Constant)
+                and keyword.value.value == "setup_failed"
+                for keyword in node.keywords
+            )
+        ]
+        detach_under_match_lock = any(
+            setup_failure_detaches
+            and any(
+                context_name(item.context_expr) == "replacement.turn_lock"
+                for item in with_node.items
+            )
+            and any(
+                child is setup_failure_detaches[0]
+                for child in ast.walk(with_node)
+            )
+            for with_node in recovery_nodes
+            if isinstance(with_node, ast.With)
+        )
+        if len(setup_failure_detaches) != 1 or not detach_under_match_lock:
+            problems.append(
+                "Setup exceptions do not detach authoritatively under the replacement match lock."
+            )
+
+        failed_cleanup_calls = [
+            node
+            for node in recovery_nodes
+            if isinstance(node, ast.Call)
+            and context_name(node.func) == "apply_failed_setup_cleanup"
+        ]
+        cleanup_call_is_locked = any(
+            any(child is cleanup_call for child in ast.walk(with_node))
+            for cleanup_call in failed_cleanup_calls
+            for with_node in recovery_nodes
+            if isinstance(with_node, ast.With)
+        )
+        if len(failed_cleanup_calls) != 1 or cleanup_call_is_locked:
+            problems.append("Failed-setup transport cleanup is missing or runs under a lock.")
+
+        slot_retry_loops = [
+            node
+            for node in recovery_nodes
+            if isinstance(node, ast.For)
+            and isinstance(node.iter, ast.Call)
+            and context_name(node.iter.func) == "range"
+            and any(
+                isinstance(argument, ast.Name) and argument.id == "room_count"
+                for argument in node.iter.args
+            )
+            and any(isinstance(child, ast.While) for child in ast.walk(node))
+        ]
+        if len(slot_retry_loops) != 1:
+            problems.append("Released room slots do not retry replacement pairing.")
+
+    if failed_cleanup_function is not None:
+        cleanup_nodes = list(ast.walk(failed_cleanup_function))
+        player_loops = [
+            node
+            for node in cleanup_nodes
+            if isinstance(node, ast.For)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "sid"
+            and context_name(node.iter) == "detached.players"
+        ]
+        direct_emits = [
+            node
+            for node in cleanup_nodes
+            if isinstance(node, ast.Call)
+            and context_name(node.func) == "socketio.emit"
+            and any(
+                keyword.arg == "to"
+                and isinstance(keyword.value, ast.Name)
+                and keyword.value.id == "sid"
+                for keyword in node.keywords
+            )
+        ]
+        close_calls = [
+            node
+            for node in cleanup_nodes
+            if isinstance(node, ast.Call)
+            and context_name(node.func) == "socketio.close_room"
+            and node.args
+            and context_name(node.args[0]) == "detached.room_id"
+        ]
+        if len(player_loops) != 1 or len(direct_emits) != 1:
+            problems.append("Failed setup notices are not emitted directly to every SID.")
+        if len(close_calls) != 1:
+            problems.append("Failed setup cleanup does not close the partial Socket.IO room.")
+        if any(isinstance(node, (ast.With, ast.AsyncWith)) for node in cleanup_nodes):
+            problems.append("Failed-setup transport cleanup acquires a lock.")
+
+    for function_name, function in (
+        ("_recover_room_capacity", recovery_function),
+        ("apply_failed_setup_cleanup", failed_cleanup_function),
+    ):
+        if function is None:
+            continue
+        forbidden_requeue_calls = [
+            context_name(node.func)
+            for node in ast.walk(function)
+            if isinstance(node, ast.Call)
+            and context_name(node.func) in {
+                "state.request_matchmaking",
+                "state.duel_queue.append",
+                "state.queued_at_by_sid.update",
+            }
+        ]
+        if forbidden_requeue_calls:
+            problems.append(
+                f"{function_name} automatically requeues failed players: "
+                + ", ".join(forbidden_requeue_calls)
+            )
+
     lifecycle_functions = {
         node.name: node
         for node in ast.walk(socket_tree)
@@ -2654,7 +2827,8 @@ def guardrail_match_lifecycle_coordination() -> Tuple[bool, str]:
     return True, (
         "Match lifecycle uses Eventlet coordination, one startup-guarded process "
         "sweeper, match-before-registry locking, no transport/resolver work under "
-        "state_lock, monotonic deadlines, and no lease/deferred-cleanup state."
+        "state_lock, immediate failed-setup detachment with direct SID cleanup and "
+        "same-slot retry, monotonic deadlines, and no lease/deferred-cleanup state."
     )
 
 _GUARDRAILS: Tuple[Tuple[str, Callable[[], Tuple[bool, str]]], ...] = (
