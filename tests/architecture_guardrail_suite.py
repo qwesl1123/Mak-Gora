@@ -2659,10 +2659,15 @@ def guardrail_match_lifecycle_coordination() -> Tuple[bool, str]:
     }
     recovery_function = socket_functions.get("_recover_room_capacity")
     failed_cleanup_function = socket_functions.get("apply_failed_setup_cleanup")
+    interrupted_setup_function = socket_functions.get(
+        "notify_interrupted_match_setup"
+    )
     if recovery_function is None:
         problems.append("Missing room-capacity recovery coordinator.")
     if failed_cleanup_function is None:
         problems.append("Missing failed-setup transport cleanup helper.")
+    if interrupted_setup_function is None:
+        problems.append("Missing interrupted match-setup notification helper.")
 
     duel_queue_handlers = [
         node
@@ -2704,20 +2709,18 @@ def guardrail_match_lifecycle_coordination() -> Tuple[bool, str]:
         else:
             stale_guard = stale_setup_guards[0]
             stale_nodes = list(ast.walk(stale_guard))
-            interrupted_emits = [
+            interrupted_notice_calls = [
                 node
                 for node in stale_nodes
                 if isinstance(node, ast.Call)
-                and context_name(node.func) == "emit"
+                and context_name(node.func) == "notify_interrupted_match_setup"
                 and len(node.args) >= 2
-                and isinstance(node.args[0], ast.Constant)
-                and node.args[0].value == "duel_system"
-                and context_name(node.args[1]) == "MATCH_SETUP_INTERRUPTED_MESSAGE"
-                and not any(keyword.arg == "to" for keyword in node.keywords)
+                and context_name(node.args[0]) == "socketio"
+                and context_name(node.args[1]) == "result.match.players"
             ]
-            if len(interrupted_emits) != 1:
+            if len(interrupted_notice_calls) != 1:
                 problems.append(
-                    "Stale direct setup does not emit one requester-local retry notice."
+                    "Stale direct setup does not notify every original match player."
                 )
             requester_guards = [
                 node
@@ -2825,8 +2828,70 @@ def guardrail_match_lifecycle_coordination() -> Tuple[bool, str]:
                     + ", ".join(mutated_stale_state)
                 )
 
+    if interrupted_setup_function is not None:
+        helper_nodes = list(ast.walk(interrupted_setup_function))
+        player_loop_targets = {
+            node.target.id
+            for node in helper_nodes
+            if isinstance(node, ast.For)
+            and isinstance(node.target, ast.Name)
+            and context_name(node.iter) == "players"
+        }
+        direct_interrupted_emits = sum(
+            1
+            for node in helper_nodes
+            if isinstance(node, ast.Call)
+            and context_name(node.func) == "socketio.emit"
+            and len(node.args) >= 2
+            and context_name(node.args[1]) == "MATCH_SETUP_INTERRUPTED_MESSAGE"
+            and any(
+                keyword.arg == "to"
+                and isinstance(keyword.value, ast.Name)
+                and keyword.value.id in player_loop_targets
+                for keyword in node.keywords
+            )
+        )
+        if len(player_loop_targets) != 1 or direct_interrupted_emits != 1:
+            problems.append(
+                "Interrupted setup notices are not emitted directly to every player SID."
+            )
+        if any(isinstance(node, (ast.With, ast.AsyncWith)) for node in helper_nodes):
+            problems.append("Interrupted setup notification helper acquires a lock.")
+
     if recovery_function is not None:
         recovery_nodes = list(ast.walk(recovery_function))
+        attempt_loops = [
+            node
+            for node in recovery_nodes
+            if isinstance(node, ast.While)
+            and any(
+                isinstance(child, ast.Call)
+                and context_name(child.func) == "state.try_pair_waiting"
+                for child in ast.walk(node)
+            )
+        ]
+        attempt_nodes = list(ast.walk(attempt_loops[0])) if len(attempt_loops) == 1 else []
+        fresh_time_names = {
+            target.id
+            for node in attempt_nodes
+            if isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Call)
+            and context_name(node.value.func) == "state.current_monotonic_time"
+            for target in node.targets
+            if isinstance(target, ast.Name)
+        }
+        forwarded_time_names = {
+            keyword.value.id
+            for node in attempt_nodes
+            if isinstance(node, ast.Call)
+            and context_name(node.func) == "state.try_pair_waiting"
+            for keyword in node.keywords
+            if keyword.arg == "now" and isinstance(keyword.value, ast.Name)
+        }
+        if not fresh_time_names & forwarded_time_names:
+            problems.append(
+                "Replacement pairing does not refresh and forward monotonic time per attempt."
+            )
         delivered_assignments = [
             node
             for node in recovery_nodes
@@ -3031,8 +3096,9 @@ def guardrail_match_lifecycle_coordination() -> Tuple[bool, str]:
         "Match lifecycle uses Eventlet coordination, one startup-guarded process "
         "sweeper, match-before-registry locking, no transport/resolver work under "
         "state_lock, immediate failed-setup detachment with direct SID cleanup and "
-        "same-slot retry, requester-local stale-setup notification without duplicate "
-        "cleanup or requeue, monotonic deadlines, and no lease/deferred-cleanup state."
+        "same-slot retry with fresh per-attempt monotonic time, direct all-player "
+        "stale-setup notification without duplicate cleanup or requeue, monotonic "
+        "deadlines, and no lease/deferred-cleanup state."
     )
 
 _GUARDRAILS: Tuple[Tuple[str, Callable[[], Tuple[bool, str]]], ...] = (

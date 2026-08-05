@@ -640,6 +640,18 @@ def _notify_queue_expirations(socketio, expired_queue_sids):
             logger.exception("Failed queue-expiration notice for SID")
 
 
+def notify_interrupted_match_setup(socketio, players):
+    for player_sid in players:
+        try:
+            socketio.emit(
+                "duel_system",
+                MATCH_SETUP_INTERRUPTED_MESSAGE,
+                to=player_sid,
+            )
+        except Exception:
+            logger.exception("Failed interrupted match-setup notice")
+
+
 def _match_expiration(match, now, policy):
     if match.phase == "ended":
         if match.ended_at is None:
@@ -691,25 +703,37 @@ def _recover_room_capacity(
     admission_policy,
 ):
     replacements = []
+    seed_base = int(now * 1000) & 0xFFFFFFFF
     pairing_attempt = 0
     expired_queue_sids = state.expire_queued_sids(
         now=now,
         policy=admission_policy,
     )
+    notified_expired_sids = set(expired_queue_sids)
     _notify_queue_expirations(socketio, expired_queue_sids)
     for _slot in range(room_count):
         while True:
-            seed = (int(now * 1000) + pairing_attempt) & 0xFFFFFFFF
+            seed = (seed_base + pairing_attempt) & 0xFFFFFFFF
             pairing_attempt += 1
+            attempt_expired_sids = []
             try:
+                attempt_now = state.current_monotonic_time()
                 replacement = state.try_pair_waiting(
                     seed,
-                    now=now,
+                    now=attempt_now,
                     policy=admission_policy,
+                    expired_queue_sids=attempt_expired_sids,
                 )
             except Exception:
                 logger.exception("Failed replacement matchmaking")
                 break
+            newly_expired_sids = tuple(
+                sid
+                for sid in attempt_expired_sids
+                if sid not in notified_expired_sids
+            )
+            notified_expired_sids.update(newly_expired_sids)
+            _notify_queue_expirations(socketio, newly_expired_sids)
             if replacement is None:
                 return tuple(replacements)
 
@@ -864,8 +888,8 @@ def register_duel_socket_handlers(socketio):
         if result.match is not None:
             delivered = deliver_match_setup(socketio, result.match)
             if not delivered:
+                notify_interrupted_match_setup(socketio, result.match.players)
                 if sid in result.match.players:
-                    emit("duel_system", MATCH_SETUP_INTERRUPTED_MESSAGE)
                     return
             if (
                 sid not in result.match.players

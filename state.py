@@ -170,8 +170,11 @@ def _try_pair_waiting_locked(
     seed: int,
     now: float,
     policy: AdmissionPolicy,
+    expired_queue_sids: list[str] | None = None,
 ) -> MatchState | None:
-    _expire_queued_sids_locked(now, policy)
+    expired = _expire_queued_sids_locked(now, policy)
+    if expired_queue_sids is not None:
+        expired_queue_sids.extend(expired)
     if len(duel_rooms) >= policy.max_active_rooms or len(duel_queue) < 2:
         return None
 
@@ -187,10 +190,16 @@ def try_pair_waiting(
     *,
     now: float | None = None,
     policy: AdmissionPolicy | None = None,
+    expired_queue_sids: list[str] | None = None,
 ) -> MatchState | None:
     active_policy = _policy(policy)
     with state_lock:
-        return _try_pair_waiting_locked(seed, _now(now), active_policy)
+        return _try_pair_waiting_locked(
+            seed,
+            _now(now),
+            active_policy,
+            expired_queue_sids,
+        )
 
 
 def request_matchmaking(

@@ -946,29 +946,34 @@ def scenario_lifecycle_initial_emit_setup_failure_detaches_and_retries() -> bool
 
 
 def scenario_lifecycle_stale_replacement_setup_retries_same_slot() -> bool:
-    policy = _admission_policy(max_active_rooms=1, queue_ttl_seconds=100)
-    with _isolated_state(admission_policy=policy):
+    policy = _admission_policy(max_active_rooms=1, queue_ttl_seconds=10)
+    with _isolated_state(admission_policy=policy) as (clock, _active_policy):
         old = _create_room("old-a", "old-b")
-        for sid in ("stale-a", "stale-b", "success-a", "success-b"):
+        for sid in ("stale-a", "stale-b", "deadline-expired"):
             state.request_matchmaking(sid, 32, now=1, policy=policy)
+        for sid in ("success-a", "success-b"):
+            state.request_matchmaking(sid, 32, now=5, policy=policy)
         with old.turn_lock:
             assert state.detach_match_if_current(
                 old,
                 reason="test_release",
                 message="Test capacity release.",
             ) is not None
+        clock.set(10)
 
         socketio = FakeSocketIO()
         replacement_ready = Event()
         replacement_detached = Event()
         stale_matches: list[MatchState] = []
         pairing_seeds: list[int] = []
+        pairing_times: list[float] = []
         detach_calls: list[MatchState] = []
         original_pair = state.try_pair_waiting
         original_detach = state.detach_match_if_current
 
         def tracked_pair(seed: int, **kwargs: Any) -> MatchState | None:
             pairing_seeds.append(seed)
+            pairing_times.append(kwargs["now"])
             replacement = original_pair(seed, **kwargs)
             if not stale_matches and replacement is not None:
                 stale_matches.append(replacement)
@@ -990,6 +995,7 @@ def scenario_lifecycle_stale_replacement_setup_retries_same_slot() -> bool:
                     message="Test stale replacement.",
                 )
             assert detached is not None
+            clock.set(11)
             replacement_detached.send()
 
         state.try_pair_waiting = tracked_pair
@@ -1011,6 +1017,7 @@ def scenario_lifecycle_stale_replacement_setup_retries_same_slot() -> bool:
 
         stale = stale_matches[0]
         assert pairing_seeds == [10000, 10001]
+        assert pairing_times == [10, 11]
         assert detach_calls == [stale]
         assert stale.room_id not in state.duel_rooms
         assert all(sid not in state.sid_to_room for sid in stale.players)
@@ -1022,6 +1029,15 @@ def scenario_lifecycle_stale_replacement_setup_retries_same_slot() -> bool:
         success = state.get_match_by_sid("success-a")
         assert success is not None
         assert state.get_match_by_sid("success-b") is success
+        assert "deadline-expired" not in success.players
+        assert "deadline-expired" not in state.duel_queue
+        assert "deadline-expired" not in state.queued_at_by_sid
+        assert [
+            kwargs.get("to")
+            for event, payload, kwargs in socketio.emit_attempts
+            if event == "duel_system" and payload == SOCKETS.QUEUE_EXPIRED_MESSAGE
+        ] == ["deadline-expired"]
+        assert len(state.duel_rooms) == policy.max_active_rooms
         assert replacement_ids == (success.room_id,)
     return True
 
@@ -1100,7 +1116,7 @@ def scenario_lifecycle_failed_setup_transport_failure_isolation() -> bool:
     return True
 
 
-def scenario_lifecycle_direct_matchmaking_stale_setup_notifies_requester() -> bool:
+def _assert_stale_direct_setup_disconnect(disconnected_sid: str) -> None:
     policy = _admission_policy(max_active_rooms=1, queue_ttl_seconds=100)
     with _isolated_state(admission_policy=policy):
         socketio = FakeSocketIO()
@@ -1114,6 +1130,8 @@ def scenario_lifecycle_direct_matchmaking_stale_setup_notifies_requester() -> bo
             created_matches: list[MatchState] = []
             matchmaking_calls: list[str] = []
             detach_calls: list[MatchState] = []
+            notice_lock_states: list[bool] = []
+            notice_phase = [False]
             original_deliver = SOCKETS.deliver_match_setup
             original_request_matchmaking = state.request_matchmaking
             original_detach = state.detach_match_if_current
@@ -1125,7 +1143,9 @@ def scenario_lifecycle_direct_matchmaking_stale_setup_notifies_requester() -> bo
                 # The harness uses a SimpleNamespace in place of Flask's
                 # greenthread-local request proxy; restore the requester here.
                 SOCKETS.request.sid = "requester"
-                return original_deliver(active_socketio, match)
+                delivered = original_deliver(active_socketio, match)
+                notice_phase[0] = True
+                return delivered
 
             def tracked_request_matchmaking(sid: str, seed: int, **kwargs: Any) -> Any:
                 matchmaking_calls.append(sid)
@@ -1139,37 +1159,42 @@ def scenario_lifecycle_direct_matchmaking_stale_setup_notifies_requester() -> bo
                 SOCKETS.request.sid = "requester"
                 socketio.handlers[state.QUEUE_EVENT]()
 
-            def disconnect_waiting_peer() -> None:
-                SOCKETS.request.sid = "waiting-peer"
+            def disconnect_match_player() -> None:
+                SOCKETS.request.sid = disconnected_sid
                 socketio.handlers["disconnect"]("client disconnect")
+
+            def probe(operation: str, target: str) -> None:
+                if (
+                    notice_phase[0]
+                    and operation == "emit"
+                    and target in created_matches[0].players
+                ):
+                    notice_lock_states.append(created_matches[0].turn_lock.locked())
 
             SOCKETS.deliver_match_setup = paused_deliver
             state.request_matchmaking = tracked_request_matchmaking
             state.detach_match_if_current = tracked_detach
+            socketio.transport_probe = probe
             requester = None
             try:
-                requester = eventlet.spawn(request_match)
-                eventlet.sleep(0)
-                setup_ready.wait()
-                match = created_matches[0]
-                assert state.get_match_by_sid("requester") is match
+                with _captured_server_failures() as failures:
+                    requester = eventlet.spawn(request_match)
+                    eventlet.sleep(0)
+                    setup_ready.wait()
+                    match = created_matches[0]
+                    assert state.get_match_by_sid("requester") is match
+                    socketio.fail_emit_once_targets.add(disconnected_sid)
 
-                disconnect = eventlet.spawn(disconnect_waiting_peer)
-                eventlet.sleep(0)
-                disconnect.wait()
-                close_attempts_after_disconnect = tuple(socketio.close_attempts)
-                assert close_attempts_after_disconnect == (match.room_id,)
-                assert any(
-                    event == "duel_system"
-                    and payload == "Opponent disconnected."
-                    and kwargs.get("to") == match.room_id
-                    for event, payload, kwargs in socketio.emitted
-                )
+                    disconnect = eventlet.spawn(disconnect_match_player)
+                    eventlet.sleep(0)
+                    disconnect.wait()
+                    close_attempts_after_disconnect = tuple(socketio.close_attempts)
+                    assert close_attempts_after_disconnect == (match.room_id,)
 
-                SOCKETS.request.sid = "requester"
-                resume_setup.send()
-                eventlet.sleep(0)
-                requester.wait()
+                    SOCKETS.request.sid = "requester"
+                    resume_setup.send()
+                    eventlet.sleep(0)
+                    requester.wait()
             finally:
                 if not resume_setup.ready():
                     resume_setup.send()
@@ -1177,23 +1202,37 @@ def scenario_lifecycle_direct_matchmaking_stale_setup_notifies_requester() -> bo
                 state.request_matchmaking = original_request_matchmaking
                 state.detach_match_if_current = original_detach
 
+            survivor_sid = (
+                "requester" if disconnected_sid == "waiting-peer" else "waiting-peer"
+            )
             assert match.room_id not in state.duel_rooms
-            assert "requester" not in state.duel_queue
-            assert "requester" not in state.queued_at_by_sid
-            assert "requester" not in state.sid_to_room
-            assert state.get_match_by_sid("requester") is None
-            assert socketio.direct_emitted == [
-                (
-                    "requester",
-                    "duel_system",
-                    SOCKETS.MATCH_SETUP_INTERRUPTED_MESSAGE,
-                    {},
-                )
-            ]
-            assert not any(
-                sid == "waiting-peer"
+            assert all(
+                player_sid not in state.duel_queue
+                and player_sid not in state.queued_at_by_sid
+                and player_sid not in state.sid_to_room
+                and state.get_match_by_sid(player_sid) is None
+                for player_sid in match.players
+            )
+            assert [
+                kwargs.get("to")
+                for event, payload, kwargs in socketio.emit_attempts
+                if event == "duel_system"
                 and payload == SOCKETS.MATCH_SETUP_INTERRUPTED_MESSAGE
-                for sid, _event, payload, _kwargs in socketio.direct_emitted
+            ] == match.players
+            assert [
+                kwargs.get("to")
+                for event, payload, kwargs in socketio.emitted
+                if event == "duel_system"
+                and payload == SOCKETS.MATCH_SETUP_INTERRUPTED_MESSAGE
+            ] == [survivor_sid]
+            assert failures == ["Failed interrupted match-setup notice"]
+            assert notice_lock_states == [False, False]
+            assert socketio.direct_emitted == []
+            assert any(
+                event == "duel_system"
+                and payload == "Opponent disconnected."
+                and kwargs.get("to") == match.room_id
+                for event, payload, kwargs in socketio.emitted
             )
             assert not any(
                 payload == SOCKETS.MATCH_SETUP_INTERRUPTED_MESSAGE
@@ -1203,10 +1242,6 @@ def scenario_lifecycle_direct_matchmaking_stale_setup_notifies_requester() -> bo
             assert not any(
                 event in {"duel_role", "duel_prep_options", "duel_snapshot"}
                 for event, _payload, _kwargs in socketio.emitted
-            )
-            assert not any(
-                payload == "Match found. Prep phase: pick class + items."
-                for _event, payload, _kwargs in socketio.emitted
             )
             assert not any(
                 payload in {
@@ -1221,6 +1256,13 @@ def scenario_lifecycle_direct_matchmaking_stale_setup_notifies_requester() -> bo
             assert not state.duel_queue
             assert not state.queued_at_by_sid
             assert not state.sid_to_room
+
+
+def scenario_lifecycle_direct_matchmaking_stale_setup_notifies_requester() -> bool:
+    for disconnected_sid in ("waiting-peer", "requester"):
+        _assert_stale_direct_setup_disconnect(disconnected_sid)
+
+    policy = _admission_policy(max_active_rooms=1, queue_ttl_seconds=100)
 
     # A queue request can opportunistically set up two older waiting SIDs.
     # If that unrelated match becomes stale, the current requester keeps its
@@ -1299,10 +1341,12 @@ def scenario_lifecycle_direct_matchmaking_stale_setup_notifies_requester() -> bo
                 payload == SOCKETS.MATCH_SETUP_INTERRUPTED_MESSAGE
                 for _sid, _event, payload, _kwargs in socketio.direct_emitted
             )
-            assert not any(
-                payload == SOCKETS.MATCH_SETUP_INTERRUPTED_MESSAGE
-                for _event, payload, _kwargs in socketio.emitted
-            )
+            assert [
+                kwargs.get("to")
+                for event, payload, kwargs in socketio.emitted
+                if event == "duel_system"
+                and payload == SOCKETS.MATCH_SETUP_INTERRUPTED_MESSAGE
+            ] == stale_match.players
             assert tuple(socketio.close_attempts) == close_attempts_after_disconnect
 
     # Revalidation also runs after a successful unrelated setup. While that
