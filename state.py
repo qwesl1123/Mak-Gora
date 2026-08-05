@@ -37,6 +37,15 @@ class MatchmakingResult:
     status: str
     match: MatchState | None = None
     newly_queued: bool = False
+    expired_queue_sids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class DetachedRoom:
+    room_id: str
+    players: tuple[str, ...]
+    reason: str
+    message: str
 
 
 @dataclass
@@ -77,6 +86,10 @@ def _policy(policy: AdmissionPolicy | None) -> AdmissionPolicy:
 
 def _now(now: float | None) -> float:
     return monotonic_clock() if now is None else now
+
+
+def current_monotonic_time() -> float:
+    return _now(None)
 
 
 def _expire_queued_sids_locked(now: float, policy: AdmissionPolicy) -> tuple[str, ...]:
@@ -131,9 +144,22 @@ def _allocate_room_id_locked() -> str:
     return f"duel-{_next_room_sequence:016x}"
 
 
-def _create_room_locked(p1: str, p2: str, seed: int) -> MatchState:
+def _create_room_locked(
+    p1: str,
+    p2: str,
+    seed: int,
+    now: float | None = None,
+) -> MatchState:
     room_id = _allocate_room_id_locked()
-    match = MatchState(room_id=room_id, players=[p1, p2], seed=seed)
+    created_at = _now(now)
+    match = MatchState(
+        room_id=room_id,
+        players=[p1, p2],
+        seed=seed,
+        created_at=created_at,
+        phase_started_at=created_at,
+        last_gameplay_activity_at=created_at,
+    )
     duel_rooms[room_id] = match
     sid_to_room[p1] = room_id
     sid_to_room[p2] = room_id
@@ -144,8 +170,11 @@ def _try_pair_waiting_locked(
     seed: int,
     now: float,
     policy: AdmissionPolicy,
+    expired_queue_sids: list[str] | None = None,
 ) -> MatchState | None:
-    _expire_queued_sids_locked(now, policy)
+    expired = _expire_queued_sids_locked(now, policy)
+    if expired_queue_sids is not None:
+        expired_queue_sids.extend(expired)
     if len(duel_rooms) >= policy.max_active_rooms or len(duel_queue) < 2:
         return None
 
@@ -153,7 +182,7 @@ def _try_pair_waiting_locked(
     del duel_queue[:2]
     queued_at_by_sid.pop(p1, None)
     queued_at_by_sid.pop(p2, None)
-    return _create_room_locked(p1, p2, seed)
+    return _create_room_locked(p1, p2, seed, now)
 
 
 def try_pair_waiting(
@@ -161,10 +190,16 @@ def try_pair_waiting(
     *,
     now: float | None = None,
     policy: AdmissionPolicy | None = None,
+    expired_queue_sids: list[str] | None = None,
 ) -> MatchState | None:
     active_policy = _policy(policy)
     with state_lock:
-        return _try_pair_waiting_locked(seed, _now(now), active_policy)
+        return _try_pair_waiting_locked(
+            seed,
+            _now(now),
+            active_policy,
+            expired_queue_sids,
+        )
 
 
 def request_matchmaking(
@@ -177,15 +212,24 @@ def request_matchmaking(
     active_policy = _policy(policy)
     current_time = _now(now)
     with state_lock:
-        _expire_queued_sids_locked(current_time, active_policy)
+        expired_queue_sids = _expire_queued_sids_locked(
+            current_time,
+            active_policy,
+        )
         room_id = sid_to_room.get(sid)
         if room_id in duel_rooms:
-            return MatchmakingResult("already_in_duel")
+            return MatchmakingResult(
+                "already_in_duel",
+                expired_queue_sids=expired_queue_sids,
+            )
 
         already_queued = sid in duel_queue
         if not already_queued:
             if len(duel_queue) >= active_policy.max_queued_sids:
-                return MatchmakingResult("queue_full")
+                return MatchmakingResult(
+                    "queue_full",
+                    expired_queue_sids=expired_queue_sids,
+                )
             duel_queue.append(sid)
             queued_at_by_sid[sid] = current_time
 
@@ -195,12 +239,22 @@ def request_matchmaking(
                 status = "matched"
             else:
                 status = "already_queued" if already_queued else "queued"
-            return MatchmakingResult(status, match, not already_queued)
+            return MatchmakingResult(
+                status,
+                match,
+                not already_queued,
+                expired_queue_sids,
+            )
         if len(duel_rooms) >= active_policy.max_active_rooms and not already_queued:
-            return MatchmakingResult("room_full", newly_queued=True)
+            return MatchmakingResult(
+                "room_full",
+                newly_queued=True,
+                expired_queue_sids=expired_queue_sids,
+            )
         return MatchmakingResult(
             "already_queued" if already_queued else "queued",
             newly_queued=not already_queued,
+            expired_queue_sids=expired_queue_sids,
         )
 
 
@@ -210,14 +264,66 @@ def get_match_by_sid(sid: str) -> Optional[MatchState]:
         return duel_rooms.get(room_id) if room_id else None
 
 
-def cleanup_room(room_id: str) -> MatchState | None:
+def is_sid_queued(sid: str) -> bool:
     with state_lock:
-        match = duel_rooms.pop(room_id, None)
-        if match is None:
+        return sid in duel_queue
+
+
+def is_registered_match(
+    match: MatchState,
+    *,
+    sid: str | None = None,
+) -> bool:
+    with state_lock:
+        if duel_rooms.get(match.room_id) is not match:
+            return False
+        if sid is not None and sid_to_room.get(sid) != match.room_id:
+            return False
+        return True
+
+
+def registered_matches_snapshot() -> tuple[MatchState, ...]:
+    with state_lock:
+        return tuple(duel_rooms.values())
+
+
+def detach_match_if_current(
+    match: MatchState,
+    *,
+    reason: str,
+    message: str,
+) -> DetachedRoom | None:
+    """Atomically detach ``match``; caller must hold ``match.turn_lock``."""
+    with state_lock:
+        if duel_rooms.get(match.room_id) is not match:
             return None
-        for sid in match.players:
-            sid_to_room.pop(sid, None)
-        return match
+        duel_rooms.pop(match.room_id)
+        players = tuple(match.players)
+        for sid in players:
+            if sid_to_room.get(sid) == match.room_id:
+                sid_to_room.pop(sid, None)
+            _remove_queued_sid_locked(sid)
+        return DetachedRoom(
+            room_id=match.room_id,
+            players=players,
+            reason=reason,
+            message=message,
+        )
+
+
+def cleanup_room(room_id: str) -> MatchState | None:
+    """Compatibility coordinator for explicit room cleanup."""
+    with state_lock:
+        match = duel_rooms.get(room_id)
+    if match is None:
+        return None
+    with match.turn_lock:
+        detached = detach_match_if_current(
+            match,
+            reason="explicit_cleanup",
+            message="Duel room closed.",
+        )
+    return match if detached is not None else None
 
 
 def _remove_limiter_record_locked(sid: str) -> bool:

@@ -43,6 +43,10 @@ Guardrails implemented here:
    every active next-offense effect is snapshotted/consumed through the shared
    helpers, and strike-again receives the explicit no-next-offense parent basis.
 
+8. Process-local lifecycle coordination: match lifecycle uses one Eventlet
+   semaphore, one process sweeper startup, match-before-registry lock ordering,
+   and no cleanup leases or chat-based activity refresh.
+
 Design notes / limitations:
 
 * These checks are deliberately conservative. They catch the *obvious* bad
@@ -2495,7 +2499,610 @@ def guardrail_aggregate_runner_failure_semantics() -> Tuple[bool, str]:
 # Runner plumbing (mirrors the other suites' run_all() contract).
 # =========================================================================== #
 
+
+def guardrail_match_lifecycle_coordination() -> Tuple[bool, str]:
+    models_path = _gameplay_file("models.py")
+    if models_path is None:
+        return False, "Missing lifecycle source files: models.py"
+    required_paths = {
+        "models.py": models_path,
+        **{
+            name: _REPO_ROOT / name
+            for name in ("state.py", "sockets.py", "__init__.py")
+        },
+    }
+    missing = [name for name, path in required_paths.items() if not path.is_file()]
+    if missing:
+        return False, f"Missing lifecycle source files: {', '.join(missing)}"
+
+    sources = {name: _read(path) for name, path in required_paths.items()}
+    trees = {name: ast.parse(source) for name, source in sources.items()}
+    problems: List[str] = []
+
+    model_tree = trees["models.py"]
+    threading_locks = [
+        alias.name
+        for node in ast.walk(model_tree)
+        if isinstance(node, ast.ImportFrom) and node.module == "threading"
+        for alias in node.names
+        if alias.name in {"Lock", "RLock"}
+    ]
+    if threading_locks:
+        problems.append(
+            "Match lifecycle imports native threading locks: "
+            + ", ".join(threading_locks)
+        )
+    if "from eventlet.semaphore import Semaphore" not in sources["models.py"]:
+        problems.append("MatchState does not import Eventlet Semaphore.")
+
+    combined = "\n".join(sources.values()).lower()
+    forbidden_terms = (
+        "availability_transport_setup_in_progress",
+        "availability_resolution_in_progress",
+        "availability_pending_cleanup_reason",
+        "availability_pending_cleanup_message",
+        "availability_closed",
+        "cleanup_lease",
+        "deferred_cleanup",
+        "setup_lease",
+        "reservation_state",
+        "pending_setup",
+    )
+    present_forbidden = [term for term in forbidden_terms if term in combined]
+    if present_forbidden:
+        problems.append(
+            "Lease/deferred-cleanup state was added: "
+            + ", ".join(present_forbidden)
+        )
+    if "eventlet.monkey_patch" in combined:
+        problems.append("Global Eventlet monkey patching is forbidden.")
+
+    socket_tree = trees["sockets.py"]
+    background_calls = [
+        node
+        for node in ast.walk(socket_tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "start_background_task"
+    ]
+    if len(background_calls) != 1:
+        problems.append(
+            f"Expected one process sweeper startup call; found {len(background_calls)}."
+        )
+
+    init_calls = [
+        node
+        for node in ast.walk(trees["__init__.py"])
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "start_lifecycle_sweeper_once"
+    ]
+    if len(init_calls) != 1:
+        problems.append(
+            f"Application initialization must start the sweeper once; found {len(init_calls)} calls."
+        )
+
+    def context_name(expression: ast.expr) -> str:
+        if isinstance(expression, ast.Name):
+            return expression.id
+        if isinstance(expression, ast.Attribute):
+            prefix = context_name(expression.value)
+            return f"{prefix}.{expression.attr}" if prefix else expression.attr
+        return ""
+
+    for filename in ("state.py", "sockets.py"):
+        for node in ast.walk(trees[filename]):
+            if not isinstance(node, ast.With):
+                continue
+            contexts = {context_name(item.context_expr) for item in node.items}
+            if not contexts & {"state_lock", "state.state_lock"}:
+                continue
+            nested = list(ast.walk(ast.Module(body=node.body, type_ignores=[])))
+            if any(
+                isinstance(child, ast.With)
+                and any(
+                    context_name(item.context_expr).endswith(".turn_lock")
+                    for item in child.items
+                )
+                for child in nested
+            ):
+                problems.append(
+                    f"{filename} acquires a match lock while state_lock is held."
+                )
+            if any(
+                isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Attribute)
+                and child.func.attr in {"emit", "resolve_turn"}
+                for child in nested
+            ):
+                problems.append(
+                    f"{filename} emits or resolves while state_lock is held."
+                )
+
+    state_functions = {
+        node.name: node
+        for node in trees["state.py"].body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    queue_status_function = state_functions.get("is_sid_queued")
+    if queue_status_function is None:
+        problems.append("Missing atomic queue-membership query.")
+    else:
+        locked_membership_checks = [
+            child
+            for child in ast.walk(queue_status_function)
+            if isinstance(child, ast.With)
+            and any(
+                context_name(item.context_expr) == "state_lock"
+                for item in child.items
+            )
+            and any(
+                isinstance(descendant, ast.Compare)
+                and isinstance(descendant.left, ast.Name)
+                and descendant.left.id == "sid"
+                and len(descendant.ops) == 1
+                and isinstance(descendant.ops[0], ast.In)
+                and len(descendant.comparators) == 1
+                and context_name(descendant.comparators[0]) == "duel_queue"
+                for descendant in ast.walk(child)
+            )
+        ]
+        if len(locked_membership_checks) != 1:
+            problems.append(
+                "Queue-membership query is not guarded by the registry semaphore."
+            )
+
+    socket_functions = {
+        node.name: node
+        for node in socket_tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    recovery_function = socket_functions.get("_recover_room_capacity")
+    failed_cleanup_function = socket_functions.get("apply_failed_setup_cleanup")
+    interrupted_setup_function = socket_functions.get(
+        "notify_interrupted_match_setup"
+    )
+    if recovery_function is None:
+        problems.append("Missing room-capacity recovery coordinator.")
+    if failed_cleanup_function is None:
+        problems.append("Missing failed-setup transport cleanup helper.")
+    if interrupted_setup_function is None:
+        problems.append("Missing interrupted match-setup notification helper.")
+
+    duel_queue_handlers = [
+        node
+        for node in ast.walk(socket_tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "duel_queue"
+    ]
+    if len(duel_queue_handlers) != 1:
+        problems.append(
+            f"Expected one duel_queue handler; found {len(duel_queue_handlers)}."
+        )
+    else:
+        duel_queue_handler = duel_queue_handlers[0]
+        handler_nodes = list(ast.walk(duel_queue_handler))
+        direct_setup_assignments = [
+            node
+            for node in handler_nodes
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "delivered"
+                for target in node.targets
+            )
+            and isinstance(node.value, ast.Call)
+            and context_name(node.value.func) == "deliver_match_setup"
+        ]
+        stale_setup_guards = [
+            node
+            for node in handler_nodes
+            if isinstance(node, ast.If)
+            and isinstance(node.test, ast.UnaryOp)
+            and isinstance(node.test.op, ast.Not)
+            and isinstance(node.test.operand, ast.Name)
+            and node.test.operand.id == "delivered"
+        ]
+        if len(direct_setup_assignments) != 1 or len(stale_setup_guards) != 1:
+            problems.append(
+                "duel_queue does not capture and check direct setup delivery once."
+            )
+        else:
+            stale_guard = stale_setup_guards[0]
+            stale_nodes = list(ast.walk(stale_guard))
+            interrupted_notice_calls = [
+                node
+                for node in stale_nodes
+                if isinstance(node, ast.Call)
+                and context_name(node.func) == "notify_interrupted_match_setup"
+                and len(node.args) >= 2
+                and context_name(node.args[0]) == "socketio"
+                and context_name(node.args[1]) == "result.match.players"
+            ]
+            if len(interrupted_notice_calls) != 1:
+                problems.append(
+                    "Stale direct setup does not notify every original match player."
+                )
+            requester_guards = [
+                node
+                for node in stale_guard.body
+                if isinstance(node, ast.If)
+                and isinstance(node.test, ast.Compare)
+                and isinstance(node.test.left, ast.Name)
+                and node.test.left.id == "sid"
+                and len(node.test.ops) == 1
+                and isinstance(node.test.ops[0], ast.In)
+                and len(node.test.comparators) == 1
+                and context_name(node.test.comparators[0]) == "result.match.players"
+            ]
+            if len(requester_guards) != 1:
+                problems.append(
+                    "Stale direct setup retry is not gated to a requester in the stale match."
+                )
+            elif not any(
+                isinstance(node, ast.Return)
+                for node in ast.walk(requester_guards[0])
+            ):
+                problems.append("Stale direct setup does not return after its retry notice.")
+
+            unrelated_requester_guards = [
+                node
+                for node in handler_nodes
+                if isinstance(node, ast.If)
+                and node not in stale_nodes
+                and any(
+                    isinstance(child, ast.Compare)
+                    and isinstance(child.left, ast.Name)
+                    and child.left.id == "sid"
+                    and len(child.ops) == 1
+                    and isinstance(child.ops[0], ast.NotIn)
+                    and len(child.comparators) == 1
+                    and context_name(child.comparators[0]) == "result.match.players"
+                    for child in ast.walk(node.test)
+                )
+            ]
+            if len(unrelated_requester_guards) != 1:
+                problems.append(
+                    "Unrelated setup does not isolate requester revalidation."
+                )
+            else:
+                unrelated_nodes = list(ast.walk(unrelated_requester_guards[0]))
+                queue_membership_checks = [
+                    node
+                    for node in unrelated_nodes
+                    if isinstance(node, ast.Call)
+                    and context_name(node.func) == "state.is_sid_queued"
+                    and len(node.args) == 1
+                    and isinstance(node.args[0], ast.Name)
+                    and node.args[0].id == "sid"
+                ]
+                if (
+                    len(queue_membership_checks) != 1
+                    or not any(
+                        isinstance(node, ast.Return)
+                        for node in unrelated_nodes
+                    )
+                ):
+                    problems.append(
+                        "Unrelated setup does not atomically revalidate queue disposition."
+                    )
+
+            forbidden_stale_calls = [
+                context_name(node.func)
+                for node in stale_nodes
+                if isinstance(node, ast.Call)
+                and context_name(node.func) in {
+                    "state.request_matchmaking",
+                    "state.detach_match_if_current",
+                    "state.duel_queue.append",
+                    "socketio.close_room",
+                }
+            ]
+            if forbidden_stale_calls:
+                problems.append(
+                    "Stale direct setup performs duplicate cleanup or requeue work: "
+                    + ", ".join(forbidden_stale_calls)
+                )
+
+            stale_assignment_targets = []
+            for node in stale_nodes:
+                if isinstance(node, ast.Assign):
+                    targets = node.targets
+                elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+                    targets = [node.target]
+                else:
+                    continue
+                for target in targets:
+                    target_value = target.value if isinstance(target, ast.Subscript) else target
+                    stale_assignment_targets.append(context_name(target_value))
+            forbidden_stale_targets = {
+                "state.duel_queue",
+                "state.queued_at_by_sid",
+                "state.sid_to_room",
+            }
+            mutated_stale_state = sorted(
+                set(stale_assignment_targets) & forbidden_stale_targets
+            )
+            if mutated_stale_state:
+                problems.append(
+                    "Stale direct setup mutates queue or SID mapping state: "
+                    + ", ".join(mutated_stale_state)
+                )
+
+    if interrupted_setup_function is not None:
+        helper_nodes = list(ast.walk(interrupted_setup_function))
+        player_loop_targets = {
+            node.target.id
+            for node in helper_nodes
+            if isinstance(node, ast.For)
+            and isinstance(node.target, ast.Name)
+            and context_name(node.iter) == "players"
+        }
+        direct_interrupted_emits = sum(
+            1
+            for node in helper_nodes
+            if isinstance(node, ast.Call)
+            and context_name(node.func) == "socketio.emit"
+            and len(node.args) >= 2
+            and context_name(node.args[1]) == "MATCH_SETUP_INTERRUPTED_MESSAGE"
+            and any(
+                keyword.arg == "to"
+                and isinstance(keyword.value, ast.Name)
+                and keyword.value.id in player_loop_targets
+                for keyword in node.keywords
+            )
+        )
+        if len(player_loop_targets) != 1 or direct_interrupted_emits != 1:
+            problems.append(
+                "Interrupted setup notices are not emitted directly to every player SID."
+            )
+        if any(isinstance(node, (ast.With, ast.AsyncWith)) for node in helper_nodes):
+            problems.append("Interrupted setup notification helper acquires a lock.")
+
+    if recovery_function is not None:
+        recovery_nodes = list(ast.walk(recovery_function))
+        attempt_loops = [
+            node
+            for node in recovery_nodes
+            if isinstance(node, ast.While)
+            and any(
+                isinstance(child, ast.Call)
+                and context_name(child.func) == "state.try_pair_waiting"
+                for child in ast.walk(node)
+            )
+        ]
+        attempt_nodes = list(ast.walk(attempt_loops[0])) if len(attempt_loops) == 1 else []
+        fresh_time_names = {
+            target.id
+            for node in attempt_nodes
+            if isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Call)
+            and context_name(node.value.func) == "state.current_monotonic_time"
+            for target in node.targets
+            if isinstance(target, ast.Name)
+        }
+        forwarded_time_names = {
+            keyword.value.id
+            for node in attempt_nodes
+            if isinstance(node, ast.Call)
+            and context_name(node.func) == "state.try_pair_waiting"
+            for keyword in node.keywords
+            if keyword.arg == "now" and isinstance(keyword.value, ast.Name)
+        }
+        if not fresh_time_names & forwarded_time_names:
+            problems.append(
+                "Replacement pairing does not refresh and forward monotonic time per attempt."
+            )
+        delivered_assignments = [
+            node
+            for node in recovery_nodes
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "delivered"
+                for target in node.targets
+            )
+            and isinstance(node.value, ast.Call)
+            and context_name(node.value.func) == "deliver_match_setup"
+        ]
+        replacement_appends = [
+            node
+            for node in recovery_nodes
+            if isinstance(node, ast.Call)
+            and context_name(node.func) == "replacements.append"
+        ]
+        delivered_guards = [
+            node
+            for node in recovery_nodes
+            if isinstance(node, ast.If)
+            and isinstance(node.test, ast.Name)
+            and node.test.id == "delivered"
+        ]
+        guarded_appends = {
+            id(node)
+            for guard in delivered_guards
+            for node in ast.walk(guard)
+            if isinstance(node, ast.Call)
+            and context_name(node.func) == "replacements.append"
+        }
+        if len(delivered_assignments) != 1:
+            problems.append("Replacement setup delivery is not captured exactly once.")
+        if len(replacement_appends) != 1 or id(replacement_appends[0]) not in guarded_appends:
+            problems.append("Replacement room IDs are not appended only after successful delivery.")
+
+        detach_calls = [
+            node
+            for node in recovery_nodes
+            if isinstance(node, ast.Call)
+            and context_name(node.func) == "state.detach_match_if_current"
+        ]
+        setup_failure_detaches = [
+            node
+            for node in detach_calls
+            if any(
+                keyword.arg == "reason"
+                and isinstance(keyword.value, ast.Constant)
+                and keyword.value.value == "setup_failed"
+                for keyword in node.keywords
+            )
+        ]
+        detach_under_match_lock = any(
+            setup_failure_detaches
+            and any(
+                context_name(item.context_expr) == "replacement.turn_lock"
+                for item in with_node.items
+            )
+            and any(
+                child is setup_failure_detaches[0]
+                for child in ast.walk(with_node)
+            )
+            for with_node in recovery_nodes
+            if isinstance(with_node, ast.With)
+        )
+        if len(setup_failure_detaches) != 1 or not detach_under_match_lock:
+            problems.append(
+                "Setup exceptions do not detach authoritatively under the replacement match lock."
+            )
+
+        failed_cleanup_calls = [
+            node
+            for node in recovery_nodes
+            if isinstance(node, ast.Call)
+            and context_name(node.func) == "apply_failed_setup_cleanup"
+        ]
+        cleanup_call_is_locked = any(
+            any(child is cleanup_call for child in ast.walk(with_node))
+            for cleanup_call in failed_cleanup_calls
+            for with_node in recovery_nodes
+            if isinstance(with_node, ast.With)
+        )
+        if len(failed_cleanup_calls) != 1 or cleanup_call_is_locked:
+            problems.append("Failed-setup transport cleanup is missing or runs under a lock.")
+
+        slot_retry_loops = [
+            node
+            for node in recovery_nodes
+            if isinstance(node, ast.For)
+            and isinstance(node.iter, ast.Call)
+            and context_name(node.iter.func) == "range"
+            and any(
+                isinstance(argument, ast.Name) and argument.id == "room_count"
+                for argument in node.iter.args
+            )
+            and any(isinstance(child, ast.While) for child in ast.walk(node))
+        ]
+        if len(slot_retry_loops) != 1:
+            problems.append("Released room slots do not retry replacement pairing.")
+
+    if failed_cleanup_function is not None:
+        cleanup_nodes = list(ast.walk(failed_cleanup_function))
+        player_loops = [
+            node
+            for node in cleanup_nodes
+            if isinstance(node, ast.For)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "sid"
+            and context_name(node.iter) == "detached.players"
+        ]
+        direct_emits = [
+            node
+            for node in cleanup_nodes
+            if isinstance(node, ast.Call)
+            and context_name(node.func) == "socketio.emit"
+            and any(
+                keyword.arg == "to"
+                and isinstance(keyword.value, ast.Name)
+                and keyword.value.id == "sid"
+                for keyword in node.keywords
+            )
+        ]
+        close_calls = [
+            node
+            for node in cleanup_nodes
+            if isinstance(node, ast.Call)
+            and context_name(node.func) == "socketio.close_room"
+            and node.args
+            and context_name(node.args[0]) == "detached.room_id"
+        ]
+        if len(player_loops) != 1 or len(direct_emits) != 1:
+            problems.append("Failed setup notices are not emitted directly to every SID.")
+        if len(close_calls) != 1:
+            problems.append("Failed setup cleanup does not close the partial Socket.IO room.")
+        if any(isinstance(node, (ast.With, ast.AsyncWith)) for node in cleanup_nodes):
+            problems.append("Failed-setup transport cleanup acquires a lock.")
+
+    for function_name, function in (
+        ("_recover_room_capacity", recovery_function),
+        ("apply_failed_setup_cleanup", failed_cleanup_function),
+    ):
+        if function is None:
+            continue
+        forbidden_requeue_calls = [
+            context_name(node.func)
+            for node in ast.walk(function)
+            if isinstance(node, ast.Call)
+            and context_name(node.func) in {
+                "state.request_matchmaking",
+                "state.duel_queue.append",
+                "state.queued_at_by_sid.update",
+            }
+        ]
+        if forbidden_requeue_calls:
+            problems.append(
+                f"{function_name} automatically requeues failed players: "
+                + ", ".join(forbidden_requeue_calls)
+            )
+
+    lifecycle_functions = {
+        node.name: node
+        for node in ast.walk(socket_tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name in {"_match_expiration", "run_lifecycle_sweep", "lifecycle_sweeper"}
+    }
+    for function_name, function in lifecycle_functions.items():
+        if any(
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "time"
+            and node.func.attr == "time"
+            for node in ast.walk(function)
+        ):
+            problems.append(f"{function_name} uses wall-clock time.")
+
+    chat_handlers = [
+        node
+        for node in ast.walk(socket_tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "duel_chat"
+    ]
+    if len(chat_handlers) != 1:
+        problems.append(f"Expected one duel_chat handler; found {len(chat_handlers)}.")
+    elif any(
+        isinstance(node, (ast.Assign, ast.AnnAssign, ast.AugAssign))
+        and any(
+            isinstance(target, ast.Attribute)
+            and target.attr == "last_gameplay_activity_at"
+            for target in (
+                node.targets
+                if isinstance(node, ast.Assign)
+                else [node.target]
+            )
+        )
+        for node in ast.walk(chat_handlers[0])
+    ):
+        problems.append("Chat refreshes lifecycle activity.")
+
+    if problems:
+        return False, "; ".join(problems)
+    return True, (
+        "Match lifecycle uses Eventlet coordination, one startup-guarded process "
+        "sweeper, match-before-registry locking, no transport/resolver work under "
+        "state_lock, immediate failed-setup detachment with direct SID cleanup and "
+        "same-slot retry with fresh per-attempt monotonic time, direct all-player "
+        "stale-setup notification without duplicate cleanup or requeue, monotonic "
+        "deadlines, and no lease/deferred-cleanup state."
+    )
+
 _GUARDRAILS: Tuple[Tuple[str, Callable[[], Tuple[bool, str]]], ...] = (
+    ("guardrail_match_lifecycle_coordination", guardrail_match_lifecycle_coordination),
     ("guardrail_player_resource_writes", guardrail_player_resource_writes),
     ("guardrail_damage_resource_gains_post_damage", guardrail_damage_resource_gains_post_damage),
     ("guardrail_raw_proc_bonus_damage", guardrail_raw_proc_bonus_damage),

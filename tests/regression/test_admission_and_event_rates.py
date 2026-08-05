@@ -97,6 +97,9 @@ class _FakeSocketIO:
         self.handlers: dict[str, Any] = {}
         self.emitted: list[tuple[str, Any, dict[str, Any]]] = []
         self.assert_unlocked = assert_unlocked
+        self.entered_rooms: list[tuple[str, str]] = []
+        self.closed_rooms: list[str] = []
+        self.server = _FakeSocketIOServer(self)
 
     def on(self, event: str):
         def register(handler):
@@ -106,11 +109,28 @@ class _FakeSocketIO:
         return register
 
     def emit(self, event: str, payload: Any = None, **kwargs: Any) -> None:
+        self.assert_transport_unlocked()
+        self.emitted.append((event, payload, kwargs))
+
+    def close_room(self, room_id: str) -> None:
+        self.assert_transport_unlocked()
+        self.closed_rooms.append(room_id)
+
+    def assert_transport_unlocked(self) -> None:
         if self.assert_unlocked:
             assert not state.state_lock.locked(), (
                 "Socket.IO transport must run after the admission lock is released"
             )
-        self.emitted.append((event, payload, kwargs))
+
+
+class _FakeSocketIOServer:
+    def __init__(self, socketio: _FakeSocketIO) -> None:
+        self.socketio = socketio
+
+    def enter_room(self, sid: str, room_id: str, *, namespace: str) -> None:
+        self.socketio.assert_transport_unlocked()
+        assert namespace == "/"
+        self.socketio.entered_rooms.append((room_id, sid))
 
 
 @contextmanager
@@ -128,11 +148,7 @@ def _registered_handlers(
 ]:
     socketio = _FakeSocketIO(assert_unlocked=assert_unlocked)
     direct_emits: list[tuple[str, str, Any, dict[str, Any]]] = []
-    joins: list[tuple[str, str]] = []
-    leaves: list[tuple[str, str]] = []
     original_emit = SOCKETS.emit
-    original_join_room = SOCKETS.join_room
-    original_leave_room = SOCKETS.leave_room
     original_sid = SOCKETS.request.sid
 
     def assert_lock_released() -> None:
@@ -152,24 +168,12 @@ def _registered_handlers(
         if on_direct_emit is not None:
             on_direct_emit(event, payload)
 
-    def join(room_id: str, *, sid: str) -> None:
-        assert_lock_released()
-        joins.append((room_id, sid))
-
-    def leave(room_id: str, *, sid: str) -> None:
-        assert_lock_released()
-        leaves.append((room_id, sid))
-
     SOCKETS.emit = direct_emit
-    SOCKETS.join_room = join
-    SOCKETS.leave_room = leave
     SOCKETS.register_duel_socket_handlers(socketio)
     try:
-        yield socketio, direct_emits, joins, leaves
+        yield socketio, direct_emits, socketio.entered_rooms, socketio.closed_rooms
     finally:
         SOCKETS.emit = original_emit
-        SOCKETS.join_room = original_join_room
-        SOCKETS.leave_room = original_leave_room
         SOCKETS.request.sid = original_sid
 
 
@@ -245,6 +249,7 @@ def scenario_admission_lazy_queue_expiration() -> bool:
         clock.set(30)
         newcomer = state.request_matchmaking("newcomer", seed=3)
         assert newcomer.match is None
+        assert newcomer.expired_queue_sids == ("expired",)
         assert state.duel_queue == ["newcomer"]
         assert "expired" not in state.queued_at_by_sid
 
@@ -258,7 +263,7 @@ def scenario_admission_lazy_queue_expiration() -> bool:
         assert not state.duel_queue and not state.queued_at_by_sid
 
         socket_source = Path(SOCKETS.__file__).read_text(encoding="utf-8")
-        assert "start_background_task" not in socket_source
+        assert socket_source.count("socketio.start_background_task(") == 1
     return True
 
 
@@ -512,7 +517,7 @@ def scenario_admission_capacity_recovery_transport() -> bool:
         replacement = next(iter(state.duel_rooms.values()))
         assert replacement.players == ["replacement-p1", "replacement-p2"]
         assert replacement.room_id != old_match.room_id
-        assert leaves == [(old_match.room_id, "old-p1")]
+        assert leaves == [old_match.room_id]
         assert joins == [
             (replacement.room_id, "replacement-p1"),
             (replacement.room_id, "replacement-p2"),
@@ -622,19 +627,23 @@ def scenario_admission_ordinary_duel_and_source_guardrails() -> bool:
 
     state_source = Path(state.__file__).read_text(encoding="utf-8")
     socket_source = Path(SOCKETS.__file__).read_text(encoding="utf-8")
+    model_source = Path(sys.modules[MatchState.__module__].__file__).read_text(
+        encoding="utf-8"
+    )
     assert "from eventlet.semaphore import Semaphore" in state_source
-    assert "threading.Lock" not in state_source and "threading.RLock" not in state_source
-    assert "start_background_task" not in state_source + socket_source
+    assert "from eventlet.semaphore import Semaphore" in model_source
+    assert "threading.Lock" not in model_source and "threading.RLock" not in model_source
+    assert "start_background_task" not in state_source
+    assert socket_source.count("socketio.start_background_task(") == 1
     forbidden_lifecycle_terms = (
-        "prep_idle_ttl",
-        "prep_absolute_ttl",
-        "combat_idle_ttl",
-        "combat_absolute_ttl",
-        "ended_room_grace_ttl",
         "cleanup_lease",
         "deferred_cleanup",
+        "pending_cleanup",
     )
-    assert not any(term in state_source.lower() for term in forbidden_lifecycle_terms)
+    assert not any(
+        term in (state_source + socket_source).lower()
+        for term in forbidden_lifecycle_terms
+    )
     assert not any(
         term in socket_source
         for term in ("remote_addr", "X-Forwarded-For", "ProxyFix")

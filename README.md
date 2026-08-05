@@ -50,11 +50,56 @@ The retained-log value must be at least 30 and the socket buffer at least 4096
 bytes; invalid explicit values stop startup with a configuration error.
 
 Matchmaking retains at most 100 queued Socket.IO SIDs and 50 duel rooms by
-default. Queue entries expire lazily after 15 minutes when matchmaking state is
-next accessed; clients receive no proactive timeout and must queue again.
-`MAKGORA_MAX_QUEUED_SIDS`, `MAKGORA_MAX_ACTIVE_ROOMS`, and
-`MAKGORA_QUEUE_TTL_SECONDS` override these values. Room IDs use a
-process-lifetime monotonic sequence and are not reused after cleanup.
+default. Queue entries expire after 15 minutes, both lazily when matchmaking is
+accessed and proactively by the lifecycle sweeper. Expired clients receive a
+SID-local notice and must queue again. `MAKGORA_MAX_QUEUED_SIDS`,
+`MAKGORA_MAX_ACTIVE_ROOMS`, and `MAKGORA_QUEUE_TTL_SECONDS` override these
+values. Room IDs use a process-lifetime monotonic sequence and are not reused
+after cleanup.
+
+Retained rooms use these default monotonic lifecycle deadlines:
+
+| Phase | Idle expiration | Absolute expiration / grace |
+| --- | --- | --- |
+| Prep | 10 minutes | 30 minutes absolute |
+| Combat | 15 minutes | 2 hours absolute |
+| Ended | n/a | 2 minutes after the duel ends |
+
+The one process-local sweeper runs every 30 seconds. Deadlines are inclusive:
+a room or queue entry is eligible when `now >= deadline`. Accepted
+state-changing prep submissions, a SID's first lock-in, the prep-to-combat
+transition, and accepted first action submissions for a turn refresh idle
+activity. Malformed, rejected, duplicate, unauthorized, or throttled events do
+not; neither do queue requests, snapshots, system messages, or chat. Absolute
+deadlines never refresh.
+
+Override lifecycle values with
+`MAKGORA_PREP_IDLE_TTL_SECONDS`,
+`MAKGORA_PREP_ABSOLUTE_TTL_SECONDS`,
+`MAKGORA_COMBAT_IDLE_TTL_SECONDS`,
+`MAKGORA_COMBAT_ABSOLUTE_TTL_SECONDS`,
+`MAKGORA_ENDED_GRACE_SECONDS`, and
+`MAKGORA_LIFECYCLE_SWEEP_INTERVAL_SECONDS`. Every value must be finite and
+positive. Prep/combat absolute TTLs must be at least their corresponding idle
+TTLs; invalid explicit configuration stops startup.
+
+Admission uses one Eventlet registry semaphore, and each match uses one
+Eventlet semaphore for setup, gameplay operations, disconnect, and lifecycle
+cleanup. The lock order is match semaphore then registry semaphore. The
+sweeper never waits for a busy match; disconnect waits cooperatively for only
+the affected match. All room removal uses one atomic state-detachment path,
+with Socket.IO notices/closure and FIFO capacity-recovery setup performed after
+locks are released. A detached room can promote at most one successfully
+delivered waiting pair. If replacement setup fails, the replacement is detached
+immediately, both SIDs receive direct retry notices, any partial Socket.IO room
+is closed, and the same capacity slot is retried with the next FIFO pair. Failed
+players are not automatically requeued, stale replacements are not reported as
+successful, and individual transport failures do not stop later cleanup. This
+uses no setup lease or deferred-cleanup state.
+
+Expiration may occur up to one sweep interval late when a match is busy.
+This is intentional and avoids cleanup leases or a deferred-operation state
+machine.
 
 High-frequency client events use per-SID token buckets:
 
@@ -80,10 +125,8 @@ individual SID rate, but queue and room caps still bound retained matchmaking
 state. The limits are per SID, not per IP, so two tabs on one computer remain
 independent. Proxy-level and identity-based controls remain external.
 
-Queue expiration is lazy in PR 3B. Prep, combat, and ended-room expiration are
-not implemented until PR 3C. There is no lifecycle sweeper. Admission state is
-guarded with an Eventlet semaphore but remains process-local; running multiple
-application workers is not supported by this PR.
+Lifecycle state remains process-local. Multiple application workers are not
+supported.
 
 ## Development Documentation
 
